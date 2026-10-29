@@ -5,10 +5,12 @@ import {
   X, ArrowLeft, Send, Loader2, Inbox as InboxIcon,
 } from "lucide-react";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { Avatar } from "./avatar";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { sendMessage, markThreadRead, deleteMessage, getUserByEmail } from "@/server-actions/data";
+import { sendMessage, markThreadRead, deleteMessage } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 import type { MessageT, TeamMemberT } from "@/lib/types";
 
 interface InboxDrawerProps {
@@ -18,7 +20,8 @@ interface InboxDrawerProps {
 }
 
 export function InboxDrawer({ messages, members, currentUser }: InboxDrawerProps) {
-  const { inboxOpen, setInboxOpen, inboxThreadId, openInboxThread, closeInboxThread, bumpRefresh } = useApp();
+  const { inboxOpen, setInboxOpen, inboxThreadId, openInboxThread, closeInboxThread } = useApp();
+  const refresh = useRefresh();
 
   // Group messages into threads
   const threads = useMemo(() => {
@@ -100,15 +103,19 @@ export function InboxDrawer({ messages, members, currentUser }: InboxDrawerProps
             members={members}
             currentUser={currentUser}
             onBack={closeInboxThread}
-            onReplySent={bumpRefresh}
+            onReplySent={refresh}
             onDelete={async (id) => {
-              const res = await deleteMessage(id);
-              if (!res.ok) {
-                toast.error(res.error);
-                return;
+              try {
+                const res = await deleteMessage(id);
+                if (!res.ok) {
+                  toast.error(res.error);
+                  return;
+                }
+                refresh();
+                toast.success("Message deleted");
+              } catch (e) {
+                toast.error(actionErrorMessage(e, "Failed to delete message"));
               }
-              bumpRefresh();
-              toast.success("Message deleted");
             }}
           />
         ) : (
@@ -213,9 +220,9 @@ function ThreadList({
 
 function ThreadView({
   thread,
-  members,
+  members: _members,
   currentUser,
-  onBack,
+  onBack: _onBack,
   onReplySent,
   onDelete,
 }: {
@@ -229,12 +236,14 @@ function ThreadView({
   const [replyBody, setReplyBody] = useState("");
   const [sending, setSending] = useState(false);
 
-  // Mark thread as read when opened
+  // Mark thread as read when opened. The dep array intentionally includes
+  // hasUnread so re-opening an already-loaded thread that gained a new unread
+  // message still triggers the mark-read call.
   useEffect(() => {
     if (thread?.hasUnread) {
       markThreadRead(thread.threadId);
     }
-  }, [thread?.threadId]);
+  }, [thread?.threadId, thread?.hasUnread]);
 
   if (!thread) {
     return (
@@ -246,8 +255,16 @@ function ThreadView({
 
   const first = thread.messages[0];
   const replyTo = first.direction === "IN" ? first.senderName : first.recipientName;
-  const replyToColor = first.direction === "IN" ? first.senderAvatarColor : "forest";
   const memberId = first.memberId;
+  // L-P0-2 fix: derive the recipient's userId directly from the thread's
+  // existing messages instead of doing a name-based email lookup. If the
+  // first message is IN (they sent it), the recipient of our reply is the
+  // original sender; if OUT (we sent it), the recipient is the original
+  // recipient. This bypasses the email-mismatch issue where 3 of 12 seed
+  // members have roster emails that don't match their User accounts.
+  const replyRecipientUserId = first.direction === "IN"
+    ? first.senderUserId
+    : first.recipientUserId;
 
   const sendReply = async () => {
     if (!replyBody.trim()) {
@@ -256,22 +273,14 @@ function ThreadView({
     }
     setSending(true);
     try {
-      // Look up the recipient's user ID
-      const recipientRes = await getUserByEmail(
-        // The replyTo is the other person in the conversation — find their email
-        // from the members list if possible, otherwise leave recipientUserId empty
-        members.find((m) => m.name === replyTo)?.email ?? ""
-      );
-      const recipientUser = recipientRes.ok ? recipientRes.data : null;
       const res = await sendMessage({
-        direction: "OUT",
         threadId: thread.threadId,
         memberId,
         senderName: currentUser.name,
         senderAvatarColor: currentUser.avatarColor,
         senderRole: currentUser.role,
         recipientName: replyTo,
-        recipientUserId: recipientUser?.id,
+        recipientUserId: replyRecipientUserId,
         subject: first.subject.startsWith("Re:") ? first.subject : `Re: ${first.subject}`,
         body: replyBody.trim(),
       });

@@ -11,7 +11,7 @@ const { db, getServerSession } = vi.hoisted(() => {
   // A generic auto-mock factory: db.<model>.<method> is a vi.fn().
   const models = [
     "auditLog", "project", "task", "teamMember", "reminder", "notification",
-    "timeEntry", "calendarEvent", "message", "user", "userSettings",
+    "timeEntry", "calendarEvent", "message", "messageRead", "user", "userSettings",
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
     "taskTagConfig", "priorityConfig", "departmentConfig",
@@ -395,28 +395,59 @@ describe("notification & message mutations require auth (P0-3 regression)", () =
     expectErr(await markMessageRead("m-1"), "AUTH");
   });
 
-  it("markMessageRead only updates messages addressed to the caller", async () => {
+  it("markMessageRead only marks messages addressed to the caller as read (L-P0-2)", async () => {
     signIn(MEMBER);
-    db.message.updateMany.mockResolvedValue({ count: 1 });
+    // L-P0-2: the new implementation findUnique's the message to verify the
+    // recipient check, then upserts a MessageRead row.
+    db.message.findUnique.mockResolvedValue({ id: "m-1", recipientUserId: MEMBER.userId });
+    db.messageRead.upsert.mockResolvedValue({ id: "mr-1", userId: MEMBER.userId, messageId: "m-1", readAt: new Date() });
     await markMessageRead("m-1");
-    expect(db.message.updateMany).toHaveBeenCalledWith(
+    expect(db.message.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: "m-1", recipientUserId: MEMBER.userId }),
+        where: { id: "m-1" },
+        select: { recipientUserId: true },
+      }),
+    );
+    expect(db.messageRead.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_messageId: { userId: MEMBER.userId, messageId: "m-1" } },
       }),
     );
   });
 
-  it("markThreadRead only marks the caller's incoming messages as read", async () => {
+  it("markMessageRead silently no-ps for messages NOT addressed to the caller (L-P0-2)", async () => {
     signIn(MEMBER);
-    db.message.updateMany.mockResolvedValue({ count: 2 });
+    db.message.findUnique.mockResolvedValue({ id: "m-1", recipientUserId: "someone-else" });
+    await markMessageRead("m-1");
+    expect(db.messageRead.upsert).not.toHaveBeenCalled();
+  });
+
+  it("markThreadRead marks the caller's incoming messages as read via MessageRead (L-P0-2)", async () => {
+    signIn(MEMBER);
+    // L-P0-2: the new implementation findMany's the unread messages in the
+    // thread addressed to me, then createMany's MessageRead rows.
+    db.message.findMany.mockResolvedValue([
+      { id: "m-1" },
+      { id: "m-2" },
+    ]);
+    db.messageRead.createMany.mockResolvedValue({ count: 2 });
     await markThreadRead("th-1");
-    expect(db.message.updateMany).toHaveBeenCalledWith(
+    expect(db.message.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           threadId: "th-1",
-          direction: "IN",
           recipientUserId: MEMBER.userId,
+          readBy: { none: { userId: MEMBER.userId } },
         }),
+      }),
+    );
+    expect(db.messageRead.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          { userId: MEMBER.userId, messageId: "m-1" },
+          { userId: MEMBER.userId, messageId: "m-2" },
+        ],
+        skipDuplicates: true,
       }),
     );
   });

@@ -56,7 +56,6 @@ import {
   createReminder,
   updateProfile,
   getUserSettings,
-  updateUserSettings,
   sendMessage,
   getUserByEmail,
   getAllUsers,
@@ -183,7 +182,7 @@ describe("getDashboardData mapping & stats", () => {
       { id: "e-1", title: "Standup", description: "", date: now, time: "09:00", durationMin: 15, type: "MEETING", location: "", createdAt: now },
     ]);
     db.message.findMany.mockResolvedValue([
-      { id: "msg-1", direction: "IN", threadId: "th-1", memberId: "m-mia", senderUserId: "u-oli", recipientUserId: "u-mia", senderName: "Oli", senderAvatarColor: "ocean", senderRole: "Dev", recipientName: "Mia", subject: "Hi", body: "Yo", read: false, createdAt: now },
+      { id: "msg-1", direction: "IN", threadId: "th-1", memberId: "m-mia", senderUserId: "u-oli", recipientUserId: "u-mia", senderName: "Oli", senderAvatarColor: "ocean", senderRole: "Dev", recipientName: "Mia", subject: "Hi", body: "Yo", read: false, createdAt: now, readBy: [] },
     ]);
   }
 
@@ -618,7 +617,7 @@ describe("profile & settings", () => {
     await expect(getUserSettings(MEMBER.userId)).rejects.toThrow(/signed in/i);
   });
 
-  it("sendMessage reuses the provided threadId and generates one when absent", async () => {
+  it("sendMessage reuses the provided threadId and generates one when absent (L-P0-2)", async () => {
     signIn(MEMBER);
     db.message.create.mockResolvedValue({});
     const explicit = expectOk(await sendMessage({
@@ -628,7 +627,10 @@ describe("profile & settings", () => {
     expect(explicit).toBe("th-42");
     expect(db.message.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ threadId: "th-42", read: true, senderUserId: MEMBER.userId }),
+        // L-P0-2: direction is now always "OUT" at write time (derived per
+        // viewer at read time); read is false because the recipient hasn't
+        // seen it yet (the sender's own copy is implicitly read at read time).
+        data: expect.objectContaining({ threadId: "th-42", direction: "OUT", read: false, senderUserId: MEMBER.userId }),
       }),
     );
 
@@ -881,7 +883,7 @@ describe("workspace config mutations", () => {
     ["createConfigItem", "create"],
     ["updateConfigItem", "update"],
     ["deleteConfigItem", "delete"],
-  ] as const)("%s writes through to the right table", async (action, method) => {
+  ] as const)("%s writes through to the right table", async (action, _method) => {
     if (action === "createConfigItem") {
       db.taskStatusConfig.create.mockResolvedValue({});
       await createConfigItem("taskStatusConfig", { key: "BLOCKED" });

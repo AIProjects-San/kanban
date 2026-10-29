@@ -21,7 +21,6 @@ import {
 import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
-import { cn } from "@/lib/utils";
 import { ACCENTS } from "@/lib/constants";
 
 interface CmdItem {

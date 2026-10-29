@@ -333,3 +333,71 @@ removed.
 5. Nonce-based CSP (HSTS done at the app layer 2026-10-30; the reverse-proxy
    (Caddy) layer can also add it when TLS terminates there).
 6. Redis-backed rate limiting. ~~Per-user notification routing~~ **Done 2026-10-30** (see §6.2).
+
+---
+
+## 9. Launch-readiness audit (2026-10-30) — staff engineering pass
+
+A second-pass audit (`Fernly-Launch-Readiness-Audit.docx`, 2026-10-30) targets a
+**100,000-user** launch and is far more demanding than the original P0–P3 list
+above. It re-rates the codebase **RED** on data integrity, scalability, UX
+correctness, and operability; **AMBER** on security architecture; **GREEN**
+only on engineering quality.
+
+The audit enumerates 16 P0 launch blockers, 10 P1 ship-in-window items, and
+12 P2 fast-follow items. This section tracks each one and is updated as the
+fixes land. Items marked ✅ have an implemented + tested fix; items marked
+**OPEN** are still pending.
+
+### 9.1 P0 — Launch blockers (close by day 14)
+
+| # | Item (audit §) | Why it blocks | Status |
+|---|----------------|---------------|--------|
+| L-P0-1 | Mutation data refresh — no `router.refresh()` anywhere; Kanban drag reverts, created items invisible until reload | First-minute UX break | ✅ Fixed — new `useRefresh()` hook (`src/hooks/use-refresh.ts`) wraps `useRouter().refresh()` + `bumpRefresh()`; swept all 13 mutation callsites (task/project/user/member/assignment modals, calendar/users/projects/settings/team views, inbox-drawer, app-shell onMarkAllRead). TasksView adds optimistic local state for the drag that is cleared on success/failure. Workspace-settings `Object.assign(config, fresh.data)` anti-pattern replaced with a `reload()` callback that calls `setConfig(fresh.data) + refresh()`. Regression tests: `use-refresh.test.ts` (calls router.refresh before bumpRefresh in order), `tasks-view-refresh.test.tsx` (captures DndContext's onDragEnd and verifies router.refresh is called on success, NOT on failure). Toolchain green: 416/416 tests, tsc clean, lint clean. Devil's-advocate review identified 3 BLOCKERs + 5 MAJORs; all addressed. |
+| L-P0-2 | Message direction/read remodel — `direction` stored from sender's POV but read from viewer's POV; one global `read` flag shared by both parties; `markThreadRead` requires `direction:IN` so sent messages can never be matched | Messaging unusable for real senders | ✅ Fixed — added `MessageRead(userId, messageId, readAt)` join table; `direction` is now DERIVED per viewer in the dashboard loader (`recipientUserId === me ? "IN" : "OUT"`); `markThreadRead` matches on `recipientUserId: auth.userId` instead of `direction: "IN"`; `markMessageRead` upserts a `MessageRead` row after verifying the message is addressed to the caller; legacy `read` column kept for seed-data compat. Compose flows (team-view MessageModal, inbox-drawer reply) now use `member.userId` / the thread's existing `senderUserId`/`recipientUserId` directly instead of the email-mismatched `getUserByEmail(member.email)` lookup. The `direction` parameter is now optional in the zod schema. Regression tests: `messages-p0-2.test.ts` (5 tests covering the audit's exact scenario + readBy strip from client payload). Toolchain green: 422/422 tests, tsc clean, lint clean. Devil's-advocate review found 2 MAJORs (direction param lie, email-mismatch in compose) + 8 MINORs; both MAJORs addressed, key MINORs (readBy cast, test mock readBy) addressed. |
+| L-P0-3 | Error boundaries & loading states — no `error.tsx`/`global-error.tsx`/`not-found.tsx`/`loading.tsx` in `src/app/` | Uncaught errors show raw Next.js page | OPEN |
+| L-P0-4 | Health endpoint — `/api/route.ts` returns "Hello world"; no probe for LB/orchestrator | Cannot detect wedged instance | OPEN |
+| L-P0-5 | DB indexes — `Task`, `TimeEntry`, `Project` have zero secondary indexes; every scoped query is a sequential scan | Latency bomb at 100k rows | OPEN |
+| L-P0-6 | Prisma migrations — schema managed with `db push --accept-data-loss`; no migration history, no rollback | Data loss risk in production | OPEN |
+| L-P0-7 | RBAC editor enforcement — `hasPermissionDb` exists, is unit-tested, is called by zero production paths; admins can revoke permissions and nothing changes | Trust failure | OPEN |
+| L-P0-8 | Session revocation — no `tokenVersion`; stolen cookie valid 30 days, survives password change | Largest single security exposure | OPEN |
+| L-P0-9 | Pagination & server-side search — every list returns all rows; payload and DOM cost grow with workspace | Cannot scale to 100k users | OPEN |
+| L-P0-10 | Redis rate limiting — in-memory limiter resets on deploy, no cross-instance state, NAT offices locked out | Throttling failure under load | OPEN |
+| L-P0-11 | Mail service + password reset — no mail service at all; no self-service reset or email verification | Support avalanche + account-takeover enabler | OPEN |
+| L-P0-12 | Login demo gating — login screen prefills `demo@fernly.app / fernly123`; seed creates public admin credentials unless `NODE_ENV=production` exactly | Public admin credentials in misconfigured deploys | OPEN |
+| L-P0-13 | `User.role` default `'Project Lead'` — invalid role string; sessions downgrade to MEMBER, UI renders it literally | Garbage state on raw inserts | OPEN |
+| L-P0-14 | Delete semantics — `deleteProject` SetNulls `Task.projectId` (orphans); `deleteUser` leaves roster ghost + dangling message ids | Data integrity decays from day one | OPEN |
+| L-P0-15 | Shortcut permission gating — `G U`/`G W`/`G L` fire for every user; MEMBERS navigate into admin views and eat raw auth-error toasts | Permission bypass at the keyboard layer | OPEN |
+| L-P0-16 | Workload config wiring — `Workspace.workloadFullCapacity` editable but `recalcMemberStats` hardcodes 6; the setting lies | Cosmetic admin UI | OPEN |
+
+### 9.2 P1 — Ship in the same window (days 15–21)
+
+| # | Item (audit §) | Why it matters at 100k | Status |
+|---|----------------|------------------------|--------|
+| L-P1-17 | Code splitting + JS budget — Recharts/Calendar ship in initial bundle; no per-view `next/dynamic` | First paint pays for screens user never opens | OPEN |
+| L-P1-18 | Focus trap & a11y pass — Modal has no focus trap/restore; no `aria-labelledby` to title | Legal + reputational exposure | OPEN |
+| L-P1-19 | Error tracking + logs + alerts — no Sentry, no metrics, no tracing, no on-call signal | First sign of trouble is a user complaint | OPEN |
+| L-P1-20 | Audit log retention — every mutation writes a row forever; unbounded growth slows timeline queries | Latency on the audit view | OPEN |
+| L-P1-21 | Multi-instance + LB + Dockerfile — single instance behind Caddy; scaling is SSH surgery | Cannot horizontally scale | OPEN |
+| L-P1-22 | Backup/DR drill — no verified PITR, no restore rehearsal, no RPO/RTO statement | Cannot recover from data loss | OPEN |
+| L-P1-23 | Component & E2E tests — highest-traffic UI has no tests; component coverage near zero by gate design | Regressions in W1 refresh work ship silently | OPEN |
+| L-P1-24 | Lint re-enablement — `no-unused-vars`, `react-hooks/exhaustive-deps` etc. off globally | Dead code and effect bugs land silently | OPEN |
+| L-P1-25 | Load testing — no measurement exists for the 100k claim anywhere | No evidence the product scales | OPEN |
+| L-P1-26 | DB region decision — primary in eu-west-1, audience defaults to Pacific/Auckland | Cross-continent RTT on every page | OPEN |
+
+### 9.3 P2 — Fast follow (days 22–30 and post-launch)
+
+| # | Item (audit §) | Why not a blocker | Status |
+|---|----------------|-------------------|--------|
+| L-P2-27 | SSO / 2FA | Credentials work at launch | OPEN |
+| L-P2-28 | File attachments | Missing vs competitors, not blocking | OPEN |
+| L-P2-29 | @mentions | MENTION type exists unused; high delight value | OPEN |
+| L-P2-30 | Global data search | Palette searches commands only | OPEN |
+| L-P2-31 | Bulk operations | Multi-select not needed day one | OPEN |
+| L-P2-32 | i18n | English-only OK for NZ launch; extract strings now | OPEN |
+| L-P2-33 | Trash / undo window | Soft-delete covers integrity; undo is polish | OPEN |
+| L-P2-34 | Webhooks / Slack | Demand arrives after users, not before | OPEN |
+| L-P2-35 | GDPR export & legal pages | Needed before any EU user | OPEN |
+| L-P2-36 | Multi-workspace tenancy | Architectural ceiling; only required for multi-org commercial model | OPEN |
+| L-P2-37 | Status page + on-call runbook | Operational polish once L-P1-19 lands | OPEN |
+| L-P2-38 | Recurring events / ICS | Calendar power features | OPEN |

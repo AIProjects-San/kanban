@@ -3,17 +3,18 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   UserCog, UserPlus, RefreshCw, Loader2, Mail, Trash2,
-  Edit3, FolderKanban, Clock, Plus, Shield, ShieldCheck, ShieldAlert, ShieldX,
+  Edit3, FolderKanban, Clock, Plus, ShieldCheck, ShieldX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
 import {
   getAllUsers, deleteUser, getUserProjectAssignments } from "@/server-actions/data";
 import { actionErrorMessage } from "@/lib/action-errors";
 import {
   type Role,
-  ROLE_LABELS, ROLE_DESCRIPTIONS, ALL_PERMISSIONS,
+  ROLE_LABELS, ALL_PERMISSIONS,
   hasPermission,
 } from "@/lib/rbac";
 import { Avatar } from "../fernly/avatar";
@@ -46,8 +47,9 @@ interface UsersViewProps {
   projects: Array<{ id: string; name: string; color: string; status: string }>;
 }
 
-export function UsersView({ currentUser, projects }: UsersViewProps) {
-  const { openUserModal, openAssignmentModal, bumpRefresh } = useApp();
+export function UsersView({ currentUser, projects: _projects }: UsersViewProps) {
+  const { openUserModal, openAssignmentModal } = useApp();
+  const refresh = useRefresh();
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -57,7 +59,6 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
   const [loadingAssignments, setLoadingAssignments] = useState<string | null>(null);
 
   const role = currentUser.role as Role;
-  const canManageRoles = hasPermission(role, "role:manage");
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -119,7 +120,7 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
         return;
       }
       toast.success("User deleted");
-      bumpRefresh();
+      refresh();
       await loadUsers();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to delete user"));

@@ -1,7 +1,7 @@
 // @vitest-environment node
 // ^ NextAuth + the route handler use Node-only crypto/headers APIs; jsdom
 // is the wrong realm here.
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Regression tests for the NextAuth route-wrapper's "clear every auth

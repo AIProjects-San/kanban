@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./modal";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { createMember, getAllUsers } from "@/server-actions/data";
 import { toast } from "sonner";
 import { Field, FormRow } from "./field";
@@ -55,7 +56,7 @@ export function MemberModal() {
 }
 
 function MemberForm({ onClose }: { onClose: () => void }) {
-  const { bumpRefresh } = useApp();
+  const refresh = useRefresh();
   const [existingUsers, setExistingUsers] = useState<ExistingUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -128,7 +129,7 @@ function MemberForm({ onClose }: { onClose: () => void }) {
       return;
     }
     toast.success(`${selectedUser.name} added to the team`);
-    bumpRefresh();
+    refresh();
     onClose();
   };
 

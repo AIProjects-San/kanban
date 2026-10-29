@@ -1,8 +1,7 @@
 "use client";
 
-import { Shield, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { ROLE_LABELS, type Role } from "@/lib/rbac";
+import { Loader2 } from "lucide-react";
+import { type Role } from "@/lib/rbac";
 import { Avatar } from "./avatar";
 import { RoleBadge } from "./role-badge";
 

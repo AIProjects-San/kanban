@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Loader2, Check } from "lucide-react";
 import { Modal } from "./modal";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import {
   getUserProjectAssignments,
   assignUserToProject,
@@ -51,7 +52,7 @@ function AssignmentForm({
   projects: Array<{ id: string; name: string; color: string; status: string }>;
   onClose: () => void;
 }) {
-  const { bumpRefresh } = useApp();
+  const refresh = useRefresh();
   const [assignments, setAssignments] = useState<ProjectAssignment[] | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
 
@@ -113,7 +114,7 @@ function AssignmentForm({
         }
         toast.success("Assigned to project");
       }
-      bumpRefresh();
+      refresh();
     } catch {
       toast.error("Failed to update assignment");
     } finally {

@@ -47,8 +47,6 @@ import {
   unassignUserFromProject,
   getDashboardData,
 } from "@/server-actions/data";
-import { AuthorizationError } from "@/server-actions/auth-guard";
-
 import type { ActionResult, ActionErrorCode } from "@/lib/action-result";
 
 /** Assert an action failed, optionally matching the message regex or error code. */

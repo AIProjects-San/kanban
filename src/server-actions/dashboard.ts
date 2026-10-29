@@ -7,7 +7,6 @@
 // silently render an empty workspace). `getMyProjects` / `getProjectMembers`
 // are invoked from client components and therefore return ActionResults.
 
-import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getSession, AuthorizationError } from "./auth-guard";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
@@ -133,6 +132,9 @@ export async function getDashboardData(): Promise<DashboardData> {
           }
         : undefined,
       orderBy: { createdAt: "desc" },
+      // L-P0-2: include the per-recipient read-state rows so the loader can
+      // derive `read` per viewer without an N+1.
+      include: { readBy: { where: { userId: currentUserId ?? "" } } },
     }),
   ]);
 
@@ -211,10 +213,26 @@ export async function getDashboardData(): Promise<DashboardData> {
       date: e.date.toISOString(),
       createdAt: e.createdAt.toISOString(),
     })),
-    messages: messages.map(m => ({
-      ...m,
-      createdAt: m.createdAt.toISOString(),
-    })),
+    messages: messages.map(m => {
+      // L-P0-2: derive direction per viewer (recipient sees IN, sender sees OUT).
+      // The stored `direction` column is no longer authoritative.
+      const viewerDirection = m.recipientUserId === currentUserId ? "IN" : "OUT";
+      // Read state: sender's own copy is always "read" (they wrote it).
+      // Recipient's copy is read if either a MessageRead row exists OR the
+      // legacy `read` column is true (seed-data compat).
+      const viewerRead = viewerDirection === "OUT"
+        ? true
+        : (m.readBy.length > 0 || m.read);
+      // Strip the readBy relation from the client payload (it's an
+      // implementation detail).
+      const { readBy: _readBy, ...rest } = m;
+      return {
+        ...rest,
+        direction: viewerDirection as "IN" | "OUT",
+        read: viewerRead,
+        createdAt: m.createdAt.toISOString(),
+      };
+    }),
     stats: {
       total, ended, running, pending, paused,
       weeklyCompletion,

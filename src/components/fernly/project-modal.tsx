@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Modal } from "./modal";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { createProject, updateProject, deleteProject } from "@/server-actions/data";
 import { toast } from "sonner";
 import { EntityHistorySection } from "./entity-history-section";
@@ -44,7 +45,7 @@ function ProjectForm({
   members: TeamMemberT[];
   onClose: () => void;
 }) {
-  const { bumpRefresh } = useApp();
+  const refresh = useRefresh();
   const [name, setName] = useState(editing?.name ?? "");
   const [description, setDescription] = useState(editing?.description ?? "");
   const [status, setStatus] = useState<ProjectStatus>(editing?.status ?? "RUNNING");
@@ -95,7 +96,7 @@ function ProjectForm({
       }
       toast.success("Project created");
     }
-    bumpRefresh();
+    refresh();
     onClose();
   };
 
@@ -107,7 +108,7 @@ function ProjectForm({
       return;
     }
     toast.success("Project deleted");
-    bumpRefresh();
+    refresh();
     onClose();
   };
 

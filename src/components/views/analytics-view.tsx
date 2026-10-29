@@ -27,7 +27,7 @@ interface AnalyticsViewProps {
 
 type Period = "7D" | "30D" | "90D";
 
-export function AnalyticsView({ tasks, timeEntries, members, projects }: AnalyticsViewProps) {
+export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }: AnalyticsViewProps) {
   const [period, setPeriod] = useState<Period>("30D");
 
   const days = period === "7D" ? 7 : period === "30D" ? 30 : 90;

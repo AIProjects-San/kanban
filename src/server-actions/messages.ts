@@ -1,7 +1,10 @@
 "use server";
 
-// Team messaging. Messages are routed by stable user ids: sender is always
-// the signed-in user, and read-state mutations are scoped to the recipient.
+// Team messaging. L-P0-2 remodel: direction is now DERIVED per viewer
+// (recipientUserId === me ? "IN" : "OUT") and read state is per-recipient
+// via the MessageRead join table. The legacy `direction` and `read` columns
+// are kept for backward-compat with seed data but new code MUST NOT trust
+// them for viewer-relative logic.
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
@@ -12,7 +15,10 @@ import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
 export async function sendMessage(raw: {
-  direction: "OUT" | "IN";
+  // direction is now ignored — always derived as "OUT" from the sender's POV
+  // at write time. Kept in the signature for backward-compat with the
+  // existing callers (inbox-drawer.tsx, team-view.tsx MessageModal).
+  direction?: "OUT" | "IN";
   threadId?: string;
   memberId?: string | null;
   senderName: string;
@@ -30,7 +36,9 @@ export async function sendMessage(raw: {
     const threadId = input.threadId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await db.message.create({
       data: {
-        direction: input.direction,
+        // Always "OUT" from the sender's POV at write time. The viewer-
+        // relative direction is derived at read time in the dashboard loader.
+        direction: "OUT",
         threadId,
         memberId: input.memberId || null,
         senderUserId: auth.userId,
@@ -41,7 +49,9 @@ export async function sendMessage(raw: {
         recipientName: input.recipientName,
         subject: input.subject,
         body: input.body,
-        read: input.direction === "OUT" ? true : false, // outgoing is always "read"
+        // Legacy: false for the recipient (who hasn't seen it yet). The
+        // sender's own copy is implicitly read (they wrote it).
+        read: false,
       },
     });
     await logAudit({
@@ -58,11 +68,23 @@ export async function sendMessage(raw: {
 
 export async function markMessageRead(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
-    // Only the recipient of a message may mark it as read.
+    // Only the recipient of a message may mark it as read. L-P0-2: insert
+    // a MessageRead row instead of mutating the legacy `read` column.
     const auth = await getSessionOrThrow();
-    await db.message.updateMany({
-      where: { id, recipientUserId: auth.userId },
-      data: { read: true },
+    // Verify the message is addressed to me (recipient check).
+    const msg = await db.message.findUnique({
+      where: { id },
+      select: { recipientUserId: true },
+    });
+    if (!msg || msg.recipientUserId !== auth.userId) {
+      // Not addressed to me — silently no-op (don't leak existence).
+      return;
+    }
+    // Upsert the read-state row (compound unique on (userId, messageId)).
+    await db.messageRead.upsert({
+      where: { userId_messageId: { userId: auth.userId, messageId: id } },
+      update: { readAt: new Date() },
+      create: { userId: auth.userId, messageId: id },
     });
     revalidatePath("/");
   });
@@ -70,11 +92,25 @@ export async function markMessageRead(id: string): Promise<ActionResult<void>> {
 
 export async function markThreadRead(threadId: string): Promise<ActionResult<void>> {
   return toResult(async () => {
-    // Only messages addressed to the signed-in user are marked read.
+    // L-P0-2: mark all messages in this thread that are addressed to me as
+    // read. The old code required `direction: "IN"` which never matched
+    // real sent messages (they were stored as "OUT"). The new check uses
+    // recipientUserId === me, which is the actual recipient check.
     const auth = await getSessionOrThrow();
-    await db.message.updateMany({
-      where: { threadId, direction: "IN", read: false, recipientUserId: auth.userId },
-      data: { read: true },
+    // Find all unread messages in this thread addressed to me.
+    const unreadMsgs = await db.message.findMany({
+      where: {
+        threadId,
+        recipientUserId: auth.userId,
+        readBy: { none: { userId: auth.userId } },
+      },
+      select: { id: true },
+    });
+    if (unreadMsgs.length === 0) return;
+    // Bulk-insert MessageRead rows (skip duplicates via the compound unique).
+    await db.messageRead.createMany({
+      data: unreadMsgs.map((m) => ({ userId: auth.userId, messageId: m.id })),
+      skipDuplicates: true,
     });
     revalidatePath("/");
   });

@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Link2, Users, Info } from "lucide-react";
 import { Modal } from "./modal";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import {
   createTask,
   updateTask,
@@ -11,7 +12,6 @@ import {
   getProjectMembers,
 } from "@/server-actions/data";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import { EntityHistorySection } from "./entity-history-section";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
@@ -148,7 +148,7 @@ function TaskForm({
   allMembers: TeamMemberT[];
   onClose: () => void;
 }) {
-  const { bumpRefresh } = useApp();
+  const refresh = useRefresh();
   const [title, setTitle] = useState(editing?.title ?? "");
   const [description, setDescription] = useState(editing?.description ?? "");
   const [status, setStatus] = useState<TaskStatus>(editing?.status ?? defaultStatus);
@@ -191,7 +191,7 @@ function TaskForm({
       }
       toast.success("Task created");
     }
-    bumpRefresh();
+    refresh();
     onClose();
   };
 
@@ -203,7 +203,7 @@ function TaskForm({
       return;
     }
     toast.success("Task deleted");
-    bumpRefresh();
+    refresh();
     onClose();
   };
 

@@ -137,7 +137,6 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
     departments,
     roles,
     permissions,
-    rolePermissions,
   ] = await Promise.all([
     db.workspace.findFirst({ where: { id: "default" } }),
     db.taskStatusConfig.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -151,7 +150,6 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
       include: { permissions: { include: { permission: true } } },
     }),
     db.permission.findMany({ orderBy: { sortOrder: "asc" } }),
-    db.rolePermission.findMany({ include: { role: true, permission: true } }),
   ]);
 
   const config: WorkspaceConfig = {

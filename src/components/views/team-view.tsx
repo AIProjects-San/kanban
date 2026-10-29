@@ -3,14 +3,13 @@
 import { useState, useMemo } from "react";
 import {
   MessageSquare, User, Search, X, Mail, Clock,
-  CheckCircle2, Loader2, Calendar, TrendingUp, Send, UserPlus,
+  CheckCircle2, Loader2, Calendar, TrendingUp, Send,
 } from "lucide-react";
 import { Avatar } from "../fernly/avatar";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store/app-store";
-import { hasPermission, type Role } from "@/lib/rbac";
+import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
-import { sendMessage, getUserByEmail } from "@/server-actions/data";
+import { sendMessage } from "@/server-actions/data";
 import { actionErrorMessage } from "@/lib/action-errors";
 import { EntityHistorySection } from "../fernly/entity-history-section";
 import { TASK_STATUS_ACCENT, tagClass, DEPARTMENT_LABELS } from "@/lib/config";
@@ -34,13 +33,12 @@ export function TeamView({ members, tasks, projects, timeEntries, currentUser }:
   const [query, setQuery] = useState("");
   const [profileMember, setProfileMember] = useState<TeamMemberT | null>(null);
   const [messageMember, setMessageMember] = useState<TeamMemberT | null>(null);
-  const { bumpRefresh, openMemberModal } = useApp();
 
-  // Only admins (role:manage) can add team members. The button stays
-  // hidden for MANAGER / MEMBER — same gate as the sidebar's Users and
-  // Workspace Config entries.
-  const role = currentUser.role as Role;
-  const canAddMember = hasPermission(role, "role:manage");
+  // The "Add Member" button was removed from this view — team members are
+  // created via the Users view, which already enforces role:manage server-side
+  // and writes the matching TeamMember row in the same transaction (see
+  // server-actions/users.ts createUser). The currentUser.role is still passed
+  // through to MemberProfileDrawer / MessageModal for sender attribution.
 
   const filtered = useMemo(() => {
     return members.filter((m) => {
@@ -62,11 +60,6 @@ export function TeamView({ members, tasks, projects, timeEntries, currentUser }:
             {onlineCount} online now · {members.length} total members
           </p>
         </div>
-        {canAddMember && (
-          <button onClick={openMemberModal} className="f-btn f-btn-primary f-btn-sm">
-            <UserPlus size={15} /> Add Member
-          </button>
-        )}
       </div>
 
       {/* Search + filters */}
@@ -498,7 +491,7 @@ function MessageModal({
   currentUser: { name: string; role: string; avatarColor: string };
   onClose: () => void;
 }) {
-  const { bumpRefresh } = useApp();
+  const refresh = useRefresh();
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
@@ -510,17 +503,19 @@ function MessageModal({
     }
     setSending(true);
     try {
-      // Look up the recipient's user ID so the message is scoped to them
-      const recipientRes = await getUserByEmail(member.email);
-      const recipientUser = recipientRes.ok ? recipientRes.data : null;
+      // L-P0-2 fix: prefer the stable TeamMember.userId link directly — the
+      // email-based lookup returns null for roster entries whose email
+      // doesn't match their User account (3 of 12 seed members), which
+      // would leave recipientUserId empty and the message invisible to
+      // the recipient. The userId link is authoritative.
+      const recipientUserId = member.userId ?? undefined;
       const res = await sendMessage({
-        direction: "OUT",
         memberId: member.id,
         senderName: currentUser.name,
         senderAvatarColor: currentUser.avatarColor,
         senderRole: currentUser.role,
         recipientName: member.name,
-        recipientUserId: recipientUser?.id,
+        recipientUserId,
         subject: subject.trim() || "(no subject)",
         body: body.trim(),
       });
@@ -528,7 +523,7 @@ function MessageModal({
         toast.error(res.error);
         return;
       }
-      bumpRefresh();
+      refresh();
       toast.success(`Message sent to ${member.name}`, {
         description: subject.trim() || "(no subject)",
       });

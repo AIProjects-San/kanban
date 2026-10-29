@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Plus, MapPin, Clock, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { createEvent, deleteEvent } from "@/server-actions/data";
 import { toast } from "sonner";
 import { Modal } from "../fernly/modal";
@@ -26,7 +26,7 @@ export function CalendarView({ events }: CalendarViewProps) {
   const [selectedDate, setSelectedDate] = useState<Date>(today);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailEvent, setDetailEvent] = useState<CalendarEventT | null>(null);
-  const { bumpRefresh } = useApp();
+  const refresh = useRefresh();
 
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
@@ -209,7 +209,7 @@ export function CalendarView({ events }: CalendarViewProps) {
                       toast.error(res.error);
                       return;
                     }
-                    bumpRefresh();
+                    refresh();
                     toast.success("Event deleted");
                   }} />
                 ))}
@@ -256,7 +256,7 @@ export function CalendarView({ events }: CalendarViewProps) {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         defaultDate={selectedDate}
-        onCreated={() => { bumpRefresh(); setCreateOpen(false); }}
+        onCreated={() => { refresh(); setCreateOpen(false); }}
       />
 
       {/* Event detail modal with audit history */}
@@ -270,7 +270,7 @@ export function CalendarView({ events }: CalendarViewProps) {
               toast.error(res.error);
               return;
             }
-            bumpRefresh();
+            refresh();
             toast.success("Event deleted");
             setDetailEvent(null);
           }}

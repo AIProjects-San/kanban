@@ -12,6 +12,7 @@ import {
   useDraggable,
   useDroppable,
 } from "@dnd-kit/core";
+import { useRefresh } from "@/hooks/use-refresh";
 import { Plus, MoreHorizontal, Calendar as CalIcon, FolderKanban } from "lucide-react";
 import { useApp } from "@/store/app-store";
 import { Avatar } from "../fernly/avatar";
@@ -32,10 +33,18 @@ interface TasksViewProps {
 
 type FilterKey = "all" | "mine" | "high" | "due-week";
 
-export function TasksView({ tasks, projects, members, currentUser }: TasksViewProps) {
+export function TasksView({ tasks, projects, members: _members, currentUser }: TasksViewProps) {
   const { openTaskModal } = useApp();
+  const refresh = useRefresh();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Optimistic local override applied while a drag is in flight so the card
+  // snaps to the new column immediately. Cleared on both success and failure
+  // once router.refresh() has been triggered (the refresh is fire-and-forget,
+  // but bumpRefresh() remounts the view via the AppShell key, which discards
+  // local state — including this override — so the next render uses fresh
+  // server props). See L-P0-1 fix and the devil's-advocate review.
+  const [optimisticTasks, setOptimisticTasks] = useState<TaskT[] | null>(null);
   // Project filter: "all" = every project the user can see (already scope-restricted for members)
   const [projectId, setProjectId] = useState<string>("all");
 
@@ -46,12 +55,14 @@ export function TasksView({ tasks, projects, members, currentUser }: TasksViewPr
   // Resolve "me" from the session instead of a hardcoded name.
   const me = currentUser?.name ?? "";
 
+  const liveTasks = optimisticTasks ?? tasks;
+
   const filteredTasks = useMemo(() => {
     const now = new Date();
     const weekFromNow = new Date();
     weekFromNow.setDate(now.getDate() + 7);
 
-    return tasks.filter((t) => {
+    return liveTasks.filter((t) => {
       if (projectId !== "all" && t.projectId !== projectId) return false;
       if (filter === "mine" && t.assignee?.name !== me) return false;
       if (filter === "high" && t.priority !== "HIGH") return false;
@@ -62,7 +73,7 @@ export function TasksView({ tasks, projects, members, currentUser }: TasksViewPr
       }
       return true;
     });
-  }, [tasks, filter, projectId, me]);
+  }, [liveTasks, filter, projectId, me]);
 
   const byColumn = (status: TaskStatus) =>
     filteredTasks
@@ -78,7 +89,7 @@ export function TasksView({ tasks, projects, members, currentUser }: TasksViewPr
     const { active, over } = e;
     if (!over) return;
     const overId = over.id as string;
-    const activeTask = tasks.find((t) => t.id === active.id);
+    const activeTask = liveTasks.find((t) => t.id === active.id);
     if (!activeTask) return;
 
     // Determine target column
@@ -87,21 +98,45 @@ export function TasksView({ tasks, projects, members, currentUser }: TasksViewPr
       targetStatus = overId as TaskStatus;
     } else {
       // Dropped on a card — use that card's status
-      const overTask = tasks.find((t) => t.id === overId);
+      const overTask = liveTasks.find((t) => t.id === overId);
       if (overTask) targetStatus = overTask.status;
     }
     if (!targetStatus || targetStatus === activeTask.status) return;
 
     const colTasks = byColumn(targetStatus);
     const newOrder = colTasks.length ? Math.max(...colTasks.map((t) => t.order)) + 1 : 0;
+
+    // Optimistic update: instantly move the card to the target column so the
+    // drag feels responsive. Rolled back if the server action fails.
+    setOptimisticTasks((prev) => {
+      const base = prev ?? tasks;
+      return base.map((t) =>
+        t.id === activeTask.id ? { ...t, status: targetStatus!, order: newOrder } : t,
+      );
+    });
+
     try {
       const res = await moveTask(activeTask.id, targetStatus, newOrder);
       if (!res.ok) {
+        // Roll back the optimistic update on failure.
+        setOptimisticTasks(null);
         toast.error(res.error);
         return;
       }
       toast.success(`Moved to ${TASK_STATUSES.find((c) => c.key === targetStatus)?.label}`);
+      // L-P0-1 fix: trigger a real server-component refresh so the new state
+      // is fetched. The useRefresh hook also bumps the Zustand tick so the
+      // AppShell key changes and TasksView remounts with fresh server props
+      // (which clears the optimistic override).
+      refresh();
+      // Clear the optimistic override defensively. If the refresh's new
+      // server props haven't landed by the next render, the override still
+      // holds the correct value (it matches what we just persisted). If
+      // they have landed, this prevents the override from masking any
+      // subsequent server-side change.
+      setOptimisticTasks(null);
     } catch (e) {
+      setOptimisticTasks(null);
       toast.error(actionErrorMessage(e, "Failed to move task"));
     }
   }
@@ -113,7 +148,7 @@ export function TasksView({ tasks, projects, members, currentUser }: TasksViewPr
     { key: "due-week", label: "Due this week" },
   ];
 
-  const activeTask = activeId ? tasks.find((t) => t.id === activeId) : null;
+  const activeTask = activeId ? liveTasks.find((t) => t.id === activeId) : null;
   const selectedProject = projectId !== "all" ? projects.find((p) => p.id === projectId) : null;
 
   return (

@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { Loader2, KeyRound, UserPlus } from "lucide-react";
 import { Modal } from "./modal";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import {
   createUser,
   updateUser,
@@ -10,7 +11,7 @@ import {
   getAllUsers } from "@/server-actions/data";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { ROLE_LABELS, type Role } from "@/lib/rbac";
+import { type Role } from "@/lib/rbac";
 import { EntityHistorySection } from "./entity-history-section";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
@@ -111,7 +112,7 @@ function UserForm({
   allUsers: UserRecord[];
   onClose: () => void;
 }) {
-  const { bumpRefresh } = useApp();
+  const refresh = useRefresh();
   const [name, setName] = useState(editing?.name ?? "");
   const [email, setEmail] = useState(editing?.email ?? "");
   const [role, setRole] = useState<Role>((editing?.role as Role) ?? "MEMBER");
@@ -167,7 +168,7 @@ function UserForm({
           description: `${name} can now sign in with ${email}`,
         });
       }
-      bumpRefresh();
+      refresh();
       onClose();
     } catch {
       toast.error("Failed to save user");
@@ -186,7 +187,7 @@ function UserForm({
         return;
       }
       toast.success("User deleted");
-      bumpRefresh();
+      refresh();
       onClose();
     } catch {
       toast.error("Failed to delete user");

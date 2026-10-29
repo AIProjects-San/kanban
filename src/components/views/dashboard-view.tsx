@@ -309,7 +309,7 @@ function ProgressBar({ label, value, color }: { label: string; value: number; co
 function TimeTracker() {
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0); // seconds
-  const [project, setProject] = useState("Halcyon Labs Website");
+  const [project] = useState("Halcyon Labs Website");
 
   useEffect(() => {
     if (!running) return;

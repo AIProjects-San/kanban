@@ -51,6 +51,9 @@ model User {
   // workspace-wide broadcasts instead — see the Notification model).
   notifications Notification[]
 
+  // Per-recipient message read-state rows (L-P0-2 fix).
+  messageReads MessageRead[]
+
   @@index([managerId])
 }
 
@@ -225,6 +228,10 @@ model Reminder {
 
 model Message {
   id                String   @id @default(cuid())
+  // direction is now DERIVED per-viewer (recipientUserId === me ? "IN" : "OUT")
+  // — see L-P0-2 fix. The column is retained for backward-compat with seed
+  // data and remains set to "OUT" by sendMessage (the sender's POV at write
+  // time). New code MUST NOT trust this column for viewer-relative logic.
   direction         String // "IN" (to current user) | "OUT" (from current user)
   threadId          String // groups messages in the same conversation
   memberId          String? // the TeamMember this conversation is with
@@ -236,13 +243,38 @@ model Message {
   recipientName     String // display name of recipient
   subject           String
   body              String
+  // Legacy single-row read flag. Retained for backward-compat with seed rows
+  // but new messages do NOT use it for read tracking — see MessageRead.
   read              Boolean  @default(false)
   createdAt         DateTime @default(now())
+
+  // Per-recipient read state (L-P0-2 fix). A row here means the recipient
+  // has marked this message as read. The sender's own copy is implicitly
+  // read (you wrote it). The legacy `read` column above is kept only for
+  // seed-data compat.
+  readBy            MessageRead[]
 
   @@index([threadId])
   @@index([direction])
   @@index([recipientUserId])
   @@index([senderUserId])
+}
+
+// Per-recipient message read state. Each row records that `userId` has read
+// `messageId`. Compound unique prevents duplicates; cascade delete keeps
+// the table clean when a user or message is removed.
+model MessageRead {
+  id        String   @id @default(cuid())
+  userId    String
+  messageId String
+  readAt    DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([userId])
+  @@index([messageId])
 }
 
 // ---------------------------------------------------------------------------

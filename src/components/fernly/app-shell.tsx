@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useApp, type AccentTheme } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { Sidebar } from "@/components/fernly/sidebar";
 import { Topbar } from "@/components/fernly/topbar";
@@ -72,6 +73,7 @@ interface AppShellProps {
 export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
   const { data: session, status } = useSession();
   const { view, refreshTick, setAccent, setDark } = useApp();
+  const refresh = useRefresh();
   useKeyboardShortcuts();
 
   // Apply user settings from DB on mount — overrides localStorage defaults
@@ -85,7 +87,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
       setAccent(accent);
       setDark(user.settings.dark);
     }
-  }, [user?.settings?.accent, user?.settings?.dark, setAccent, setDark]);
+  }, [user?.settings, user?.settings?.accent, user?.settings?.dark, setAccent, setDark]);
 
   // Loading state
   if (status === "loading") {
@@ -119,7 +121,10 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
           user={userProfile}
           onMarkAllRead={async () => {
             await markAllNotificationsRead();
-            useApp.getState().bumpRefresh();
+            // L-P0-1 fix: refresh server-component props so the new read state
+            // is fetched. useRefresh also bumps the Zustand tick so the topbar
+            // remounts with the fresh notifs array.
+            refresh();
           }}
         />
         <main className="flex-1 overflow-y-auto f-scroll">

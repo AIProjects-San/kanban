@@ -9,7 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getSession, getSessionOrThrow, requirePermission, requirePermissionForTarget, AuthorizationError } from "./auth-guard";
-import { hasPermission, isValidRole, ROLE_LABELS, type Role } from "@/lib/rbac";
+import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/rbac";
 import { assertNoCycle } from "@/lib/hierarchy";
 import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/password";
 import { emailSchema } from "@/lib/validation";

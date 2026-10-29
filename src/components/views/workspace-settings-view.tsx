@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from "react";
 import {
-  Settings2, Save, Loader2, Plus, Trash2, ChevronDown, Shield,
+  Settings2, Save, Loader2, Plus, Shield,
   Tag, Flag, Building2, Calendar, CheckSquare, FolderKanban,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useRefresh } from "@/hooks/use-refresh";
 import { Section } from "../fernly/section";
 import { Field, FormRow } from "../fernly/field";
-import { FormActions } from "../fernly/form-actions";
 import {
   loadWorkspaceConfig, updateWorkspaceSettings,
   updateConfigItem, createConfigItem, deleteConfigItem,
@@ -20,10 +20,24 @@ interface WorkspaceSettingsViewProps {
   currentUser: { id: string; name: string; role: string };
 }
 
-export function WorkspaceSettingsView({ currentUser }: WorkspaceSettingsViewProps) {
+export function WorkspaceSettingsView({ currentUser: _currentUser }: WorkspaceSettingsViewProps) {
   const [config, setConfig] = useState<WorkspaceConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<string>("general");
+  const refresh = useRefresh();
+
+  // Reload the workspace config from the server. Called after every
+  // successful mutation so child components get a fresh prop reference
+  // (React doesn't see `Object.assign` mutations on the same object).
+  // Also calls `refresh()` so server-component props (e.g. the task
+  // status list used by the Kanban view) are re-fetched.
+  const reload = async () => {
+    const fresh = await loadWorkspaceConfig();
+    if (fresh.ok) {
+      setConfig(fresh.data);
+    }
+    refresh();
+  };
 
   useEffect(() => {
     loadWorkspaceConfig()
@@ -91,45 +105,45 @@ export function WorkspaceSettingsView({ currentUser }: WorkspaceSettingsViewProp
       </div>
 
       {/* Tab content */}
-      {activeTab === "general" && <GeneralSettings config={config} />}
-      {activeTab === "task-statuses" && <ConfigListEditor config={config} type="taskStatuses" labelKey="label" fields={[
+      {activeTab === "general" && <GeneralSettings config={config} reload={reload} />}
+      {activeTab === "task-statuses" && <ConfigListEditor config={config} reload={reload} type="taskStatuses" labelKey="label" fields={[
         { key: "key", label: "Key", type: "text" },
         { key: "label", label: "Label", type: "text" },
         { key: "accentClass", label: "Accent class", type: "text" },
         { key: "sortOrder", label: "Sort order", type: "number" },
       ]} />}
-      {activeTab === "project-statuses" && <ConfigListEditor config={config} type="projectStatuses" labelKey="label" fields={[
+      {activeTab === "project-statuses" && <ConfigListEditor config={config} reload={reload} type="projectStatuses" labelKey="label" fields={[
         { key: "key", label: "Key", type: "text" },
         { key: "label", label: "Label", type: "text" },
         { key: "badgeClass", label: "Badge class", type: "text" },
         { key: "dotClass", label: "Dot class", type: "text" },
         { key: "sortOrder", label: "Sort order", type: "number" },
       ]} />}
-      {activeTab === "event-types" && <ConfigListEditor config={config} type="eventTypes" labelKey="label" fields={[
+      {activeTab === "event-types" && <ConfigListEditor config={config} reload={reload} type="eventTypes" labelKey="label" fields={[
         { key: "key", label: "Key", type: "text" },
         { key: "label", label: "Label", type: "text" },
         { key: "dotClass", label: "Dot class", type: "text" },
         { key: "bgClass", label: "BG class", type: "text" },
         { key: "sortOrder", label: "Sort order", type: "number" },
       ]} />}
-      {activeTab === "tags" && <ConfigListEditor config={config} type="taskTags" labelKey="label" fields={[
+      {activeTab === "tags" && <ConfigListEditor config={config} reload={reload} type="taskTags" labelKey="label" fields={[
         { key: "key", label: "Key", type: "text" },
         { key: "label", label: "Label", type: "text" },
         { key: "color", label: "Color (oklch)", type: "text" },
         { key: "sortOrder", label: "Sort order", type: "number" },
       ]} />}
-      {activeTab === "priorities" && <ConfigListEditor config={config} type="priorities" labelKey="label" fields={[
+      {activeTab === "priorities" && <ConfigListEditor config={config} reload={reload} type="priorities" labelKey="label" fields={[
         { key: "key", label: "Key", type: "text" },
         { key: "label", label: "Label", type: "text" },
         { key: "color", label: "Color (oklch)", type: "text" },
         { key: "sortOrder", label: "Sort order", type: "number" },
       ]} />}
-      {activeTab === "departments" && <ConfigListEditor config={config} type="departments" labelKey="label" fields={[
+      {activeTab === "departments" && <ConfigListEditor config={config} reload={reload} type="departments" labelKey="label" fields={[
         { key: "key", label: "Key", type: "text" },
         { key: "label", label: "Label", type: "text" },
         { key: "sortOrder", label: "Sort order", type: "number" },
       ]} />}
-      {activeTab === "roles" && <RolesEditor config={config} />}
+      {activeTab === "roles" && <RolesEditor config={config} reload={reload} />}
     </div>
   );
 }
@@ -138,7 +152,7 @@ export function WorkspaceSettingsView({ currentUser }: WorkspaceSettingsViewProp
 // General workspace settings
 // ---------------------------------------------------------------------------
 
-function GeneralSettings({ config }: { config: WorkspaceConfig }) {
+function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: () => Promise<void> }) {
   const { workspace } = config;
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(workspace);
@@ -148,6 +162,7 @@ function GeneralSettings({ config }: { config: WorkspaceConfig }) {
     try {
       await updateWorkspaceSettings(form);
       toast.success("Workspace settings updated");
+      await reload();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to save"));
     } finally {
@@ -219,11 +234,13 @@ interface FieldDef {
 
 function ConfigListEditor({
   config,
+  reload,
   type,
   labelKey,
   fields,
 }: {
   config: WorkspaceConfig;
+  reload: () => Promise<void>;
   type: keyof WorkspaceConfig;
   labelKey: string;
   fields: FieldDef[];
@@ -271,9 +288,9 @@ function ConfigListEditor({
       }
       toast.success("Updated");
       setEditing(null);
-      // Refresh config
-      const fresh = await loadWorkspaceConfig();
-      if (fresh.ok) Object.assign(config, fresh.data);
+      // Refresh config + server-component props (replaces the buggy
+      // `Object.assign(config, fresh.data)` mutation that React never saw).
+      await reload();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to update"));
     } finally {
@@ -292,8 +309,7 @@ function ConfigListEditor({
       toast.success("Created");
       setNewItem({});
       setShowNew(false);
-      const fresh = await loadWorkspaceConfig();
-      if (fresh.ok) Object.assign(config, fresh.data);
+      await reload();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to create"));
     } finally {
@@ -311,8 +327,7 @@ function ConfigListEditor({
         return;
       }
       toast.success("Deleted");
-      const fresh = await loadWorkspaceConfig();
-      if (fresh.ok) Object.assign(config, fresh.data);
+      await reload();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to delete"));
     } finally {
@@ -439,7 +454,7 @@ function ConfigItemEditor({
 // Roles editor — permission matrix with checkboxes
 // ---------------------------------------------------------------------------
 
-function RolesEditor({ config }: { config: WorkspaceConfig }) {
+function RolesEditor({ config, reload }: { config: WorkspaceConfig; reload: () => Promise<void> }) {
   const [editingRole, setEditingRole] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -462,8 +477,7 @@ function RolesEditor({ config }: { config: WorkspaceConfig }) {
         return;
       }
       toast.success("Permissions updated");
-      const fresh = await loadWorkspaceConfig();
-      if (fresh.ok) Object.assign(config, fresh.data);
+      await reload();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to update"));
     } finally {
@@ -481,8 +495,7 @@ function RolesEditor({ config }: { config: WorkspaceConfig }) {
         return;
       }
       toast.success("Role deleted");
-      const fresh = await loadWorkspaceConfig();
-      if (fresh.ok) Object.assign(config, fresh.data);
+      await reload();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to delete"));
     } finally {
@@ -502,7 +515,7 @@ function RolesEditor({ config }: { config: WorkspaceConfig }) {
       </div>
 
       {/* New role form */}
-      {showNew && <NewRoleForm config={config} onDone={() => setShowNew(false)} />}
+      {showNew && <NewRoleForm config={config} reload={reload} onDone={() => setShowNew(false)} />}
 
       {/* Roles list with permission matrix */}
       {config.roles.map((role) => (
@@ -560,7 +573,7 @@ function RolesEditor({ config }: { config: WorkspaceConfig }) {
   );
 }
 
-function NewRoleForm({ config, onDone }: { config: WorkspaceConfig; onDone: () => void }) {
+function NewRoleForm({ config, reload, onDone }: { config: WorkspaceConfig; reload: () => Promise<void>; onDone: () => void }) {
   const [key, setKey] = useState("");
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
@@ -585,6 +598,7 @@ function NewRoleForm({ config, onDone }: { config: WorkspaceConfig; onDone: () =
         return;
       }
       toast.success("Role created");
+      await reload();
       onDone();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to create role"));

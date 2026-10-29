@@ -62,7 +62,11 @@ export const createEventSchema = z.object({
 });
 
 export const sendMessageSchema = z.object({
-  direction: z.enum(["IN", "OUT"]),
+  // L-P0-2: direction is now DERIVED per viewer (recipientUserId === me ?
+  // "IN" : "OUT") and is no longer authoritative. The field is kept optional
+  // in the schema for backward-compat with callers that still pass it, but
+  // the value is IGNORED — sendMessage always writes "OUT" at write time.
+  direction: z.enum(["IN", "OUT"]).optional(),
   threadId: z.string().max(80).optional(),
   memberId: cuidish.nullable().optional(),
   senderName: z.string().max(120),

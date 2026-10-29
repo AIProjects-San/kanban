@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { usePermissions } from "@/hooks/use-permissions";
 import { toast } from "sonner";
 import { deleteProject } from "@/server-actions/data";
@@ -21,7 +22,8 @@ interface ProjectsViewProps {
 }
 
 export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
-  const { openProjectModal, bumpRefresh } = useApp();
+  const { openProjectModal } = useApp();
+  const refresh = useRefresh();
   const { can } = usePermissions();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | ProjectStatus>("all");
@@ -58,7 +60,7 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
         return;
       }
       toast.success("Project deleted");
-      bumpRefresh();
+      refresh();
     } catch (e) {
       toast.error(actionErrorMessage(e, "Failed to delete project"));
     }

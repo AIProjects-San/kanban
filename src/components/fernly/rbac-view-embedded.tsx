@@ -11,7 +11,6 @@ import {
   ROLE_LABELS, ROLE_DESCRIPTIONS, ALL_PERMISSIONS,
   hasPermission,
 } from "@/lib/rbac";
-import { RoleBadge } from "../fernly/role-badge";
 import { Section } from "../fernly/section";
 
 /**

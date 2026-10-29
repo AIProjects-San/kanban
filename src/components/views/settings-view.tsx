@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Check, Bell, User, Palette, Clock, Lock, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApp, type AccentTheme } from "@/store/app-store";
+import { useRefresh } from "@/hooks/use-refresh";
 import { Avatar } from "../fernly/avatar";
 import { toast } from "sonner";
 import { updateProfile, changePassword, updateUserSettings } from "@/server-actions/data";
@@ -38,7 +39,8 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({ user }: SettingsViewProps) {
-  const { accent, setAccent, dark, setDark, bumpRefresh } = useApp();
+  const { accent, setAccent, dark, setDark } = useApp();
+  const refresh = useRefresh();
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState(user.role);
   const [timezone, setTimezone] = useState(user.timezone);
@@ -61,11 +63,16 @@ export function SettingsView({ user }: SettingsViewProps) {
       toast.error(res.error);
       return;
     }
-    bumpRefresh();
+    refresh();
     toast.success("Profile updated");
   };
 
-  // Persist notification toggle changes to DB immediately
+  // Persist notification toggle changes to DB immediately. The local Zustand
+  // store already drives the UI for these toggles, so we don't call refresh()
+  // here — the next refresh from any other action will re-fetch user.settings
+  // (with our persisted values) and the AppShell useEffect will re-apply them,
+  // reconciling any drift. Calling refresh() per-toggle would cause a full
+  // app remount per click (defect #8 in the P0-1 review).
   const toggleNotif = async (key: keyof typeof notif, value: boolean) => {
     setNotif((prev) => ({ ...prev, [key]: value }));
     const dbKey = key === "weeklyDigest" ? "notifWeekly" : key === "productUpdates" ? "notifProduct" : `notif${key.charAt(0).toUpperCase()}${key.slice(1)}`;
@@ -77,7 +84,8 @@ export function SettingsView({ user }: SettingsViewProps) {
     }
   };
 
-  // Persist theme + dark mode changes to DB immediately
+  // Persist theme + dark mode changes to DB immediately. Same rationale as
+  // toggleNotif: the Zustand store already drives the UI; no refresh needed.
   const handleAccentChange = async (a: AccentTheme) => {
     setAccent(a);
     try { await updateUserSettings(user.id, { accent: a }); } catch { /* ignore */ }
