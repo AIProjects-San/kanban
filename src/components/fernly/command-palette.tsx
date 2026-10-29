@@ -6,14 +6,15 @@ import {
   Search,
   LayoutDashboard,
   CheckSquare,
+  FolderKanban,
   Calendar,
   BarChart3,
   Users,
   Settings,
   HelpCircle,
   History,
-  Shield,
   Plus,
+  UserPlus,
   Moon,
   Sun,
 } from "lucide-react";
@@ -35,12 +36,14 @@ interface CmdItem {
 export function CommandPalette() {
   const {
     cmdkOpen, setCmdkOpen,
-    setView, openTaskModal, openProjectModal, openMemberModal,
+    setView, openTaskModal, openProjectModal, openUserModal,
     dark, setDark, setAccent,
   } = useApp();
   const [query, setQuery] = useState("");
   const { data: session } = useSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
+  const canManageRoles = hasPermission(role, "role:manage");
+  const canViewAudit = hasPermission(role, "audit:view");
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -60,15 +63,24 @@ export function CommandPalette() {
 
   const items: CmdItem[] = useMemo(() => {
     type NavEntry = { key: ViewKey; label: string; icon: React.ComponentType<{ size?: number }> };
+    // Navigation mirrors the sidebar exactly (src/components/fernly/sidebar.tsx)
+    // so ⌘K and the sidebar expose the same set of reachable views. Role-gated
+    // entries are conditionally included to match the sidebar's filter logic.
     const nav: NavEntry[] = [
       { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
       { key: "tasks", label: "Tasks", icon: CheckSquare },
+      { key: "projects", label: "Projects", icon: FolderKanban },
       { key: "calendar", label: "Calendar", icon: Calendar },
       { key: "analytics", label: "Analytics", icon: BarChart3 },
       { key: "team", label: "Team", icon: Users },
       { key: "settings", label: "Settings", icon: Settings },
-      { key: "rbac", label: "Roles & Permissions", icon: Shield },
-      ...(hasPermission(role, "audit:view")
+      ...(canManageRoles
+        ? [{ key: "users" as ViewKey, label: "Users", icon: UserPlus } satisfies NavEntry]
+        : []),
+      ...(canManageRoles
+        ? [{ key: "workspace-settings" as ViewKey, label: "Workspace Config", icon: Settings } satisfies NavEntry]
+        : []),
+      ...(canViewAudit
         ? [{ key: "audit" as ViewKey, label: "Audit Log", icon: History } satisfies NavEntry]
         : []),
       { key: "help", label: "Help & Shortcuts", icon: HelpCircle },
@@ -92,17 +104,27 @@ export function CommandPalette() {
       {
         id: "new-project",
         label: "Create new project",
+        hint: "P",
         icon: Plus,
         action: () => { openProjectModal(); setCmdkOpen(false); },
         group: "Create",
       },
-      {
-        id: "new-member",
-        label: "Invite team member",
-        icon: Plus,
-        action: () => { openMemberModal(); setCmdkOpen(false); },
-        group: "Create",
-      },
+      // The "Invite team member" entry used to live here and opened the
+      // MemberModal, which still exposes an obsolete "Create new" tab that
+      // creates a TeamMember without a login account. That workflow is
+      // superseded by UserModal ("Create user" below) which mints a real
+      // login + team-member row in one shot. The MemberModal is now only
+      // reachable from the Team page's "Add Member" button (which only
+      // offers the "pick an existing user" path).
+      ...(canManageRoles
+        ? [{
+            id: "new-user",
+            label: "Create user",
+            icon: UserPlus,
+            action: () => { openUserModal(); setCmdkOpen(false); },
+            group: "Create" as const,
+          }]
+        : []),
       {
         id: "toggle-theme",
         label: dark ? "Switch to light mode" : "Switch to dark mode",
@@ -121,7 +143,7 @@ export function CommandPalette() {
         };
       }),
     ];
-  }, [setView, setCmdkOpen, openTaskModal, openProjectModal, openMemberModal, dark, setDark, setAccent]);
+  }, [setView, setCmdkOpen, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, canViewAudit]);
 
   const filtered = items.filter((i) =>
     i.label.toLowerCase().includes(query.toLowerCase())

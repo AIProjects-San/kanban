@@ -11,7 +11,6 @@ export type ViewKey =
   | "team"
   | "settings"
   | "help"
-  | "rbac"
   | "audit"
   | "users"
   | "workspace-settings";

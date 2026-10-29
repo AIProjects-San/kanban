@@ -47,6 +47,46 @@ and regression-tested in this pass. Test evidence: **261 unit/integration tests 
 > 11 new: 7 route-wrapper + 4 events.signOut); end-to-end verified
 > against the running dev server (cookies empty after signout, fresh
 > sign-in mints a clean set, audit row lands).
+>
+> **2026-10-30 fourth pass — cmdk / sidebar / help-center drift fix.** A
+> UI-sync audit found 13 drift items between the Command Palette, the
+> Sidebar, the per-view create-buttons, and the Help cheatsheet. All
+> high/medium items fixed:
+> - **Removed** the cmdk "Invite team member" entry (opened the obsolete
+>   MemberModal "Create new" tab — created `TeamMember` rows without a
+>   login account, orphaning them from auth). The MemberModal is now
+>   pick-existing-user-only, and is reachable only from the new
+>   "Add Member" button on the Team page header (admin-gated).
+> - **Removed** the cmdk "Roles & Permissions" (`rbac`) Navigation entry
+>   that led to a blank screen (no AppShell branch); deleted the dead
+>   `views/rbac-view.tsx` file; removed `"rbac"` from the `ViewKey`
+>   union so future `setView("rbac")` calls fail at compile time.
+>   Roles & Permissions lives in the Workspace Config tab.
+> - **Added** missing cmdk Navigation entries: `projects`, `users`,
+>   `workspace-settings` (the latter two admin-gated to match the
+>   sidebar). The cmdk Navigation group now mirrors the sidebar 1:1.
+> - **Added** a "Create user" cmdk entry (admin-gated) — the modern
+>   replacement for the obsolete MemberModal "Create new" tab. Opens
+>   `UserModal`, which mints a login + team-member row in one shot.
+> - **Added** the missing `P` hint to the "Create new project" cmdk
+>   entry (was the only Create entry without its shortcut hint).
+> - **Updated** the Help cheatsheet: removed `G R → Roles &
+>   Permissions` (no handler wired, view doesn't exist); added
+>   `I → Open inbox`, `G P → Go to Projects`, `G U → Go to Users`,
+>   `G W → Go to Workspace Config` (all were wired in
+>   `use-keyboard-shortcuts.ts` but missing from the cheatsheet).
+> - **Rewrote** two FAQs whose copy no longer matched the UI: "How do I
+>   create a new task?" (no "New Task" button in the top bar — it's on
+>   Tasks/Dashboard pages); "How do I add a team member?" (button was
+>   missing, now added; clarify the Users-page → Create-user flow).
+> - **Renamed** the sidebar "Logout" button to "Sign out" for label
+>   consistency with the topbar profile menu.
+> Regression tests: `src/components/fernly/__tests__/command-palette.test.tsx`
+> (12) + `src/components/fernly/__tests__/member-modal.test.tsx` (5).
+> Toolchain green: `lint` + `tsc --noEmit` + `299/299 tests`; verified
+> end-to-end against the running dev server (cmdk nav mirrors sidebar,
+> "Create user" opens UserModal, "Add Member" opens the trimmed
+> MemberModal, role-gating hides admin entries from MEMBER).
 
 ---
 

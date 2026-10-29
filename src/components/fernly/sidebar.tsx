@@ -117,14 +117,14 @@ export function Sidebar() {
           </div>
         </nav>
 
-        {/* Logout */}
+        {/* Sign out */}
         <div className="p-3 border-t border-sidebar-border">
           <button
             onClick={() => { void fernlySignOut(); }}
             className="f-nav-item w-full"
           >
             <LogOut size={18} />
-            <span>Logout</span>
+            <span>Sign out</span>
           </button>
         </div>
       </aside>

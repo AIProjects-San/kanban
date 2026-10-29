@@ -3,11 +3,12 @@
 import { useState, useMemo } from "react";
 import {
   MessageSquare, User, Search, X, Mail, Clock,
-  CheckCircle2, Loader2, Calendar, TrendingUp, Send,
+  CheckCircle2, Loader2, Calendar, TrendingUp, Send, UserPlus,
 } from "lucide-react";
 import { Avatar } from "../fernly/avatar";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
+import { hasPermission, type Role } from "@/lib/rbac";
 import { toast } from "sonner";
 import { sendMessage, getUserByEmail } from "@/server-actions/data";
 import { EntityHistorySection } from "../fernly/entity-history-section";
@@ -32,7 +33,13 @@ export function TeamView({ members, tasks, projects, timeEntries, currentUser }:
   const [query, setQuery] = useState("");
   const [profileMember, setProfileMember] = useState<TeamMemberT | null>(null);
   const [messageMember, setMessageMember] = useState<TeamMemberT | null>(null);
-  const { bumpRefresh } = useApp();
+  const { bumpRefresh, openMemberModal } = useApp();
+
+  // Only admins (role:manage) can add team members. The button stays
+  // hidden for MANAGER / MEMBER — same gate as the sidebar's Users and
+  // Workspace Config entries.
+  const role = currentUser.role as Role;
+  const canAddMember = hasPermission(role, "role:manage");
 
   const filtered = useMemo(() => {
     return members.filter((m) => {
@@ -54,6 +61,11 @@ export function TeamView({ members, tasks, projects, timeEntries, currentUser }:
             {onlineCount} online now · {members.length} total members
           </p>
         </div>
+        {canAddMember && (
+          <button onClick={openMemberModal} className="f-btn f-btn-primary f-btn-sm">
+            <UserPlus size={15} /> Add Member
+          </button>
+        )}
       </div>
 
       {/* Search + filters */}
