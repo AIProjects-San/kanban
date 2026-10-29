@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ROLE_LABELS, hasPermission, type Role } from "@/lib/rbac";
 import { getAuditLogs } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 import { Avatar } from "../fernly/avatar";
 import { StatCard } from "../fernly/stat-card";
 import { FilterBar } from "../fernly/filter-bar";
@@ -55,8 +56,8 @@ export function AuditView({ currentUser }: AuditViewProps) {
       } else {
         toast.error(result.error);
       }
-    } catch {
-      toast.error("Failed to load audit log");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to load audit log"));
     } finally {
       setLoading(false);
     }

@@ -41,6 +41,31 @@ describe("ACTION_META", () => {
       expect(ACTION_META[a], `missing meta for ${a}`).toBeDefined();
     }
   });
+
+  it("P2-18: covers workspace.updated + config.created/updated/deleted", () => {
+    // These replaced the misleading "profile.updated"/USER badges that lied
+    // about what the mutation actually did.
+    for (const a of [
+      "workspace.updated",
+      "config.created",
+      "config.updated",
+      "config.deleted",
+    ] as AuditAction[]) {
+      expect(ACTION_META[a], `missing meta for ${a}`).toBeDefined();
+      expect(ACTION_META[a].icon).toBeTruthy();
+      expect(ACTION_META[a].cls).toMatch(/^(text|bg)-/);
+    }
+    // The non-delete workspace/config actions use a purple/violet palette
+    // to set them apart from regular profile edits. Deletes stay red.
+    for (const a of [
+      "workspace.updated",
+      "config.created",
+      "config.updated",
+    ] as AuditAction[]) {
+      expect(ACTION_META[a].cls).toMatch(/purple|violet/);
+    }
+    expect(ACTION_META["config.deleted"].cls).toMatch(/destructive/);
+  });
 });
 
 describe("getActionMeta", () => {
@@ -68,6 +93,10 @@ describe("getEntityBadge", () => {
       "REMINDER",
       "TIME",
       "AUTH",
+      // P2-18: workspace + config mutations get their own badges instead of
+      // being mislabelled as USER/profile updates.
+      "WORKSPACE",
+      "CONFIG",
     ]) {
       const badge = getEntityBadge(t);
       expect(badge).not.toBe(ENTITY_BADGE_DEFAULT);

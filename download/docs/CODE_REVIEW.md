@@ -1,6 +1,6 @@
 # Fernly — Full Code Review (Devilish Edition)
 
-**Date:** 2026-10-29 · **Reviewer:** Automated deep audit · **Verdict at start:** *not production-ready*
+**Date:** 2026-10-29 (re-verified 2026-10-30) · **Reviewer:** Automated deep audit · **Verdict at start:** *not production-ready*
 **Verdict after remediation:** *production-ready for a single-tenant internal deployment, with the accepted risks listed in §5.*
 
 This review is deliberately harsh and honest. Every finding below was verified against the
@@ -8,6 +8,139 @@ source, reproduced where possible, and — unless explicitly marked **OPEN** —
 and regression-tested in this pass. Test evidence: **261 unit/integration tests green,
 95%+ statement coverage on the security-critical layer, production build clean with
 `ignoreBuildErrors` removed.**
+
+> **2026-10-30 re-verification note.** After a container rebuild, every P0–P3 fix was
+> re-audited against the restored tree. Result: all fixes held **except** two whose
+> on-disk state had partially reverted — P3-26 (48 dead `components/ui/*` files were
+> still present while their dependencies had already been removed, breaking `tsc`) and
+> P3-27 (`.env.example` missing; legacy `db/custom.db` still on disk). Both were
+> re-completed in this pass: dead files/dirs removed, `@radix-ui/react-toast` pruned,
+> `.env.example` restored, scaffold leftovers (`tests/`, `mini-services/`, `examples/`,
+> `tool-results/`) deleted. Toolchain re-verified green: `lint` + `tsc --noEmit` +
+> `261/261 tests` + dev-server login flow.
+>
+> **2026-10-30 post-restart hardening.** After the container rebuild a browser
+> holding a session cookie signed by the *pre-restart* secret hit
+> `[next-auth][error][JWT_SESSION_ERROR] "decryption operation failed"` on every
+> request — the stale cookie never self-healed (30-day lifetime) and could wedge
+> the sign-in flow via the equally stale CSRF cookie. Fix: `src/proxy.ts` (Next 16
+> proxy convention) verifies the cookie against the current `NEXTAUTH_SECRET`,
+> strips the bad cookie from the forwarded request and expires it in the
+> response; `/api/auth/*` is excluded so NextAuth can always rotate its own
+> cookies. Regression tests in `src/proxy.test.ts` (stale cleared, valid kept,
+> no-secret passthrough). Toolchain green: `lint` + `tsc --noEmit` +
+> `268/268 tests` + end-to-end stale-cookie recovery verified against the
+> running dev server.
+>
+> **2026-10-30 third pass — signout hygiene + noImplicitAny.** Two remaining
+> backlog items closed: (a) signout now clears *every* auth cookie — the
+> NextAuth route handler in `app/api/auth/[...nextauth]/route.ts` wraps the
+> default handler and appends `Max-Age=0` `Set-Cookie` headers for all six
+> cookie name spaces (`next-auth.*` + `__Secure-next-auth.*`) on
+> `/api/auth/signout`, and `events.signOut` writes a best-effort
+> `auth.signed_out` audit row (DB-outage-safe). Both UI logout buttons funnel
+> through `lib/signout.ts` and hard-navigate to `/` instead of back to the
+> current view. (b) The last 12 `any` usages were eliminated (User type
+> augmented, ConfigTable union mirrored at the call site, Recharts formatter
+> typed, palette `icon` typed) and `tsconfig.noImplicitAny` flipped to `true`.
+> Toolchain green: `lint` + `tsc --noEmit` + `282/282 tests` (+
+> 11 new: 7 route-wrapper + 4 events.signOut); end-to-end verified
+> against the running dev server (cookies empty after signout, fresh
+> sign-in mints a clean set, audit row lands).
+>
+> **2026-10-30 fourth pass — cmdk / sidebar / help-center drift fix.** A
+> UI-sync audit found 13 drift items between the Command Palette, the
+> Sidebar, the per-view create-buttons, and the Help cheatsheet. All
+> high/medium items fixed:
+> - **Removed** the cmdk "Invite team member" entry (opened the obsolete
+>   MemberModal "Create new" tab — created `TeamMember` rows without a
+>   login account, orphaning them from auth). The MemberModal is now
+>   pick-existing-user-only, and is reachable only from the new
+>   "Add Member" button on the Team page header (admin-gated).
+> - **Removed** the cmdk "Roles & Permissions" (`rbac`) Navigation entry
+>   that led to a blank screen (no AppShell branch); deleted the dead
+>   `views/rbac-view.tsx` file; removed `"rbac"` from the `ViewKey`
+>   union so future `setView("rbac")` calls fail at compile time.
+>   Roles & Permissions lives in the Workspace Config tab.
+> - **Added** missing cmdk Navigation entries: `projects`, `users`,
+>   `workspace-settings` (the latter two admin-gated to match the
+>   sidebar). The cmdk Navigation group now mirrors the sidebar 1:1.
+> - **Added** a "Create user" cmdk entry (admin-gated) — the modern
+>   replacement for the obsolete MemberModal "Create new" tab. Opens
+>   `UserModal`, which mints a login + team-member row in one shot.
+> - **Added** the missing `P` hint to the "Create new project" cmdk
+>   entry (was the only Create entry without its shortcut hint).
+> - **Updated** the Help cheatsheet: removed `G R → Roles &
+>   Permissions` (no handler wired, view doesn't exist); added
+>   `I → Open inbox`, `G P → Go to Projects`, `G U → Go to Users`,
+>   `G W → Go to Workspace Config` (all were wired in
+>   `use-keyboard-shortcuts.ts` but missing from the cheatsheet).
+> - **Rewrote** two FAQs whose copy no longer matched the UI: "How do I
+>   create a new task?" (no "New Task" button in the top bar — it's on
+>   Tasks/Dashboard pages); "How do I add a team member?" (button was
+>   missing, now added; clarify the Users-page → Create-user flow).
+> - **Renamed** the sidebar "Logout" button to "Sign out" for label
+>   consistency with the topbar profile menu.
+> Regression tests: `src/components/fernly/__tests__/command-palette.test.tsx`
+> (12) + `src/components/fernly/__tests__/member-modal.test.tsx` (5).
+> Toolchain green: `lint` + `tsc --noEmit` + `299/299 tests`; verified
+> end-to-end against the running dev server (cmdk nav mirrors sidebar,
+> "Create user" opens UserModal, "Add Member" opens the trimmed
+> MemberModal, role-gating hides admin entries from MEMBER).
+>
+> **2026-10-30 fifth pass — user reporting hierarchy.** Added a
+> manager-subordinate tree on top of the existing 3-role RBAC, threaded
+> through every action that mutates a target user.
+> - **Schema**: `User.managerId` self-relation (`onDelete: SetNull` so
+>   deleting a manager promotes their direct reports to roots rather
+>   than cascading a delete), indexed for efficient "who reports to X"
+>   lookups. Migration pushed via `prisma db push`; client regenerated.
+> - **`lib/rbac.ts`**: added `roleRank()` (ADMIN=3 > MANAGER=2 >
+>   MEMBER=1) and `outranks()` (strict — same rank is NOT outranking)
+>   so the hierarchy helpers can answer "does A outrank B?" without
+>   consulting the DB.
+> - **`lib/hierarchy.ts`** (new): `getManagerChain(userId)` walks up
+>   the tree (capped at 32 hops); `getSubtreeUserIds(userId)` BFS'es
+>   down (capped at 1000 nodes); `getDirectReports(managerId)` for
+>   one-level lookups; `canManageUser(actor, target, actorSubtree)` —
+>   pure predicate (ADMIN→any, self→always, MEMBER→never, MANAGER→
+>   subtree OR legacy rank escape hatch for unmanaged users);
+>   `assertNoCycle(userId, newManagerId)` rejects self-reference and
+>   cycles before writing `managerId`.
+> - **`server-actions/auth-guard.ts`**: new
+>   `requirePermissionForTarget(permission, targetUserId)` — runs the
+>   standard role check, then for non-self targets fetches the target
+>   and applies `canManageUser`. Self-targets short-circuit (caller-
+>   side self-protection rules still apply). ADMIN short-circuits the
+>   subtree computation.
+> - **`server-actions/users.ts`**: `getAllUsers` now returns
+>   `managerId` + `managerName` in a single Prisma query (no N+1);
+>   `createUser` accepts `managerId`; `updateUser` and `deleteUser`
+>   gate via `requirePermissionForTarget` (hierarchy-aware);
+>   `updateUser` enforces cycle prevention (`assertNoCycle`) and a
+>   self-protection rule "cannot change your own manager" (admin-only
+>   escape); `getUserProfile` enforces the hierarchy for non-self
+>   reads. Audit log entries now record manager changes.
+> - **UI**: UserModal has a "Reports to" dropdown (excludes self,
+>   lists every other user with their role). UsersView shows a
+>   "Reports to: <name>" line on every row ("— (root)" for unmanaged).
+> - **Seed**: 11 manager edges building a 3-level tree rooted at the
+>   ADMIN: Mira (root) → Ingrid & Priya (managers) → their respective
+>   reports; plus a few direct reports of the admin.
+> - **Tests**: `lib/__tests__/hierarchy.test.ts` (10 — pure
+>   `canManageUser` predicate coverage); `lib/__tests__/rbac.test.ts`
+>   +5 for `roleRank`/`outranks`;
+>   `server-actions/__tests__/auth-guard.test.ts` +7 for
+>   `requirePermissionForTarget` (role-check rejection, self
+>   short-circuit, target-not-found, ADMIN bypass, hierarchy path
+>   exercised via a MANAGER-held permission, hierarchy rejection for
+>   non-reports).
+> Toolchain green: `lint` + `tsc --noEmit` + `322/322 tests` (+
+> 22 new); verified end-to-end against the running dev server —
+> Users view shows "Reports to: <name>" on every row matching the
+> seeded tree (Mira=root, Ingrid/Priya report to Mira, their reports
+> chain correctly), UserModal's "Reports to" dropdown populates
+> with all other users.
 
 ---
 
@@ -83,30 +216,93 @@ What remains open is listed transparently in §5 with remediation sketches.
 
 ## 6. Open items (honest list, with risk assessment)
 
-These were **consciously not** fixed in this pass:
+These were **consciously not** fixed in the original pass. Status after the
+2026-10-30 hardening pass is marked per item:
 
-1. **Name-based identity joins.** `Project.ownerName`, task-assignee matching and the
-   member-scope queries match on human *names*/emails rather than stable ids. Two users
-   named "Alex" will see each other's scope. Fixing this requires a data migration
-   (`ownerUserId` on Project, `userId` on TeamMember). **Risk: medium (data visibility
-   confusion, not privilege escalation).** Recommended before multi-team use.
-2. **Notifications are workspace-global** (by design in the original demo). Every signed-in
-   user sees the same 20 notifications and can mark them read. **Risk: low for a
-   single-team workspace.** Fix: add `recipientUserId` to `Notification`.
+1. ~~**Name-based identity joins.**~~ **FIXED 2026-10-30.** `Project.ownerUserId`
+   and `TeamMember.userId` (unique) now carry authoritative identity; all
+   scoping queries (dashboard, my-projects, project members, task-edit
+   ownership) match on stable ids. `Project.ownerName` survives as a
+   denormalized display copy only and is never used for authorization.
+   Existing rows were backfilled (`scripts/link-identities.js` — idempotent);
+   the seed links identities at creation; `createMember` auto-links by email.
+   Regression tests assert no identity query filters by name.
+2. ~~**Notifications are workspace-global**~~ **FIXED 2026-10-30 (second pass).**
+   `Notification.recipientUserId` added (nullable, indexed, cascading delete):
+   rows with a recipient are private to that user (only they see them and only
+   they can flip read state); rows with a null recipient are workspace-wide
+   broadcasts, visible to everyone and curatable (mark read/unread) only by
+   `role:manage` holders — flipping a broadcast affects every viewer.
+   `markAllNotificationsRead` touches only the caller's own rows. The dashboard
+   query, seed data (private + broadcast mix) and the topbar ("All" badge on
+   broadcasts) all follow the routing. Regression tests cover all four paths.
 3. **In-memory rate limiter** resets on restart and doesn't share state across instances.
    Fine for the current single-instance deployment; swap for Redis/Upstash before scaling
    horizontally.
-4. **Error messages in production** may still be generic for *unexpected* errors (only
-   `AuthorizationError`/`ValidationError` carry a digest marker). The complete fix is
-   returning `{ ok: false, error }` result objects from every action — a sweeping but
-   mechanical refactor, recommended next iteration.
+   *(Related 2026-10-30: stale-cookie self-healing after secret rotation is now
+   handled by `src/proxy.ts` — see the re-verification note above.)*
+4. ~~**Error messages in production** may still be generic for *unexpected* errors.~~
+   **FIXED 2026-10-30 (second pass).** Every client-invoked server action now
+   returns `{ ok: false; code; error }` result objects (`lib/action-result.ts` +
+   `server-actions/result.ts`): AuthorizationError → `AUTH` with the real
+   message, validation failures → `VALIDATION`, everything else → `INTERNAL`
+   with a generic message (details logged server-side only). SSR-only loaders
+   (`getDashboardData`, `getUserProfile`, `getUserSettings`) intentionally keep
+   throwing — a DB outage during SSR belongs in the error boundary. All
+   call sites branch on `res.ok`; `lib/action-errors.ts` remains only as the
+   internal classification helper.
 5. **ESLint is permissive** — many valuable rules (`no-unused-vars`, `react-hooks/exhaustive-deps`,
    …) are switched off globally. Re-enable incrementally with an allow-list of legacy
    suppressions; do not bulk-flip without a dedicated pass.
-6. **No CI pipeline** exists yet. The toolchain is now `lint && typecheck && test && build` —
-   wire these into GitHub Actions before merging further work.
-7. **`tsconfig` has `noImplicitAny: false`.** Tighten after the remaining `any`s are
-   eliminated.
+6. ~~**No CI pipeline** exists yet.~~ **FIXED 2026-10-30.** `.github/workflows/ci.yml`
+   runs lint + typecheck + coverage-gated tests + production build on every
+   push/PR (E2E job scaffolded, disabled until a CI database secret exists).
+   A `.githooks/pre-commit` hook (lint + typecheck) ships with the repo —
+   enable with `git config core.hooksPath .githooks`. HSTS added to the app's
+   security headers.
+7. ~~**`tsconfig` has `noImplicitAny: false`.**~~ **FIXED 2026-10-30 (third pass).**
+   Every `any` in the source tree was either redundant (the `User` type
+   augmentation was incomplete, so `auth.ts` leaned on `as any` for
+   `id`/`role`) or a workaround for a dynamic API (`table as any` for the
+   six config tables; `formatter={(v: any) => …}` for Recharts). All
+   twelve were eliminated: `next-auth.d.ts` now augments `User` too; the
+   config-table call sites use a literal `ConfigTable` union; the Recharts
+   formatter takes `number | string`; the command palette's `icon: any`
+   became `React.ComponentType<{ size?: number }>`. `noImplicitAny: true`
+   flipped on, `tsc --noEmit` clean.
+
+8. **Signout must clear *every* auth cookie.** **FIXED 2026-10-30 (third pass).**
+   NextAuth's built-in `/api/auth/signout` only expires the session-token
+   cookie, leaving the CSRF and callback-url cookies behind. After a
+   `NEXTAUTH_SECRET` rotation the surviving CSRF cookie (signed with the
+   old secret, `httpOnly` so JS can't reach it) wedged the next sign-in
+   attempt. The route handler in `app/api/auth/[...nextauth]/route.ts`
+   now wraps NextAuth and — on POST/GET `/api/auth/signout` — appends
+   `Max-Age=0` `Set-Cookie` headers for all six cookie name spaces
+   (`next-auth.*` and `__Secure-next-auth.*`). A new
+   `events.signOut` callback in `src/lib/auth.ts` writes an
+   `auth.signed_out` audit entry (best-effort, DB-outage-safe). Both UI
+   logout buttons (sidebar + topbar profile menu) funnel through
+   `lib/signout.ts`, which calls `signOut({ callbackUrl: "/", redirect:
+   false })` then hard-navigates to `/` — replacing the prior inline
+   calls that bounced the user back to the page they were on. Regression
+   tests: `app/api/auth/__tests__/signout.test.ts` (7) +
+   `lib/__tests__/auth.test.ts` `events.signOut` block (4). End-to-end
+   verified against the live dev server: cookies after signout are
+   empty, fresh sign-in mints a clean set, audit row lands.
+
+   **Follow-up fix (CLIENT_FETCH_ERROR).** The first cut of
+   `fernlySignOut` used `signOut({ redirect: false })` and then
+   `window.location.replace("/")`. That raced against NextAuth's own
+   post-signout `__NEXTAUTH._getSession()` call (which fires
+   `GET /api/auth/session` to refresh the local cache): our hard
+   navigation aborted the in-flight fetch, and `fetchData`'s catch
+   block logged `[next-auth][error][CLIENT_FETCH_ERROR] … undefined {}`
+   on every logout. Switched to `signOut({ redirect: true })` so
+   NextAuth performs the navigation itself and skips the `_getSession`
+   call entirely — no in-flight fetch to abort, no console noise.
+   Verified with a headless browser: both logout paths (sidebar +
+   topbar) leave the console clean and the cookie jar empty.
 
 ## 7. Maintainability & reuse assessment
 
@@ -125,10 +321,15 @@ removed.
 
 ## 8. Recommended next iterations (priority order)
 
-1. CI pipeline (lint + typecheck + test + build) and pre-commit hook.
-2. Stable-id identity columns + migration (removes name-collision ambiguity).
-3. Result-object returns for all server actions (production-grade error UX).
-4. Split `server-actions/data.ts` by domain (`tasks.ts`, `projects.ts`, `users.ts`, …) —
-   it is the only remaining oversized file.
-5. Nonce-based CSP; add `Strict-Transport-Security` at the reverse proxy (Caddy).
-6. Redis-backed rate limiting + per-user notification routing.
+1. ~~CI pipeline (lint + typecheck + test + build) and pre-commit hook.~~ **Done 2026-10-30.**
+2. ~~Stable-id identity columns + migration (removes name-collision ambiguity).~~ **Done 2026-10-30.**
+3. ~~Result-object returns for all server actions (production-grade error UX).~~
+   **Done 2026-10-30 (second pass)** — see §6.4.
+4. ~~Split `server-actions/data.ts` by domain (`tasks.ts`, `projects.ts`, `users.ts`, …)~~
+   **Done 2026-10-30 (second pass)** — 13 per-domain modules; `data.ts` is a
+   barrel re-export (without `"use server"` — Turbopack strips re-exports from
+   action modules, and a plain barrel keeps the server references intact).
+   Server-only helpers moved to `shared.ts` / `result.ts`.
+5. Nonce-based CSP (HSTS done at the app layer 2026-10-30; the reverse-proxy
+   (Caddy) layer can also add it when TLS terminates there).
+6. Redis-backed rate limiting. ~~Per-user notification routing~~ **Done 2026-10-30** (see §6.2).

@@ -10,6 +10,7 @@ import { useApp } from "@/store/app-store";
 import { toast } from "sonner";
 import {
   getAllUsers, deleteUser, getUserProjectAssignments } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 import {
   type Role,
   ROLE_LABELS, ROLE_DESCRIPTIONS, ALL_PERMISSIONS,
@@ -64,8 +65,8 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
       const result = await getAllUsers();
       if (result.ok) setUsers(result.data);
       else toast.error(result.error);
-    } catch {
-      toast.error("Failed to load users");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to load users"));
     } finally {
       setLoading(false);
     }
@@ -120,8 +121,8 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
       toast.success("User deleted");
       bumpRefresh();
       await loadUsers();
-    } catch {
-      toast.error("Failed to delete user");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to delete user"));
     }
   }
 

@@ -9,6 +9,7 @@ import { useApp } from "@/store/app-store";
 import { usePermissions } from "@/hooks/use-permissions";
 import { toast } from "sonner";
 import { deleteProject } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 import { EmptyState } from "../fernly/empty-state";
 import { FilterBar } from "../fernly/filter-bar";
 import { PROJECT_STATUSES, PROJECT_STATUS_MAP, priorityClass } from "@/lib/config";
@@ -58,8 +59,8 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
       }
       toast.success("Project deleted");
       bumpRefresh();
-    } catch {
-      toast.error("Failed to delete project");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to delete project"));
     }
   }
 

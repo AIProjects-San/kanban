@@ -287,3 +287,133 @@ describe("security posture", () => {
     expect(String(authOptions.secret)).not.toMatch(/^fernly-dev-secret/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P0-6 regression — NEXTAUTH_SECRET hardening at module load
+// ---------------------------------------------------------------------------
+
+describe("NEXTAUTH_SECRET hardening (P0-6)", () => {
+  const ENV_KEYS = ["NEXTAUTH_SECRET", "NODE_ENV", "NEXT_PHASE"] as const;
+  // `process.env.NODE_ENV` is typed as a readonly literal in @types/node;
+  // cast through a record so we can reassign it in tests.
+  const env = process.env as Record<string, string | undefined>;
+
+  function snapshotEnv(): Record<string, string | undefined> {
+    const snap: Record<string, string | undefined> = {};
+    for (const k of ENV_KEYS) snap[k] = env[k];
+    return snap;
+  }
+  function restoreEnv(snap: Record<string, string | undefined>) {
+    for (const k of ENV_KEYS) {
+      if (snap[k] === undefined) delete env[k];
+      else env[k] = snap[k]!;
+    }
+  }
+  async function freshAuthOptions() {
+    vi.resetModules();
+    const mod = await import("@/lib/auth");
+    return mod.authOptions;
+  }
+
+  it("throws in production when NEXTAUTH_SECRET is missing", async () => {
+    const snap = snapshotEnv();
+    env.NODE_ENV = "production";
+    delete env.NEXTAUTH_SECRET;
+    delete env.NEXT_PHASE;
+    await expect(freshAuthOptions()).rejects.toThrow(/NEXTAUTH_SECRET/i);
+    restoreEnv(snap);
+  });
+
+  it("throws in production when NEXTAUTH_SECRET is the dev default", async () => {
+    const snap = snapshotEnv();
+    env.NODE_ENV = "production";
+    env.NEXTAUTH_SECRET = "fernly-dev-secret-change-me";
+    delete env.NEXT_PHASE;
+    await expect(freshAuthOptions()).rejects.toThrow(/NEXTAUTH_SECRET/i);
+    restoreEnv(snap);
+  });
+
+  it("does NOT throw during `next build` even with a missing secret", async () => {
+    const snap = snapshotEnv();
+    env.NODE_ENV = "production";
+    delete env.NEXTAUTH_SECRET;
+    env.NEXT_PHASE = "phase-production-build";
+    const opts = await freshAuthOptions();
+    // Build phase gets the ephemeral dev fallback so type-checking the
+    // options object works on machines that only inject secrets at runtime.
+    expect(opts.secret).toBeTruthy();
+    expect(String(opts.secret)).not.toMatch(/^fernly-dev-secret/);
+    restoreEnv(snap);
+  });
+
+  it("uses the supplied secret in production when it is strong", async () => {
+    const snap = snapshotEnv();
+    env.NODE_ENV = "production";
+    env.NEXTAUTH_SECRET = "jGUR5Eto0JofIfWznpURe6MAfVfJH4xPMCNAEuO0Yw8=";
+    delete env.NEXT_PHASE;
+    const opts = await freshAuthOptions();
+    expect(opts.secret).toBe("jGUR5Eto0JofIfWznpURe6MAfVfJH4xPMCNAEuO0Yw8=");
+    restoreEnv(snap);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0-7 regression — production cookies carry the Secure flag
+// ---------------------------------------------------------------------------
+
+describe("production cookie security (P0-7)", () => {
+  const ENV_KEYS = ["NEXTAUTH_SECRET", "NODE_ENV", "NEXT_PHASE"] as const;
+  // `process.env.NODE_ENV` is typed as a readonly literal in @types/node;
+  // cast through a record so we can reassign it in tests.
+  const env = process.env as Record<string, string | undefined>;
+  function snapshotEnv(): Record<string, string | undefined> {
+    const snap: Record<string, string | undefined> = {};
+    for (const k of ENV_KEYS) snap[k] = env[k];
+    return snap;
+  }
+  function restoreEnv(snap: Record<string, string | undefined>) {
+    for (const k of ENV_KEYS) {
+      if (snap[k] === undefined) delete env[k];
+      else env[k] = snap[k]!;
+    }
+  }
+  async function freshAuthOptions() {
+    vi.resetModules();
+    const mod = await import("@/lib/auth");
+    return mod.authOptions;
+  }
+
+  it("flips useSecureCookies + Secure flag on every cookie in production", async () => {
+    const snap = snapshotEnv();
+    env.NODE_ENV = "production";
+    env.NEXTAUTH_SECRET = "jGUR5Eto0JofIfWznpURe6MAfVfJH4xPMCNAEuO0Yw8=";
+    delete env.NEXT_PHASE;
+    const opts = await freshAuthOptions();
+    expect(opts.useSecureCookies).toBe(true);
+    // All three named cookies must carry the Secure flag in production.
+    for (const key of ["sessionToken", "callbackUrl", "csrfToken"] as const) {
+      const cookie = opts.cookies![key] as { options?: { secure?: boolean; httpOnly?: boolean; sameSite?: string } };
+      expect(cookie.options?.secure).toBe(true);
+    }
+    // Session-token must additionally be httpOnly + sameSite=lax.
+    const session = opts.cookies!.sessionToken!.options!;
+    expect(session.httpOnly).toBe(true);
+    expect(session.sameSite).toBe("lax");
+    expect(session.path).toBe("/");
+    restoreEnv(snap);
+  });
+
+  it("keeps Secure=false for every cookie in dev/test", async () => {
+    const snap = snapshotEnv();
+    env.NODE_ENV = "development";
+    delete env.NEXTAUTH_SECRET; // ephemeral dev fallback
+    delete env.NEXT_PHASE;
+    const opts = await freshAuthOptions();
+    expect(opts.useSecureCookies).toBe(false);
+    for (const key of ["sessionToken", "callbackUrl", "csrfToken"] as const) {
+      const cookie = opts.cookies![key] as { options?: { secure?: boolean } };
+      expect(cookie.options?.secure).toBe(false);
+    }
+    restoreEnv(snap);
+  });
+});

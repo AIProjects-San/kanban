@@ -14,6 +14,7 @@ import {
   loadWorkspaceConfig, updateWorkspaceSettings,
   updateConfigItem, createConfigItem, deleteConfigItem,
   updateRole, createRole, deleteRole, type WorkspaceConfig } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 
 interface WorkspaceSettingsViewProps {
   currentUser: { id: string; name: string; role: string };
@@ -147,8 +148,8 @@ function GeneralSettings({ config }: { config: WorkspaceConfig }) {
     try {
       await updateWorkspaceSettings(form);
       toast.success("Workspace settings updated");
-    } catch {
-      toast.error("Failed to save");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -273,8 +274,8 @@ function ConfigListEditor({
       // Refresh config
       const fresh = await loadWorkspaceConfig();
       if (fresh.ok) Object.assign(config, fresh.data);
-    } catch {
-      toast.error("Failed to update");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to update"));
     } finally {
       setSaving(false);
     }
@@ -293,8 +294,8 @@ function ConfigListEditor({
       setShowNew(false);
       const fresh = await loadWorkspaceConfig();
       if (fresh.ok) Object.assign(config, fresh.data);
-    } catch {
-      toast.error("Failed to create");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to create"));
     } finally {
       setSaving(false);
     }
@@ -312,8 +313,8 @@ function ConfigListEditor({
       toast.success("Deleted");
       const fresh = await loadWorkspaceConfig();
       if (fresh.ok) Object.assign(config, fresh.data);
-    } catch {
-      toast.error("Failed to delete");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to delete"));
     } finally {
       setSaving(false);
     }
@@ -463,8 +464,8 @@ function RolesEditor({ config }: { config: WorkspaceConfig }) {
       toast.success("Permissions updated");
       const fresh = await loadWorkspaceConfig();
       if (fresh.ok) Object.assign(config, fresh.data);
-    } catch {
-      toast.error("Failed to update");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to update"));
     } finally {
       setSaving(false);
     }
@@ -482,8 +483,8 @@ function RolesEditor({ config }: { config: WorkspaceConfig }) {
       toast.success("Role deleted");
       const fresh = await loadWorkspaceConfig();
       if (fresh.ok) Object.assign(config, fresh.data);
-    } catch {
-      toast.error("Failed to delete");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to delete"));
     } finally {
       setSaving(false);
     }
@@ -585,8 +586,8 @@ function NewRoleForm({ config, onDone }: { config: WorkspaceConfig; onDone: () =
       }
       toast.success("Role created");
       onDone();
-    } catch {
-      toast.error("Failed to create role");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to create role"));
     } finally {
       setSaving(false);
     }

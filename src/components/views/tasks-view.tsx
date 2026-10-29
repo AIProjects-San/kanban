@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { TASK_STATUSES, priorityClass, tagClass } from "@/lib/config";
 import type { TaskT, TaskStatus, ProjectT, TeamMemberT } from "@/lib/types";
 import { moveTask } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 import { toast } from "sonner";
 
 interface TasksViewProps {
@@ -100,8 +101,8 @@ export function TasksView({ tasks, projects, members, currentUser }: TasksViewPr
         return;
       }
       toast.success(`Moved to ${TASK_STATUSES.find((c) => c.key === targetStatus)?.label}`);
-    } catch {
-      toast.error("Failed to move task");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to move task"));
     }
   }
 

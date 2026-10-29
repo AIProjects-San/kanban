@@ -34,8 +34,8 @@ model User {
   // manager promotes their direct reports to roots rather than cascading
   // a delete. The chain is walked by lib/hierarchy.ts.
   // ---------------------------------------------------------------------
-  managerId    String?
-  manager      User?    @relation("UserManager", fields: [managerId], references: [id], onDelete: SetNull)
+  managerId     String?
+  manager       User?   @relation("UserManager", fields: [managerId], references: [id], onDelete: SetNull)
   directReports User[]  @relation("UserManager")
 
   projectAssignments ProjectAssignment[]
@@ -44,8 +44,8 @@ model User {
   // Stable-identity links (see docs/CODE_REVIEW.md §6.1): authorization
   // decisions must NEVER be made on human-readable names — two users can
   // share a name. These relations carry the authoritative identity.
-  ownedProjects Project[]      @relation("ProjectOwner")
-  memberProfile TeamMember?    @relation("MemberProfile")
+  ownedProjects Project[]   @relation("ProjectOwner")
+  memberProfile TeamMember? @relation("MemberProfile")
 
   // Personal notifications routed to this user (null-recipient rows are
   // workspace-wide broadcasts instead — see the Notification model).
@@ -60,19 +60,19 @@ model User {
 // ---------------------------------------------------------------------------
 
 model UserSettings {
-  userId           String   @id
-  accent           String   @default("forest") // forest | ocean | plum | ember
-  dark             Boolean  @default(false)
-  notifEmail       Boolean  @default(true)
-  notifPush        Boolean  @default(true)
-  notifMentions    Boolean  @default(true)
-  notifDueToday    Boolean  @default(true)
-  notifWeekly      Boolean  @default(false)
-  notifProduct     Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  userId        String   @id
+  accent        String   @default("forest") // forest | ocean | plum | ember
+  dark          Boolean  @default(false)
+  notifEmail    Boolean  @default(true)
+  notifPush     Boolean  @default(true)
+  notifMentions Boolean  @default(true)
+  notifDueToday Boolean  @default(true)
+  notifWeekly   Boolean  @default(false)
+  notifProduct  Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // ---------------------------------------------------------------------------
@@ -80,21 +80,21 @@ model UserSettings {
 // ---------------------------------------------------------------------------
 
 model Project {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
-  description String   @default("")
-  status      String   @default("RUNNING") // RUNNING | ENDED | PENDING | PAUSED
-  priority    String   @default("MEDIUM")  // HIGH | MEDIUM | LOW
+  description String    @default("")
+  status      String    @default("RUNNING") // RUNNING | ENDED | PENDING | PAUSED
+  priority    String    @default("MEDIUM") // HIGH | MEDIUM | LOW
   dueDate     DateTime?
-  progress    Int      @default(0)         // 0..100
-  color       String   @default("forest")  // forest | ocean | plum | ember | slate
+  progress    Int       @default(0) // 0..100
+  color       String    @default("forest") // forest | ocean | plum | ember | slate
   // Denormalized display copy of the owner's name. Authority lives in
   // ownerUserId — ownerName must never be used for authorization.
-  ownerName   String   @default("")
+  ownerName   String    @default("")
   ownerUserId String?
-  ownerUser   User?    @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  ownerUser   User?     @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   tasks       Task[]
   timeEntries TimeEntry[]
@@ -106,20 +106,20 @@ model Project {
 // ---------------------------------------------------------------------------
 
 model Task {
-  id          String   @id @default(cuid())
+  id          String      @id @default(cuid())
   title       String
-  description String   @default("")
-  status      String   @default("TODO")        // TODO | IN_PROGRESS | IN_REVIEW | DONE
-  priority    String   @default("MEDIUM")      // HIGH | MEDIUM | LOW
-  tag         String   @default("FRONTEND")    // FRONTEND | BACKEND | DESIGN | QA | MARKETING
+  description String      @default("")
+  status      String      @default("TODO") // TODO | IN_PROGRESS | IN_REVIEW | DONE
+  priority    String      @default("MEDIUM") // HIGH | MEDIUM | LOW
+  tag         String      @default("FRONTEND") // FRONTEND | BACKEND | DESIGN | QA | MARKETING
   dueDate     DateTime?
-  order       Int      @default(0)
+  order       Int         @default(0)
   projectId   String?
   assigneeId  String?
-  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  project     Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
   assignee    TeamMember? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ model TeamMember {
   online         Boolean  @default(false)
   openTasks      Int      @default(0)
   completedTasks Int      @default(0)
-  workload       Int      @default(0)             // 0..100 percent
+  workload       Int      @default(0) // 0..100 percent
   // Link to the User account this member record represents (nullable:
   // roster entries may exist without a login). Unique: one account maps to
   // at most one roster entry.
@@ -183,7 +183,7 @@ model Notification {
   // to everyone, and only curatable (mark read/unread) by role:manage
   // holders, since flipping a broadcast's read flag affects every viewer.
   recipientUserId String?
-  user            User?    @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  user            User?   @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
 
   @@index([recipientUserId, read])
 }
@@ -193,15 +193,15 @@ model Notification {
 // ---------------------------------------------------------------------------
 
 model TimeEntry {
-  id          String   @id @default(cuid())
+  id          String      @id @default(cuid())
   projectId   String?
   memberId    String?
   date        DateTime
-  hours       Float    @default(0)
-  description String   @default("")
-  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  hours       Float       @default(0)
+  description String      @default("")
+  project     Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
   member      TeamMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now())
+  createdAt   DateTime    @default(now())
 }
 
 // ---------------------------------------------------------------------------
@@ -224,20 +224,20 @@ model Reminder {
 // ---------------------------------------------------------------------------
 
 model Message {
-  id               String   @id @default(cuid())
-  direction        String   // "IN" (to current user) | "OUT" (from current user)
-  threadId         String   // groups messages in the same conversation
-  memberId         String?  // the TeamMember this conversation is with
-  senderUserId     String   @default("") // User.id of the sender
-  recipientUserId  String   @default("") // User.id of the recipient
-  senderName       String   // display name of sender
-  senderAvatarColor String  @default("forest")
-  senderRole       String   @default("")
-  recipientName    String   // display name of recipient
-  subject          String
-  body             String
-  read             Boolean  @default(false)
-  createdAt        DateTime @default(now())
+  id                String   @id @default(cuid())
+  direction         String // "IN" (to current user) | "OUT" (from current user)
+  threadId          String // groups messages in the same conversation
+  memberId          String? // the TeamMember this conversation is with
+  senderUserId      String   @default("") // User.id of the sender
+  recipientUserId   String   @default("") // User.id of the recipient
+  senderName        String // display name of sender
+  senderAvatarColor String   @default("forest")
+  senderRole        String   @default("")
+  recipientName     String // display name of recipient
+  subject           String
+  body              String
+  read              Boolean  @default(false)
+  createdAt         DateTime @default(now())
 
   @@index([threadId])
   @@index([direction])
@@ -251,14 +251,14 @@ model Message {
 
 model AuditLog {
   id          String   @id @default(cuid())
-  actorId     String   @default("")   // User.id of who did it
-  actorName   String                  // display name at the time of the action
-  actorRole   String   @default("")   // ADMIN | MANAGER | MEMBER | SYSTEM
-  action      String                  // e.g. "task.created", "project.deleted", "auth.signed_in"
-  entityType  String                  // TASK | PROJECT | MEMBER | EVENT | MESSAGE | USER | ROLE | REMINDER | TIME | AUTH | NOTIFICATION
+  actorId     String   @default("") // User.id of who did it
+  actorName   String // display name at the time of the action
+  actorRole   String   @default("") // ADMIN | MANAGER | MEMBER | SYSTEM
+  action      String // e.g. "task.created", "project.deleted", "auth.signed_in"
+  entityType  String // TASK | PROJECT | MEMBER | EVENT | MESSAGE | USER | ROLE | REMINDER | TIME | AUTH | NOTIFICATION
   entityId    String   @default("")
-  entityLabel String   @default("")   // human-readable label of the affected record
-  detail      String   @default("")   // full human-readable sentence for the timeline
+  entityLabel String   @default("") // human-readable label of the affected record
+  detail      String   @default("") // full human-readable sentence for the timeline
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
@@ -281,8 +281,8 @@ model ProjectAssignment {
   role      String   @default("MEMBER") // OWNER | MEMBER
   createdAt DateTime @default(now())
 
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, userId])
   @@index([projectId])
@@ -296,20 +296,20 @@ model ProjectAssignment {
 // ---------------------------------------------------------------------------
 
 model Workspace {
-  id                    String   @id @default("default")
-  name                  String   @default("Fernly Workspace")
-  defaultTimezone       String   @default("Pacific/Auckland")
-  defaultUserRole       String   @default("MEMBER")
-  defaultDepartment     String   @default("ENGINEERING")
-  defaultAvatarColor    String   @default("forest")
-  defaultJobTitle       String   @default("Team Member")
-  minPasswordLength     Int      @default(8)
-  workloadFullCapacity  Int      @default(6)
-  auditLogLimit         Int      @default(300)
-  entityHistoryLimit    Int      @default(50)
-  dashboardNotifLimit   Int      @default(20)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                   String   @id @default("default")
+  name                 String   @default("Fernly Workspace")
+  defaultTimezone      String   @default("Pacific/Auckland")
+  defaultUserRole      String   @default("MEMBER")
+  defaultDepartment    String   @default("ENGINEERING")
+  defaultAvatarColor   String   @default("forest")
+  defaultJobTitle      String   @default("Team Member")
+  minPasswordLength    Int      @default(8)
+  workloadFullCapacity Int      @default(6)
+  auditLogLimit        Int      @default(300)
+  entityHistoryLimit   Int      @default(50)
+  dashboardNotifLimit  Int      @default(20)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -333,23 +333,23 @@ model TaskStatusConfig {
 }
 
 model ProjectStatusConfig {
-  id          String  @id @default(cuid())
-  key         String  @unique
-  label       String
-  badgeClass  String  @default("bg-muted text-muted-foreground")
-  dotClass    String  @default("bg-muted-foreground")
-  sortOrder   Int     @default(0)
-  isVisible   Boolean @default(true)
-}
-
-model EventTypeConfig {
   id         String  @id @default(cuid())
   key        String  @unique
   label      String
-  dotClass   String  @default("bg-primary")
-  bgClass    String  @default("bg-primary/10")
+  badgeClass String  @default("bg-muted text-muted-foreground")
+  dotClass   String  @default("bg-muted-foreground")
   sortOrder  Int     @default(0)
   isVisible  Boolean @default(true)
+}
+
+model EventTypeConfig {
+  id        String  @id @default(cuid())
+  key       String  @unique
+  label     String
+  dotClass  String  @default("bg-primary")
+  bgClass   String  @default("bg-primary/10")
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
 }
 
 model TaskTagConfig {
@@ -410,7 +410,7 @@ model Permission {
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
 
-  roles       RolePermission[]
+  roles RolePermission[]
 }
 
 model RolePermission {

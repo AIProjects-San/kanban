@@ -164,6 +164,10 @@ beforeEach(() => {
   wireMemberLookup();
   db.auditLog.create.mockResolvedValue({});
   db.task.aggregate.mockResolvedValue({ _max: { order: 0 } });
+  // Default: recalcMemberStats() calls db.task.findMany({ where: { assigneeId } })
+  // — return an empty array so tests that don't care about that side-effect
+  // don't crash on `tasks.filter(...)`. Tests that DO care override this.
+  db.task.findMany.mockResolvedValue([]);
   // The workspace config loader reads every config table in parallel —
   // default them to empty arrays so getWorkspaceConfig() resolves.
   for (const table of [

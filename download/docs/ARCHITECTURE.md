@@ -31,9 +31,16 @@ trip, and hands it to `AppShell`, which switches between views client-side
 (`store/app-store.ts` holds `ViewKey`). Navigation = state change, not route change.
 
 **No REST/GraphQL layer.** All reads and writes go through Server Actions
-(`src/server-actions/data.ts`). This is a deliberate trade-off: fewer moving parts and
-end-to-end type safety, at the cost of one large action module (splitting it by domain
-is the next refactor — see CODE_REVIEW §8).
+(`src/server-actions/`), organised **per domain** since the 2026-10-30 split:
+`dashboard`, `tasks`, `projects`, `members`, `events`, `notifications`,
+`reminders`, `users`, `time-entries`, `messages`, `assignments`, `workspace`,
+`audit` — with `data.ts` as a thin barrel re-export so callers have one stable
+import path. Every client-invoked action returns an
+**`ActionResult<T> = { ok: true; data: T } | { ok: false; code; error }`**
+(`lib/action-result.ts`) instead of throwing: production never masks action
+error messages, and clients branch on `res.ok`. SSR-only loaders
+(`getDashboardData`, `getUserProfile`, `getUserSettings`) keep the throwing
+contract — a DB outage there belongs in the error boundary, not an empty UI.
 
 ## 2. Layering
 
@@ -45,8 +52,10 @@ components/auth/            — login screen
 hooks/                      — use-keyboard-shortcuts, use-permissions (client RBAC)
 store/app-store.ts          — Zustand: view state, modals, inbox, theme (session only)
 ──────────────────────────────────────────────────────────────────────────────
-server-actions/data.ts      — "use server": every mutation + scoped reads
+server-actions/             — per-domain "use server" modules (barrel: data.ts)
 server-actions/auth-guard.ts— getSession / requirePermission / getSessionOrThrow
+server-actions/shared.ts    — server-only helpers (logAudit, task-edit ownership)
+server-actions/result.ts    — toResult(): thrown Error → ActionResult mapping
 lib/                        — pure logic (rbac, config, validation, password, …)
 lib/db.ts                   — Prisma singleton
 lib/config-loader.ts        — workspace config with 60 s cache + bump invalidation

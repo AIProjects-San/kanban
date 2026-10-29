@@ -7,6 +7,7 @@ import { useApp, type AccentTheme } from "@/store/app-store";
 import { Avatar } from "../fernly/avatar";
 import { toast } from "sonner";
 import { updateProfile, changePassword, updateUserSettings } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 import { Section } from "../fernly/section";
 import { Field } from "../fernly/field";
 import { PasswordInput } from "../fernly/password-input";
@@ -71,8 +72,8 @@ export function SettingsView({ user }: SettingsViewProps) {
     try {
       const res = await updateUserSettings(user.id, { [dbKey]: value });
       if (!res.ok) toast.error(res.error);
-    } catch {
-      toast.error("Failed to save setting");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to save setting"));
     }
   };
 

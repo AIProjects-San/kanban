@@ -11,6 +11,7 @@ import { useApp } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { toast } from "sonner";
 import { sendMessage, getUserByEmail } from "@/server-actions/data";
+import { actionErrorMessage } from "@/lib/action-errors";
 import { EntityHistorySection } from "../fernly/entity-history-section";
 import { TASK_STATUS_ACCENT, tagClass, DEPARTMENT_LABELS } from "@/lib/config";
 import type { TeamMemberT, Department, TaskT, ProjectT, TimeEntryT } from "@/lib/types";
@@ -532,8 +533,8 @@ function MessageModal({
         description: subject.trim() || "(no subject)",
       });
       onClose();
-    } catch {
-      toast.error("Failed to send message");
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to send message"));
     } finally {
       setSending(false);
     }

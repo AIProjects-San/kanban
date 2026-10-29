@@ -225,6 +225,69 @@ describe("getDashboardData mapping & stats", () => {
     expect(data.stats.weeklyCompletion).toBe(50);
   });
 
+  it("P2-21: weeklyCompletion excludes DONE tasks older than 7 days (weekAgo is actually used)", async () => {
+    // The original bug: weekAgo was computed and never used, so a task marked
+    // DONE six months ago was counted as "completed this week". The fix uses
+    // `t.status === "DONE" && t.updatedAt >= weekAgo`.
+    signIn(MEMBER);
+    seedFullWorkspace();
+    const stale = new Date();
+    stale.setDate(stale.getDate() - 30); // 30 days ago — outside the 7-day window
+    // Override the task mock: 2 DONE tasks, but one is stale.
+    db.task.findMany.mockImplementation(({ where }: { where?: { assignee?: unknown } }) => {
+      if (where?.assignee) return Promise.resolve([{ projectId: "p-1" }]);
+      return Promise.resolve([
+        {
+          id: "t-fresh", title: "Fresh", description: "", status: "DONE", priority: "HIGH", tag: "QA",
+          dueDate: now, projectId: "p-1", assigneeId: "m-mia", order: 0,
+          createdAt: now, updatedAt: new Date(), // today
+          project: { id: "p-1", name: "Apollo", description: "", status: "RUNNING", priority: "HIGH", progress: 50, color: "forest", ownerName: "Mia", dueDate: now, createdAt: now, updatedAt: now },
+          assignee: { id: "m-mia", name: "Mia", email: "mia@fernly.dev", role: "Dev", department: "ENGINEERING", avatarColor: "forest", online: true, openTasks: 1, completedTasks: 2, workload: 20, createdAt: now, updatedAt: now },
+        },
+        {
+          id: "t-stale", title: "Stale", description: "", status: "DONE", priority: "LOW", tag: "BACKEND",
+          dueDate: null, projectId: "p-1", assigneeId: "m-mia", order: 1,
+          createdAt: now, updatedAt: stale, // 30 days ago — must NOT count
+          project: { id: "p-1", name: "Apollo", description: "", status: "RUNNING", priority: "HIGH", progress: 50, color: "forest", ownerName: "Mia", dueDate: now, createdAt: now, updatedAt: now },
+          assignee: { id: "m-mia", name: "Mia", email: "mia@fernly.dev", role: "Dev", department: "ENGINEERING", avatarColor: "forest", online: true, openTasks: 1, completedTasks: 2, workload: 20, createdAt: now, updatedAt: now },
+        },
+      ]);
+    });
+    const data = await getDashboardData();
+    // 2 DONE tasks total, but only 1 was updated within the last 7 days → 50%.
+    // If weekAgo were ignored (the original bug), this would be 100%.
+    expect(data.stats.weeklyCompletion).toBe(50);
+  });
+
+  it("P2-21: weeklyCompletion is 0 when every DONE task is older than 7 days", async () => {
+    signIn(MEMBER);
+    seedFullWorkspace();
+    const stale = new Date();
+    stale.setDate(stale.getDate() - 10); // 10 days ago
+    db.task.findMany.mockImplementation(({ where }: { where?: { assignee?: unknown } }) => {
+      if (where?.assignee) return Promise.resolve([{ projectId: "p-1" }]);
+      return Promise.resolve([
+        {
+          id: "t-old", title: "Old", description: "", status: "DONE", priority: "HIGH", tag: "QA",
+          dueDate: now, projectId: "p-1", assigneeId: "m-mia", order: 0,
+          createdAt: now, updatedAt: stale,
+          project: { id: "p-1", name: "Apollo", description: "", status: "RUNNING", priority: "HIGH", progress: 50, color: "forest", ownerName: "Mia", dueDate: now, createdAt: now, updatedAt: now },
+          assignee: { id: "m-mia", name: "Mia", email: "mia@fernly.dev", role: "Dev", department: "ENGINEERING", avatarColor: "forest", online: true, openTasks: 1, completedTasks: 2, workload: 20, createdAt: now, updatedAt: now },
+        },
+        {
+          id: "t-todo", title: "Todo", description: "", status: "TODO", priority: "LOW", tag: "BACKEND",
+          dueDate: null, projectId: "p-1", assigneeId: "m-mia", order: 1,
+          createdAt: now, updatedAt: now,
+          project: { id: "p-1", name: "Apollo", description: "", status: "RUNNING", priority: "HIGH", progress: 50, color: "forest", ownerName: "Mia", dueDate: now, createdAt: now, updatedAt: now },
+          assignee: { id: "m-mia", name: "Mia", email: "mia@fernly.dev", role: "Dev", department: "ENGINEERING", avatarColor: "forest", online: true, openTasks: 1, completedTasks: 2, workload: 20, createdAt: now, updatedAt: now },
+        },
+      ]);
+    });
+    const data = await getDashboardData();
+    // 1 DONE task, but it's stale → 0% completed this week.
+    expect(data.stats.weeklyCompletion).toBe(0);
+  });
+
   it("never lets audit-write failures break the main query path", async () => {
     signIn(MEMBER);
     seedFullWorkspace();
