@@ -1,0 +1,869 @@
+     1→"use server";
+     2→
+     3→import { revalidatePath } from "next/cache";
+     4→import { db } from "@/lib/db";
+     5→import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+     6→import { ROLE_LABELS, type Role } from "@/lib/rbac";
+     7→
+     8→// Re-export for convenience
+     9→export { AuthorizationError };
+    10→
+    11→// ---------------------------------------------------------------------------
+    12→// Audit logging — every mutating action leaves an immutable trail
+    13→// ---------------------------------------------------------------------------
+    14→
+    15→const STATUS_LABELS: Record<string, string> = {
+    16→  TODO: "To do",
+    17→  IN_PROGRESS: "In progress",
+    18→  IN_REVIEW: "In review",
+    19→  DONE: "Done",
+    20→};
+    21→
+    22→function fmtDay(d: Date) {
+    23→  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    24→}
+    25→
+    26→async function logAudit(entry: {
+    27→  actor: { userId: string; name: string; role: string };
+    28→  action: string;
+    29→  entityType: string;
+    30→  entityId?: string;
+    31→  entityLabel?: string;
+    32→  detail: string;
+    33→}) {
+    34→  try {
+    35→    await db.auditLog.create({
+    36→      data: {
+    37→        actorId: entry.actor.userId,
+    38→        actorName: entry.actor.name,
+    39→        actorRole: entry.actor.role,
+    40→        action: entry.action,
+    41→        entityType: entry.entityType,
+    42→        entityId: entry.entityId ?? "",
+    43→        entityLabel: entry.entityLabel ?? "",
+    44→        detail: entry.detail,
+    45→      },
+    46→    });
+    47→  } catch (err) {
+    48→    // Audit logging must never break the underlying operation
+    49→    console.error("[audit] failed to write log entry:", err);
+    50→  }
+    51→}
+    52→
+    53→// ---------------------------------------------------------------------------
+    54→// Dashboard data loader — single round trip
+    55→// ---------------------------------------------------------------------------
+    56→
+    57→export async function getDashboardData() {
+    58→  const [projects, tasks, members, reminders, notifs, timeEntries, events, messages] = await Promise.all([
+    59→    db.project.findMany({ orderBy: { createdAt: "desc" } }),
+    60→    db.task.findMany({ include: { project: true, assignee: true }, orderBy: { order: "asc" } }),
+    61→    db.teamMember.findMany({ orderBy: { name: "asc" } }),
+    62→    db.reminder.findMany({ orderBy: { dueDate: "asc" } }),
+    63→    db.notification.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
+    64→    db.timeEntry.findMany({ orderBy: { date: "desc" } }),
+    65→    db.calendarEvent.findMany({ orderBy: { date: "asc" } }),
+    66→    db.message.findMany({ orderBy: { createdAt: "desc" } }),
+    67→  ]);
+    68→
+    69→  const total = projects.length;
+    70→  const ended = projects.filter((p) => p.status === "ENDED").length;
+    71→  const running = projects.filter((p) => p.status === "RUNNING").length;
+    72→  const pending = projects.filter((p) => p.status === "PENDING").length;
+    73→  const paused = projects.filter((p) => p.status === "PAUSED").length;
+    74→
+    75→  // Weekly completion = tasks completed in last 7 days / total tasks
+    76→  const weekAgo = new Date();
+    77→  weekAgo.setDate(weekAgo.getDate() - 7);
+    78→  const completedThisWeek = tasks.filter(
+    79→    (t) => t.status === "DONE"
+    80→  ).length;
+    81→  const weeklyCompletion = tasks.length
+    82→    ? Math.round((completedThisWeek / tasks.length) * 100)
+    83→    : 0;
+    84→
+    85→  const projectEndedPct = total ? Math.round((ended / total) * 100) : 0;
+    86→
+    87→  return {
+    88→    projects: projects.map(p => ({
+    89→      ...p,
+    90→      dueDate: p.dueDate?.toISOString() ?? null,
+    91→      createdAt: p.createdAt.toISOString(),
+    92→    })),
+    93→    tasks: tasks.map(t => ({
+    94→      ...t,
+    95→      dueDate: t.dueDate?.toISOString() ?? null,
+    96→      createdAt: t.createdAt.toISOString(),
+    97→      project: t.project ? {
+    98→        ...t.project,
+    99→        dueDate: t.project.dueDate?.toISOString() ?? null,
+   100→        createdAt: t.project.createdAt.toISOString(),
+   101→      } : null,
+   102→      assignee: t.assignee ? {
+   103→        ...t.assignee,
+   104→        createdAt: t.assignee.createdAt.toISOString(),
+   105→        updatedAt: t.assignee.updatedAt.toISOString(),
+   106→      } : null,
+   107→    })),
+   108→    members: members.map(m => ({
+   109→      ...m,
+   110→      createdAt: m.createdAt.toISOString(),
+   111→      updatedAt: m.updatedAt.toISOString(),
+   112→    })),
+   113→    reminders: reminders.map(r => ({
+   114→      ...r,
+   115→      dueDate: r.dueDate.toISOString(),
+   116→      createdAt: r.createdAt.toISOString(),
+   117→    })),
+   118→    notifications: notifs.map(n => ({
+   119→      ...n,
+   120→      createdAt: n.createdAt.toISOString(),
+   121→    })),
+   122→    timeEntries: timeEntries.map(te => ({
+   123→      ...te,
+   124→      date: te.date.toISOString(),
+   125→      createdAt: te.createdAt.toISOString(),
+   126→    })),
+   127→    events: events.map(e => ({
+   128→      ...e,
+   129→      date: e.date.toISOString(),
+   130→      createdAt: e.createdAt.toISOString(),
+   131→    })),
+   132→    messages: messages.map(m => ({
+   133→      ...m,
+   134→      createdAt: m.createdAt.toISOString(),
+   135→    })),
+   136→    stats: {
+   137→      total, ended, running, pending, paused,
+   138→      weeklyCompletion,
+   139→      projectEndedPct,
+   140→    },
+   141→  };
+   142→}
+   143→
+   144→export async function getUserProfile(userId: string) {
+   145→  const user = await db.user.findUnique({ where: { id: userId } });
+   146→  if (!user) return null;
+   147→  return {
+   148→    id: user.id,
+   149→    email: user.email,
+   150→    name: user.name,
+   151→    role: user.role,
+   152→    timezone: user.timezone,
+   153→    bio: user.bio,
+   154→    avatarColor: user.avatarColor,
+   155→  };
+   156→}
+   157→
+   158→// ---------------------------------------------------------------------------
+   159→// Task CRUD
+   160→// ---------------------------------------------------------------------------
+   161→
+   162→export async function createTask(input: {
+   163→  title: string;
+   164→  description?: string;
+   165→  status?: string;
+   166→  priority?: string;
+   167→  tag?: string;
+   168→  dueDate?: string | null;
+   169→  projectId?: string | null;
+   170→  assigneeId?: string | null;
+   171→}) {
+   172→  const auth = await requirePermission("task:create");
+   173→  const maxOrder = await db.task.aggregate({
+   174→    where: { status: input.status ?? "TODO" },
+   175→    _max: { order: true },
+   176→  });
+   177→  const task = await db.task.create({
+   178→    data: {
+   179→      title: input.title,
+   180→      description: input.description ?? "",
+   181→      status: input.status ?? "TODO",
+   182→      priority: input.priority ?? "MEDIUM",
+   183→      tag: input.tag ?? "FRONTEND",
+   184→      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+   185→      projectId: input.projectId || null,
+   186→      assigneeId: input.assigneeId || null,
+   187→      order: (maxOrder._max.order ?? -1) + 1,
+   188→    },
+   189→    include: { project: true },
+   190→  });
+   191→  await recalcMemberStats(input.assigneeId);
+   192→  await logAudit({
+   193→    actor: auth,
+   194→    action: "task.created",
+   195→    entityType: "TASK",
+   196→    entityId: task.id,
+   197→    entityLabel: task.title,
+   198→    detail: task.project
+   199→      ? `Created task “${task.title}” in ${task.project.name}`
+   200→      : `Created task “${task.title}” without a project`,
+   201→  });
+   202→  revalidatePath("/");
+   203→}
+   204→
+   205→export async function updateTask(id: string, input: Partial<{
+   206→  title: string;
+   207→  description: string;
+   208→  status: string;
+   209→  priority: string;
+   210→  tag: string;
+   211→  dueDate: string | null;
+   212→  projectId: string | null;
+   213→  assigneeId: string | null;
+   214→}>) {
+   215→  // task:edit:any allows editing any task; otherwise check task:edit:own
+   216→  const auth = await requirePermission("task:edit:own");
+   217→  const existing = await db.task.findUnique({ where: { id } });
+   218→  if (!existing) return;
+   219→  await db.task.update({
+   220→    where: { id },
+   221→    data: {
+   222→      title: input.title,
+   223→      description: input.description,
+   224→      status: input.status,
+   225→      priority: input.priority,
+   226→      tag: input.tag,
+   227→      dueDate: input.dueDate !== undefined ? (input.dueDate ? new Date(input.dueDate) : null) : undefined,
+   228→      projectId: input.projectId,
+   229→      assigneeId: input.assigneeId,
+   230→    },
+   231→  });
+   232→  await recalcMemberStats(existing.assigneeId);
+   233→  if (input.assigneeId && input.assigneeId !== existing.assigneeId) {
+   234→    await recalcMemberStats(input.assigneeId);
+   235→  }
+   236→  const changes: string[] = [];
+   237→  if (input.title !== undefined && input.title !== existing.title) changes.push("title");
+   238→  if (input.status !== undefined && input.status !== existing.status) changes.push("status");
+   239→  if (input.priority !== undefined && input.priority !== existing.priority) changes.push("priority");
+   240→  if (input.tag !== undefined && input.tag !== existing.tag) changes.push("tag");
+   241→  if (input.description !== undefined && input.description !== existing.description) changes.push("description");
+   242→  if (input.dueDate !== undefined) {
+   243→    const nd = input.dueDate ? new Date(input.dueDate).toISOString() : null;
+   244→    const od = existing.dueDate ? existing.dueDate.toISOString() : null;
+   245→    if (nd !== od) changes.push("due date");
+   246→  }
+   247→  if (input.projectId !== undefined && input.projectId !== existing.projectId) changes.push("project");
+   248→  if (input.assigneeId !== undefined && input.assigneeId !== existing.assigneeId) changes.push("assignee");
+   249→  await logAudit({
+   250→    actor: auth,
+   251→    action: "task.updated",
+   252→    entityType: "TASK",
+   253→    entityId: id,
+   254→    entityLabel: input.title ?? existing.title,
+   255→    detail: changes.length
+   256→      ? `Updated ${changes.join(", ")} on “${input.title ?? existing.title}”`
+   257→      : `Saved task “${input.title ?? existing.title}”`,
+   258→  });
+   259→  revalidatePath("/");
+   260→}
+   261→
+   262→export async function moveTask(id: string, newStatus: string, newOrder: number) {
+   263→  const auth = await requirePermission("task:edit:own");
+   264→  const task = await db.task.findUnique({ where: { id } });
+   265→  if (!task) return;
+   266→  const oldAssignee = task.assigneeId;
+   267→  await db.task.update({
+   268→    where: { id },
+   269→    data: { status: newStatus, order: newOrder },
+   270→  });
+   271→  await recalcMemberStats(oldAssignee);
+   272→  if (task.status !== newStatus) {
+   273→    await logAudit({
+   274→      actor: auth,
+   275→      action: "task.moved",
+   276→      entityType: "TASK",
+   277→      entityId: id,
+   278→      entityLabel: task.title,
+   279→      detail: `Moved “${task.title}” to ${STATUS_LABELS[newStatus] ?? newStatus}`,
+   280→    });
+   281→  }
+   282→  revalidatePath("/");
+   283→}
+   284→
+   285→export async function deleteTask(id: string) {
+   286→  const auth = await requirePermission("task:delete");
+   287→  const task = await db.task.findUnique({ where: { id } });
+   288→  if (!task) return;
+   289→  await db.task.delete({ where: { id } });
+   290→  await recalcMemberStats(task.assigneeId);
+   291→  await logAudit({
+   292→    actor: auth,
+   293→    action: "task.deleted",
+   294→    entityType: "TASK",
+   295→    entityId: id,
+   296→    entityLabel: task.title,
+   297→    detail: `Deleted task “${task.title}”`,
+   298→  });
+   299→  revalidatePath("/");
+   300→}
+   301→
+   302→async function recalcMemberStats(memberId: string | null) {
+   303→  if (!memberId) return;
+   304→  const tasks = await db.task.findMany({ where: { assigneeId: memberId } });
+   305→  const open = tasks.filter((t) => t.status !== "DONE").length;
+   306→  const completed = tasks.filter((t) => t.status === "DONE").length;
+   307→  const workload = Math.min(100, Math.round((open / 6) * 100));
+   308→  await db.teamMember.update({
+   309→    where: { id: memberId },
+   310→    data: { openTasks: open, completedTasks: completed, workload },
+   311→  });
+   312→}
+   313→
+   314→// ---------------------------------------------------------------------------
+   315→// Project CRUD
+   316→// ---------------------------------------------------------------------------
+   317→
+   318→export async function createProject(input: {
+   319→  name: string;
+   320→  description?: string;
+   321→  status?: string;
+   322→  priority?: string;
+   323→  dueDate?: string | null;
+   324→  color?: string;
+   325→  ownerName?: string;
+   326→}) {
+   327→  const auth = await requirePermission("project:create");
+   328→  const project = await db.project.create({
+   329→    data: {
+   330→      name: input.name,
+   331→      description: input.description ?? "",
+   332→      status: input.status ?? "RUNNING",
+   333→      priority: input.priority ?? "MEDIUM",
+   334→      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+   335→      color: input.color ?? "forest",
+   336→      ownerName: input.ownerName ?? "",
+   337→    },
+   338→  });
+   339→  await logAudit({
+   340→    actor: auth,
+   341→    action: "project.created",
+   342→    entityType: "PROJECT",
+   343→    entityId: project.id,
+   344→    entityLabel: project.name,
+   345→    detail: `Created project “${project.name}”`,
+   346→  });
+   347→  revalidatePath("/");
+   348→}
+   349→
+   350→export async function updateProject(id: string, input: Partial<{
+   351→  name: string;
+   352→  description: string;
+   353→  status: string;
+   354→  priority: string;
+   355→  dueDate: string | null;
+   356→  color: string;
+   357→  ownerName: string;
+   358→  progress: number;
+   359→}>) {
+   360→  const auth = await requirePermission("project:edit");
+   361→  const existing = await db.project.findUnique({ where: { id } });
+   362→  await db.project.update({
+   363→    where: { id },
+   364→    data: {
+   365→      name: input.name,
+   366→      description: input.description,
+   367→      status: input.status,
+   368→      priority: input.priority,
+   369→      dueDate: input.dueDate !== undefined ? (input.dueDate ? new Date(input.dueDate) : null) : undefined,
+   370→      color: input.color,
+   371→      ownerName: input.ownerName,
+   372→      progress: input.progress,
+   373→    },
+   374→  });
+   375→  if (existing) {
+   376→    const changes: string[] = [];
+   377→    if (input.name !== undefined && input.name !== existing.name) changes.push("name");
+   378→    if (input.description !== undefined && input.description !== existing.description) changes.push("description");
+   379→    if (input.status !== undefined && input.status !== existing.status) changes.push("status");
+   380→    if (input.priority !== undefined && input.priority !== existing.priority) changes.push("priority");
+   381→    if (input.color !== undefined && input.color !== existing.color) changes.push("color");
+   382→    if (input.ownerName !== undefined && input.ownerName !== existing.ownerName) changes.push("owner");
+   383→    if (input.progress !== undefined && input.progress !== existing.progress) changes.push("progress");
+   384→    if (input.dueDate !== undefined) {
+   385→      const nd = input.dueDate ? new Date(input.dueDate).toISOString() : null;
+   386→      const od = existing.dueDate ? existing.dueDate.toISOString() : null;
+   387→      if (nd !== od) changes.push("due date");
+   388→    }
+   389→    await logAudit({
+   390→      actor: auth,
+   391→      action: "project.updated",
+   392→      entityType: "PROJECT",
+   393→      entityId: id,
+   394→      entityLabel: input.name ?? existing.name,
+   395→      detail: changes.length
+   396→        ? `Updated ${changes.join(", ")} on project “${input.name ?? existing.name}”`
+   397→        : `Saved project “${input.name ?? existing.name}”`,
+   398→    });
+   399→  }
+   400→  revalidatePath("/");
+   401→}
+   402→
+   403→export async function deleteProject(id: string) {
+   404→  const auth = await requirePermission("project:delete");
+   405→  const existing = await db.project.findUnique({ where: { id } });
+   406→  await db.project.delete({ where: { id } });
+   407→  if (existing) {
+   408→    await logAudit({
+   409→      actor: auth,
+   410→      action: "project.deleted",
+   411→      entityType: "PROJECT",
+   412→      entityId: id,
+   413→      entityLabel: existing.name,
+   414→      detail: `Deleted project “${existing.name}”`,
+   415→    });
+   416→  }
+   417→  revalidatePath("/");
+   418→}
+   419→
+   420→// ---------------------------------------------------------------------------
+   421→// Team Member CRUD
+   422→// ---------------------------------------------------------------------------
+   423→
+   424→export async function createMember(input: {
+   425→  name: string;
+   426→  role: string;
+   427→  department: string;
+   428→  email: string;
+   429→  avatarColor?: string;
+   430→  online?: boolean;
+   431→}) {
+   432→  const auth = await requirePermission("member:invite");
+   433→  const member = await db.teamMember.create({
+   434→    data: {
+   435→      name: input.name,
+   436→      role: input.role,
+   437→      department: input.department,
+   438→      email: input.email,
+   439→      avatarColor: input.avatarColor ?? "forest",
+   440→      online: input.online ?? false,
+   441→    },
+   442→  });
+   443→  await logAudit({
+   444→    actor: auth,
+   445→    action: "member.invited",
+   446→    entityType: "MEMBER",
+   447→    entityId: member.id,
+   448→    entityLabel: member.name,
+   449→    detail: `Invited ${member.name} (${member.role}) to the team`,
+   450→  });
+   451→  revalidatePath("/");
+   452→}
+   453→
+   454→export async function updateMember(id: string, input: Partial<{
+   455→  name: string;
+   456→  role: string;
+   457→  department: string;
+   458→  email: string;
+   459→  avatarColor: string;
+   460→  online: boolean;
+   461→}>) {
+   462→  const auth = await requirePermission("member:edit");
+   463→  const existing = await db.teamMember.findUnique({ where: { id } });
+   464→  await db.teamMember.update({ where: { id }, data: input });
+   465→  if (existing) {
+   466→    const changes: string[] = [];
+   467→    if (input.name !== undefined && input.name !== existing.name) changes.push("name");
+   468→    if (input.role !== undefined && input.role !== existing.role) changes.push("job title");
+   469→    if (input.department !== undefined && input.department !== existing.department) changes.push("department");
+   470→    if (input.email !== undefined && input.email !== existing.email) changes.push("email");
+   471→    if (input.online !== undefined && input.online !== existing.online) changes.push("availability");
+   472→    await logAudit({
+   473→      actor: auth,
+   474→      action: "member.updated",
+   475→      entityType: "MEMBER",
+   476→      entityId: id,
+   477→      entityLabel: input.name ?? existing.name,
+   478→      detail: changes.length
+   479→        ? `Updated ${changes.join(", ")} for ${input.name ?? existing.name}`
+   480→        : `Saved profile of ${input.name ?? existing.name}`,
+   481→    });
+   482→  }
+   483→  revalidatePath("/");
+   484→}
+   485→
+   486→export async function deleteMember(id: string) {
+   487→  const auth = await requirePermission("member:delete");
+   488→  const existing = await db.teamMember.findUnique({ where: { id } });
+   489→  await db.teamMember.delete({ where: { id } });
+   490→  if (existing) {
+   491→    await logAudit({
+   492→      actor: auth,
+   493→      action: "member.removed",
+   494→      entityType: "MEMBER",
+   495→      entityId: id,
+   496→      entityLabel: existing.name,
+   497→      detail: `Removed ${existing.name} (${existing.role}) from the team`,
+   498→    });
+   499→  }
+   500→  revalidatePath("/");
+   501→}
+   502→
+   503→// ---------------------------------------------------------------------------
+   504→// Calendar Event CRUD
+   505→// ---------------------------------------------------------------------------
+   506→
+   507→export async function createEvent(input: {
+   508→  title: string;
+   509→  description?: string;
+   510→  date: string;
+   511→  time?: string;
+   512→  durationMin?: number;
+   513→  type?: string;
+   514→  location?: string;
+   515→}) {
+   516→  const auth = await requirePermission("event:create");
+   517→  const event = await db.calendarEvent.create({
+   518→    data: {
+   519→      title: input.title,
+   520→      description: input.description ?? "",
+   521→      date: new Date(input.date),
+   522→      time: input.time ?? "09:00",
+   523→      durationMin: input.durationMin ?? 60,
+   524→      type: input.type ?? "MEETING",
+   525→      location: input.location ?? "",
+   526→    },
+   527→  });
+   528→  await logAudit({
+   529→    actor: auth,
+   530→    action: "event.created",
+   531→    entityType: "EVENT",
+   532→    entityId: event.id,
+   533→    entityLabel: event.title,
+   534→    detail: `Scheduled “${event.title}” on ${fmtDay(event.date)} at ${event.time}`,
+   535→  });
+   536→  revalidatePath("/");
+   537→}
+   538→
+   539→export async function deleteEvent(id: string) {
+   540→  const auth = await requirePermission("event:delete");
+   541→  const existing = await db.calendarEvent.findUnique({ where: { id } });
+   542→  await db.calendarEvent.delete({ where: { id } });
+   543→  if (existing) {
+   544→    await logAudit({
+   545→      actor: auth,
+   546→      action: "event.deleted",
+   547→      entityType: "EVENT",
+   548→      entityId: id,
+   549→      entityLabel: existing.title,
+   550→      detail: `Deleted event “${existing.title}”`,
+   551→    });
+   552→  }
+   553→  revalidatePath("/");
+   554→}
+   555→
+   556→// ---------------------------------------------------------------------------
+   557→// Notifications
+   558→// ---------------------------------------------------------------------------
+   559→
+   560→export async function markNotificationRead(id: string, read: boolean) {
+   561→  await db.notification.update({ where: { id }, data: { read } });
+   562→  revalidatePath("/");
+   563→}
+   564→
+   565→export async function markAllNotificationsRead() {
+   566→  await db.notification.updateMany({ where: { read: false }, data: { read: true } });
+   567→  revalidatePath("/");
+   568→}
+   569→
+   570→// ---------------------------------------------------------------------------
+   571→// Reminders
+   572→// ---------------------------------------------------------------------------
+   573→
+   574→export async function toggleReminder(id: string, completed: boolean) {
+   575→  const auth = await getSession();
+   576→  if (!auth) throw new AuthorizationError("You must be signed in.");
+   577→  const existing = await db.reminder.findUnique({ where: { id } });
+   578→  await db.reminder.update({ where: { id }, data: { completed } });
+   579→  if (existing && existing.completed !== completed) {
+   580→    await logAudit({
+   581→      actor: auth,
+   582→      action: completed ? "reminder.completed" : "reminder.reopened",
+   583→      entityType: "REMINDER",
+   584→      entityId: id,
+   585→      entityLabel: existing.title,
+   586→      detail: completed
+   587→        ? `Completed reminder “${existing.title}”`
+   588→        : `Reopened reminder “${existing.title}”`,
+   589→    });
+   590→  }
+   591→  revalidatePath("/");
+   592→}
+   593→
+   594→export async function createReminder(title: string, dueDate: string) {
+   595→  const auth = await getSession();
+   596→  if (!auth) throw new AuthorizationError("You must be signed in.");
+   597→  const reminder = await db.reminder.create({ data: { title, dueDate: new Date(dueDate) } });
+   598→  await logAudit({
+   599→    actor: auth,
+   600→    action: "reminder.created",
+   601→    entityType: "REMINDER",
+   602→    entityId: reminder.id,
+   603→    entityLabel: title,
+   604→    detail: `Added reminder “${title}”`,
+   605→  });
+   606→  revalidatePath("/");
+   607→}
+   608→
+   609→// ---------------------------------------------------------------------------
+   610→// User profile
+   611→// ---------------------------------------------------------------------------
+   612→
+   613→export async function updateProfile(userId: string, input: {
+   614→  name: string;
+   615→  role: string;
+   616→  timezone: string;
+   617→  bio: string;
+   618→  avatarColor: string;
+   619→}) {
+   620→  const auth = await getSession();
+   621→  if (!auth) throw new AuthorizationError("You must be signed in.");
+   622→  if (auth.userId !== userId) {
+   623→    throw new AuthorizationError("You can only update your own profile.");
+   624→  }
+   625→  const existing = await db.user.findUnique({ where: { id: userId } });
+   626→  await db.user.update({ where: { id: userId }, data: input });
+   627→  if (existing) {
+   628→    const changes: string[] = [];
+   629→    if (input.name !== existing.name) changes.push("name");
+   630→    if (input.role !== existing.role) changes.push("job title");
+   631→    if (input.timezone !== existing.timezone) changes.push("timezone");
+   632→    if (input.bio !== existing.bio) changes.push("bio");
+   633→    if (input.avatarColor !== existing.avatarColor) changes.push("avatar color");
+   634→    await logAudit({
+   635→      actor: auth,
+   636→      action: "profile.updated",
+   637→      entityType: "USER",
+   638→      entityId: userId,
+   639→      entityLabel: input.name,
+   640→      detail: changes.length
+   641→        ? `Updated ${changes.join(", ")} on their profile`
+   642→        : "Saved their profile",
+   643→    });
+   644→  }
+   645→  revalidatePath("/");
+   646→}
+   647→
+   648→// ---------------------------------------------------------------------------
+   649→// Time tracking
+   650→// ---------------------------------------------------------------------------
+   651→
+   652→export async function logTime(input: {
+   653→  projectId: string;
+   654→  memberId: string;
+   655→  date: string;
+   656→  hours: number;
+   657→  description?: string;
+   658→}) {
+   659→  const auth = await getSession();
+   660→  if (!auth) throw new AuthorizationError("You must be signed in.");
+   661→  const entry = await db.timeEntry.create({
+   662→    data: {
+   663→      projectId: input.projectId,
+   664→      memberId: input.memberId,
+   665→      date: new Date(input.date),
+   666→      hours: input.hours,
+   667→      description: input.description ?? "",
+   668→    },
+   669→  });
+   670→  const project = input.projectId
+   671→    ? await db.project.findUnique({ where: { id: input.projectId } })
+   672→    : null;
+   673→  await logAudit({
+   674→    actor: auth,
+   675→    action: "time.logged",
+   676→    entityType: "TIME",
+   677→    entityId: entry.id,
+   678→    entityLabel: project?.name ?? "Unassigned",
+   679→    detail: `Logged ${input.hours}h${project ? ` on “${project.name}”` : ""}`,
+   680→  });
+   681→  revalidatePath("/");
+   682→}
+   683→
+   684→// ---------------------------------------------------------------------------
+   685→// Messages (Team messaging)
+   686→// ---------------------------------------------------------------------------
+   687→
+   688→export async function sendMessage(input: {
+   689→  direction: "OUT" | "IN";
+   690→  threadId?: string;
+   691→  memberId?: string | null;
+   692→  senderName: string;
+   693→  senderAvatarColor?: string;
+   694→  senderRole?: string;
+   695→  recipientName: string;
+   696→  subject: string;
+   697→  body: string;
+   698→}) {
+   699→  const auth = await requirePermission("message:send");
+   700→  // Generate a threadId if not provided (new conversation)
+   701→  const threadId = input.threadId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+   702→  await db.message.create({
+   703→    data: {
+   704→      direction: input.direction,
+   705→      threadId,
+   706→      memberId: input.memberId || null,
+   707→      senderName: input.senderName,
+   708→      senderAvatarColor: input.senderAvatarColor || "forest",
+   709→      senderRole: input.senderRole || "",
+   710→      recipientName: input.recipientName,
+   711→      subject: input.subject,
+   712→      body: input.body,
+   713→      read: input.direction === "OUT" ? true : false, // outgoing is always "read"
+   714→    },
+   715→  });
+   716→  await logAudit({
+   717→    actor: auth,
+   718→    action: "message.sent",
+   719→    entityType: "MESSAGE",
+   720→    entityLabel: input.subject,
+   721→    detail: `Sent “${input.subject}” to ${input.recipientName}`,
+   722→  });
+   723→  revalidatePath("/");
+   724→  return threadId;
+   725→}
+   726→
+   727→export async function markMessageRead(id: string) {
+   728→  await db.message.update({ where: { id }, data: { read: true } });
+   729→  revalidatePath("/");
+   730→}
+   731→
+   732→export async function markThreadRead(threadId: string) {
+   733→  await db.message.updateMany({
+   734→    where: { threadId, direction: "IN", read: false },
+   735→    data: { read: true },
+   736→  });
+   737→  revalidatePath("/");
+   738→}
+   739→
+   740→export async function deleteMessage(id: string) {
+   741→  const auth = await requirePermission("message:send"); // anyone who can send can delete their own
+   742→  const existing = await db.message.findUnique({ where: { id } });
+   743→  await db.message.delete({ where: { id } });
+   744→  if (existing) {
+   745→    await logAudit({
+   746→      actor: auth,
+   747→      action: "message.deleted",
+   748→      entityType: "MESSAGE",
+   749→      entityId: id,
+   750→      entityLabel: existing.subject,
+   751→      detail: `Deleted message “${existing.subject}”`,
+   752→    });
+   753→  }
+   754→  revalidatePath("/");
+   755→}
+   756→
+   757→// ---------------------------------------------------------------------------
+   758→// User role management (Admin only)
+   759→// ---------------------------------------------------------------------------
+   760→
+   761→export async function updateUserRole(userId: string, newRole: string) {
+   762→  const auth = await requirePermission("role:manage");
+   763→  if (!["ADMIN", "MANAGER", "MEMBER"].includes(newRole)) {
+   764→    throw new AuthorizationError("Invalid role. Must be ADMIN, MANAGER, or MEMBER.");
+   765→  }
+   766→  if (userId === auth.userId && newRole !== "ADMIN") {
+   767→    throw new AuthorizationError("You cannot change your own role. Ask another admin to do it.");
+   768→  }
+   769→  const target = await db.user.findUnique({ where: { id: userId } });
+   770→  if (!target) return;
+   771→  await db.user.update({ where: { id: userId }, data: { role: newRole } });
+   772→  const roleLabel = (r: string) => ROLE_LABELS[r as Role] ?? r;
+   773→  await logAudit({
+   774→    actor: auth,
+   775→    action: "role.changed",
+   776→    entityType: "ROLE",
+   777→    entityId: userId,
+   778→    entityLabel: target.name,
+   779→    detail: `Changed role of ${target.name} from ${roleLabel(target.role)} to ${roleLabel(newRole)}`,
+   780→  });
+   781→  revalidatePath("/");
+   782→}
+   783→
+   784→export async function getAllUsers() {
+   785→  await requirePermission("role:manage");
+   786→  const users = await db.user.findMany({
+   787→    select: { id: true, email: true, name: true, role: true, createdAt: true },
+   788→    orderBy: { name: "asc" },
+   789→  });
+   790→  return users.map(u => ({
+   791→    ...u,
+   792→    createdAt: u.createdAt.toISOString(),
+   793→  }));
+   794→}
+   795→
+   796→/**
+   797→ * Create a login account for a team member who doesn't have one.
+   798→ * The account gets the MEMBER role and the default password "fernly123".
+   799→ */
+   800→export async function createUserForMember(memberId: string) {
+   801→  await requirePermission("role:manage");
+   802→  const member = await db.teamMember.findUnique({ where: { id: memberId } });
+   803→  if (!member) {
+   804→    throw new AuthorizationError("Team member not found.");
+   805→  }
+   806→  const existing = await db.user.findUnique({ where: { email: member.email.toLowerCase() } });
+   807→  if (existing) {
+   808→    throw new AuthorizationError(`A login account already exists for ${member.email}.`);
+   809→  }
+   810→  const bcrypt = (await import("bcryptjs")).default;
+   811→  const passwordHash = await bcrypt.hash("fernly123", 10);
+   812→  await db.user.create({
+   813→    data: {
+   814→      email: member.email.toLowerCase(),
+   815→      name: member.name,
+   816→      passwordHash,
+   817→      role: "MEMBER",
+   818→      timezone: "Pacific/Auckland",
+   819→      bio: "",
+   820→      avatarColor: member.avatarColor,
+   821→    },
+   822→  });
+   823→  await logAudit({
+   824→    actor: auth,
+   825→    action: "user.account_created",
+   826→    entityType: "USER",
+   827→    entityId: member.id,
+   828→    entityLabel: member.name,
+   829→    detail: `Created a login account for ${member.name} (${member.email})`,
+   830→  });
+   831→  revalidatePath("/");
+   832→}
+   833→
+   834→// ---------------------------------------------------------------------------
+   835→// Audit log (Admin + Manager)
+   836→// ---------------------------------------------------------------------------
+   837→
+   838→export async function getAuditLogs() {
+   839→  await requirePermission("audit:view");
+   840→  const logs = await db.auditLog.findMany({
+   841→    orderBy: { createdAt: "desc" },
+   842→    take: 300,
+   843→  });
+   844→  return logs.map((l) => ({
+   845→    ...l,
+   846→    createdAt: l.createdAt.toISOString(),
+   847→  }));
+   848→}
+   849→
+   850→// ---------------------------------------------------------------------------
+   851→// Projects the current user is associated with (owner or task assignee)
+   852→// ---------------------------------------------------------------------------
+   853→
+   854→export async function getMyProjects() {
+   855→  const auth = await getSession();
+   856→  if (!auth) return [];
+   857→  const projects = await db.project.findMany({
+   858→    where: {
+   859→      OR: [
+   860→        { ownerName: auth.name },
+   861→        { tasks: { some: { assignee: { name: auth.name } } } },
+   862→      ],
+   863→    },
+   864→    select: { id: true, name: true, color: true, status: true },
+   865→    orderBy: { name: "asc" },
+   866→  });
+   867→  return projects;
+   868→}
+   869→

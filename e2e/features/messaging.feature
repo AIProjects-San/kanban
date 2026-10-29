@@ -1,0 +1,21 @@
+Feature: Messaging
+  Users can message each other, and each inbox only shows its own threads.
+
+  Background:
+    Given the app is running
+
+  Scenario: Send a message to another member
+    When I sign in as "demo@fernly.dev" with password "fernly123"
+    And I open the "Team" view
+    And I send a message with subject "E2E hello" to "member@fernly.dev"
+    Then I should see a confirmation that the message was sent
+
+  Scenario: The recipient sees the message in their inbox
+    When I sign in as "member@fernly.dev" with password "fernly123"
+    And I open my inbox
+    Then my inbox should contain a message with subject "E2E hello"
+
+  Scenario: Other members cannot see that message
+    When I sign in as "manager@fernly.dev" with password "fernly123"
+    And I open my inbox
+    Then my inbox should not contain a message with subject "E2E hello"

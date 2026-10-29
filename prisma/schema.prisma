@@ -1,0 +1,384 @@
+// Fernly — Project Management Admin Dashboard schema
+// PostgreSQL datasource (Supabase), Prisma Client JS
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth + Profile
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("Project Lead")
+  timezone     String   @default("Pacific/Auckland")
+  bio          String   @default("")
+  avatarColor  String   @default("forest")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  projectAssignments ProjectAssignment[]
+  settings           UserSettings?
+}
+
+// ---------------------------------------------------------------------------
+// User settings — per-user preferences stored in the DB so they follow the
+// user across machines (theme, dark mode, notification toggles).
+// ---------------------------------------------------------------------------
+
+model UserSettings {
+  userId           String   @id
+  accent           String   @default("forest") // forest | ocean | plum | ember
+  dark             Boolean  @default(false)
+  notifEmail       Boolean  @default(true)
+  notifPush        Boolean  @default(true)
+  notifMentions    Boolean  @default(true)
+  notifDueToday    Boolean  @default(true)
+  notifWeekly      Boolean  @default(false)
+  notifProduct     Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  status      String   @default("RUNNING") // RUNNING | ENDED | PENDING | PAUSED
+  priority    String   @default("MEDIUM")  // HIGH | MEDIUM | LOW
+  dueDate     DateTime?
+  progress    Int      @default(0)         // 0..100
+  color       String   @default("forest")  // forest | ocean | plum | ember | slate
+  ownerName   String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks       Task[]
+  timeEntries TimeEntry[]
+  assignments ProjectAssignment[]
+}
+
+// ---------------------------------------------------------------------------
+// Tasks (Kanban)
+// ---------------------------------------------------------------------------
+
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @default("")
+  status      String   @default("TODO")        // TODO | IN_PROGRESS | IN_REVIEW | DONE
+  priority    String   @default("MEDIUM")      // HIGH | MEDIUM | LOW
+  tag         String   @default("FRONTEND")    // FRONTEND | BACKEND | DESIGN | QA | MARKETING
+  dueDate     DateTime?
+  order       Int      @default(0)
+  projectId   String?
+  assigneeId  String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assignee    TeamMember? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Team Members
+// ---------------------------------------------------------------------------
+
+model TeamMember {
+  id             String   @id @default(cuid())
+  name           String
+  role           String
+  department     String   @default("ENGINEERING") // ENGINEERING | DESIGN | MARKETING | MANAGEMENT
+  email          String   @unique
+  avatarColor    String   @default("forest")
+  online         Boolean  @default(false)
+  openTasks      Int      @default(0)
+  completedTasks Int      @default(0)
+  workload       Int      @default(0)             // 0..100 percent
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tasks       Task[]
+  timeEntries TimeEntry[]
+}
+
+// ---------------------------------------------------------------------------
+// Calendar Events
+// ---------------------------------------------------------------------------
+
+model CalendarEvent {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @default("")
+  date        DateTime
+  time        String   @default("09:00")
+  durationMin Int      @default(60)
+  type        String   @default("MEETING") // MEETING | DEADLINE | REVIEW | SOCIAL | FOCUS
+  location    String   @default("")
+  createdAt   DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String   @id @default(cuid())
+  title     String
+  message   String
+  type      String   @default("INFO") // INFO | SUCCESS | WARNING | TASK | MENTION
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Time Tracking
+// ---------------------------------------------------------------------------
+
+model TimeEntry {
+  id          String   @id @default(cuid())
+  projectId   String?
+  memberId    String?
+  date        DateTime
+  hours       Float    @default(0)
+  description String   @default("")
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  member      TeamMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Reminders (Dashboard widget)
+// ---------------------------------------------------------------------------
+
+model Reminder {
+  id        String   @id @default(cuid())
+  title     String
+  dueDate   DateTime
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+  // Owner of the reminder. Null = workspace-wide reminder (visible to
+  // everyone); set = personal reminder visible only to that user.
+  ownerId   String?
+}
+
+// ---------------------------------------------------------------------------
+// Messages (Team messaging — inbox + sent + threads)
+// ---------------------------------------------------------------------------
+
+model Message {
+  id               String   @id @default(cuid())
+  direction        String   // "IN" (to current user) | "OUT" (from current user)
+  threadId         String   // groups messages in the same conversation
+  memberId         String?  // the TeamMember this conversation is with
+  senderUserId     String   @default("") // User.id of the sender
+  recipientUserId  String   @default("") // User.id of the recipient
+  senderName       String   // display name of sender
+  senderAvatarColor String  @default("forest")
+  senderRole       String   @default("")
+  recipientName    String   // display name of recipient
+  subject          String
+  body             String
+  read             Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([threadId])
+  @@index([direction])
+  @@index([recipientUserId])
+  @@index([senderUserId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log — immutable trail of every mutating action in the workspace
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorId     String   @default("")   // User.id of who did it
+  actorName   String                  // display name at the time of the action
+  actorRole   String   @default("")   // ADMIN | MANAGER | MEMBER | SYSTEM
+  action      String                  // e.g. "task.created", "project.deleted", "auth.signed_in"
+  entityType  String                  // TASK | PROJECT | MEMBER | EVENT | MESSAGE | USER | ROLE | REMINDER | TIME | AUTH | NOTIFICATION
+  entityId    String   @default("")
+  entityLabel String   @default("")   // human-readable label of the affected record
+  detail      String   @default("")   // full human-readable sentence for the timeline
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType])
+  @@index([actorId])
+}
+
+// ---------------------------------------------------------------------------
+// Project Assignments — which users are allocated to which projects.
+// This is the explicit "assign user to project" relation, separate from
+// ownership (Project.ownerName) and task-based association (Task.assigneeId).
+// A user assigned to a project can see it in their dashboard and tasks view,
+// even if they don't own it or have tasks in it yet.
+// ---------------------------------------------------------------------------
+
+model ProjectAssignment {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  role      String   @default("MEMBER") // OWNER | MEMBER
+  createdAt DateTime @default(now())
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Workspace — single-row table holding workspace-level settings.
+// All "default X" values that were previously hardcoded move here so admins
+// can configure them without a code deploy.
+// ---------------------------------------------------------------------------
+
+model Workspace {
+  id                    String   @id @default("default")
+  name                  String   @default("Fernly Workspace")
+  defaultTimezone       String   @default("Pacific/Auckland")
+  defaultUserRole       String   @default("MEMBER")
+  defaultDepartment     String   @default("ENGINEERING")
+  defaultAvatarColor    String   @default("forest")
+  defaultJobTitle       String   @default("Team Member")
+  minPasswordLength     Int      @default(8)
+  workloadFullCapacity  Int      @default(6)
+  auditLogLimit         Int      @default(300)
+  entityHistoryLimit    Int      @default(50)
+  dashboardNotifLimit   Int      @default(20)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// DB-backed domain enums — admins can add/rename/reorder/customize colors
+// for task statuses, project statuses, event types, tags, priorities, and
+// departments. Each table is seeded with the defaults from lib/config.ts.
+//
+// The TS literal unions (TaskStatus, ProjectStatus, etc.) are kept as
+// "known defaults" — DB rows can extend them additively. Consumers use
+// `string` at runtime and look up the label/color from the DB-driven list.
+// ---------------------------------------------------------------------------
+
+model TaskStatusConfig {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  label       String
+  accentClass String  @default("bg-zinc-400")
+  sortOrder   Int     @default(0)
+  isTerminal  Boolean @default(false) // true = DONE-like (no further transitions expected)
+  isVisible   Boolean @default(true)
+}
+
+model ProjectStatusConfig {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  label       String
+  badgeClass  String  @default("bg-muted text-muted-foreground")
+  dotClass    String  @default("bg-muted-foreground")
+  sortOrder   Int     @default(0)
+  isVisible   Boolean @default(true)
+}
+
+model EventTypeConfig {
+  id         String  @id @default(cuid())
+  key        String  @unique
+  label      String
+  dotClass   String  @default("bg-primary")
+  bgClass    String  @default("bg-primary/10")
+  sortOrder  Int     @default(0)
+  isVisible  Boolean @default(true)
+}
+
+model TaskTagConfig {
+  id        String  @id @default(cuid())
+  key       String  @unique
+  label     String
+  color     String  @default("oklch(0.6 0.05 250)") // oklch string for inline style
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
+}
+
+model PriorityConfig {
+  id        String  @id @default(cuid())
+  key       String  @unique
+  label     String
+  color     String  @default("oklch(0.6 0.05 250)")
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
+}
+
+model DepartmentConfig {
+  id        String  @id @default(cuid())
+  key       String  @unique
+  label     String
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
+}
+
+// ---------------------------------------------------------------------------
+// DB-backed RBAC — roles and permissions are admin-configurable.
+// The ROLE_PERMISSIONS matrix from lib/rbac.ts is replaced by the
+// RolePermission join table. System roles (ADMIN/MANAGER/MEMBER) are seeded
+// with isSystem=true and cannot be deleted (but their permissions can be
+// edited).
+// ---------------------------------------------------------------------------
+
+model Role {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  description String   @default("")
+  iconName    String   @default("Shield") // Lucide icon name
+  badgeClass  String   @default("bg-muted text-muted-foreground")
+  isSystem    Boolean  @default(false) // system roles can't be deleted
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  description String   @default("")
+  group       String   @default("General") // for admin UI grouping
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}

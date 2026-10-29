@@ -1,0 +1,201 @@
+import type { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import bcrypt from "bcryptjs";
+import { db } from "@/lib/db";
+import { loginLimiter } from "@/lib/rate-limit";
+
+// ---------------------------------------------------------------------------
+// Secret handling
+// ---------------------------------------------------------------------------
+// In production a missing or known-weak NEXTAUTH_SECRET means anyone can
+// forge session JWTs, so we refuse to boot. During `next build`
+// (NEXT_PHASE=phase-production-build) we skip the throw so the build itself
+// can succeed on machines that (correctly) only inject secrets at runtime.
+
+const WEAK_SECRET_PREFIX = "fernly-dev-secret";
+
+function resolveSecret(): string {
+  const secret = process.env.NEXTAUTH_SECRET ?? "";
+  const isWeak = !secret || secret.startsWith(WEAK_SECRET_PREFIX);
+  const isBuild = process.env.NEXT_PHASE === "phase-production-build";
+
+  if (isWeak && process.env.NODE_ENV === "production" && !isBuild) {
+    throw new Error(
+      "NEXTAUTH_SECRET is missing or uses the development default. " +
+      "Generate a strong secret (openssl rand -base64 32) and set it before " +
+      "starting the server — session tokens are forgeable otherwise.",
+    );
+  }
+  if (isWeak) {
+    // Dev only: ephemeral random secret so we never sign with a public constant.
+    console.warn(
+      "[auth] NEXTAUTH_SECRET not set (or is the dev default) — using an " +
+      "ephemeral secret. Sessions will reset on server restart.",
+    );
+    return crypto.randomUUID();
+  }
+  return secret;
+}
+
+const isProd = process.env.NODE_ENV === "production";
+
+// How often the JWT callback re-reads the user's role from the database.
+// Keeps role changes effective within minutes without hammering the DB on
+// every single request.
+const ROLE_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+
+export const authOptions: NextAuthOptions = {
+  session: {
+    strategy: "jwt",
+    // Re-check the role from the database at most every 15 minutes so that
+    // role/permission changes apply without waiting for a full re-login.
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
+  pages: {
+    signIn: "/",
+  },
+  // Trust the proxy's forwarded headers so NextAuth detects the correct
+  // scheme/host in preview environments (HTTPS gateway → HTTP internal).
+  // In production we require secure cookies since traffic is HTTPS.
+  useSecureCookies: isProd,
+  cookies: {
+    sessionToken: {
+      name: "next-auth.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: isProd,
+      },
+    },
+    callbackUrl: {
+      name: "next-auth.callback-url",
+      options: {
+        sameSite: "lax",
+        path: "/",
+        secure: isProd,
+      },
+    },
+    csrfToken: {
+      name: "next-auth.csrf-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: isProd,
+      },
+    },
+  },
+  providers: [
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials, req) {
+        if (!credentials?.email || !credentials?.password) return null;
+
+        const email = credentials.email.toLowerCase();
+        // Best-effort client IP (behind the reverse proxy).
+        const headers = req?.headers ?? {};
+        const xff =
+          (typeof headers["x-forwarded-for"] === "string" && headers["x-forwarded-for"]) || "";
+        const ip = xff.split(",")[0].trim() || "unknown";
+        const emailKey = `login:email:${email}`;
+        const ipKey = `login:ip:${ip}`;
+
+        // Brute-force throttle: block before touching the database when the
+        // email or the source IP is over the attempt budget.
+        if (loginLimiter.check(emailKey).blocked || loginLimiter.check(ipKey).blocked) {
+          console.warn(`[auth] login throttled for ${email} (ip ${ip})`);
+          return null;
+        }
+
+        const user = await db.user.findUnique({ where: { email } });
+        if (!user) {
+          // Timing-attack mitigation: burn the same bcrypt work factor when
+          // the account doesn't exist so response times don't reveal whether
+          // an email is registered.
+          await bcrypt.compare(
+            credentials.password,
+            // Precomputed hash of a random throwaway string (cost 10).
+            "$2b$10$GYrvjahdLkU.Jqm7PcKefutEUdE3LqKraZPNJ8M7q/FCSKaJdgWte",
+          );
+          loginLimiter.hit(emailKey);
+          loginLimiter.hit(ipKey);
+          return null;
+        }
+        const ok = await bcrypt.compare(credentials.password, user.passwordHash);
+        if (!ok) {
+          loginLimiter.hit(emailKey);
+          loginLimiter.hit(ipKey);
+          return null;
+        }
+        // Successful sign-in clears the per-email budget (a legit user who
+        // mistyped their password a few times shouldn't stay blocked).
+        loginLimiter.reset(emailKey);
+        // Audit trail: record successful sign-ins
+        try {
+          await db.auditLog.create({
+            data: {
+              actorId: user.id,
+              actorName: user.name,
+              actorRole: user.role,
+              action: "auth.signed_in",
+              entityType: "AUTH",
+              entityLabel: user.email,
+              detail: `${user.name} signed in to the workspace`,
+            },
+          });
+        } catch (err) {
+          console.error("[audit] failed to log sign-in:", err);
+        }
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        } as any;
+      },
+    }),
+  ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        // Initial sign-in — stamp the token with the current role.
+        token.id = (user as any).id;
+        token.role = (user as any).role;
+        token.roleCheckedAt = Date.now();
+      } else if (
+        typeof token.roleCheckedAt !== "number" ||
+        Date.now() - (token.roleCheckedAt as number) > ROLE_REFRESH_MS
+      ) {
+        // Periodically re-read the role from the database so promotions and
+        // demotions take effect without waiting for the JWT to expire.
+        const fresh = await db.user.findUnique({
+          where: { id: token.id as string },
+          select: { role: true },
+        });
+        if (fresh) {
+          token.role = fresh.role;
+        } else {
+          // Account deleted mid-session — invalidate the identity claim; the
+          // app treats an empty id as "not signed in".
+          token.id = "";
+          token.role = "MEMBER";
+        }
+        token.roleCheckedAt = Date.now();
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        (session.user as any).id = token.id as string;
+        (session.user as any).role = token.role as string;
+      }
+      return session;
+    },
+  },
+  secret: resolveSecret(),
+};

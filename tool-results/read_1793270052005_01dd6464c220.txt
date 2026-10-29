@@ -1,0 +1,529 @@
+     1→/* eslint-disable @typescript-eslint/no-require-imports */
+     2→// Fernly seed script — generates rich, realistic mock data
+     3→// Run: bun run db:seed
+     4→
+     5→const { PrismaClient } = require("@prisma/client");
+     6→const bcrypt = require("bcryptjs");
+     7→
+     8→const db = new PrismaClient();
+     9→
+    10→const now = new Date();
+    11→const TODAY = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    12→
+    13→function addDays(date, n) {
+    14→  const d = new Date(date);
+    15→  d.setDate(d.getDate() + n);
+    16→  return d;
+    17→}
+    18→function addHours(date, n) {
+    19→  const d = new Date(date);
+    20→  d.setHours(d.getHours() + n);
+    21→  return d;
+    22→}
+    23→function pick(arr) {
+    24→  return arr[Math.floor(Math.random() * arr.length)];
+    25→}
+    26→
+    27→async function main() {
+    28→  console.log("🌱 Seeding Fernly database...");
+    29→
+    30→  await db.notification.deleteMany();
+    31→  await db.timeEntry.deleteMany();
+    32→  await db.calendarEvent.deleteMany();
+    33→  await db.reminder.deleteMany();
+    34→  await db.task.deleteMany();
+    35→  await db.project.deleteMany();
+    36→  await db.teamMember.deleteMany();
+    37→  await db.user.deleteMany();
+    38→  await db.message.deleteMany();
+    39→  await db.auditLog.deleteMany();
+    40→
+    41→  // -----------------------------------------------------------------
+    42→  // Users — 3 roles for RBAC testing
+    43→  // -----------------------------------------------------------------
+    44→  const passwordHash = await bcrypt.hash("fernly123", 10);
+    45→  const demoUser = await db.user.create({
+    46→    data: {
+    47→      email: "demo@fernly.app",
+    48→      name: "Mira Hale",
+    49→      passwordHash,
+    50→      role: "ADMIN",
+    51→      timezone: "Pacific/Auckland",
+    52→      bio: "Workspace admin at Halcyon Labs. Coffee enthusiast, trail runner, occasional watercolorist.",
+    53→      avatarColor: "forest",
+    54→    },
+    55→  });
+    56→  const managerUser = await db.user.create({
+    57→    data: {
+    58→      email: "manager@fernly.app",
+    59→      name: "Ingrid Solberg",
+    60→      passwordHash,
+    61→      role: "MANAGER",
+    62→      timezone: "Europe/Oslo",
+    63→      bio: "Engineering Manager. Keeps the trains running on time.",
+    64→      avatarColor: "ocean",
+    65→    },
+    66→  });
+    67→  const memberUser = await db.user.create({
+    68→    data: {
+    69→      email: "member@fernly.app",
+    70→      name: "Theo Vance",
+    71→      passwordHash,
+    72→      role: "MEMBER",
+    73→      timezone: "Pacific/Auckland",
+    74→      bio: "Senior Frontend Engineer. Loves clean code and good coffee.",
+    75→      avatarColor: "plum",
+    76→    },
+    77→  });
+    78→  console.log(`  ✓ 3 users (ADMIN, MANAGER, MEMBER) — all password: fernly123`);
+    79→  console.log(`  ✓ User: ${demoUser.email} (password: fernly123)`);
+    80→
+    81→  // -----------------------------------------------------------------
+    82→  // Team Members (12)
+    83→  // -----------------------------------------------------------------
+    84→  const memberSeed = [
+    85→    { name: "Mira Hale", role: "Project Lead", department: "MANAGEMENT", email: "mira@fernly.app", avatarColor: "forest", online: true },
+    86→    { name: "Theo Vance", role: "Senior Frontend Engineer", department: "ENGINEERING", email: "theo@fernly.app", avatarColor: "ocean", online: true },
+    87→    { name: "Lena Okafor", role: "Backend Engineer", department: "ENGINEERING", email: "lena@fernly.app", avatarColor: "plum", online: true },
+    88→    { name: "Rafael Costa", role: "DevOps Engineer", department: "ENGINEERING", email: "rafael@fernly.app", avatarColor: "ember", online: false },
+    89→    { name: "Yuki Tanaka", role: "Product Designer", department: "DESIGN", email: "yuki@fernly.app", avatarColor: "plum", online: true },
+    90→    { name: "Amara Diallo", role: "UX Researcher", department: "DESIGN", email: "amara@fernly.app", avatarColor: "forest", online: false },
+    91→    { name: "Soren Lindqvist", role: "QA Engineer", department: "ENGINEERING", email: "soren@fernly.app", avatarColor: "ocean", online: true },
+    92→    { name: "Priya Nair", role: "Marketing Lead", department: "MARKETING", email: "priya@fernly.app", avatarColor: "ember", online: true },
+    93→    { name: "Marcus Bell", role: "Content Strategist", department: "MARKETING", email: "marcus@fernly.app", avatarColor: "forest", online: false },
+    94→    { name: "Ingrid Solberg", role: "Engineering Manager", department: "MANAGEMENT", email: "ingrid@fernly.app", avatarColor: "slate", online: true },
+    95→    { name: "Diego Morales", role: "Mobile Engineer", department: "ENGINEERING", email: "diego@fernly.app", avatarColor: "ocean", online: false },
+    96→    { name: "Hana Park", role: "Visual Designer", department: "DESIGN", email: "hana@fernly.app", avatarColor: "plum", online: false },
+    97→  ];
+    98→
+    99→  const members = [];
+   100→  for (const m of memberSeed) {
+   101→    const member = await db.teamMember.create({
+   102→      data: { ...m, openTasks: 0, completedTasks: 0, workload: 0 },
+   103→    });
+   104→    members.push(member);
+   105→  }
+   106→  console.log(`  ✓ ${members.length} team members`);
+   107→
+   108→  // -----------------------------------------------------------------
+   109→  // Projects (24)
+   110→  // -----------------------------------------------------------------
+   111→  const projectTemplates = [
+   112→    "Halcyon Labs Website", "Fernly Mobile App", "Atlas Analytics Platform",
+   113→    "Orion Design System", "Cobalt CRM Migration", "Sage Payments API",
+   114→    "Lumen Email Campaign", "Pulse Customer Portal", "Verdant Sustainability Report",
+   115→    "Nimbus Cloud Migration", "Tidepool Data Lake", "Ember Marketing Site",
+   116→    "Quill Documentation Hub", "Beacon Onboarding Flow", "Driftwood Mobile SDK",
+   117→    "Sundial Calendar Sync", "Cinder Security Audit", "Marigold Brand Refresh",
+   118→    "Halcyon iOS Release", "Fernly v2.0 Launch", "Atlas Reports Module",
+   119→    "Orion Icon Library", "Cobalt Mobile Sync", "Sage Webhooks v3",
+   120→  ];
+   121→  const statuses = ["RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","RUNNING","ENDED","ENDED","ENDED","ENDED","ENDED","ENDED","ENDED","ENDED","ENDED","ENDED","PENDING","PAUSED"];
+   122→  const priorities = ["HIGH", "MEDIUM", "LOW"];
+   123→  const colors = ["forest", "ocean", "plum", "ember", "slate"];
+   124→
+   125→  const projects = [];
+   126→  // Deterministic ownership so each demo user is associated with real projects
+   127→  // (index → owner name). Others stay random.
+   128→  const explicitOwners = {
+   129→    0: "Mira Hale",        // Halcyon Labs Website
+   130→    1: "Mira Hale",        // Fernly Mobile App
+   131→    4: "Mira Hale",        // Lumen Email Campaign
+   132→    2: "Theo Vance",       // Atlas Analytics Platform
+   133→    14: "Theo Vance",      // Driftwood Mobile SDK
+   134→    18: "Ingrid Solberg",  // Halcyon iOS Release
+   135→    19: "Ingrid Solberg",  // Fernly v2.0 Launch
+   136→    7: "Ingrid Solberg",   // Pulse Customer Portal
+   137→  };
+   138→  for (let i = 0; i < 24; i++) {
+   139→    const status = statuses[i];
+   140→    const owner = explicitOwners[i] ?? pick(members).name;
+   141→    const progress = status === "ENDED" ? 100 : status === "PENDING" ? 0 : Math.floor(15 + Math.random() * 75);
+   142→    const dueDate = status === "ENDED"
+   143→      ? addDays(TODAY, -(Math.floor(Math.random() * 60) + 5))
+   144→      : addDays(TODAY, Math.floor(Math.random() * 90) + 3);
+   145→    const p = await db.project.create({
+   146→      data: {
+   147→        name: projectTemplates[i],
+   148→        description: `${projectTemplates[i]} — internal initiative led by ${owner}.`,
+   149→        status,
+   150→        priority: pick(priorities),
+   151→        dueDate,
+   152→        progress,
+   153→        color: pick(colors),
+   154→        ownerName: owner,
+   155→      },
+   156→    });
+   157→    projects.push(p);
+   158→  }
+   159→  console.log(`  ✓ ${projects.length} projects`);
+   160→
+   161→  // -----------------------------------------------------------------
+   162→  // Tasks (40 across all 4 columns)
+   163→  // -----------------------------------------------------------------
+   164→  const taskTitles = [
+   165→    "Implement auth flow with NextAuth", "Build Kanban drag-drop with dnd-kit",
+   166→    "Design dashboard KPI cards", "Write E2E tests for login",
+   167→    "Migrate legacy API to tRPC", "Optimize bundle size",
+   168→    "Add dark mode toggle", "Create calendar event modal",
+   169→    "Set up Prisma schema", "Refactor analytics service",
+   170→    "Build team member cards", "Add command palette",
+   171→    "Design empty states", "Write API integration tests",
+   172→    "Implement notifications drawer", "Create settings forms",
+   173→    "Add responsive breakpoints", "Build analytics charts",
+   174→    "Set up CI/CD pipeline", "Optimize database queries",
+   175→    "Design onboarding flow", "Add keyboard shortcuts",
+   176→    "Build help center search", "Create project color picker",
+   177→    "Implement CSV export", "Add workload indicators",
+   178→    "Build time tracker widget", "Design priority badges",
+   179→    "Create reminder cards", "Add member filter chips",
+   180→    "Implement activity graph", "Build top contributors list",
+   181→    "Add tag system to tasks", "Create due-date picker",
+   182→    "Build mobile sidebar", "Add toast notifications",
+   183→    "Implement task reordering", "Create dashboard widgets",
+   184→    "Add member profile drawer", "Build event type colors",
+   185→  ];
+   186→  const tags = ["FRONTEND", "BACKEND", "DESIGN", "QA", "MARKETING"];
+   187→  const statusDistribution = [
+   188→    ...Array(11).fill("TODO"),
+   189→    ...Array(9).fill("IN_PROGRESS"),
+   190→    ...Array(7).fill("IN_REVIEW"),
+   191→    ...Array(13).fill("DONE"),
+   192→  ];
+   193→
+   194→  let order = 0;
+   195→  const tasks = [];
+   196→  // Guarantee each demo user (Mira=0, Theo=1, Ingrid=9) is assigned tasks in
+   197→  // several projects so their task modal shows associated projects.
+   198→  const explicitAssignments = [
+   199→    { memberIdx: 0, projectIdx: 0 },   // Mira — Halcyon Labs Website
+   200→    { memberIdx: 1, projectIdx: 1 },   // Theo — Fernly Mobile App
+   201→    { memberIdx: 0, projectIdx: 4 },   // Mira — Lumen Email Campaign
+   202→    { memberIdx: 9, projectIdx: 18 },  // Ingrid — Halcyon iOS Release
+   203→    { memberIdx: 1, projectIdx: 2 },   // Theo — Atlas Analytics Platform
+   204→    { memberIdx: 9, projectIdx: 19 },  // Ingrid — Fernly v2.0 Launch
+   205→    { memberIdx: 0, projectIdx: 2 },   // Mira — Atlas Analytics Platform
+   206→    { memberIdx: 1, projectIdx: 14 },  // Theo — Driftwood Mobile SDK
+   207→    { memberIdx: 9, projectIdx: 1 },   // Ingrid — Fernly Mobile App
+   208→    { memberIdx: 0, projectIdx: 1 },   // Mira — Fernly Mobile App
+   209→  ];
+   210→  for (let i = 0; i < taskTitles.length; i++) {
+   211→    const status = statusDistribution[i] || "TODO";
+   212→    const project = i < explicitAssignments.length
+   213→      ? projects[explicitAssignments[i].projectIdx]
+   214→      : pick(projects);
+   215→    const assignee = i < explicitAssignments.length
+   216→      ? members[explicitAssignments[i].memberIdx]
+   217→      : pick(members);
+   218→    const dueDate = Math.random() > 0.2 ? addDays(TODAY, Math.floor(Math.random() * 30) - 5) : null;
+   219→    const task = await db.task.create({
+   220→      data: {
+   221→        title: taskTitles[i],
+   222→        description: `${taskTitles[i]}. Scope and acceptance criteria defined in the project brief.`,
+   223→        status,
+   224→        priority: pick(priorities),
+   225→        tag: pick(tags),
+   226→        dueDate,
+   227→        order: order++,
+   228→        projectId: project.id,
+   229→        assigneeId: assignee.id,
+   230→      },
+   231→    });
+   232→    tasks.push(task);
+   233→  }
+   234→  console.log(`  ✓ ${tasks.length} tasks`);
+   235→
+   236→  // Recompute member stats
+   237→  for (const m of members) {
+   238→    const open = tasks.filter((t) => t.assigneeId === m.id && t.status !== "DONE").length;
+   239→    const completed = tasks.filter((t) => t.assigneeId === m.id && t.status === "DONE").length;
+   240→    const workload = Math.min(100, Math.round((open / 6) * 100));
+   241→    await db.teamMember.update({ where: { id: m.id }, data: { openTasks: open, completedTasks: completed, workload } });
+   242→  }
+   243→
+   244→  // -----------------------------------------------------------------
+   245→  // Calendar Events (18)
+   246→  // -----------------------------------------------------------------
+   247→  const eventTitles = [
+   248→    { title: "Sprint Planning", type: "MEETING" },
+   249→    { title: "Design Review — Orion", type: "REVIEW" },
+   250→    { title: "Halcyon Labs Check-in", type: "MEETING" },
+   251→    { title: "Fernly v2.0 Launch", type: "DEADLINE" },
+   252→    { title: "1:1 with Ingrid", type: "MEETING" },
+   253→    { title: "QA Sync", type: "REVIEW" },
+   254→    { title: "Marketing Standup", type: "MEETING" },
+   255→    { title: "Deep Work — Atlas", type: "FOCUS" },
+   256→    { title: "Team Lunch", type: "SOCIAL" },
+   257→    { title: "Demo Day", type: "MEETING" },
+   258→    { title: "Cobalt Migration Cutoff", type: "DEADLINE" },
+   259→    { title: "User Research Debrief", type: "REVIEW" },
+   260→    { title: "Engineering All-Hands", type: "MEETING" },
+   261→    { title: "Brand Refresh Review", type: "REVIEW" },
+   262→    { title: "Onboarding Workshop", type: "MEETING" },
+   263→    { title: "Focus: API Refactor", type: "FOCUS" },
+   264→    { title: "Sprint Retro", type: "REVIEW" },
+   265→    { title: "Fernly Birthday", type: "SOCIAL" },
+   266→  ];
+   267→  const times = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00"];
+   268→  const locations = ["Google Meet", "Room A — Kauri", "Room B — Rimu", "Zoom", "Slack Huddle", "Office Kitchen"];
+   269→
+   270→  for (let i = 0; i < eventTitles.length; i++) {
+   271→    const e = eventTitles[i];
+   272→    const offset = Math.floor(Math.random() * 50) - 10;
+   273→    await db.calendarEvent.create({
+   274→      data: {
+   275→        title: e.title,
+   276→        description: `${e.title}. ${e.type === "DEADLINE" ? "Hard deadline — please plan accordingly." : "Open to all relevant contributors."}`,
+   277→        date: addDays(TODAY, offset),
+   278→        time: pick(times),
+   279→        durationMin: pick([30, 45, 60, 90]),
+   280→        type: e.type,
+   281→        location: pick(locations),
+   282→      },
+   283→    });
+   284→  }
+   285→  console.log(`  ✓ ${eventTitles.length} calendar events`);
+   286→
+   287→  // -----------------------------------------------------------------
+   288→  // Notifications (8)
+   289→  // -----------------------------------------------------------------
+   290→  const notifs = [
+   291→    { title: "Task assigned", message: "Theo Vance assigned you “Implement auth flow with NextAuth”", type: "TASK" },
+   292→    { title: "Reminder: Halcyon check-in", message: "Check-in with Halcyon Labs is due in 2 hours.", type: "WARNING" },
+   293→    { title: "Project ended", message: "Halcyon Labs Website marked as ended. Archived to Reports.", type: "INFO" },
+   294→    { title: "Mention", message: "Yuki Tanaka mentioned you in “Design Review — Orion”.", type: "MENTION" },
+   295→    { title: "Sprint complete", message: "Sprint 14 wrapped up — 18 of 22 tasks completed.", type: "SUCCESS" },
+   296→    { title: "Due soon", message: "“Fernly v2.0 Launch” is due in 3 days.", type: "WARNING" },
+   297→    { title: "New member", message: "Hana Park joined the Design team. Say hi!", type: "INFO" },
+   298→    { title: "Time to log", message: "You have 4.5h unlogged time this week.", type: "INFO" },
+   299→  ];
+   300→  for (let i = 0; i < notifs.length; i++) {
+   301→    await db.notification.create({
+   302→      data: {
+   303→        ...notifs[i],
+   304→        read: i > 4,
+   305→        createdAt: addHours(now, -i * 3 - 1),
+   306→      },
+   307→    });
+   308→  }
+   309→  console.log(`  ✓ ${notifs.length} notifications`);
+   310→
+   311→  // -----------------------------------------------------------------
+   312→  // Time entries (~180 across 90 days)
+   313→  // -----------------------------------------------------------------
+   314→  let teCount = 0;
+   315→  for (let d = 89; d >= 0; d--) {
+   316→    const date = addDays(TODAY, -d);
+   317→    const day = date.getDay();
+   318→    if (day === 0 || day === 6) continue;
+   319→    const entriesToday = Math.floor(Math.random() * 4) + 1;
+   320→    for (let j = 0; j < entriesToday; j++) {
+   321→      await db.timeEntry.create({
+   322→        data: {
+   323→          projectId: pick(projects).id,
+   324→          memberId: pick(members).id,
+   325→          date,
+   326→          hours: Math.round((Math.random() * 4 + 1) * 10) / 10,
+   327→          description: pick(["Code review", "Feature work", "Planning", "Bug fix", "Design sync", "Testing", "Documentation"]),
+   328→        },
+   329→      });
+   330→      teCount++;
+   331→    }
+   332→  }
+   333→  console.log(`  ✓ ${teCount} time entries across 90 days`);
+   334→
+   335→  // -----------------------------------------------------------------
+   336→  // Reminders (5)
+   337→  // -----------------------------------------------------------------
+   338→  const reminders = [
+   339→    { title: "Check-in with Halcyon Labs", dueDate: addDays(TODAY, 0) },
+   340→    { title: "Review PRs from Theo", dueDate: addDays(TODAY, 1) },
+   341→    { title: "Send Fernly v2.0 announcement", dueDate: addDays(TODAY, 2) },
+   342→    { title: "Approve Q3 marketing budget", dueDate: addDays(TODAY, 4) },
+   343→    { title: "1:1 prep with Ingrid", dueDate: addDays(TODAY, -1) },
+   344→  ];
+   345→  for (const r of reminders) {
+   346→    await db.reminder.create({
+   347→      data: { title: r.title, dueDate: r.dueDate, completed: r.dueDate < TODAY },
+   348→    });
+   349→  }
+   350→  console.log(`  ✓ ${reminders.length} reminders`);
+   351→
+   352→  // -----------------------------------------------------------------
+   353→  // Messages (incoming from team members + one sent)
+   354→  // -----------------------------------------------------------------
+   355→  await db.message.deleteMany();
+   356→
+   357→  const seedMessages = [
+   358→    {
+   359→      from: members[1], // Theo Vance
+   360→      subject: "Auth flow PR ready for review",
+   361→      body: "Hey Mira,\n\nI just pushed the NextAuth implementation to the `feature/auth-flow` branch. It's ready for your review whenever you have a moment.\n\nKey points:\n- Credentials provider with bcrypt hashing\n- JWT session strategy\n- Cookie config for reverse-proxy environments\n\nCould you take a look before EOD? I'd like to merge before the sprint ends.\n\nThanks!\nTheo",
+   362→      daysAgo: 0,
+   363→      read: false,
+   364→    },
+   365→    {
+   366→      from: members[4], // Yuki Tanaka
+   367→      subject: "Orion design review — feedback needed",
+   368→      body: "Hi Mira,\n\nI've attached the latest Orion design system mockups. The main changes are:\n\n1. Updated color tokens for accessibility (WCAG AA)\n2. New iconography set (48 icons)\n3. Component spacing refinements\n\nCan we schedule a 30-min review this week? I'd love your input on the color palette before we finalize.\n\nBest,\nYuki",
+   369→      daysAgo: 1,
+   370→      read: false,
+   371→    },
+   372→    {
+   373→      from: members[9], // Ingrid Solberg
+   374→      subject: "Sprint retro notes + action items",
+   375→      body: "Mira,\n\nGreat sprint everyone! Here are the retro notes:\n\n**What went well:**\n- Fernly v2.0 on track for launch\n- Cross-team collaboration improved\n- Bug turnaround time down 23%\n\n**Action items:**\n1. Review QA process (Soren leading)\n2. Update documentation hub (Marcus)\n3. Plan v2.1 roadmap (you + me next week)\n\nLet's chat Thursday about the roadmap.\n\nIngrid",
+   376→      daysAgo: 2,
+   377→      read: true,
+   378→    },
+   379→    {
+   380→      from: members[7], // Priya Nair
+   381→      subject: "Fernly v2.0 launch — marketing plan",
+   382→      body: "Hi Mira,\n\nThe marketing plan for the v2.0 launch is ready. We're targeting a 3-week campaign:\n\n- Week 1: Teaser social posts + email to waitlist\n- Week 2: Product hunt launch + blog post\n- Week 3: Customer spotlight + webinar\n\nBudget: $4.2k (within Q4 allocation). Can you approve by Friday so we can start scheduling?\n\nPriya",
+   383→      daysAgo: 3,
+   384→      read: false,
+   385→    },
+   386→    {
+   387→      from: members[6], // Soren Lindqvist
+   388→      subject: "QA: Found 3 blockers in staging",
+   389→      body: "Mira,\n\nI found 3 blocker-level bugs in staging during regression testing:\n\n1. **Kanban drag-drop breaks on mobile** — cards become unresponsive after first drag\n2. **Calendar events don't persist** — POST returns 200 but event doesn't appear\n3. **Analytics CSV export** — filename has undefined when period is 7D\n\nI've logged all three in the tracker. Theo and Lena are aware. We should fix before launch.\n\nSoren",
+   390→      daysAgo: 4,
+   391→      read: true,
+   392→    },
+   393→    {
+   394→      from: members[2], // Lena Okafor
+   395→      subject: "Atlas API — need your input on schema",
+   396→      body: "Hey,\n\nI'm working on the Atlas analytics API and I'm stuck on the schema design for the time-series tables. Two options:\n\n**Option A:** Wide table (one row per day, columns per metric)\n**Option B:** Narrow/EAV (one row per metric per day)\n\nOption A is faster to query but harder to extend. Option B is flexible but needs more joins.\n\nCan we sync for 15 min tomorrow? I'd value your perspective.\n\nLena",
+   397→      daysAgo: 5,
+   398→      read: true,
+   399→    },
+   400→  ];
+   401→
+   402→  for (const msg of seedMessages) {
+   403→    const threadId = `seed-${msg.from.id}-${msg.daysAgo}`;
+   404→    await db.message.create({
+   405→      data: {
+   406→        direction: "IN",
+   407→        threadId,
+   408→        memberId: msg.from.id,
+   409→        senderName: msg.from.name,
+   410→        senderAvatarColor: msg.from.avatarColor,
+   411→        senderRole: msg.from.role,
+   412→        recipientName: demoUser.name,
+   413→        subject: msg.subject,
+   414→        body: msg.body,
+   415→        read: msg.read,
+   416→        createdAt: addDays(now, -msg.daysAgo),
+   417→      },
+   418→    });
+   419→  }
+   420→
+   421→  // One sent message (reply to Theo)
+   422→  await db.message.create({
+   423→    data: {
+   424→      direction: "OUT",
+   425→      threadId: `seed-${members[1].id}-0`,
+   426→      memberId: members[1].id,
+   427→      senderName: demoUser.name,
+   428→      senderAvatarColor: "forest",
+   429→      senderRole: demoUser.role,
+   430→      recipientName: members[1].name,
+   431→      subject: "Re: Auth flow PR ready for review",
+   432→      body: "Thanks Theo!\n\nI'll review it this afternoon. The proxy cookie config looks solid — that was the tricky part.\n\nI'll leave comments in the PR if I spot anything. Plan to merge by 5pm.\n\nMira",
+   433→      read: true,
+   434→      createdAt: addDays(now, 0),
+   435→    },
+   436→  });
+   437→
+   438→  console.log(`  ✓ ${seedMessages.length + 1} messages (6 incoming, 1 sent)`);
+   439→
+   440→  // -----------------------------------------------------------------
+   441→  // Audit Log — realistic trail of the last ~10 days
+   442→  // -----------------------------------------------------------------
+   443→  async function audit(actor, actorRole, action, entityType, entityLabel, detail, daysAgo, hoursAgo) {
+   444→    const createdAt = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000 - hoursAgo * 60 * 60 * 1000);
+   445→    await db.auditLog.create({
+   446→      data: {
+   447→        actorId: actor.id,
+   448→        actorName: actor.name,
+   449→        actorRole,
+   450→        action,
+   451→        entityType,
+   452→        entityId: "",
+   453→        entityLabel,
+   454→        detail,
+   455→        createdAt,
+   456→      },
+   457→    });
+   458→  }
+   459→
+   460→  const ADMIN = "ADMIN", MANAGER = "MANAGER", MEMBER = "MEMBER";
+   461→  const mira = demoUser, ingrid = managerUser, theo = memberUser;
+   462→
+   463→  const auditEntries = [
+   464→    // Today
+   465→    [mira, ADMIN, "auth.signed_in", "AUTH", "demo@fernly.app", "Mira Hale signed in to the workspace", 0, 2],
+   466→    [theo, MEMBER, "task.moved", "TASK", "Build Kanban drag-drop with dnd-kit", "Moved “Build Kanban drag-drop with dnd-kit” to In review", 0, 3],
+   467→    [ingrid, MANAGER, "event.created", "EVENT", "Sprint Retro", "Scheduled “Sprint Retro” on " + fmt(new Date(now.getTime() + 2 * 864e5)) + " at 15:00", 0, 5],
+   468→    [mira, ADMIN, "time.logged", "TIME", "Fernly Mobile App", "Logged 3.5h on “Fernly Mobile App”", 0, 6],
+   469→    [theo, MEMBER, "task.created", "TASK", "Add biometric unlock to mobile app", "Created task “Add biometric unlock to mobile app” in Fernly Mobile App", 0, 7],
+   470→    // Yesterday
+   471→    [theo, MEMBER, "auth.signed_in", "AUTH", "member@fernly.app", "Theo Vance signed in to the workspace", 1, 8],
+   472→    [mira, ADMIN, "project.created", "PROJECT", "Quill Documentation Hub", "Created project “Quill Documentation Hub”", 1, 6],
+   473→    [ingrid, MANAGER, "task.updated", "TASK", "Optimize database queries", "Updated priority, assignee on “Optimize database queries”", 1, 4],
+   474→    [theo, MEMBER, "reminder.completed", "REMINDER", "Review PRs from Theo", "Completed reminder “Review PRs from Theo”", 1, 2],
+   475→    [mira, ADMIN, "message.sent", "MESSAGE", "Re: Auth flow PR ready for review", "Sent “Re: Auth flow PR ready for review” to Theo Vance", 1, 1],
+   476→    // 2 days ago
+   477→    [ingrid, MANAGER, "auth.signed_in", "AUTH", "manager@fernly.app", "Ingrid Solberg signed in to the workspace", 2, 7],
+   478→    [ingrid, MANAGER, "project.updated", "PROJECT", "Fernly v2.0 Launch", "Updated progress on project “Fernly v2.0 Launch”", 2, 5],
+   479→    [mira, ADMIN, "role.changed", "ROLE", "Lena Okafor", "Changed role of Lena Okafor from Member to Manager", 2, 4],
+   480→    [theo, MEMBER, "task.moved", "TASK", "Implement auth flow with NextAuth", "Moved “Implement auth flow with NextAuth” to Done", 2, 2],
+   481→    // 3 days ago
+   482→    [theo, MEMBER, "message.sent", "MESSAGE", "QA: Found 3 blockers in staging", "Sent “QA: Found 3 blockers in staging” to Mira Hale", 3, 6],
+   483→    [mira, ADMIN, "member.invited", "MEMBER", "Hana Park", "Invited Hana Park (Visual Designer) to the team", 3, 4],
+   484→    [mira, ADMIN, "auth.signed_in", "AUTH", "demo@fernly.app", "Mira Hale signed in to the workspace", 3, 7],
+   485→    [ingrid, MANAGER, "event.deleted", "EVENT", "Marketing Standup (moved)", "Deleted event “Marketing Standup (moved)”", 3, 1],
+   486→    // 4 days ago
+   487→    [mira, ADMIN, "project.updated", "PROJECT", "Orion Design System", "Updated status, due date on project “Orion Design System”", 4, 6],
+   488→    [ingrid, MANAGER, "member.updated", "MEMBER", "Diego Morales", "Updated job title for Diego Morales", 4, 3],
+   489→    [theo, MEMBER, "task.created", "TASK", "Write E2E tests for login", "Created task “Write E2E tests for login” in Fernly Mobile App", 4, 1],
+   490→    // 5 days ago
+   491→    [ingrid, MANAGER, "project.created", "PROJECT", "Sundial Calendar Sync", "Created project “Sundial Calendar Sync”", 5, 6],
+   492→    [mira, ADMIN, "event.created", "EVENT", "Demo Day", "Scheduled “Demo Day” on " + fmt(new Date(now.getTime() + 5 * 864e5)) + " at 14:00", 5, 3],
+   493→    [theo, MEMBER, "task.moved", "TASK", "Build team member cards", "Moved “Build team member cards” to In progress", 5, 1],
+   494→    // 6 days ago
+   495→    [mira, ADMIN, "time.logged", "TIME", "Halcyon Labs Website", "Logged 6.5h on “Halcyon Labs Website”", 6, 5],
+   496→    [ingrid, MANAGER, "auth.signed_in", "AUTH", "manager@fernly.app", "Ingrid Solberg signed in to the workspace", 6, 8],
+   497→    [mira, ADMIN, "reminder.created", "REMINDER", "Approve Q3 marketing budget", "Added reminder “Approve Q3 marketing budget”", 6, 2],
+   498→    // 7 days ago
+   499→    [mira, ADMIN, "user.account_created", "USER", "Priya Nair", "Created a login account for Priya Nair (priya@fernly.app)", 7, 5],
+   500→    [ingrid, MANAGER, "task.updated", "TASK", "Set up CI/CD pipeline", "Updated description on “Set up CI/CD pipeline”", 7, 3],
+   501→    [theo, MEMBER, "message.sent", "MESSAGE", "Atlas API — need your input on schema", "Sent “Atlas API — need your input on schema” to Mira Hale", 7, 1],
+   502→    // 8 days ago
+   503→    [mira, ADMIN, "project.deleted", "PROJECT", "Slate Legacy Cleanup", "Deleted project “Slate Legacy Cleanup”", 8, 6],
+   504→    [mira, ADMIN, "auth.signed_in", "AUTH", "demo@fernly.app", "Mira Hale signed in to the workspace", 8, 7],
+   505→    // 9 days ago
+   506→    [theo, MEMBER, "task.created", "TASK", "Add dark mode toggle", "Created task “Add dark mode toggle” in Fernly Mobile App", 9, 4],
+   507→    [ingrid, MANAGER, "project.updated", "PROJECT", "Pulse Customer Portal", "Updated owner on project “Pulse Customer Portal”", 9, 2],
+   508→    [mira, ADMIN, "task.deleted", "TASK", "Fix dropdown z-index overlap", "Deleted task “Fix dropdown z-index overlap”", 9, 1],
+   509→  ];
+   510→
+   511→  function fmt(d) {
+   512→    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+   513→  }
+   514→
+   515→  for (const [actor, actorRole, action, entityType, entityLabel, detail, daysAgo, hoursAgo] of auditEntries) {
+   516→    await audit(actor, actorRole, action, entityType, entityLabel, detail, daysAgo, hoursAgo);
+   517→  }
+   518→  console.log(`  ✓ ${auditEntries.length} audit log entries across 10 days`);
+   519→
+   520→  console.log("\n✅ Seed complete. Login: demo@fernly.app / fernly123");
+   521→}
+   522→
+   523→main()
+   524→  .catch((e) => {
+   525→    console.error(e);
+   526→    process.exit(1);
+   527→  })
+   528→  .finally(() => db.$disconnect());
+   529→
