@@ -1,6 +1,6 @@
 # Fernly — Full Code Review (Devilish Edition)
 
-**Date:** 2026-10-29 · **Reviewer:** Automated deep audit · **Verdict at start:** *not production-ready*
+**Date:** 2026-10-29 (re-verified 2026-10-30) · **Reviewer:** Automated deep audit · **Verdict at start:** *not production-ready*
 **Verdict after remediation:** *production-ready for a single-tenant internal deployment, with the accepted risks listed in §5.*
 
 This review is deliberately harsh and honest. Every finding below was verified against the
@@ -8,6 +8,16 @@ source, reproduced where possible, and — unless explicitly marked **OPEN** —
 and regression-tested in this pass. Test evidence: **261 unit/integration tests green,
 95%+ statement coverage on the security-critical layer, production build clean with
 `ignoreBuildErrors` removed.**
+
+> **2026-10-30 re-verification note.** After a container rebuild, every P0–P3 fix was
+> re-audited against the restored tree. Result: all fixes held **except** two whose
+> on-disk state had partially reverted — P3-26 (48 dead `components/ui/*` files were
+> still present while their dependencies had already been removed, breaking `tsc`) and
+> P3-27 (`.env.example` missing; legacy `db/custom.db` still on disk). Both were
+> re-completed in this pass: dead files/dirs removed, `@radix-ui/react-toast` pruned,
+> `.env.example` restored, scaffold leftovers (`tests/`, `mini-services/`, `examples/`,
+> `tool-results/`) deleted. Toolchain re-verified green: `lint` + `tsc --noEmit` +
+> `261/261 tests` + dev-server login flow.
 
 ---
 
@@ -83,16 +93,23 @@ What remains open is listed transparently in §5 with remediation sketches.
 
 ## 6. Open items (honest list, with risk assessment)
 
-These were **consciously not** fixed in this pass:
+These were **consciously not** fixed in the original pass. Status after the
+2026-10-30 hardening pass is marked per item:
 
-1. **Name-based identity joins.** `Project.ownerName`, task-assignee matching and the
-   member-scope queries match on human *names*/emails rather than stable ids. Two users
-   named "Alex" will see each other's scope. Fixing this requires a data migration
-   (`ownerUserId` on Project, `userId` on TeamMember). **Risk: medium (data visibility
-   confusion, not privilege escalation).** Recommended before multi-team use.
-2. **Notifications are workspace-global** (by design in the original demo). Every signed-in
-   user sees the same 20 notifications and can mark them read. **Risk: low for a
-   single-team workspace.** Fix: add `recipientUserId` to `Notification`.
+1. ~~**Name-based identity joins.**~~ **FIXED 2026-10-30.** `Project.ownerUserId`
+   and `TeamMember.userId` (unique) now carry authoritative identity; all
+   scoping queries (dashboard, my-projects, project members, task-edit
+   ownership) match on stable ids. `Project.ownerName` survives as a
+   denormalized display copy only and is never used for authorization.
+   Existing rows were backfilled (`scripts/link-identities.js` — idempotent);
+   the seed links identities at creation; `createMember` auto-links by email.
+   Regression tests assert no identity query filters by name.
+2. **Notifications are workspace-global** (by design in the original demo).
+   Every signed-in user sees the same 20 notifications and can mark them read.
+   **Risk: low for a single-team workspace.** Fix: add `recipientUserId` to
+   `Notification`. *(Bonus hardening in the same pass: time entries are now
+   scoped to the visible member set — scoped users no longer receive other
+   members' time logs in the dashboard payload.)*
 3. **In-memory rate limiter** resets on restart and doesn't share state across instances.
    Fine for the current single-instance deployment; swap for Redis/Upstash before scaling
    horizontally.
@@ -103,8 +120,12 @@ These were **consciously not** fixed in this pass:
 5. **ESLint is permissive** — many valuable rules (`no-unused-vars`, `react-hooks/exhaustive-deps`,
    …) are switched off globally. Re-enable incrementally with an allow-list of legacy
    suppressions; do not bulk-flip without a dedicated pass.
-6. **No CI pipeline** exists yet. The toolchain is now `lint && typecheck && test && build` —
-   wire these into GitHub Actions before merging further work.
+6. ~~**No CI pipeline** exists yet.~~ **FIXED 2026-10-30.** `.github/workflows/ci.yml`
+   runs lint + typecheck + coverage-gated tests + production build on every
+   push/PR (E2E job scaffolded, disabled until a CI database secret exists).
+   A `.githooks/pre-commit` hook (lint + typecheck) ships with the repo —
+   enable with `git config core.hooksPath .githooks`. HSTS added to the app's
+   security headers.
 7. **`tsconfig` has `noImplicitAny: false`.** Tighten after the remaining `any`s are
    eliminated.
 
@@ -125,10 +146,11 @@ removed.
 
 ## 8. Recommended next iterations (priority order)
 
-1. CI pipeline (lint + typecheck + test + build) and pre-commit hook.
-2. Stable-id identity columns + migration (removes name-collision ambiguity).
+1. ~~CI pipeline (lint + typecheck + test + build) and pre-commit hook.~~ **Done 2026-10-30.**
+2. ~~Stable-id identity columns + migration (removes name-collision ambiguity).~~ **Done 2026-10-30.**
 3. Result-object returns for all server actions (production-grade error UX).
 4. Split `server-actions/data.ts` by domain (`tasks.ts`, `projects.ts`, `users.ts`, …) —
    it is the only remaining oversized file.
-5. Nonce-based CSP; add `Strict-Transport-Security` at the reverse proxy (Caddy).
+5. Nonce-based CSP (HSTS done at the app layer 2026-10-30; the reverse-proxy
+   (Caddy) layer can also add it when TLS terminates there).
 6. Redis-backed rate limiting + per-user notification routing.

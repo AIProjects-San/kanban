@@ -28,6 +28,12 @@ model User {
 
   projectAssignments ProjectAssignment[]
   settings           UserSettings?
+
+  // Stable-identity links (see docs/CODE_REVIEW.md §6.1): authorization
+  // decisions must NEVER be made on human-readable names — two users can
+  // share a name. These relations carry the authoritative identity.
+  ownedProjects Project[]      @relation("ProjectOwner")
+  memberProfile TeamMember?    @relation("MemberProfile")
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +70,11 @@ model Project {
   dueDate     DateTime?
   progress    Int      @default(0)         // 0..100
   color       String   @default("forest")  // forest | ocean | plum | ember | slate
+  // Denormalized display copy of the owner's name. Authority lives in
+  // ownerUserId — ownerName must never be used for authorization.
   ownerName   String   @default("")
+  ownerUserId String?
+  ownerUser   User?    @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -109,6 +119,11 @@ model TeamMember {
   openTasks      Int      @default(0)
   completedTasks Int      @default(0)
   workload       Int      @default(0)             // 0..100 percent
+  // Link to the User account this member record represents (nullable:
+  // roster entries may exist without a login). Unique: one account maps to
+  // at most one roster entry.
+  userId         String?  @unique
+  user           User?    @relation("MemberProfile", fields: [userId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

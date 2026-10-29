@@ -250,15 +250,15 @@ describe("updateProject partial-change branch", () => {
 describe("getDashboardData MANAGER scoping", () => {
   it("applies the same scoping to MANAGER as to MEMBER", async () => {
     signIn(MANAGER);
-    db.project.findMany.mockImplementation(({ where }: { where?: { ownerName?: string; id?: { in: string[] } } }) => {
-      if (where?.ownerName) return Promise.resolve([{ id: "p-1" }]);
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string; id?: { in: string[] } } }) => {
+      if (where?.ownerUserId) return Promise.resolve([{ id: "p-1" }]);
       return Promise.resolve([]);
     });
     db.task.findMany.mockImplementation(({ where }: { where?: { assignee?: unknown } }) => {
       if (where?.assignee) return Promise.resolve([]);
       return Promise.resolve([]);
     });
-    db.projectAssignment.findMany.mockResolvedValue([{ projectId: "p-1", user: { email: "max@fernly.dev" } }]);
+    db.projectAssignment.findMany.mockResolvedValue([{ projectId: "p-1", userId: "u-max" }]);
     db.teamMember.findMany.mockResolvedValue([]);
     db.reminder.findMany.mockResolvedValue([]);
     db.notification.findMany.mockResolvedValue([]);
@@ -287,6 +287,7 @@ describe("getDashboardData MANAGER scoping", () => {
 
     await getDashboardData();
     const memberCall = db.teamMember.findMany.mock.calls.at(-1)![0];
-    expect(memberCall.where).toEqual({ name: MANAGER.name });
+    // "Only yourself" is resolved via the stable user-id link, never a name.
+    expect(memberCall.where).toEqual({ userId: MANAGER.userId });
   });
 });

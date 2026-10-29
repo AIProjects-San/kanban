@@ -1,0 +1,17 @@
+#!/bin/bash
+# Fernly pre-commit hook.
+# Install once per clone:  git config core.hooksPath .githooks
+#
+# Runs the fast checks (lint + typecheck) on every commit; unit tests run in
+# CI. Bypass in an emergency with `git commit --no-verify` — and expect to be
+# asked about it in review.
+
+set -euo pipefail
+
+echo "[pre-commit] lint…"
+bun run lint
+
+echo "[pre-commit] typecheck…"
+bun run typecheck
+
+echo "[pre-commit] OK"

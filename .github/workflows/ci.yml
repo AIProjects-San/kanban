@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: lint + typecheck + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Unit tests mock Prisma at the client boundary, so a dummy URL is
+      # enough to construct the client. The build step below never opens a
+      # connection either (auth secret checks are skipped during
+      # phase-production-build).
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Unit & integration tests (coverage-gated)
+        run: bun run test:coverage
+
+  build:
+    name: production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: verify
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      # NEXTAUTH_SECRET is intentionally absent: the auth module skips its
+      # production-secret assertion during phase-production-build, and a
+      # build that *requires* a real secret would be a CI smell.
+      - name: Build
+        run: bun run build
+
+  e2e:
+    name: e2e (cucumber + selenium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: verify
+    # E2E needs a database with seed data; skipped unless repository secrets
+    # provide one. Flip the `if` when a CI database is wired up.
+    if: ${{ false }}
+    env:
+      DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
+      NEXTAUTH_SECRET: ${{ secrets.CI_NEXTAUTH_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Push schema & seed
+        run: |
+          bun run db:push
+          bun run db:seed
+
+      - name: Start dev server
+        run: nohup bun run dev > dev.log 2>&1 &
+
+      - name: Run E2E suite
+        run: bun run test:e2e

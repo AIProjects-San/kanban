@@ -105,10 +105,10 @@ beforeEach(() => {
 
 describe("getDashboardData mapping & stats", () => {
   function seedFullWorkspace() {
-    db.project.findMany.mockImplementation(({ where }: { where?: { ownerName?: string; id?: { in: string[] } } }) => {
-      const owned = [{ id: "p-owned", name: "Owned", ownerName: "Mia" }];
-      // First call = scoping pre-query; last call = main query.
-      if (where?.ownerName) return Promise.resolve(owned.map((p) => ({ id: p.id })));
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string; id?: { in: string[] } } }) => {
+      const owned = [{ id: "p-owned", name: "Owned", ownerUserId: "u-mia" }];
+      // First call = scoping pre-query (by owner user id); last call = main query.
+      if (where?.ownerUserId) return Promise.resolve(owned.map((p) => ({ id: p.id })));
       const visible = where?.id?.in ?? [];
       return Promise.resolve(
         [
@@ -147,7 +147,7 @@ describe("getDashboardData mapping & stats", () => {
       ]);
     });
     db.projectAssignment.findMany.mockResolvedValue([
-      { projectId: "p-1", user: { email: "mia@fernly.dev" } },
+      { projectId: "p-1", userId: "u-mia" },
     ]);
     db.teamMember.findMany.mockResolvedValue([
       { id: "m-mia", name: "Mia", email: "mia@fernly.dev", role: "Dev", department: "ENGINEERING", avatarColor: "forest", online: true, openTasks: 1, completedTasks: 2, workload: 20, createdAt: now, updatedAt: now },
@@ -683,6 +683,12 @@ describe("read helpers", () => {
     const projects = await getMyProjects();
     const where = db.project.findMany.mock.calls[0][0].where;
     expect(where.OR).toHaveLength(3);
+    // Identity matching must go through the stable user id, never the name.
+    expect(where.OR).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerUserId: ADMIN.userId }),
+      expect.objectContaining({ tasks: { some: { assignee: { userId: ADMIN.userId } } } }),
+      expect.objectContaining({ assignments: { some: { userId: ADMIN.userId } } }),
+    ]));
     expect(projects[0].name).toBe("Apollo");
   });
 
@@ -693,15 +699,19 @@ describe("read helpers", () => {
   });
 
   it("getProjectMembers merges owner + assigned members without duplicates", async () => {
-    db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Apollo", ownerName: "Ada" });
-    const member = (id: string, name: string) => ({
-      id, name, email: `${name.toLowerCase()}@fernly.dev`, role: "Dev", department: "ENGINEERING",
+    db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Apollo", ownerUserId: "u-ada" });
+    const member = (id: string, name: string, userId: string | null = null) => ({
+      id, name, userId, email: `${name.toLowerCase()}@fernly.dev`, role: "Dev", department: "ENGINEERING",
       avatarColor: "forest", online: false, openTasks: 0, completedTasks: 0, workload: 0,
     });
-    db.teamMember.findMany.mockResolvedValue([member("m-mia", "Mia"), member("m-ada", "Ada")]);
-    db.teamMember.findFirst.mockResolvedValue(member("m-ada", "Ada"));
+    db.teamMember.findMany.mockResolvedValue([member("m-mia", "Mia"), member("m-ada", "Ada", "u-ada")]);
+    // The owner is resolved via the stable user-id link, not by name.
+    db.teamMember.findUnique.mockResolvedValue(member("m-ada", "Ada", "u-ada"));
 
     const merged = await getProjectMembers("p-1");
+    expect(db.teamMember.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: "u-ada" } }),
+    );
     expect(merged).toHaveLength(2);
     const ada = merged.find((m) => m.name === "Ada")!;
     expect(ada.isOwner).toBe(true);

@@ -14,6 +14,10 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["*.space-z.ai", "*.fcapp.run"],
   async headers() {
     const securityHeaders = [
+      // HSTS: only meaningful over HTTPS; the preview/production proxy
+      // terminates TLS in front of this app. One year, no subdomains —
+      // tighten to includeSubDomains once the whole host is HTTPS-only.
+      { key: "Strict-Transport-Security", value: "max-age=31536000" },
       { key: "X-Frame-Options", value: "DENY" },
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

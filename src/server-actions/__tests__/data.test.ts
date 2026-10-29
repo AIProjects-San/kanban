@@ -205,6 +205,43 @@ describe("getDashboardData (P0-1 regression)", () => {
     );
   });
 
+  it("scopes a MEMBER via stable user ids, never via names (identity migration)", async () => {
+    signIn(MEMBER);
+    db.project.findMany.mockResolvedValue([]);
+    db.task.findMany.mockResolvedValue([]);
+    db.teamMember.findMany.mockResolvedValue([]);
+    db.reminder.findMany.mockResolvedValue([]);
+    db.notification.findMany.mockResolvedValue([]);
+    db.timeEntry.findMany.mockResolvedValue([]);
+    db.calendarEvent.findMany.mockResolvedValue([]);
+    db.message.findMany.mockResolvedValue([]);
+    db.projectAssignment.findMany.mockResolvedValue([]);
+
+    await getDashboardData();
+
+    // The ownership pre-query must match on the stable id. Two users sharing
+    // a name must NOT see each other's projects (review §6.1).
+    const ownedCall = db.project.findMany.mock.calls.find(
+      ([args]) => args?.where?.ownerUserId !== undefined,
+    );
+    expect(ownedCall).toBeDefined();
+    expect(ownedCall![0].where.ownerUserId).toBe(MEMBER.userId);
+
+    // Task-assignment pre-query: assignee matched by userId, not name.
+    const assignedCall = db.task.findMany.mock.calls.find(
+      ([args]) => args?.where?.assignee !== undefined && args.where.assignee !== null,
+    );
+    expect(assignedCall).toBeDefined();
+    expect(assignedCall![0].where.assignee).toEqual({ userId: MEMBER.userId });
+
+    // No query anywhere may filter identity by the caller's name.
+    const nameFilters = JSON.stringify(db.project.findMany.mock.calls)
+      + JSON.stringify(db.task.findMany.mock.calls)
+      + JSON.stringify(db.teamMember.findMany.mock.calls);
+    expect(nameFilters).not.toContain(`"name":"${MEMBER.name}"`);
+    expect(nameFilters).not.toContain(`ownerName`);
+  });
+
   it("lets ADMIN see everything (no scoping where clause on projects)", async () => {
     signIn(ADMIN);
     db.project.findMany.mockResolvedValue([]);

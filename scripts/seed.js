@@ -283,6 +283,11 @@ async function main() {
   console.log(`  ✓ ${3 + extraUsers.length} users (ADMIN, MANAGER, MEMBER) — all password: fernly123`);
   console.log(`  ✓ User: ${demoUser.email} (password: fernly123)`);
 
+  // Name → user map for the stable-identity links below. Seed names are
+  // unique, so a name map is deterministic here.
+  const allUsers = await db.user.findMany({ select: { id: true, name: true } });
+  const userByName = new Map(allUsers.map((u) => [u.name, u.id]));
+
   // -----------------------------------------------------------------
   // Team Members (12)
   // -----------------------------------------------------------------
@@ -304,7 +309,14 @@ async function main() {
   const members = [];
   for (const m of memberSeed) {
     const member = await db.teamMember.create({
-      data: { ...m, openTasks: 0, completedTasks: 0, workload: 0 },
+      data: {
+        ...m,
+        // Stable identity: link the roster entry to the user account.
+        userId: userByName.get(m.name) ?? null,
+        openTasks: 0,
+        completedTasks: 0,
+        workload: 0,
+      },
     });
     members.push(member);
   }
@@ -343,6 +355,7 @@ async function main() {
   for (let i = 0; i < 24; i++) {
     const status = statuses[i];
     const owner = explicitOwners[i] ?? pick(members).name;
+    const ownerMember = members.find((m) => m.name === owner) ?? null;
     const progress = status === "ENDED" ? 100 : status === "PENDING" ? 0 : Math.floor(15 + Math.random() * 75);
     const dueDate = status === "ENDED"
       ? addDays(TODAY, -(Math.floor(Math.random() * 60) + 5))
@@ -357,6 +370,9 @@ async function main() {
         progress,
         color: pick(colors),
         ownerName: owner,
+        // Stable identity: the authoritative owner link (ownerName above is
+        // only the display copy).
+        ownerUserId: ownerMember?.userId ?? userByName.get(owner) ?? null,
       },
     });
     projects.push(p);

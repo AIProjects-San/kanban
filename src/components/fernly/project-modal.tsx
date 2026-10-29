@@ -51,7 +51,20 @@ function ProjectForm({
   const [priority, setPriority] = useState<Priority>(editing?.priority ?? "MEDIUM");
   const [dueDate, setDueDate] = useState(editing?.dueDate ? editing.dueDate.slice(0, 10) : "");
   const [color, setColor] = useState<string>(editing?.color ?? "forest");
-  const [ownerName, setOwnerName] = useState(editing?.ownerName ?? members[0]?.name ?? "");
+  // Owner is tracked by stable member id. When editing, resolve the current
+  // owner's member record via the user-id link (falling back to a name match
+  // for legacy rows created before the stable-id migration).
+  const [ownerMemberId, setOwnerMemberId] = useState<string>(() => {
+    if (editing?.ownerUserId) {
+      const byId = members.find((m) => m.userId && m.userId === editing.ownerUserId);
+      if (byId) return byId.id;
+    }
+    if (editing?.ownerName) {
+      const byName = members.find((m) => m.name === editing.ownerName);
+      if (byName) return byName.id;
+    }
+    return members[0]?.id ?? "";
+  });
 
   const submit = async () => {
     if (!name.trim()) {
@@ -65,7 +78,7 @@ function ProjectForm({
       priority,
       dueDate: dueDate || null,
       color,
-      ownerName,
+      ownerMemberId,
     };
     if (editing) {
       await updateProject(editing.id, payload);
@@ -111,9 +124,9 @@ function ProjectForm({
           <input type="date" className="f-input" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
         </Field>
         <Field label="Owner">
-          <select className="f-input" value={ownerName} onChange={(e) => setOwnerName(e.target.value)}>
+          <select className="f-input" value={ownerMemberId} onChange={(e) => setOwnerMemberId(e.target.value)}>
             <option value="">— Unassigned —</option>
-            {members.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+            {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
       </FormRow>

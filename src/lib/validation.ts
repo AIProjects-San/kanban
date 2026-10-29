@@ -39,7 +39,7 @@ export const createProjectSchema = z.object({
   priority: z.string().max(20).optional(),
   dueDate: isoDate.nullable().optional(),
   color: z.string().max(30).optional(),
-  ownerName: z.string().max(120).optional(),
+  ownerMemberId: z.string().max(64).optional(),
 });
 
 export const createMemberSchema = z.object({
@@ -90,9 +90,19 @@ export function parseOrThrow<T extends z.ZodTypeAny>(schema: T, input: unknown):
   if (!result.success) {
     const first = result.error.issues[0];
     const message = first?.message ?? "Invalid input.";
-    const err = new Error(`${message}${first?.path?.length ? ` (${first.path.join(".")})` : ""}`);
-    err.name = "ValidationError";
-    throw err;
+    throw validationError(
+      `${message}${first?.path?.length ? ` (${first.path.join(".")})` : ""}`,
+    );
   }
   return result.data;
+}
+
+/**
+ * Build an Error flagged as a validation failure — `isActionError()` on the
+ * client recognizes the name and surfaces the message to the user.
+ */
+export function validationError(message: string): Error {
+  const err = new Error(message);
+  err.name = "ValidationError";
+  return err;
 }

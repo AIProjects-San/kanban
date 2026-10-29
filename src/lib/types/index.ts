@@ -17,7 +17,9 @@ export interface ProjectT {
   dueDate: string | null;
   progress: number;
   color: AccentColor;
+  /** Display copy of the owner's name — authority lives in ownerUserId. */
   ownerName: string;
+  ownerUserId?: string | null;
   createdAt: string;
 }
 
@@ -48,6 +50,8 @@ export interface TeamMemberT {
   openTasks: number;
   completedTasks: number;
   workload: number;
+  /** Stable link to the User account this member represents (if any). */
+  userId?: string | null;
 }
 
 export interface CalendarEventT {

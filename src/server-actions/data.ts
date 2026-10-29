@@ -17,6 +17,7 @@ import {
   sendMessageSchema,
   createReminderSchema,
   parseOrThrow,
+  validationError,
 } from "@/lib/validation";
 import type { AuditAction } from "@/lib/audit-meta";
 import type { Prisma } from "@prisma/client";
@@ -81,30 +82,28 @@ export async function getDashboardData(): Promise<DashboardData> {
     return { ...EMPTY_DASHBOARD_DATA };
   }
   const role = session.role;
-  const userName = session.name;
   const currentUserId = session.userId;
   const isMember = role === "MEMBER";
   const isScoped = isMember || role === "MANAGER";
 
   // For scoped users, compute the set of project IDs they are associated with.
+  // All identity matching goes through the stable user id — never the name.
   let scopedProjectIds: Set<string> | null = null;
-  if (isScoped && userName) {
+  if (isScoped && currentUserId) {
     const [owned, assignedProjects, explicitAssignments] = await Promise.all([
       db.project.findMany({
-        where: { ownerName: userName },
+        where: { ownerUserId: currentUserId },
         select: { id: true },
       }),
       db.task.findMany({
-        where: { assignee: { name: userName } },
+        where: { assignee: { userId: currentUserId } },
         select: { projectId: true },
         distinct: ["projectId"],
       }),
-      currentUserId
-        ? db.projectAssignment.findMany({
-            where: { userId: currentUserId },
-            select: { projectId: true },
-          })
-        : Promise.resolve([]),
+      db.projectAssignment.findMany({
+        where: { userId: currentUserId },
+        select: { projectId: true },
+      }),
     ]);
     scopedProjectIds = new Set([
       ...owned.map((p) => p.id),
@@ -121,7 +120,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     ? {
         OR: [
           { projectId: { in: Array.from(scopedProjectIds) } },
-          { assignee: { name: userName } },
+          { assignee: { userId: currentUserId } },
         ],
       }
     : undefined;
@@ -131,19 +130,20 @@ export async function getDashboardData(): Promise<DashboardData> {
   let memberWhere: Prisma.TeamMemberWhereInput | undefined;
   if (isScoped && scopedProjectIds && scopedProjectIds.size > 0) {
     const projectIdArray = Array.from(scopedProjectIds);
+    const assignedUserIds = await db.projectAssignment.findMany({
+      where: { projectId: { in: projectIdArray } },
+      select: { userId: true },
+    }).then((assignments) => assignments.map((a) => a.userId));
     memberWhere = {
       OR: [
         { tasks: { some: { projectId: { in: projectIdArray } } } },
-        { email: { in: await db.projectAssignment.findMany({
-          where: { projectId: { in: projectIdArray } },
-          select: { user: { select: { email: true } } },
-        }).then((assignments) => assignments.map((a) => a.user.email)) } },
-        { name: userName }, // always include yourself
+        { userId: { in: assignedUserIds } },
+        { userId: currentUserId }, // always include yourself
       ],
     };
   } else if (isScoped) {
     // Scoped user with no projects — show only themselves
-    memberWhere = { name: userName };
+    memberWhere = { userId: currentUserId };
   }
 
   const [projects, tasks, members, reminders, notifs, timeEntries, events, messages] = await Promise.all([
@@ -174,6 +174,15 @@ export async function getDashboardData(): Promise<DashboardData> {
       orderBy: { createdAt: "desc" },
     }),
   ]);
+
+  // Scoped users only receive time entries for members they can already see
+  // (the member list is scoped above) — same data-minimization rule. Admins
+  // get the full log.
+  let visibleTimeEntries = timeEntries;
+  if (memberWhere) {
+    const visibleMemberIds = new Set(members.map((m) => m.id));
+    visibleTimeEntries = timeEntries.filter((te) => te.memberId != null && visibleMemberIds.has(te.memberId));
+  }
 
   const total = projects.length;
   const ended = projects.filter((p) => p.status === "ENDED").length;
@@ -231,7 +240,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         ...n,
         createdAt: n.createdAt.toISOString(),
       })),
-      timeEntries: timeEntries.map(te => ({
+      timeEntries: visibleTimeEntries.map(te => ({
         ...te,
         date: te.date.toISOString(),
         createdAt: te.createdAt.toISOString(),
@@ -355,10 +364,16 @@ export async function updateUserSettings(userId: string, input: Partial<{
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the TeamMember id that belongs to the signed-in user (matched by
- * email). Returns null if the user has no team-member record.
+ * Resolve the TeamMember id that belongs to the signed-in user. Prefers
+ * the stable TeamMember.userId link; falls back to a unique-email match for
+ * rows not yet linked. Returns null if the user has no team-member record.
  */
-async function getMyTeamMemberId(auth: { email: string }): Promise<string | null> {
+async function getMyTeamMemberId(auth: { userId: string; email: string }): Promise<string | null> {
+  const byUser = await db.teamMember.findUnique({
+    where: { userId: auth.userId },
+    select: { id: true },
+  });
+  if (byUser) return byUser.id;
   const member = await db.teamMember.findUnique({
     where: { email: auth.email.toLowerCase() },
     select: { id: true },
@@ -550,10 +565,25 @@ export async function createProject(input: {
   priority?: string;
   dueDate?: string | null;
   color?: string;
-  ownerName?: string;
+  /** TeamMember id of the owner — resolved to a stable user id server-side. */
+  ownerMemberId?: string;
 }) {
   const auth = await requirePermission("project:create");
   const data = parseOrThrow(createProjectSchema, input);
+  // The owner is chosen from the team roster; the client sends the member's
+  // id, and the server derives both the stable ownerUserId and the display
+  // name. A client-supplied free-text name is never trusted here.
+  let ownerUserId: string | null = null;
+  let ownerName = "";
+  if (data.ownerMemberId) {
+    const owner = await db.teamMember.findUnique({
+      where: { id: data.ownerMemberId },
+      select: { name: true, userId: true },
+    });
+    if (!owner) throw validationError("Selected owner is not a team member.");
+    ownerName = owner.name;
+    ownerUserId = owner.userId;
+  }
   const project = await db.project.create({
     data: {
       name: data.name,
@@ -562,7 +592,8 @@ export async function createProject(input: {
       priority: data.priority ?? "MEDIUM",
       dueDate: data.dueDate ? new Date(data.dueDate) : null,
       color: data.color ?? "forest",
-      ownerName: data.ownerName ?? "",
+      ownerName,
+      ownerUserId,
     },
   });
   await logAudit({
@@ -583,11 +614,30 @@ export async function updateProject(id: string, input: Partial<{
   priority: string;
   dueDate: string | null;
   color: string;
-  ownerName: string;
+  /** TeamMember id of the new owner — resolved server-side. */
+  ownerMemberId: string;
   progress: number;
 }>) {
   const auth = await requirePermission("project:edit");
   const existing = await db.project.findUnique({ where: { id } });
+  // Owner reassignment: client sends the owner's TeamMember id; the server
+  // resolves the stable user id + display name.
+  let ownerUserId: string | null | undefined;
+  let ownerName: string | undefined;
+  if (input.ownerMemberId !== undefined) {
+    if (input.ownerMemberId === "") {
+      ownerUserId = null;
+      ownerName = "";
+    } else {
+      const owner = await db.teamMember.findUnique({
+        where: { id: input.ownerMemberId },
+        select: { name: true, userId: true },
+      });
+      if (!owner) throw validationError("Selected owner is not a team member.");
+      ownerName = owner.name;
+      ownerUserId = owner.userId;
+    }
+  }
   await db.project.update({
     where: { id },
     data: {
@@ -597,7 +647,8 @@ export async function updateProject(id: string, input: Partial<{
       priority: input.priority,
       dueDate: input.dueDate !== undefined ? (input.dueDate ? new Date(input.dueDate) : null) : undefined,
       color: input.color,
-      ownerName: input.ownerName,
+      ownerName,
+      ownerUserId,
       progress: input.progress,
     },
   });
@@ -608,7 +659,7 @@ export async function updateProject(id: string, input: Partial<{
     if (input.status !== undefined && input.status !== existing.status) changes.push("status");
     if (input.priority !== undefined && input.priority !== existing.priority) changes.push("priority");
     if (input.color !== undefined && input.color !== existing.color) changes.push("color");
-    if (input.ownerName !== undefined && input.ownerName !== existing.ownerName) changes.push("owner");
+    if (ownerName !== undefined && ownerName !== existing.ownerName) changes.push("owner");
     if (input.progress !== undefined && input.progress !== existing.progress) changes.push("progress");
     if (input.dueDate !== undefined) {
       const nd = input.dueDate ? new Date(input.dueDate).toISOString() : null;
@@ -660,6 +711,14 @@ export async function createMember(input: {
 }) {
   const auth = await requirePermission("member:invite");
   const data = parseOrThrow(createMemberSchema, input);
+  // Auto-link the roster entry to an existing user account with the same
+  // email, so scoped queries work for invited teammates immediately. The
+  // unique constraint makes this safe even under a race (worst case the
+  // insert fails and is retried without the link).
+  const linkedUser = await db.user.findUnique({
+    where: { email: data.email.toLowerCase() },
+    select: { id: true },
+  });
   const member = await db.teamMember.create({
     data: {
       name: data.name,
@@ -668,6 +727,7 @@ export async function createMember(input: {
       email: data.email,
       avatarColor: data.avatarColor ?? "forest",
       online: data.online ?? false,
+      userId: linkedUser?.id ?? null,
     },
   });
   await logAudit({
@@ -1401,8 +1461,8 @@ export async function getMyProjects() {
   const projects = await db.project.findMany({
     where: {
       OR: [
-        { ownerName: auth.name },
-        { tasks: { some: { assignee: { name: auth.name } } } },
+        { ownerUserId: auth.userId },
+        { tasks: { some: { assignee: { userId: auth.userId } } } },
         { assignments: { some: { userId: auth.userId } } },
       ],
     },
@@ -1416,7 +1476,7 @@ export async function getMyProjects() {
 // Members allocated to a specific project.
 //
 // "Allocated" means the member is either:
-//   • the project's owner (Project.ownerName === member.name), OR
+//   • the project's owner (Project.ownerUserId === member.userId), OR
 //   • the assignee of at least one task in that project.
 //
 // Used by the task modal to restrict the assignee dropdown to only people who
@@ -1431,7 +1491,7 @@ export async function getProjectMembers(projectId: string) {
 
   const project = await db.project.findUnique({
     where: { id: projectId },
-    select: { id: true, name: true, ownerName: true },
+    select: { id: true, name: true, ownerUserId: true },
   });
   if (!project) return [];
 
@@ -1441,9 +1501,10 @@ export async function getProjectMembers(projectId: string) {
     orderBy: { name: "asc" },
   });
 
-  // Always include the project owner (if they're a team member).
-  const ownerMember = project.ownerName
-    ? await db.teamMember.findFirst({ where: { name: project.ownerName } })
+  // Always include the project owner (if they're a team member) — resolved
+  // via the stable user id, never by name.
+  const ownerMember = project.ownerUserId
+    ? await db.teamMember.findUnique({ where: { userId: project.ownerUserId } })
     : null;
 
   const seen = new Set<string>();
@@ -1480,7 +1541,7 @@ export async function getProjectMembers(projectId: string) {
   };
 
   if (ownerMember) push(ownerMember, true);
-  for (const m of assignedMembers) push(m, m.name === project.ownerName);
+  for (const m of assignedMembers) push(m, !!project.ownerUserId && m.userId === project.ownerUserId);
 
   return merged;
 }
