@@ -6,6 +6,8 @@ import {
   ALL_PERMISSIONS,
   hasPermission,
   isValidRole,
+  roleRank,
+  outranks,
   type Role,
   type Permission,
 } from "@/lib/rbac";
@@ -96,5 +98,41 @@ describe("role matrix sanity", () => {
     for (const p of ROLE_PERMISSIONS.MANAGER) {
       expect(admin.has(p), `MANAGER-only permission: ${p}`).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// roleRank / outranks — used by the user-hierarchy helpers in lib/hierarchy.ts
+// ---------------------------------------------------------------------------
+
+describe("roleRank", () => {
+  it("assigns ADMIN > MANAGER > MEMBER", () => {
+    expect(roleRank("ADMIN")).toBeGreaterThan(roleRank("MANAGER"));
+    expect(roleRank("MANAGER")).toBeGreaterThan(roleRank("MEMBER"));
+  });
+
+  it("returns 0 for unknown / missing roles", () => {
+    expect(roleRank("UNKNOWN")).toBe(0);
+    expect(roleRank(undefined)).toBe(0);
+    expect(roleRank(null)).toBe(0);
+    expect(roleRank("")).toBe(0);
+  });
+});
+
+describe("outranks", () => {
+  it("ADMIN outranks MANAGER and MEMBER", () => {
+    expect(outranks("ADMIN", "MANAGER")).toBe(true);
+    expect(outranks("ADMIN", "MEMBER")).toBe(true);
+  });
+
+  it("MANAGER outranks MEMBER only", () => {
+    expect(outranks("MANAGER", "MEMBER")).toBe(true);
+    expect(outranks("MANAGER", "ADMIN")).toBe(false);
+  });
+
+  it("is strict — same rank is NOT outranking", () => {
+    expect(outranks("ADMIN", "ADMIN")).toBe(false);
+    expect(outranks("MANAGER", "MANAGER")).toBe(false);
+    expect(outranks("MEMBER", "MEMBER")).toBe(false);
   });
 });

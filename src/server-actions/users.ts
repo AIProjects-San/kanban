@@ -8,8 +8,9 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getSession, getSessionOrThrow, requirePermission, AuthorizationError } from "./auth-guard";
-import { hasPermission, ROLE_LABELS, type Role } from "@/lib/rbac";
+import { getSession, getSessionOrThrow, requirePermission, requirePermissionForTarget, AuthorizationError } from "./auth-guard";
+import { hasPermission, isValidRole, ROLE_LABELS, type Role } from "@/lib/rbac";
+import { assertNoCycle } from "@/lib/hierarchy";
 import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/password";
 import { emailSchema } from "@/lib/validation";
 import { logAudit } from "./shared";
@@ -19,9 +20,15 @@ import type { ActionResult } from "@/lib/action-result";
 export async function getUserProfile(userId: string) {
   // Only the user themselves (or an admin/manager with role:manage) may read
   // a profile — otherwise any caller could harvest other users' emails.
+  // Hierarchy-aware: a MANAGER can read profiles of users in their subtree.
   const auth = await getSessionOrThrow();
   if (auth.userId !== userId && !hasPermission(auth.role, "role:manage")) {
     throw new AuthorizationError("You can only view your own profile.");
+  }
+  // For non-self access, enforce the hierarchy too (admins skip via
+  // canManageUser; managers must own the target in their subtree).
+  if (auth.userId !== userId) {
+    await requirePermissionForTarget("role:manage", userId);
   }
   const user = await db.user.findUnique({
     where: { id: userId },
@@ -212,13 +219,19 @@ export async function getAllUsers(): Promise<ActionResult<
     avatarColor: string;
     createdAt: string;
     projectCount: number;
+    managerId: string | null;
+    managerName: string | null;
   }>
 >> {
   return toResult(async () => {
     await requirePermission("role:manage");
+    // Single query with the manager relation included so the UI can render
+    // the "Reports To" column without N+1 follow-up reads.
     const users = await db.user.findMany({
       select: {
         id: true, email: true, name: true, role: true, avatarColor: true, createdAt: true,
+        managerId: true,
+        manager: { select: { id: true, name: true } },
         _count: { select: { projectAssignments: true } },
       },
       orderBy: { name: "asc" },
@@ -231,6 +244,8 @@ export async function getAllUsers(): Promise<ActionResult<
       avatarColor: u.avatarColor,
       createdAt: u.createdAt.toISOString(),
       projectCount: u._count.projectAssignments,
+      managerId: u.managerId,
+      managerName: u.manager?.name ?? null,
     }));
   });
 }
@@ -245,6 +260,7 @@ export async function createUser(input: {
   avatarColor?: string;
   department?: string;   // for the TeamMember record
   jobTitle?: string;     // for the TeamMember record
+  managerId?: string | null;  // who the new user reports to (null = root)
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
@@ -261,7 +277,7 @@ export async function createUser(input: {
     if (!input.password || input.password.length < minPasswordLength) {
       throw new AuthorizationError(`Password must be at least ${minPasswordLength} characters.`);
     }
-    if (!["ADMIN", "MANAGER", "MEMBER"].includes(input.role)) {
+    if (!isValidRole(input.role)) {
       throw new AuthorizationError("Invalid role. Must be ADMIN, MANAGER, or MEMBER.");
     }
 
@@ -269,6 +285,18 @@ export async function createUser(input: {
     const existingUser = await db.user.findUnique({ where: { email } });
     if (existingUser) {
       throw new AuthorizationError(`A user with email ${email} already exists.`);
+    }
+
+    // Validate the managerId (if provided): must exist and must not
+    // create a cycle. Cycles can't happen on create (the new user has no
+    // reports yet) but assertNoCycle also rejects self-reference and
+    // unknown-manager ids, which is what we want here.
+    const managerId = input.managerId ?? null;
+    if (managerId) {
+      const mgr = await db.user.findUnique({ where: { id: managerId }, select: { id: true } });
+      if (!mgr) throw new AuthorizationError("The selected manager does not exist.");
+      // No cycle possible on create, but the helper still rejects
+      // self-reference (defensive — the new user has no id yet anyway).
     }
 
     const passwordHash = await hashPassword(input.password);
@@ -291,6 +319,7 @@ export async function createUser(input: {
           timezone,
           bio,
           avatarColor,
+          managerId,
         },
       });
       const existingMember = await tx.teamMember.findUnique({ where: { email } });
@@ -315,7 +344,7 @@ export async function createUser(input: {
       entityType: "USER",
       entityId: user.id,
       entityLabel: name,
-      detail: `Created user ${name} (${email}) with role ${ROLE_LABELS[input.role as Role] ?? input.role}`,
+      detail: `Created user ${name} (${email}) with role ${ROLE_LABELS[input.role]}${managerId ? ` reporting to user ${managerId}` : " (no manager)"}`,
     });
     revalidatePath("/");
     return { id: user.id };
@@ -331,16 +360,26 @@ export async function updateUser(userId: string, input: {
   avatarColor?: string;
   department?: string;
   jobTitle?: string;
+  managerId?: string | null;  // who this user reports to (null = root)
   resetPassword?: string;  // if provided, set a new password
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await requirePermission("role:manage");
+    // Hierarchy gate: actor must have role:manage AND outrank/own the
+    // target. Self-edits pass the hierarchy check; caller-side self-
+    // protection rules below guard the dangerous self-mutations.
+    const auth = await requirePermissionForTarget("role:manage", userId);
     const target = await db.user.findUnique({ where: { id: userId } });
     if (!target) throw new AuthorizationError("User not found.");
 
     // Self-protection: cannot demote yourself
     if (userId === auth.userId && input.role && input.role !== "ADMIN") {
       throw new AuthorizationError("You cannot change your own role. Ask another admin to do it.");
+    }
+    // Self-protection: cannot unmanage yourself (would let you escape the
+    // hierarchy). Only an admin (who is above the hierarchy) can change
+    // a user's own managerId.
+    if (userId === auth.userId && input.managerId !== undefined && auth.role !== "ADMIN") {
+      throw new AuthorizationError("You cannot change your own manager. Ask an admin to do it.");
     }
 
     const data: Record<string, unknown> = {};
@@ -354,7 +393,7 @@ export async function updateUser(userId: string, input: {
       data.email = email;
     }
     if (input.role !== undefined) {
-      if (!["ADMIN", "MANAGER", "MEMBER"].includes(input.role)) {
+      if (!isValidRole(input.role)) {
         throw new AuthorizationError("Invalid role.");
       }
       data.role = input.role;
@@ -362,6 +401,18 @@ export async function updateUser(userId: string, input: {
     if (input.timezone !== undefined) data.timezone = input.timezone;
     if (input.bio !== undefined) data.bio = input.bio;
     if (input.avatarColor !== undefined) data.avatarColor = input.avatarColor;
+
+    // Hierarchy: validate the new managerId before writing. Rejects
+    // self-reference and cycles (manager is already a transitive report).
+    if (input.managerId !== undefined) {
+      const newManagerId = input.managerId || null;
+      if (newManagerId) {
+        const mgr = await db.user.findUnique({ where: { id: newManagerId }, select: { id: true } });
+        if (!mgr) throw new AuthorizationError("The selected manager does not exist.");
+        await assertNoCycle(userId, newManagerId);
+      }
+      data.managerId = newManagerId;
+    }
 
     if (input.resetPassword !== undefined && input.resetPassword.length > 0) {
       const minPasswordLength = await getMinPasswordLength();
@@ -394,6 +445,7 @@ export async function updateUser(userId: string, input: {
     if (input.timezone !== undefined && input.timezone !== target.timezone) changes.push("timezone");
     if (input.bio !== undefined && input.bio !== target.bio) changes.push("bio");
     if (input.avatarColor !== undefined && input.avatarColor !== target.avatarColor) changes.push("avatar");
+    if (input.managerId !== undefined && input.managerId !== target.managerId) changes.push("manager");
     if (input.resetPassword) changes.push("password");
 
     await logAudit({
@@ -412,13 +464,17 @@ export async function updateUser(userId: string, input: {
 
 export async function deleteUser(userId: string): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await requirePermission("role:manage");
+    // Hierarchy gate: same as updateUser. Self-deletion is blocked below.
+    const auth = await requirePermissionForTarget("role:manage", userId);
     if (userId === auth.userId) {
       throw new AuthorizationError("You cannot delete your own account. Ask another admin to do it.");
     }
     const target = await db.user.findUnique({ where: { id: userId } });
     if (!target) throw new AuthorizationError("User not found.");
-    // ProjectAssignments are auto-deleted via onDelete: Cascade
+    // ProjectAssignments are auto-deleted via onDelete: Cascade.
+    // managerId on the target's direct reports is auto-nullified via
+    // onDelete: SetNull (so those reports become roots, they are NOT
+    // deleted — important: deleting a manager must never delete their team).
     await db.user.delete({ where: { id: userId } });
     await logAudit({
       actor: auth,

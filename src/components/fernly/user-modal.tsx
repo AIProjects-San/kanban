@@ -25,6 +25,8 @@ interface UserRecord {
   name: string;
   role: string;
   createdAt: string;
+  managerId: string | null;
+  managerName: string | null;
 }
 
 /**
@@ -36,6 +38,21 @@ export function UserModal() {
   const { userModalOpen, userModalEditId, closeUserModal } = useApp();
   const [editing, setEditing] = useState<UserRecord | null>(null);
   const [loadingTarget, setLoadingTarget] = useState(false);
+  // All users — needed to populate the "Reports to" dropdown. Fetched once
+  // per modal open and shared by both create and edit modes.
+  const [allUsers, setAllUsers] = useState<UserRecord[]>([]);
+
+  useEffect(() => {
+    if (!userModalOpen) return;
+    let cancelled = false;
+    getAllUsers()
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok) setAllUsers(res.data);
+      })
+      .catch(() => { /* best-effort — dropdown will be empty */ });
+    return () => { cancelled = true; };
+  }, [userModalOpen]);
 
   useEffect(() => {
     if (!userModalOpen || !userModalEditId) {
@@ -74,7 +91,12 @@ export function UserModal() {
           ? <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 size={14} className="animate-spin" /> Loading user…
             </div>
-          : <UserForm key={editing?.id ?? "new"} editing={editing} onClose={closeUserModal} />
+          : <UserForm
+              key={editing?.id ?? "new"}
+              editing={editing}
+              allUsers={allUsers}
+              onClose={closeUserModal}
+            />
       )}
     </Modal>
   );
@@ -82,9 +104,11 @@ export function UserModal() {
 
 function UserForm({
   editing,
+  allUsers,
   onClose,
 }: {
   editing: UserRecord | null;
+  allUsers: UserRecord[];
   onClose: () => void;
 }) {
   const { bumpRefresh } = useApp();
@@ -96,6 +120,10 @@ function UserForm({
   const [avatarColor, setAvatarColor] = useState<AccentTheme>("forest");
   const [department, setDepartment] = useState("ENGINEERING");
   const [jobTitle, setJobTitle] = useState("Team Member");
+  // "Reports to" — the user's manager in the org chart. null = root
+  // (workspace owner / unmanaged). When editing, the existing managerId
+  // is the initial value; when creating, default to no manager.
+  const [managerId, setManagerId] = useState<string | null>(editing?.managerId ?? null);
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -118,6 +146,7 @@ function UserForm({
       if (editing) {
         const res = await updateUser(editing.id, {
           name, email, role, timezone, bio, avatarColor, department, jobTitle,
+          managerId,
           resetPassword: password || undefined,
         });
         if (!res.ok) {
@@ -128,6 +157,7 @@ function UserForm({
       } else {
         const res = await createUser({
           name, email, password, role, timezone, bio, avatarColor, department, jobTitle,
+          managerId,
         });
         if (!res.ok) {
           toast.error(res.error);
@@ -165,6 +195,11 @@ function UserForm({
     }
   }
 
+  // Build the "Reports to" dropdown options. Exclude the user being edited
+  // (cannot be your own manager). For new users there's no id yet so the
+  // list is the full directory.
+  const managerOptions = allUsers.filter((u) => u.id !== editing?.id);
+
   return (
     <div className="space-y-4">
       {/* Identity */}
@@ -195,23 +230,38 @@ function UserForm({
             <option value="MEMBER">Member — own tasks only</option>
           </select>
         </Field>
-        <Field label="Timezone">
-          <select className="f-input" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-            {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+        <Field label="Reports to" hint="Who this user reports to in the org chart">
+          <select
+            className="f-input"
+            value={managerId ?? ""}
+            onChange={(e) => setManagerId(e.target.value || null)}
+          >
+            <option value="">— No manager (root) —</option>
+            {managerOptions.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name} ({u.role})
+              </option>
+            ))}
           </select>
         </Field>
       </FormRow>
 
       <FormRow>
+        <Field label="Timezone">
+          <select className="f-input" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+            {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
+        </Field>
         <Field label="Department">
           <select className="f-input" value={department} onChange={(e) => setDepartment(e.target.value)}>
             {DEPARTMENTS.map((d) => <option key={d} value={d}>{d.charAt(0) + d.slice(1).toLowerCase()}</option>)}
           </select>
         </Field>
-        <Field label="Job title">
-          <input className="f-input" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="Senior Engineer" />
-        </Field>
       </FormRow>
+
+      <Field label="Job title">
+        <input className="f-input" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="Senior Engineer" />
+      </Field>
 
       <Field label="Bio">
         <textarea

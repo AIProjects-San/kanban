@@ -85,6 +85,36 @@ export function hasPermission(role: Role | undefined | null, permission: Permiss
   return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
 }
 
+/**
+ * Numeric rank for the three system roles, used by the user-hierarchy
+ * helpers in `lib/hierarchy.ts` to answer "does A outrank B?" without
+ * consulting the DB. Higher = more powerful.
+ *
+ *   ADMIN = 3, MANAGER = 2, MEMBER = 1, unknown/missing = 0.
+ *
+ * Note: hierarchy-aware RBAC uses BOTH `roleRank` (positional authority)
+ * AND the manager-chain (`canManageUser` in `lib/hierarchy.ts`) — a
+ * MANAGER can edit a peer MEMBER only if that MEMBER is in their subtree.
+ * Role rank alone is NOT enough to authorise a hierarchy-scoped action.
+ */
+export function roleRank(role: Role | string | undefined | null): number {
+  switch (role) {
+    case "ADMIN": return 3;
+    case "MANAGER": return 2;
+    case "MEMBER": return 1;
+    default: return 0;
+  }
+}
+
+/**
+ * True iff `actorRole` strictly outranks `targetRole` (>= is NOT enough;
+ * same-rank users cannot manage each other via role alone — they need a
+ * manager-chain relationship).
+ */
+export function outranks(actorRole: Role | string | undefined | null, targetRole: Role | string | undefined | null): boolean {
+  return roleRank(actorRole) > roleRank(targetRole);
+}
+
 export function isValidRole(role: string): role is Role {
   return role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
 }

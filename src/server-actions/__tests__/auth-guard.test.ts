@@ -9,15 +9,32 @@ vi.mock("next-auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
 }));
 
+// Mock the Prisma client so `requirePermissionForTarget`'s DB reads
+// (target lookup + subtree walk) return deterministic data.
+const userFindUnique = vi.fn();
+const userFindMany = vi.fn();
+vi.mock("@/lib/db", () => ({
+  db: {
+    user: {
+      findUnique: (...args: unknown[]) => userFindUnique(...args),
+      findMany: (...args: unknown[]) => userFindMany(...args),
+    },
+  },
+}));
+
 import {
   getSession,
   requirePermission,
+  requirePermissionForTarget,
   getSessionOrThrow,
   AuthorizationError,
 } from "@/server-actions/auth-guard";
 
 const ADMIN_SESSION = {
   user: { id: "u-admin", role: "ADMIN", name: "Ada", email: "ada@example.com" },
+};
+const MANAGER_SESSION = {
+  user: { id: "u-mgr", role: "MANAGER", name: "Mia Manager", email: "mia@example.com" },
 };
 const MEMBER_SESSION = {
   user: { id: "u-member", role: "MEMBER", name: "Mia", email: "mia@example.com" },
@@ -99,5 +116,97 @@ describe("AuthorizationError", () => {
     expect(err.name).toBe("AuthorizationError");
     expect(err.message).toBe("nope");
     expect(err instanceof Error).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requirePermissionForTarget — hierarchy-aware permission gate.
+// Verifies that the standard role check is followed by a hierarchy check
+// using the manager-chain. Mocks the DB so we can drive each scenario.
+// ---------------------------------------------------------------------------
+
+describe("requirePermissionForTarget", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("throws if the role lacks the permission (skips hierarchy check)", async () => {
+    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    // MEMBER doesn't have role:manage — should reject before any DB read.
+    await expect(
+      requirePermissionForTarget("role:manage", "u-other"),
+    ).rejects.toThrow(AuthorizationError);
+    expect(userFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("MANAGER is also rejected by the role check for role:manage (admin-only perm)", async () => {
+    // role:manage is ADMIN-only in the current RBAC matrix, so MANAGERs
+    // never reach the hierarchy layer for user-CRUD actions. This is
+    // intentional: the hierarchy foundation is in place for any future
+    // permission that expands MANAGERs' scope (see lib/hierarchy.ts →
+    // canManageUser for the predicate that would apply).
+    getServerSession.mockResolvedValue(MANAGER_SESSION);
+    await expect(
+      requirePermissionForTarget("role:manage", "u-other"),
+    ).rejects.toThrow(/does not have permission/);
+    expect(userFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("passes for self-targeted calls (self-management, no DB lookup)", async () => {
+    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    // Target == actor → no DB lookup needed.
+    const auth = await requirePermissionForTarget("role:manage", "u-admin");
+    expect(auth.userId).toBe("u-admin");
+    expect(userFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws when the target user does not exist", async () => {
+    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    userFindUnique.mockResolvedValue(null);
+    await expect(
+      requirePermissionForTarget("role:manage", "u-ghost"),
+    ).rejects.toThrow(/User not found/);
+  });
+
+  it("ADMIN passes for any target (subtree is not consulted)", async () => {
+    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    userFindUnique.mockResolvedValue({
+      id: "u-other", role: "MEMBER", managerId: "u-someone-else",
+    });
+    // For admins, getSubtreeUserIds is short-circuited in requirePermissionForTarget,
+    // so userFindMany (subtree BFS) must NOT be called.
+    const auth = await requirePermissionForTarget("role:manage", "u-other");
+    expect(auth.userId).toBe("u-admin");
+    expect(userFindMany).not.toHaveBeenCalled();
+  });
+
+  it("exercises the hierarchy path when MANAGER has the requested permission", async () => {
+    // Use `analytics:view` (which MANAGERs DO have) to drive the
+    // hierarchy check end-to-end. The target is in the manager's
+    // subtree → the call should pass.
+    getServerSession.mockResolvedValue(MANAGER_SESSION);
+    userFindUnique.mockResolvedValueOnce({
+      id: "u-report", role: "MEMBER", managerId: "u-mgr",
+    });
+    // Subtree BFS: the actor's findMany returns their direct reports;
+    // subsequent calls return empty (no deeper level).
+    userFindMany.mockResolvedValueOnce([{ id: "u-report" }]);
+    userFindMany.mockResolvedValue([]);
+
+    const auth = await requirePermissionForTarget("analytics:view", "u-report");
+    expect(auth.userId).toBe("u-mgr");
+    // The target lookup happened (otherwise we couldn't have checked).
+    expect(userFindUnique).toHaveBeenCalled();
+  });
+
+  it("rejects at the hierarchy layer when a permitted MANAGER targets a non-report", async () => {
+    getServerSession.mockResolvedValue(MANAGER_SESSION);
+    userFindUnique.mockResolvedValueOnce({
+      id: "u-peer-rep", role: "MEMBER", managerId: "u-mgr-2",
+    });
+    // The actor's subtree is empty — u-peer-rep is not in it.
+    userFindMany.mockResolvedValueOnce([]);
+
+    await expect(
+      requirePermissionForTarget("analytics:view", "u-peer-rep"),
+    ).rejects.toThrow(/reporting chain/i);
   });
 });

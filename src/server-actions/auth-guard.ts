@@ -6,6 +6,8 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { hasPermission, isValidRole, type Permission, type Role } from "@/lib/rbac";
+import { canManageUser, getSubtreeUserIds } from "@/lib/hierarchy";
+import { db } from "@/lib/db";
 
 interface AuthResult {
   userId: string;
@@ -56,6 +58,55 @@ export async function getSessionOrThrow(): Promise<AuthResult> {
   const auth = await getSession();
   if (!auth) {
     throw new AuthorizationError("You must be signed in.");
+  }
+  return auth;
+}
+
+/**
+ * Hierarchy-aware permission gate. Performs the standard role-based
+ * permission check (`requirePermission`) AND a hierarchy check: the
+ * signed-in user must be allowed to manage `targetUserId` per the
+ * reporting tree (see `lib/hierarchy.ts` → `canManageUser`).
+ *
+ * Use this for any action that mutates or reads another user's data:
+ * updateUser, deleteUser, getUserProfile (for non-self), assignManager,
+ * role changes, etc. Self-targeted calls (where targetUserId ===
+ * auth.userId) are always allowed at the hierarchy layer — caller-side
+ * self-protection rules (e.g. "cannot demote yourself") still apply.
+ *
+ * Returns the resolved AuthResult for the caller to use in audit logs.
+ */
+export async function requirePermissionForTarget(
+  permission: Permission,
+  targetUserId: string,
+): Promise<AuthResult> {
+  const auth = await requirePermission(permission);
+  if (auth.userId === targetUserId) {
+    // Self-management: hierarchy check passes. Caller enforces any extra
+    // self-protection rules (e.g. "cannot change own role").
+    return auth;
+  }
+  // Fetch the target's identity + managerId so we can apply canManageUser.
+  const target = await db.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, role: true, managerId: true },
+  });
+  if (!target) {
+    throw new AuthorizationError("User not found.");
+  }
+  const targetRole = isValidRole(target.role) ? target.role : "MEMBER";
+  // Compute the actor's subtree once. For admins this is short-circuited
+  // inside canManageUser before the subtree is consulted.
+  const actorSubtree = auth.role === "ADMIN" ? new Set<string>() : await getSubtreeUserIds(auth.userId);
+  if (!canManageUser(
+    { userId: auth.userId, role: auth.role },
+    { userId: target.id, role: targetRole, managerId: target.managerId },
+    actorSubtree,
+  )) {
+    throw new AuthorizationError(
+      "You can only manage users in your reporting chain. " +
+      "This user is not one of your direct or transitive reports.",
+    );
   }
   return auth;
 }

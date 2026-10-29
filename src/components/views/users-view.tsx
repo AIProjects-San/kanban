@@ -28,6 +28,8 @@ interface UserRecord {
   avatarColor: string;
   createdAt: string;
   projectCount: number;
+  managerId: string | null;
+  managerName: string | null;
 }
 
 interface ProjectAssignment {
@@ -189,6 +191,14 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
                       <Mail size={10} /> {u.email}
                       <span className="text-muted-foreground/40 mx-1">·</span>
                       <Clock size={10} /> Joined {new Date(u.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })}
+                    </div>
+                    {/* Reporting line — surfaces the org-chart edge so the
+                        hierarchy is visible at a glance. "—" = root. */}
+                    <div className="text-[0.6875rem] text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <span className="text-muted-foreground/60">Reports to:</span>
+                      <span className="font-medium text-foreground/80">
+                        {u.managerName ?? "— (root)"}
+                      </span>
                     </div>
                   </div>
 

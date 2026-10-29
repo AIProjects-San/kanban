@@ -26,6 +26,18 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // ---------------------------------------------------------------------
+  // Reporting hierarchy (docs/CODE_REVIEW.md §6 — user hierarchy).
+  // `managerId` is the user this account reports to (its parent in the
+  // org chart). Null = root (workspace owner / unmanaged admin). The
+  // relation is a self-reference with onDelete: SetNull so deleting a
+  // manager promotes their direct reports to roots rather than cascading
+  // a delete. The chain is walked by lib/hierarchy.ts.
+  // ---------------------------------------------------------------------
+  managerId    String?
+  manager      User?    @relation("UserManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports User[]  @relation("UserManager")
+
   projectAssignments ProjectAssignment[]
   settings           UserSettings?
 
@@ -38,6 +50,8 @@ model User {
   // Personal notifications routed to this user (null-recipient rows are
   // workspace-wide broadcasts instead — see the Notification model).
   notifications Notification[]
+
+  @@index([managerId])
 }
 
 // ---------------------------------------------------------------------------

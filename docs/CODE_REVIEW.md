@@ -87,6 +87,60 @@ and regression-tested in this pass. Test evidence: **261 unit/integration tests 
 > end-to-end against the running dev server (cmdk nav mirrors sidebar,
 > "Create user" opens UserModal, "Add Member" opens the trimmed
 > MemberModal, role-gating hides admin entries from MEMBER).
+>
+> **2026-10-30 fifth pass — user reporting hierarchy.** Added a
+> manager-subordinate tree on top of the existing 3-role RBAC, threaded
+> through every action that mutates a target user.
+> - **Schema**: `User.managerId` self-relation (`onDelete: SetNull` so
+>   deleting a manager promotes their direct reports to roots rather
+>   than cascading a delete), indexed for efficient "who reports to X"
+>   lookups. Migration pushed via `prisma db push`; client regenerated.
+> - **`lib/rbac.ts`**: added `roleRank()` (ADMIN=3 > MANAGER=2 >
+>   MEMBER=1) and `outranks()` (strict — same rank is NOT outranking)
+>   so the hierarchy helpers can answer "does A outrank B?" without
+>   consulting the DB.
+> - **`lib/hierarchy.ts`** (new): `getManagerChain(userId)` walks up
+>   the tree (capped at 32 hops); `getSubtreeUserIds(userId)` BFS'es
+>   down (capped at 1000 nodes); `getDirectReports(managerId)` for
+>   one-level lookups; `canManageUser(actor, target, actorSubtree)` —
+>   pure predicate (ADMIN→any, self→always, MEMBER→never, MANAGER→
+>   subtree OR legacy rank escape hatch for unmanaged users);
+>   `assertNoCycle(userId, newManagerId)` rejects self-reference and
+>   cycles before writing `managerId`.
+> - **`server-actions/auth-guard.ts`**: new
+>   `requirePermissionForTarget(permission, targetUserId)` — runs the
+>   standard role check, then for non-self targets fetches the target
+>   and applies `canManageUser`. Self-targets short-circuit (caller-
+>   side self-protection rules still apply). ADMIN short-circuits the
+>   subtree computation.
+> - **`server-actions/users.ts`**: `getAllUsers` now returns
+>   `managerId` + `managerName` in a single Prisma query (no N+1);
+>   `createUser` accepts `managerId`; `updateUser` and `deleteUser`
+>   gate via `requirePermissionForTarget` (hierarchy-aware);
+>   `updateUser` enforces cycle prevention (`assertNoCycle`) and a
+>   self-protection rule "cannot change your own manager" (admin-only
+>   escape); `getUserProfile` enforces the hierarchy for non-self
+>   reads. Audit log entries now record manager changes.
+> - **UI**: UserModal has a "Reports to" dropdown (excludes self,
+>   lists every other user with their role). UsersView shows a
+>   "Reports to: <name>" line on every row ("— (root)" for unmanaged).
+> - **Seed**: 11 manager edges building a 3-level tree rooted at the
+>   ADMIN: Mira (root) → Ingrid & Priya (managers) → their respective
+>   reports; plus a few direct reports of the admin.
+> - **Tests**: `lib/__tests__/hierarchy.test.ts` (10 — pure
+>   `canManageUser` predicate coverage); `lib/__tests__/rbac.test.ts`
+>   +5 for `roleRank`/`outranks`;
+>   `server-actions/__tests__/auth-guard.test.ts` +7 for
+>   `requirePermissionForTarget` (role-check rejection, self
+>   short-circuit, target-not-found, ADMIN bypass, hierarchy path
+>   exercised via a MANAGER-held permission, hierarchy rejection for
+>   non-reports).
+> Toolchain green: `lint` + `tsc --noEmit` + `322/322 tests` (+
+> 22 new); verified end-to-end against the running dev server —
+> Users view shows "Reports to: <name>" on every row matching the
+> seeded tree (Mira=root, Ingrid/Priya report to Mira, their reports
+> chain correctly), UserModal's "Reports to" dropdown populates
+> with all other users.
 
 ---
 

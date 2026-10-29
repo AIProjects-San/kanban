@@ -289,6 +289,44 @@ async function main() {
   const userByName = new Map(allUsers.map((u) => [u.name, u.id]));
 
   // -----------------------------------------------------------------
+  // Reporting hierarchy (org chart) — 3-level tree rooted at the ADMIN.
+  //   Mira (ADMIN, root)
+  //     ├── Ingrid (MANAGER)        ← Engineering Manager
+  //     │     ├── Lena              ← Backend Eng
+  //     │     ├── Rafael            ← DevOps
+  //     │     └── Soren             ← QA
+  //     ├── Priya (MANAGER)         ← Marketing Lead
+  //     │     ├── Marcus            ← Content
+  //     │     └── Hana              ← Design
+  //     ├── Theo                    ← Frontend (reports to admin directly)
+  //     ├── Yuki                    ← Product Designer
+  //     ├── Amara                   ← UX Researcher
+  //     └── Diego                   ← Full-stack
+  // -----------------------------------------------------------------
+  const mgrIngrid = userByName.get("Ingrid Solberg");
+  const mgrPriya = userByName.get("Priya Nair");
+  const treeAssignments = [
+    ["Ingrid Solberg", demoUser.id],          // Ingrid → Mira
+    ["Priya Nair", demoUser.id],              // Priya → Mira
+    ["Theo Vance", demoUser.id],              // Theo → Mira
+    ["Yuki Tanaka", demoUser.id],
+    ["Amara Diallo", demoUser.id],
+    ["Diego Morales", demoUser.id],
+    ["Lena Okafor", mgrIngrid],               // Lena → Ingrid
+    ["Rafael Costa", mgrIngrid],
+    ["Soren Lindqvist", mgrIngrid],
+    ["Marcus Bell", mgrPriya],                // Marcus → Priya
+    ["Hana Park", mgrPriya],
+  ];
+  for (const [name, mgrId] of treeAssignments) {
+    const uid = userByName.get(name);
+    if (uid && mgrId) {
+      await db.user.update({ where: { id: uid }, data: { managerId: mgrId } });
+    }
+  }
+  console.log(`  ✓ Reporting hierarchy: ${treeAssignments.length} manager edges set`);
+
+  // -----------------------------------------------------------------
   // Team Members (12)
   // -----------------------------------------------------------------
   const memberSeed = [
