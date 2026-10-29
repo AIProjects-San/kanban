@@ -1,6 +1,5 @@
 "use client";
 
-import { isActionError, actionErrorMessage } from "@/lib/action-errors";
 import { useState, useEffect, useMemo } from "react";
 import {
   History, RefreshCw, Loader2, ShieldAlert, Search,
@@ -51,13 +50,13 @@ export function AuditView({ currentUser }: AuditViewProps) {
     setLoading(true);
     try {
       const result = await getAuditLogs();
-      setLogs(result);
-    } catch (e) {
-      if (isActionError(e)) {
-        toast.error(actionErrorMessage(e));
-    } else {
-        toast.error("Failed to load audit log");
+      if (result.ok) {
+        setLogs(result.data);
+      } else {
+        toast.error(result.error);
       }
+    } catch {
+      toast.error("Failed to load audit log");
     } finally {
       setLoading(false);
     }

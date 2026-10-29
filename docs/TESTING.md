@@ -4,7 +4,7 @@
 
 | Layer | Tool | Command | Scope & gate |
 |-------|------|---------|--------------|
-| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, shared components — **261 tests**, coverage gate 90% stmts / 80% branches (current: ~95% / ~88%) |
+| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, shared components — **271 tests**, coverage gate 90% stmts / 80% branches |
 | Coverage report | Vitest + v8 | `bun run test:coverage` | HTML report in `coverage/` |
 | Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login, brute-force lockout, RBAC UI gating, board CRUD, messaging isolation (see `e2e/README.md`; requires Chrome) |
 | Static | ESLint + tsc | `bun run lint` / `bun run typecheck` | zero errors |

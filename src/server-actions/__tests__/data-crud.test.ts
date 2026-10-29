@@ -79,6 +79,24 @@ import {
   deleteRole,
 } from "@/server-actions/data";
 
+import type { ActionResult, ActionErrorCode } from "@/lib/action-result";
+
+/** Assert an action failed, optionally matching the message regex or error code. */
+function expectErr<T>(r: ActionResult<T>, matcher?: RegExp | ActionErrorCode): void {
+  expect(r.ok).toBe(false);
+  if (!r.ok && matcher) {
+    if (matcher instanceof RegExp) expect(r.error).toMatch(matcher);
+    else expect(r.code).toBe(matcher);
+  }
+}
+
+/** Assert an action succeeded; returns the data payload. */
+function expectOk<T>(r: ActionResult<T>): T {
+  expect(r.ok).toBe(true);
+  return r.ok ? r.data : (undefined as unknown as T);
+}
+
+
 const ADMIN = { userId: "u-admin", name: "Ada", email: "ada@fernly.dev", role: "ADMIN" as const };
 const MEMBER = { userId: "u-mia", name: "Mia", email: "mia@fernly.dev", role: "MEMBER" as const };
 
@@ -223,7 +241,7 @@ describe("audit logging resilience", () => {
   it("createReminder still succeeds when the audit write fails", async () => {
     db.auditLog.create.mockRejectedValue(new Error("audit table missing"));
     db.reminder.create.mockResolvedValue({ id: "r-9", title: "T", dueDate: now, completed: false, createdAt: now });
-    await expect(createReminder({ title: "T", dueDate: now.toISOString() })).resolves.toBeUndefined();
+    expectOk(await createReminder({ title: "T", dueDate: now.toISOString() }));
     expect(db.reminder.create).toHaveBeenCalled();
   });
 });
@@ -460,17 +478,40 @@ describe("reminders & notifications", () => {
     expect(db.auditLog.create).toHaveBeenCalled();
   });
 
-  it("markNotificationRead updates the row once signed in", async () => {
+  it("markNotificationRead updates your own notification once signed in", async () => {
+    signIn(MEMBER);
+    db.notification.findUnique.mockResolvedValue({ id: "n-1", recipientUserId: MEMBER.userId, read: false });
     db.notification.update.mockResolvedValue({});
-    await markNotificationRead("n-1", true);
+    expectOk(await markNotificationRead("n-1", true));
     expect(db.notification.update).toHaveBeenCalledWith({ where: { id: "n-1" }, data: { read: true } });
   });
 
-  it("markAllNotificationsRead flips every unread row", async () => {
+  it("markNotificationRead refuses to flip another user's private notification", async () => {
+    signIn(MEMBER);
+    db.notification.findUnique.mockResolvedValue({ id: "n-1", recipientUserId: "u-oli", read: false });
+    expectErr(await markNotificationRead("n-1", true), /own notifications/i);
+    expect(db.notification.update).not.toHaveBeenCalled();
+  });
+
+  it("markNotificationRead lets only role:manage flip workspace-wide broadcasts", async () => {
+    // MEMBER: denied — flipping a broadcast would clear it for everyone.
+    signIn(MEMBER);
+    db.notification.findUnique.mockResolvedValue({ id: "n-1", recipientUserId: null, read: false });
+    expectErr(await markNotificationRead("n-1", true), /admin/i);
+    expect(db.notification.update).not.toHaveBeenCalled();
+    // ADMIN: allowed (curation).
+    signIn(ADMIN);
+    db.notification.findUnique.mockResolvedValue({ id: "n-1", recipientUserId: null, read: false });
+    expectOk(await markNotificationRead("n-1", true));
+    expect(db.notification.update).toHaveBeenCalledWith({ where: { id: "n-1" }, data: { read: true } });
+  });
+
+  it("markAllNotificationsRead flips only the caller's own unread rows", async () => {
+    signIn(MEMBER);
     db.notification.updateMany.mockResolvedValue({ count: 3 });
-    await markAllNotificationsRead();
+    expectOk(await markAllNotificationsRead());
     expect(db.notification.updateMany).toHaveBeenCalledWith({
-      where: { read: false },
+      where: { recipientUserId: MEMBER.userId, read: false },
       data: { read: true },
     });
   });
@@ -517,10 +558,10 @@ describe("profile & settings", () => {
   it("sendMessage reuses the provided threadId and generates one when absent", async () => {
     signIn(MEMBER);
     db.message.create.mockResolvedValue({});
-    const explicit = await sendMessage({
+    const explicit = expectOk(await sendMessage({
       direction: "OUT", threadId: "th-42", senderName: "Mia",
       recipientName: "Oli", subject: "Re: hi", body: "yo",
-    });
+    }));
     expect(explicit).toBe("th-42");
     expect(db.message.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -528,19 +569,19 @@ describe("profile & settings", () => {
       }),
     );
 
-    const generated = await sendMessage({
+    const generated = expectOk(await sendMessage({
       direction: "IN", senderName: "Oli", recipientName: "Mia", subject: "Hi", body: "yo",
-    });
+    }));
     expect(generated).toBeTruthy();
     expect(generated).not.toBe("th-42");
   });
 
   it("getUserByEmail returns the recipient lookup result", async () => {
     db.user.findUnique.mockResolvedValue({ id: "u-oli", name: "Oli", email: "oli@fernly.dev", avatarColor: "ocean" });
-    const u = await getUserByEmail("oli@fernly.dev");
+    const u = expectOk(await getUserByEmail("oli@fernly.dev"));
     expect(u).toMatchObject({ id: "u-oli" });
     db.user.findUnique.mockResolvedValue(null);
-    expect(await getUserByEmail("ghost@fernly.dev")).toBeNull();
+    expect(expectOk(await getUserByEmail("ghost@fernly.dev"))).toBeNull();
   });
 
   it("getUserByEmail normalises the email to lowercase", async () => {
@@ -564,7 +605,7 @@ describe("user management", () => {
         avatarColor: "ocean", createdAt: now, _count: { projectAssignments: 4 },
       },
     ]);
-    const users = await getAllUsers();
+    const users = expectOk(await getAllUsers());
     expect(users[0].projectCount).toBe(4);
     expect(users[0].createdAt).toBe(now.toISOString());
   });
@@ -626,10 +667,10 @@ describe("project assignments", () => {
 
   it("assignUserToProject rejects unknown users or projects", async () => {
     db.user.findUnique.mockResolvedValue(null);
-    await expect(assignUserToProject("ghost", "p-1")).rejects.toThrow(/user not found/i);
+    expectErr(await assignUserToProject("ghost", "p-1"), /user not found/i);
     db.user.findUnique.mockResolvedValue({ id: "u-oli", name: "Oli" });
     db.project.findUnique.mockResolvedValue(null);
-    await expect(assignUserToProject("u-oli", "ghost")).rejects.toThrow(/project not found/i);
+    expectErr(await assignUserToProject("u-oli", "ghost"), /project not found/i);
   });
 
   it("unassignUserFromProject deletes the assignment", async () => {
@@ -646,7 +687,7 @@ describe("project assignments", () => {
     db.projectAssignment.findMany.mockResolvedValue([
       { id: "a-1", projectId: "p-1", userId: "u-oli", role: "MEMBER", createdAt: now, project: { id: "p-1", name: "Apollo", color: "forest", status: "RUNNING" } },
     ]);
-    const list = await getUserProjectAssignments("u-oli");
+    const list = expectOk(await getUserProjectAssignments("u-oli"));
     expect(list[0]).toMatchObject({ projectId: "p-1", project: { name: "Apollo" } });
   });
 
@@ -654,7 +695,7 @@ describe("project assignments", () => {
     db.projectAssignment.findMany.mockResolvedValue([
       { id: "a-1", projectId: "p-1", userId: "u-oli", role: "MEMBER", createdAt: now, user: { id: "u-oli", name: "Oli", email: "oli@fernly.dev", role: "MEMBER", avatarColor: "ocean" } },
     ]);
-    const list = await getProjectAssignments("p-1");
+    const list = expectOk(await getProjectAssignments("p-1"));
     expect(list[0].user).toMatchObject({ name: "Oli" });
   });
 });
@@ -665,7 +706,7 @@ describe("project assignments", () => {
 
 describe("read helpers", () => {
   it("getAuditLogsForEntity returns [] for an empty entityId", async () => {
-    const logs = await getAuditLogsForEntity("TASK", "");
+    const logs = expectOk(await getAuditLogsForEntity("TASK", ""));
     expect(logs).toEqual([]);
     expect(db.auditLog.findMany).not.toHaveBeenCalled();
   });
@@ -680,7 +721,7 @@ describe("read helpers", () => {
 
   it("getMyProjects finds owned, assigned and explicitly-assigned projects", async () => {
     db.project.findMany.mockResolvedValue([{ id: "p-1", name: "Apollo", color: "forest", status: "RUNNING" }]);
-    const projects = await getMyProjects();
+    const projects = expectOk(await getMyProjects());
     const where = db.project.findMany.mock.calls[0][0].where;
     expect(where.OR).toHaveLength(3);
     // Identity matching must go through the stable user id, never the name.
@@ -694,7 +735,7 @@ describe("read helpers", () => {
 
   it("getMyProjects returns [] when signed out", async () => {
     signIn(null);
-    expect(await getMyProjects()).toEqual([]);
+    expect(await getMyProjects()).toEqual({ ok: true, data: [] });
     expect(db.project.findMany).not.toHaveBeenCalled();
   });
 
@@ -708,7 +749,7 @@ describe("read helpers", () => {
     // The owner is resolved via the stable user-id link, not by name.
     db.teamMember.findUnique.mockResolvedValue(member("m-ada", "Ada", "u-ada"));
 
-    const merged = await getProjectMembers("p-1");
+    const merged = expectOk(await getProjectMembers("p-1"));
     expect(db.teamMember.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: "u-ada" } }),
     );
@@ -721,7 +762,7 @@ describe("read helpers", () => {
 
   it("getProjectMembers returns [] for unknown projects", async () => {
     db.project.findUnique.mockResolvedValue(null);
-    expect(await getProjectMembers("ghost")).toEqual([]);
+    expect(await getProjectMembers("ghost")).toEqual({ ok: true, data: [] });
   });
 });
 

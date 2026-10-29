@@ -1,5 +1,4 @@
 "use client";
-import { isActionError, actionErrorMessage } from "@/lib/action-errors";
 import { useState, useEffect } from "react";
 import { Loader2, KeyRound, UserPlus } from "lucide-react";
 import { Modal } from "./modal";
@@ -48,9 +47,9 @@ export function UserModal() {
       setLoadingTarget(true);
     });
     getAllUsers()
-      .then((users) => {
+      .then((res) => {
         if (cancelled) return;
-        const found = users.find((u) => u.id === userModalEditId) ?? null;
+        const found = res.ok ? res.data.find((u) => u.id === userModalEditId) ?? null : null;
         setEditing(found);
       })
       .catch(() => {
@@ -117,24 +116,31 @@ function UserForm({
     setSaving(true);
     try {
       if (editing) {
-        await updateUser(editing.id, {
+        const res = await updateUser(editing.id, {
           name, email, role, timezone, bio, avatarColor, department, jobTitle,
           resetPassword: password || undefined,
         });
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
         toast.success("User updated");
       } else {
-        await createUser({
+        const res = await createUser({
           name, email, password, role, timezone, bio, avatarColor, department, jobTitle,
         });
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
         toast.success("User created", {
           description: `${name} can now sign in with ${email}`,
         });
       }
       bumpRefresh();
       onClose();
-    } catch (e) {
-      if (isActionError(e)) toast.error(actionErrorMessage(e));
-      else toast.error("Failed to save user");
+    } catch {
+      toast.error("Failed to save user");
     } finally {
       setSaving(false);
     }
@@ -144,13 +150,16 @@ function UserForm({
     if (!editing) return;
     setDeleting(true);
     try {
-      await deleteUser(editing.id);
+      const res = await deleteUser(editing.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("User deleted");
       bumpRefresh();
       onClose();
-    } catch (e) {
-      if (isActionError(e)) toast.error(actionErrorMessage(e));
-      else toast.error("Failed to delete user");
+    } catch {
+      toast.error("Failed to delete user");
     } finally {
       setDeleting(false);
     }

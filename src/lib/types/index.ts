@@ -72,6 +72,9 @@ export interface NotificationT {
   type: "INFO" | "SUCCESS" | "WARNING" | "TASK" | "MENTION";
   read: boolean;
   createdAt: string;
+  /** null = workspace-wide broadcast; otherwise the notification is private
+   *  to that user (drives the broadcast badge in the topbar). */
+  recipientUserId: string | null;
 }
 
 export interface TimeEntryT {

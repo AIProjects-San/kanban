@@ -51,10 +51,14 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
   async function handleDelete(project: ProjectT) {
     if (!confirm(`Delete project "${project.name}"? This will also delete all tasks in it. This cannot be undone.`)) return;
     try {
-      await deleteProject(project.id);
+      const res = await deleteProject(project.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Project deleted");
       bumpRefresh();
-    } catch (e) {
+    } catch {
       toast.error("Failed to delete project");
     }
   }

@@ -3,7 +3,6 @@ import { useState, useEffect } from "react";
 import { Modal } from "./modal";
 import { useApp } from "@/store/app-store";
 import { createMember, getAllUsers } from "@/server-actions/data";
-import { isActionError } from "@/lib/action-errors";
 import { toast } from "sonner";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
@@ -62,25 +61,24 @@ function MemberForm({ onClose }: { onClose: () => void }) {
       setLoading(true);
     });
     getAllUsers()
-      .then((users) => {
-        if (!cancelled) {
-          // Show users that have a login account — they can be added as team members
-          setExistingUsers(users.map((u) => ({
-            id: u.id,
-            email: u.email,
-            name: u.name,
-            role: u.role,
-            avatarColor: u.avatarColor ?? "forest",
-          })));
-        }
-      })
-      .catch((e) => {
-        if (isActionError(e)) {
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.ok) {
           // Non-admins can't call getAllUsers — fall back to create mode
           setMode("create");
-        } else {
-          toast.error("Failed to load users");
+          return;
         }
+        // Show users that have a login account — they can be added as team members
+        setExistingUsers(res.data.map((u) => ({
+          id: u.id,
+          email: u.email,
+          name: u.name,
+          role: u.role,
+          avatarColor: u.avatarColor ?? "forest",
+        })));
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("Failed to load users");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -103,7 +101,7 @@ function MemberForm({ onClose }: { onClose: () => void }) {
         toast.error("Name and email are required");
         return;
       }
-      await createMember({
+      const res = await createMember({
         name: selectedUser.name.trim(),
         role: role.trim() || "Team Member",
         department,
@@ -111,6 +109,10 @@ function MemberForm({ onClose }: { onClose: () => void }) {
         avatarColor: selectedUser.avatarColor,
         online,
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success(`${selectedUser.name} added to the team`);
       bumpRefresh();
       onClose();
@@ -119,7 +121,7 @@ function MemberForm({ onClose }: { onClose: () => void }) {
         toast.error("Name and email are required");
         return;
       }
-      await createMember({
+      const res = await createMember({
         name: name.trim(),
         role: role.trim() || "Team Member",
         department,
@@ -127,6 +129,10 @@ function MemberForm({ onClose }: { onClose: () => void }) {
         avatarColor,
         online,
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Team member added");
       bumpRefresh();
       onClose();

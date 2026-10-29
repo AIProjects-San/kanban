@@ -1,5 +1,4 @@
 "use client";
-import { isActionError, actionErrorMessage } from "@/lib/action-errors";
 import { useState, useEffect, useMemo } from "react";
 import { Loader2, Check } from "lucide-react";
 import { Modal } from "./modal";
@@ -60,12 +59,16 @@ function AssignmentForm({
     let cancelled = false;
     getUserProjectAssignments(userId)
       .then((result) => {
-        if (!cancelled) setAssignments(result as ProjectAssignment[]);
+        if (cancelled) return;
+        if (result.ok) setAssignments(result.data);
+        else {
+          toast.error(result.error);
+          setAssignments([]);
+        }
       })
-      .catch((e) => {
+      .catch(() => {
         if (!cancelled) {
-          if (isActionError(e)) toast.error(actionErrorMessage(e));
-          else toast.error("Failed to load assignments");
+          toast.error("Failed to load assignments");
           setAssignments([]);
         }
       });
@@ -82,11 +85,19 @@ function AssignmentForm({
     setToggling(projectId);
     try {
       if (assignedProjectIds.has(projectId)) {
-        await unassignUserFromProject(userId, projectId);
+        const res = await unassignUserFromProject(userId, projectId);
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
         setAssignments(assignments.filter((a) => a.projectId !== projectId));
         toast.success("Unassigned");
       } else {
-        await assignUserToProject(userId, projectId, "MEMBER");
+        const res = await assignUserToProject(userId, projectId, "MEMBER");
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
         const project = projects.find((p) => p.id === projectId);
         if (project) {
           setAssignments([
@@ -103,9 +114,8 @@ function AssignmentForm({
         toast.success("Assigned to project");
       }
       bumpRefresh();
-    } catch (e) {
-      if (isActionError(e)) toast.error(actionErrorMessage(e));
-      else toast.error("Failed to update assignment");
+    } catch {
+      toast.error("Failed to update assignment");
     } finally {
       setToggling(null);
     }

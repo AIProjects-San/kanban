@@ -465,8 +465,8 @@ async function main() {
   // -----------------------------------------------------------------
   // Project Assignments — assign users to projects so counts are non-zero
   // -----------------------------------------------------------------
-  const allUsers = await db.user.findMany();
-  for (const u of allUsers) {
+  const usersForAssignments = await db.user.findMany();
+  for (const u of usersForAssignments) {
     // Assign each user to 2-5 random projects
     const numAssignments = Math.floor(Math.random() * 4) + 2;
     const shuffled = [...projects].sort(() => Math.random() - 0.5);
@@ -528,17 +528,23 @@ async function main() {
   console.log(`  ✓ ${eventTitles.length} calendar events`);
 
   // -----------------------------------------------------------------
-  // Notifications (8)
+  // Notifications (10) — routed per-user since the §6.2 hardening:
+  //   • rows with `recipientUserId` are private to that user
+  //   • rows with null recipient are workspace-wide broadcasts
   // -----------------------------------------------------------------
+  const demoUserId = demoUser.id;
+  // managerUser / memberUser are created earlier in the seed — reuse them.
   const notifs = [
-    { title: "Task assigned", message: "Theo Vance assigned you “Implement auth flow with NextAuth”", type: "TASK" },
-    { title: "Reminder: Halcyon check-in", message: "Check-in with Halcyon Labs is due in 2 hours.", type: "WARNING" },
-    { title: "Project ended", message: "Halcyon Labs Website marked as ended. Archived to Reports.", type: "INFO" },
-    { title: "Mention", message: "Yuki Tanaka mentioned you in “Design Review — Orion”.", type: "MENTION" },
-    { title: "Sprint complete", message: "Sprint 14 wrapped up — 18 of 22 tasks completed.", type: "SUCCESS" },
-    { title: "Due soon", message: "“Fernly v2.0 Launch” is due in 3 days.", type: "WARNING" },
-    { title: "New member", message: "Hana Park joined the Design team. Say hi!", type: "INFO" },
-    { title: "Time to log", message: "You have 4.5h unlogged time this week.", type: "INFO" },
+    { title: "Task assigned", message: "Theo Vance assigned you “Implement auth flow with NextAuth”", type: "TASK", recipientUserId: demoUserId },
+    { title: "Reminder: Halcyon check-in", message: "Check-in with Halcyon Labs is due in 2 hours.", type: "WARNING", recipientUserId: demoUserId },
+    { title: "Project ended", message: "Halcyon Labs Website marked as ended. Archived to Reports.", type: "INFO", recipientUserId: null },
+    { title: "Mention", message: "Yuki Tanaka mentioned you in “Design Review — Orion”.", type: "MENTION", recipientUserId: demoUserId },
+    { title: "Sprint complete", message: "Sprint 14 wrapped up — 18 of 22 tasks completed.", type: "SUCCESS", recipientUserId: managerUser?.id ?? null },
+    { title: "Due soon", message: "“Fernly v2.0 Launch” is due in 3 days.", type: "WARNING", recipientUserId: demoUserId },
+    { title: "New member", message: "Hana Park joined the Design team. Say hi!", type: "INFO", recipientUserId: null },
+    { title: "Time to log", message: "You have 4.5h unlogged time this week.", type: "INFO", recipientUserId: memberUser?.id ?? null },
+    { title: "Quarterly report ready", message: "The Q3 workspace report is available in Reports.", type: "INFO", recipientUserId: managerUser?.id ?? null },
+    { title: "Welcome to Fernly", message: "Explore the dashboard and set up your profile.", type: "SUCCESS", recipientUserId: null },
   ];
   for (let i = 0; i < notifs.length; i++) {
     await db.notification.create({

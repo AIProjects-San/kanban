@@ -74,11 +74,16 @@ export function EntityHistorySection({
     });
     getAuditLogsForEntity(entityType, entityId)
       .then((result) => {
-        if (!cancelled) setLogs(result as AuditLogEntry[]);
+        if (cancelled) return;
+        if (result.ok) setLogs(result.data);
+        else {
+          setError(result.error);
+          setLogs([]);
+        }
       })
-      .catch((e) => {
+      .catch(() => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load history");
+          setError("Failed to load history");
           setLogs([]);
         }
       })

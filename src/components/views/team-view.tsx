@@ -495,8 +495,9 @@ function MessageModal({
     setSending(true);
     try {
       // Look up the recipient's user ID so the message is scoped to them
-      const recipientUser = await getUserByEmail(member.email);
-      await sendMessage({
+      const recipientRes = await getUserByEmail(member.email);
+      const recipientUser = recipientRes.ok ? recipientRes.data : null;
+      const res = await sendMessage({
         direction: "OUT",
         memberId: member.id,
         senderName: currentUser.name,
@@ -507,12 +508,16 @@ function MessageModal({
         subject: subject.trim() || "(no subject)",
         body: body.trim(),
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       bumpRefresh();
       toast.success(`Message sent to ${member.name}`, {
         description: subject.trim() || "(no subject)",
       });
       onClose();
-    } catch (e) {
+    } catch {
       toast.error("Failed to send message");
     } finally {
       setSending(false);

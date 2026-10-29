@@ -97,7 +97,8 @@ function TaskModalBody({
     let cancelled = false;
     getMyProjects()
       .then((result) => {
-        if (!cancelled) setMyProjects(result);
+        if (cancelled) return;
+        setMyProjects(result.ok ? result.data : []);
       })
       .catch(() => {
         if (!cancelled) setMyProjects([]);
@@ -176,10 +177,18 @@ function TaskForm({
       assigneeId: assigneeId || null,
     };
     if (editing) {
-      await updateTask(editing.id, payload);
+      const res = await updateTask(editing.id, payload);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Task updated");
     } else {
-      await createTask(payload);
+      const res = await createTask(payload);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Task created");
     }
     bumpRefresh();
@@ -188,7 +197,11 @@ function TaskForm({
 
   const remove = async () => {
     if (!editing) return;
-    await deleteTask(editing.id);
+    const res = await deleteTask(editing.id);
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
     toast.success("Task deleted");
     bumpRefresh();
     onClose();
@@ -333,7 +346,8 @@ function AssigneeField({
     let cancelled = false;
     getProjectMembers(projectId)
       .then((result) => {
-        if (!cancelled) setProjectMembers(result);
+        if (cancelled) return;
+        setProjectMembers(result.ok ? result.data : []);
       })
       .catch(() => {
         if (!cancelled) setProjectMembers([]);

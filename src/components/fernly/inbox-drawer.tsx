@@ -102,7 +102,11 @@ export function InboxDrawer({ messages, members, currentUser }: InboxDrawerProps
             onBack={closeInboxThread}
             onReplySent={bumpRefresh}
             onDelete={async (id) => {
-              await deleteMessage(id);
+              const res = await deleteMessage(id);
+              if (!res.ok) {
+                toast.error(res.error);
+                return;
+              }
               bumpRefresh();
               toast.success("Message deleted");
             }}
@@ -251,28 +255,36 @@ function ThreadView({
       return;
     }
     setSending(true);
-    // Look up the recipient's user ID
-    const recipientUser = await getUserByEmail(
-      // The replyTo is the other person in the conversation — find their email
-      // from the members list if possible, otherwise leave recipientUserId empty
-      members.find((m) => m.name === replyTo)?.email ?? ""
-    );
-    await sendMessage({
-      direction: "OUT",
-      threadId: thread.threadId,
-      memberId,
-      senderName: currentUser.name,
-      senderAvatarColor: currentUser.avatarColor,
-      senderRole: currentUser.role,
-      recipientName: replyTo,
-      recipientUserId: recipientUser?.id,
-      subject: first.subject.startsWith("Re:") ? first.subject : `Re: ${first.subject}`,
-      body: replyBody.trim(),
-    });
-    setSending(false);
-    setReplyBody("");
-    toast.success(`Reply sent to ${replyTo}`);
-    onReplySent();
+    try {
+      // Look up the recipient's user ID
+      const recipientRes = await getUserByEmail(
+        // The replyTo is the other person in the conversation — find their email
+        // from the members list if possible, otherwise leave recipientUserId empty
+        members.find((m) => m.name === replyTo)?.email ?? ""
+      );
+      const recipientUser = recipientRes.ok ? recipientRes.data : null;
+      const res = await sendMessage({
+        direction: "OUT",
+        threadId: thread.threadId,
+        memberId,
+        senderName: currentUser.name,
+        senderAvatarColor: currentUser.avatarColor,
+        senderRole: currentUser.role,
+        recipientName: replyTo,
+        recipientUserId: recipientUser?.id,
+        subject: first.subject.startsWith("Re:") ? first.subject : `Re: ${first.subject}`,
+        body: replyBody.trim(),
+      });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      setReplyBody("");
+      toast.success(`Reply sent to ${replyTo}`);
+      onReplySent();
+    } finally {
+      setSending(false);
+    }
   };
 
   return (

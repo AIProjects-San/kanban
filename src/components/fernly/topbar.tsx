@@ -262,7 +262,17 @@ function NotificationsDropdown({
                 <div className="flex items-start gap-2.5">
                   <div className="mt-0.5">{typeIcon(n.type)}</div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-foreground">{n.title}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-semibold text-foreground">{n.title}</span>
+                      {n.recipientUserId === null && (
+                        <span
+                          title="Workspace-wide — visible to everyone"
+                          className="inline-flex items-center gap-0.5 px-1.5 py-px rounded text-[0.5625rem] font-medium uppercase tracking-wide bg-muted text-muted-foreground border border-border"
+                        >
+                          All
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.message}</div>
                     <div className="text-[0.625rem] text-muted-foreground/70 mt-1">
                       {timeAgo(n.createdAt)}

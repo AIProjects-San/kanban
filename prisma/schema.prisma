@@ -34,6 +34,10 @@ model User {
   // share a name. These relations carry the authoritative identity.
   ownedProjects Project[]      @relation("ProjectOwner")
   memberProfile TeamMember?    @relation("MemberProfile")
+
+  // Personal notifications routed to this user (null-recipient rows are
+  // workspace-wide broadcasts instead — see the Notification model).
+  notifications Notification[]
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +162,16 @@ model Notification {
   type      String   @default("INFO") // INFO | SUCCESS | WARNING | TASK | MENTION
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  // Per-user routing (docs/CODE_REVIEW.md §6.2): rows with a recipient are
+  // private to that user — only they see them and only they can mark them
+  // read. Rows with a null recipient are workspace-wide broadcasts: visible
+  // to everyone, and only curatable (mark read/unread) by role:manage
+  // holders, since flipping a broadcast's read flag affects every viewer.
+  recipientUserId String?
+  user            User?    @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+
+  @@index([recipientUserId, read])
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,5 @@
 "use client";
 
-import { isActionError, actionErrorMessage } from "@/lib/action-errors";
 import { useState } from "react";
 import { Check, Bell, User, Palette, Clock, Lock, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -56,7 +55,11 @@ export function SettingsView({ user }: SettingsViewProps) {
   });
 
   const saveProfile = async () => {
-    await updateProfile(user.id, { name, role, timezone, bio, avatarColor });
+    const res = await updateProfile(user.id, { name, role, timezone, bio, avatarColor });
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
     bumpRefresh();
     toast.success("Profile updated");
   };
@@ -66,10 +69,10 @@ export function SettingsView({ user }: SettingsViewProps) {
     setNotif((prev) => ({ ...prev, [key]: value }));
     const dbKey = key === "weeklyDigest" ? "notifWeekly" : key === "productUpdates" ? "notifProduct" : `notif${key.charAt(0).toUpperCase()}${key.slice(1)}`;
     try {
-      await updateUserSettings(user.id, { [dbKey]: value });
-    } catch (e) {
-      if (isActionError(e)) toast.error(actionErrorMessage(e));
-      else toast.error("Failed to save setting");
+      const res = await updateUserSettings(user.id, { [dbKey]: value });
+      if (!res.ok) toast.error(res.error);
+    } catch {
+      toast.error("Failed to save setting");
     }
   };
 
@@ -242,23 +245,23 @@ function SecuritySection({ userId, email }: { userId: string; email: string }) {
     if (!canSubmit) return;
     setSaving(true);
     try {
-      await changePassword({
+      const res = await changePassword({
         userId,
         currentPassword: current,
         newPassword: next,
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Password updated", {
         description: "Use your new password the next time you sign in.",
       });
       setCurrent("");
       setNext("");
       setConfirm("");
-    } catch (e) {
-      if (isActionError(e)) {
-        toast.error(actionErrorMessage(e));
-    } else {
-        toast.error("Failed to change password");
-      }
+    } catch {
+      toast.error("Failed to change password");
     } finally {
       setSaving(false);
     }

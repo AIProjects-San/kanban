@@ -16,6 +16,7 @@
 | Enumeration | Unknown emails still run a bcrypt compare (constant-time behaviour); identical error surface |
 | Role freshness | JWT callback re-reads the role from the DB every 5 min; deleted accounts are treated as signed out |
 | Secret rotation | `src/proxy.ts` verifies the session cookie against the current `NEXTAUTH_SECRET` on every page request; an undecryptable (rotated/corrupt) cookie is stripped from the forwarded request and expired in the browser, so clients self-heal to a clean sign-in instead of logging `JWT_SESSION_ERROR` on every render. Never active on `/api/auth/*` (NextAuth must stay free to rotate its own cookies) |
+| Notification routing | `Notification.recipientUserId`: private rows are visible/mutable only by their recipient; null-recipient broadcasts are visible to all and markable only by `role:manage` (flipping them affects every viewer). `markAllNotificationsRead` touches only the caller's own rows |
 
 ## 2. Authorization
 

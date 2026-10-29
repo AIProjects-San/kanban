@@ -81,10 +81,18 @@ function ProjectForm({
       ownerMemberId,
     };
     if (editing) {
-      await updateProject(editing.id, payload);
+      const res = await updateProject(editing.id, payload);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Project updated");
     } else {
-      await createProject(payload);
+      const res = await createProject(payload);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Project created");
     }
     bumpRefresh();
@@ -93,7 +101,11 @@ function ProjectForm({
 
   const remove = async () => {
     if (!editing) return;
-    await deleteProject(editing.id);
+    const res = await deleteProject(editing.id);
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
     toast.success("Project deleted");
     bumpRefresh();
     onClose();

@@ -46,8 +46,26 @@ import {
   deleteMessage,
   unassignUserFromProject,
   getDashboardData,
-  AuthorizationError,
 } from "@/server-actions/data";
+import { AuthorizationError } from "@/server-actions/auth-guard";
+
+import type { ActionResult, ActionErrorCode } from "@/lib/action-result";
+
+/** Assert an action failed, optionally matching the message regex or error code. */
+function expectErr<T>(r: ActionResult<T>, matcher?: RegExp | ActionErrorCode): void {
+  expect(r.ok).toBe(false);
+  if (!r.ok && matcher) {
+    if (matcher instanceof RegExp) expect(r.error).toMatch(matcher);
+    else expect(r.code).toBe(matcher);
+  }
+}
+
+/** Assert an action succeeded; returns the data payload. */
+function expectOk<T>(r: ActionResult<T>): T {
+  expect(r.ok).toBe(true);
+  return r.ok ? r.data : (undefined as unknown as T);
+}
+
 
 const ADMIN = { userId: "u-admin", name: "Ada", email: "ada@fernly.dev", role: "ADMIN" as const };
 const MANAGER = { userId: "u-mgr", name: "Max", email: "max@fernly.dev", role: "MANAGER" as const };
@@ -148,12 +166,12 @@ describe("updateUser optional-field branches", () => {
 
   it("rejects an invalid email update", async () => {
     setup();
-    await expect(updateUser("u-oli", { email: "nope" })).rejects.toThrow(/valid email/i);
+    expectErr(await updateUser("u-oli", { email: "nope" }), /valid email/i);
   });
 
   it("rejects a short password reset", async () => {
     setup();
-    await expect(updateUser("u-oli", { resetPassword: "short" })).rejects.toThrow(/at least 8/i);
+    expectErr(await updateUser("u-oli", { resetPassword: "short" }), /at least 8/i);
   });
 
   it("applies timezone/bio updates without touching email or role", async () => {
@@ -219,7 +237,7 @@ describe("delete flows tolerate missing pre-images", () => {
   it("deleteMessage with no existing row deletes without auditing", async () => {
     db.message.findUnique.mockResolvedValue(null);
     db.message.delete.mockResolvedValue({});
-    await expect(deleteMessage("ghost")).resolves.toBeUndefined();
+    expectOk(await deleteMessage("ghost"));
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 });

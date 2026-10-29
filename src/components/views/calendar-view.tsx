@@ -204,7 +204,11 @@ export function CalendarView({ events }: CalendarViewProps) {
               <div className="space-y-2">
                 {selectedEvents.map((e) => (
                   <EventRow key={e.id} event={e} onClick={() => setDetailEvent(e)} onDelete={async () => {
-                    await deleteEvent(e.id);
+                    const res = await deleteEvent(e.id);
+                    if (!res.ok) {
+                      toast.error(res.error);
+                      return;
+                    }
                     bumpRefresh();
                     toast.success("Event deleted");
                   }} />
@@ -261,7 +265,11 @@ export function CalendarView({ events }: CalendarViewProps) {
           event={detailEvent}
           onClose={() => setDetailEvent(null)}
           onDelete={async () => {
-            await deleteEvent(detailEvent.id);
+            const res = await deleteEvent(detailEvent.id);
+            if (!res.ok) {
+              toast.error(res.error);
+              return;
+            }
             bumpRefresh();
             toast.success("Event deleted");
             setDetailEvent(null);
@@ -316,7 +324,7 @@ function CreateEventModal({
       toast.error("Title is required");
       return;
     }
-    await createEvent({
+    const res = await createEvent({
       title: title.trim(),
       date,
       time,
@@ -324,6 +332,10 @@ function CreateEventModal({
       type,
       location,
     });
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
     toast.success("Event created");
     setTitle("");
     setLocation("");

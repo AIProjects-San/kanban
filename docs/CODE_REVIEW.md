@@ -117,21 +117,30 @@ These were **consciously not** fixed in the original pass. Status after the
    Existing rows were backfilled (`scripts/link-identities.js` — idempotent);
    the seed links identities at creation; `createMember` auto-links by email.
    Regression tests assert no identity query filters by name.
-2. **Notifications are workspace-global** (by design in the original demo).
-   Every signed-in user sees the same 20 notifications and can mark them read.
-   **Risk: low for a single-team workspace.** Fix: add `recipientUserId` to
-   `Notification`. *(Bonus hardening in the same pass: time entries are now
-   scoped to the visible member set — scoped users no longer receive other
-   members' time logs in the dashboard payload.)*
+2. ~~**Notifications are workspace-global**~~ **FIXED 2026-10-30 (second pass).**
+   `Notification.recipientUserId` added (nullable, indexed, cascading delete):
+   rows with a recipient are private to that user (only they see them and only
+   they can flip read state); rows with a null recipient are workspace-wide
+   broadcasts, visible to everyone and curatable (mark read/unread) only by
+   `role:manage` holders — flipping a broadcast affects every viewer.
+   `markAllNotificationsRead` touches only the caller's own rows. The dashboard
+   query, seed data (private + broadcast mix) and the topbar ("All" badge on
+   broadcasts) all follow the routing. Regression tests cover all four paths.
 3. **In-memory rate limiter** resets on restart and doesn't share state across instances.
    Fine for the current single-instance deployment; swap for Redis/Upstash before scaling
    horizontally.
    *(Related 2026-10-30: stale-cookie self-healing after secret rotation is now
    handled by `src/proxy.ts` — see the re-verification note above.)*
-4. **Error messages in production** may still be generic for *unexpected* errors (only
-   `AuthorizationError`/`ValidationError` carry a digest marker). The complete fix is
-   returning `{ ok: false, error }` result objects from every action — a sweeping but
-   mechanical refactor, recommended next iteration.
+4. ~~**Error messages in production** may still be generic for *unexpected* errors.~~
+   **FIXED 2026-10-30 (second pass).** Every client-invoked server action now
+   returns `{ ok: false; code; error }` result objects (`lib/action-result.ts` +
+   `server-actions/result.ts`): AuthorizationError → `AUTH` with the real
+   message, validation failures → `VALIDATION`, everything else → `INTERNAL`
+   with a generic message (details logged server-side only). SSR-only loaders
+   (`getDashboardData`, `getUserProfile`, `getUserSettings`) intentionally keep
+   throwing — a DB outage during SSR belongs in the error boundary. All
+   call sites branch on `res.ok`; `lib/action-errors.ts` remains only as the
+   internal classification helper.
 5. **ESLint is permissive** — many valuable rules (`no-unused-vars`, `react-hooks/exhaustive-deps`,
    …) are switched off globally. Re-enable incrementally with an allow-list of legacy
    suppressions; do not bulk-flip without a dedicated pass.
@@ -163,9 +172,13 @@ removed.
 
 1. ~~CI pipeline (lint + typecheck + test + build) and pre-commit hook.~~ **Done 2026-10-30.**
 2. ~~Stable-id identity columns + migration (removes name-collision ambiguity).~~ **Done 2026-10-30.**
-3. Result-object returns for all server actions (production-grade error UX).
-4. Split `server-actions/data.ts` by domain (`tasks.ts`, `projects.ts`, `users.ts`, …) —
-   it is the only remaining oversized file.
+3. ~~Result-object returns for all server actions (production-grade error UX).~~
+   **Done 2026-10-30 (second pass)** — see §6.4.
+4. ~~Split `server-actions/data.ts` by domain (`tasks.ts`, `projects.ts`, `users.ts`, …)~~
+   **Done 2026-10-30 (second pass)** — 13 per-domain modules; `data.ts` is a
+   barrel re-export (without `"use server"` — Turbopack strips re-exports from
+   action modules, and a plain barrel keeps the server references intact).
+   Server-only helpers moved to `shared.ts` / `result.ts`.
 5. Nonce-based CSP (HSTS done at the app layer 2026-10-30; the reverse-proxy
    (Caddy) layer can also add it when TLS terminates there).
-6. Redis-backed rate limiting + per-user notification routing.
+6. Redis-backed rate limiting. ~~Per-user notification routing~~ **Done 2026-10-30** (see §6.2).

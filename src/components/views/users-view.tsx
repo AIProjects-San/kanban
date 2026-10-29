@@ -1,6 +1,5 @@
 "use client";
 
-import { isActionError, actionErrorMessage } from "@/lib/action-errors";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   UserCog, UserPlus, RefreshCw, Loader2, Mail, Trash2,
@@ -61,10 +60,10 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
     setLoading(true);
     try {
       const result = await getAllUsers();
-      setUsers(result);
-    } catch (e) {
-      if (isActionError(e)) toast.error(actionErrorMessage(e));
-      else toast.error("Failed to load users");
+      if (result.ok) setUsers(result.data);
+      else toast.error(result.error);
+    } catch {
+      toast.error("Failed to load users");
     } finally {
       setLoading(false);
     }
@@ -78,7 +77,7 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
     setLoadingAssignments(expandedUser);
     getUserProjectAssignments(expandedUser)
       .then((result) => {
-        setAssignmentsByUser((prev) => ({ ...prev, [expandedUser]: result as ProjectAssignment[] }));
+        setAssignmentsByUser((prev) => ({ ...prev, [expandedUser]: result.ok ? result.data : [] }));
       })
       .catch(() => {
         setAssignmentsByUser((prev) => ({ ...prev, [expandedUser]: [] }));
@@ -111,13 +110,16 @@ export function UsersView({ currentUser, projects }: UsersViewProps) {
     }
     if (!confirm(`Delete user "${name}"? This will also remove all their project assignments. This cannot be undone.`)) return;
     try {
-      await deleteUser(userId);
+      const res = await deleteUser(userId);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("User deleted");
       bumpRefresh();
       await loadUsers();
-    } catch (e) {
-      if (isActionError(e)) toast.error(actionErrorMessage(e));
-      else toast.error("Failed to delete user");
+    } catch {
+      toast.error("Failed to delete user");
     }
   }
 

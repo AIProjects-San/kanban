@@ -94,9 +94,13 @@ export function TasksView({ tasks, projects, members, currentUser }: TasksViewPr
     const colTasks = byColumn(targetStatus);
     const newOrder = colTasks.length ? Math.max(...colTasks.map((t) => t.order)) + 1 : 0;
     try {
-      await moveTask(activeTask.id, targetStatus, newOrder);
+      const res = await moveTask(activeTask.id, targetStatus, newOrder);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success(`Moved to ${TASK_STATUSES.find((c) => c.key === targetStatus)?.label}`);
-    } catch (err) {
+    } catch {
       toast.error("Failed to move task");
     }
   }

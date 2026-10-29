@@ -73,8 +73,26 @@ import {
   updateRole,
   createRole,
   deleteRole,
-  AuthorizationError,
 } from "@/server-actions/data";
+import { AuthorizationError } from "@/server-actions/auth-guard";
+
+import type { ActionResult, ActionErrorCode } from "@/lib/action-result";
+
+/** Assert an action failed, optionally matching the message regex or error code. */
+function expectErr<T>(r: ActionResult<T>, matcher?: RegExp | ActionErrorCode): void {
+  expect(r.ok).toBe(false);
+  if (!r.ok && matcher) {
+    if (matcher instanceof RegExp) expect(r.error).toMatch(matcher);
+    else expect(r.code).toBe(matcher);
+  }
+}
+
+/** Assert an action succeeded; returns the data payload. */
+function expectOk<T>(r: ActionResult<T>): T {
+  expect(r.ok).toBe(true);
+  return r.ok ? r.data : (undefined as unknown as T);
+}
+
 
 // ---------------------------------------------------------------------------
 // Test fixtures & helpers
@@ -278,9 +296,7 @@ describe("updateTask ownership (P0-2 regression)", () => {
     db.task.update.mockResolvedValue(freshTask());
     db.teamMember.update.mockResolvedValue({});
 
-    await expect(
-      updateTask("t-1", { title: "Still mine" }),
-    ).resolves.toBeUndefined();
+    expectOk(await updateTask("t-1", { title: "Still mine" }));
     expect(db.task.update).toHaveBeenCalled();
   });
 
@@ -288,9 +304,7 @@ describe("updateTask ownership (P0-2 regression)", () => {
     signIn(MEMBER);
     db.task.findUnique.mockResolvedValue(freshTask({ assigneeId: "m-oli" }));
 
-    await expect(updateTask("t-1", { title: "Not mine" })).rejects.toThrow(
-      /only edit tasks that are assigned to you/i,
-    );
+    expectErr(await updateTask("t-1", { title: "Not mine" }), /only edit tasks that are assigned to you/i);
     expect(db.task.update).not.toHaveBeenCalled();
   });
 
@@ -298,7 +312,7 @@ describe("updateTask ownership (P0-2 regression)", () => {
     signIn(MEMBER);
     db.task.findUnique.mockResolvedValue(freshTask({ assigneeId: null }));
 
-    await expect(updateTask("t-1", { title: "Nobody's" })).rejects.toThrow(AuthorizationError);
+    expectErr(await updateTask("t-1", { title: "Nobody's" }), "AUTH");
     expect(db.task.update).not.toHaveBeenCalled();
   });
 
@@ -306,7 +320,7 @@ describe("updateTask ownership (P0-2 regression)", () => {
     signIn({ ...MEMBER, email: "stranger@fernly.dev" });
     db.task.findUnique.mockResolvedValue(freshTask({ assigneeId: "m-mia" }));
 
-    await expect(updateTask("t-1", { title: "Nope" })).rejects.toThrow(AuthorizationError);
+    expectErr(await updateTask("t-1", { title: "Nope" }), "AUTH");
   });
 
   it("allows ADMIN (task:edit:any) to update any task", async () => {
@@ -315,7 +329,7 @@ describe("updateTask ownership (P0-2 regression)", () => {
     db.task.update.mockResolvedValue(freshTask());
     db.teamMember.update.mockResolvedValue({});
 
-    await expect(updateTask("t-1", { title: "Admin override" })).resolves.toBeUndefined();
+    expectOk(await updateTask("t-1", { title: "Admin override" }));
     expect(db.task.update).toHaveBeenCalled();
   });
 
@@ -325,13 +339,13 @@ describe("updateTask ownership (P0-2 regression)", () => {
     db.task.update.mockResolvedValue(freshTask());
     db.teamMember.update.mockResolvedValue({});
 
-    await expect(updateTask("t-1", { title: "Manager override" })).resolves.toBeUndefined();
+    expectOk(await updateTask("t-1", { title: "Manager override" }));
   });
 
   it("silently no-ops when the task does not exist", async () => {
     signIn(ADMIN);
     db.task.findUnique.mockResolvedValue(null);
-    await expect(updateTask("missing", { title: "x" })).resolves.toBeUndefined();
+    expectOk(await updateTask("missing", { title: "x" }));
     expect(db.task.update).not.toHaveBeenCalled();
   });
 });
@@ -341,7 +355,7 @@ describe("moveTask ownership (P0-2 regression)", () => {
     signIn(MEMBER);
     db.task.findUnique.mockResolvedValue(freshTask({ assigneeId: "m-oli" }));
 
-    await expect(moveTask("t-1", "DONE", 0)).rejects.toThrow(AuthorizationError);
+    expectErr(await moveTask("t-1", "DONE", 0), "AUTH");
     expect(db.task.update).not.toHaveBeenCalled();
   });
 
@@ -351,7 +365,7 @@ describe("moveTask ownership (P0-2 regression)", () => {
     db.task.update.mockResolvedValue(freshTask());
     db.teamMember.update.mockResolvedValue({});
 
-    await expect(moveTask("t-1", "DONE", 0)).resolves.toBeUndefined();
+    expectOk(await moveTask("t-1", "DONE", 0));
     expect(db.task.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "DONE" }) }),
     );
@@ -364,17 +378,17 @@ describe("moveTask ownership (P0-2 regression)", () => {
 
 describe("notification & message mutations require auth (P0-3 regression)", () => {
   it("markNotificationRead rejects anonymous callers", async () => {
-    await expect(markNotificationRead("n-1", true)).rejects.toThrow(AuthorizationError);
+    expectErr(await markNotificationRead("n-1", true), "AUTH");
     expect(db.notification.update).not.toHaveBeenCalled();
   });
 
   it("markAllNotificationsRead rejects anonymous callers", async () => {
-    await expect(markAllNotificationsRead()).rejects.toThrow(AuthorizationError);
+    expectErr(await markAllNotificationsRead(), "AUTH");
     expect(db.notification.updateMany).not.toHaveBeenCalled();
   });
 
   it("markMessageRead rejects anonymous callers", async () => {
-    await expect(markMessageRead("m-1")).rejects.toThrow(AuthorizationError);
+    expectErr(await markMessageRead("m-1"), "AUTH");
   });
 
   it("markMessageRead only updates messages addressed to the caller", async () => {
@@ -455,7 +469,7 @@ describe("deleteMessage ownership (P1-9)", () => {
       id: "m-1", senderUserId: MEMBER.userId, recipientUserId: "u-oli", subject: "hi",
     });
     db.message.delete.mockResolvedValue({});
-    await expect(deleteMessage("m-1")).resolves.toBeUndefined();
+    expectOk(await deleteMessage("m-1"));
     expect(db.message.delete).toHaveBeenCalled();
   });
 
@@ -465,7 +479,7 @@ describe("deleteMessage ownership (P1-9)", () => {
       id: "m-1", senderUserId: "u-oli", recipientUserId: MEMBER.userId, subject: "hi",
     });
     db.message.delete.mockResolvedValue({});
-    await expect(deleteMessage("m-1")).resolves.toBeUndefined();
+    expectOk(await deleteMessage("m-1"));
   });
 
   it("rejects deleting a message you neither sent nor received", async () => {
@@ -473,7 +487,7 @@ describe("deleteMessage ownership (P1-9)", () => {
     db.message.findUnique.mockResolvedValue({
       id: "m-1", senderUserId: "u-oli", recipientUserId: "u-admin", subject: "hi",
     });
-    await expect(deleteMessage("m-1")).rejects.toThrow(/sent or received/i);
+    expectErr(await deleteMessage("m-1"), /sent or received/i);
     expect(db.message.delete).not.toHaveBeenCalled();
   });
 });
@@ -484,9 +498,7 @@ describe("deleteMessage ownership (P1-9)", () => {
 
 describe("logTime (P1-10)", () => {
   it("rejects anonymous callers", async () => {
-    await expect(
-      logTime({ projectId: "p-1", date: iso(new Date()), hours: 2 }),
-    ).rejects.toThrow(AuthorizationError);
+    expectErr(await logTime({ projectId: "p-1", date: iso(new Date()), hours: 2 }), "AUTH");
   });
 
   it("derives the member id from the session, never the input", async () => {
@@ -510,16 +522,12 @@ describe("logTime (P1-10)", () => {
 
   it("rejects users without a team member profile", async () => {
     signIn({ ...MEMBER, email: "stranger@fernly.dev" });
-    await expect(
-      logTime({ projectId: "p-1", date: iso(new Date()), hours: 2 }),
-    ).rejects.toThrow(/team member profile/i);
+    expectErr(await logTime({ projectId: "p-1", date: iso(new Date()), hours: 2 }), /team member profile/i);
   });
 
   it.each([0, -1, 25, NaN])("rejects invalid hours: %s", async (hours) => {
     signIn(MEMBER);
-    await expect(
-      logTime({ projectId: "p-1", date: iso(new Date()), hours }),
-    ).rejects.toThrow(/between 0 and 24/i);
+    expectErr(await logTime({ projectId: "p-1", date: iso(new Date()), hours }), /between 0 and 24/i);
   });
 });
 
@@ -532,25 +540,25 @@ describe("permission gating", () => {
     signIn(MEMBER);
     db.task.create.mockResolvedValue(freshTask({ project: null }));
     db.teamMember.update.mockResolvedValue({});
-    await expect(createTask({ title: "New" })).resolves.toBeUndefined();
+    expectOk(await createTask({ title: "New" }));
   });
 
   it("createProject is denied for MEMBER", async () => {
     signIn(MEMBER);
-    await expect(createProject({ name: "Nope" })).rejects.toThrow(AuthorizationError);
+    expectErr(await createProject({ name: "Nope" }), "AUTH");
     expect(db.project.create).not.toHaveBeenCalled();
   });
 
   it("createProject is allowed for MANAGER", async () => {
     signIn(MANAGER);
     db.project.create.mockResolvedValue({ id: "p-2", name: "Yes" });
-    await expect(createProject({ name: "Yes" })).resolves.toBeUndefined();
+    expectOk(await createProject({ name: "Yes" }));
   });
 
   it("deleteProject is denied for MANAGER", async () => {
     signIn(MANAGER);
     db.project.findUnique.mockResolvedValue({ id: "p-1" });
-    await expect(deleteProject("p-1")).rejects.toThrow(AuthorizationError);
+    expectErr(await deleteProject("p-1"), "AUTH");
     expect(db.project.delete).not.toHaveBeenCalled();
   });
 
@@ -558,7 +566,7 @@ describe("permission gating", () => {
     signIn(ADMIN);
     db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Bye" });
     db.project.delete.mockResolvedValue({});
-    await expect(deleteProject("p-1")).resolves.toBeUndefined();
+    expectOk(await deleteProject("p-1"));
   });
 
   it("sendMessage stamps the sender from the session", async () => {
@@ -582,51 +590,45 @@ describe("permission gating", () => {
 
   it("getAuditLogs requires audit:view (denied for MEMBER)", async () => {
     signIn(MEMBER);
-    await expect(getAuditLogs()).rejects.toThrow(AuthorizationError);
+    expectErr(await getAuditLogs(), "AUTH");
   });
 
   it("getAuditLogs is allowed for ADMIN", async () => {
     signIn(ADMIN);
     db.auditLog.findMany.mockResolvedValue([]);
-    await expect(getAuditLogs()).resolves.toEqual([]);
+    expect(await getAuditLogs()).toEqual({ ok: true, data: [] });
   });
 
   it("getAllUsers requires role:manage", async () => {
     signIn(MEMBER);
-    await expect(getAllUsers()).rejects.toThrow(AuthorizationError);
+    expectErr(await getAllUsers(), "AUTH");
     signIn(MANAGER);
-    await expect(getAllUsers()).rejects.toThrow(AuthorizationError);
+    expectErr(await getAllUsers(), "AUTH");
     signIn(ADMIN);
     db.user.findMany.mockResolvedValue([]);
-    await expect(getAllUsers()).resolves.toEqual([]);
+    expect(await getAllUsers()).toEqual({ ok: true, data: [] });
   });
 
   it("getAuditLogsForEntity requires a session", async () => {
-    await expect(getAuditLogsForEntity("TASK", "t-1")).rejects.toThrow(AuthorizationError);
+    expectErr(await getAuditLogsForEntity("TASK", "t-1"), "AUTH");
     signIn(MEMBER);
     db.auditLog.findMany.mockResolvedValue([]);
-    await expect(getAuditLogsForEntity("TASK", "t-1")).resolves.toEqual([]);
+    expect(await getAuditLogsForEntity("TASK", "t-1")).toEqual({ ok: true, data: [] });
   });
 
   it("updateWorkspaceSettings requires role:manage", async () => {
     signIn(MANAGER);
-    await expect(updateWorkspaceSettings({ name: "X" })).rejects.toThrow(AuthorizationError);
+    expectErr(await updateWorkspaceSettings({ name: "X" }), "AUTH");
     signIn(ADMIN);
     db.workspace.upsert.mockResolvedValue({});
-    await expect(updateWorkspaceSettings({ name: "X" })).resolves.toBeUndefined();
+    expectOk(await updateWorkspaceSettings({ name: "X" }));
   });
 
   it("config item mutations require role:manage", async () => {
     signIn(MEMBER);
-    await expect(
-      createConfigItem("taskStatusConfig", { key: "X" }),
-    ).rejects.toThrow(AuthorizationError);
-    await expect(
-      updateConfigItem("taskStatusConfig", "id", { label: "x" }),
-    ).rejects.toThrow(AuthorizationError);
-    await expect(
-      deleteConfigItem("taskStatusConfig", "id"),
-    ).rejects.toThrow(AuthorizationError);
+    expectErr(await createConfigItem("taskStatusConfig", { key: "X" }), "AUTH");
+    expectErr(await updateConfigItem("taskStatusConfig", "id", { label: "x" }), "AUTH");
+    expectErr(await deleteConfigItem("taskStatusConfig", "id"), "AUTH");
   });
 });
 
@@ -636,38 +638,28 @@ describe("permission gating", () => {
 
 describe("createUser validation", () => {
   it("rejects anonymous callers", async () => {
-    await expect(
-      createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "MEMBER" }),
-    ).rejects.toThrow(AuthorizationError);
+    expectErr(await createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "MEMBER" }), "AUTH");
   });
 
   it("rejects invalid emails", async () => {
     signIn(ADMIN);
-    await expect(
-      createUser({ name: "A", email: "not-an-email", password: "longenough1", role: "MEMBER" }),
-    ).rejects.toThrow(/valid email/i);
+    expectErr(await createUser({ name: "A", email: "not-an-email", password: "longenough1", role: "MEMBER" }), /valid email/i);
   });
 
   it("rejects short passwords", async () => {
     signIn(ADMIN);
-    await expect(
-      createUser({ name: "A", email: "a@b.co", password: "short", role: "MEMBER" }),
-    ).rejects.toThrow(/at least 8 characters/i);
+    expectErr(await createUser({ name: "A", email: "a@b.co", password: "short", role: "MEMBER" }), /at least 8 characters/i);
   });
 
   it("rejects unknown roles", async () => {
     signIn(ADMIN);
-    await expect(
-      createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "SUPERUSER" }),
-    ).rejects.toThrow(/ADMIN, MANAGER, or MEMBER/i);
+    expectErr(await createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "SUPERUSER" }), /ADMIN, MANAGER, or MEMBER/i);
   });
 
   it("rejects duplicate emails", async () => {
     signIn(ADMIN);
     db.user.findUnique.mockResolvedValue({ id: "existing" });
-    await expect(
-      createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "MEMBER" }),
-    ).rejects.toThrow(/already exists/i);
+    expectErr(await createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "MEMBER" }), /already exists/i);
   });
 
   it("hashes the password and creates user + team member", async () => {
@@ -684,7 +676,7 @@ describe("createUser validation", () => {
       role: "MEMBER",
     });
 
-    expect(result).toEqual({ id: "u-new" });
+    expect(result).toEqual({ ok: true, data: { id: "u-new" } });
     const createArgs = db.user.create.mock.calls[0][0];
     expect(createArgs.data.email).toBe("new@fernly.dev");
     expect(createArgs.data.passwordHash).not.toBe("longenough1");
@@ -697,9 +689,7 @@ describe("updateUser guards", () => {
   it("prevents an admin from demoting themselves", async () => {
     signIn(ADMIN);
     db.user.findUnique.mockResolvedValue({ id: ADMIN.userId, role: "ADMIN", email: ADMIN.email, name: "Ada" });
-    await expect(
-      updateUser(ADMIN.userId, { role: "MEMBER" }),
-    ).rejects.toThrow(/own role/i);
+    expectErr(await updateUser(ADMIN.userId, { role: "MEMBER" }), /own role/i);
   });
 
   it("allows an admin to change someone else's role", async () => {
@@ -707,26 +697,26 @@ describe("updateUser guards", () => {
     db.user.findUnique.mockResolvedValue({ id: "u-oli", role: "MEMBER", email: "o@x.co", name: "Oli" });
     db.user.update.mockResolvedValue({});
     db.teamMember.updateMany.mockResolvedValue({});
-    await expect(updateUser("u-oli", { role: "MANAGER" })).resolves.toBeUndefined();
+    expectOk(await updateUser("u-oli", { role: "MANAGER" }));
   });
 
   it("rejects invalid role values", async () => {
     signIn(ADMIN);
     db.user.findUnique.mockResolvedValue({ id: "u-oli", role: "MEMBER", email: "o@x.co", name: "Oli" });
-    await expect(updateUser("u-oli", { role: "GOD" })).rejects.toThrow(/invalid role/i);
+    expectErr(await updateUser("u-oli", { role: "GOD" }), /invalid role/i);
   });
 });
 
 describe("deleteUser guards", () => {
   it("prevents deleting your own account", async () => {
     signIn(ADMIN);
-    await expect(deleteUser(ADMIN.userId)).rejects.toThrow(/own account/i);
+    expectErr(await deleteUser(ADMIN.userId), /own account/i);
     expect(db.user.delete).not.toHaveBeenCalled();
   });
 
   it("requires role:manage", async () => {
     signIn(MEMBER);
-    await expect(deleteUser("u-oli")).rejects.toThrow(AuthorizationError);
+    expectErr(await deleteUser("u-oli"), "AUTH");
   });
 });
 
@@ -737,9 +727,7 @@ describe("deleteUser guards", () => {
 describe("changePassword", () => {
   it("rejects changing someone else's password", async () => {
     signIn(MEMBER);
-    await expect(
-      changePassword({ userId: "u-oli", currentPassword: "a", newPassword: "b" }),
-    ).rejects.toThrow(/own password/i);
+    expectErr(await changePassword({ userId: "u-oli", currentPassword: "a", newPassword: "b" }), /own password/i);
   });
 
   it("rejects a wrong current password", async () => {
@@ -750,43 +738,35 @@ describe("changePassword", () => {
       name: MEMBER.name,
       passwordHash: "$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidiu",
     });
-    await expect(
-      changePassword({ userId: MEMBER.userId, currentPassword: "wrong", newPassword: "brandnew1" }),
-    ).rejects.toThrow(/incorrect/i);
+    expectErr(await changePassword({ userId: MEMBER.userId, currentPassword: "wrong", newPassword: "brandnew1" }), /incorrect/i);
   });
 
   it("rejects new passwords shorter than 8 chars", async () => {
     signIn(MEMBER);
-    await expect(
-      changePassword({ userId: MEMBER.userId, currentPassword: "old", newPassword: "short" }),
-    ).rejects.toThrow(/at least 8 characters/i);
+    expectErr(await changePassword({ userId: MEMBER.userId, currentPassword: "old", newPassword: "short" }), /at least 8 characters/i);
   });
 
   it("rejects reusing the current password", async () => {
     signIn(MEMBER);
-    await expect(
-      changePassword({ userId: MEMBER.userId, currentPassword: "samepass", newPassword: "samepass" }),
-    ).rejects.toThrow(/different/i);
+    expectErr(await changePassword({ userId: MEMBER.userId, currentPassword: "samepass", newPassword: "samepass" }), /different/i);
   });
 });
 
 describe("self-profile & settings", () => {
   it("updateProfile rejects editing someone else's profile", async () => {
     signIn(MEMBER);
-    await expect(
-      updateProfile("u-oli", { name: "x", role: "Dev", timezone: "UTC", bio: "", avatarColor: "forest" }),
-    ).rejects.toThrow(/own profile/i);
+    expectErr(await updateProfile("u-oli", { name: "x", role: "Dev", timezone: "UTC", bio: "", avatarColor: "forest" }), /own profile/i);
   });
 
   it("updateUserSettings rejects editing someone else's settings", async () => {
     signIn(MEMBER);
-    await expect(updateUserSettings("u-oli", { dark: true })).rejects.toThrow(/own settings/i);
+    expectErr(await updateUserSettings("u-oli", { dark: true }), /own settings/i);
   });
 
   it("updateUserSettings persists your own settings", async () => {
     signIn(MEMBER);
     db.userSettings.upsert.mockResolvedValue({});
-    await expect(updateUserSettings(MEMBER.userId, { dark: true })).resolves.toBeUndefined();
+    expectOk(await updateUserSettings(MEMBER.userId, { dark: true }));
     expect(db.userSettings.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: MEMBER.userId } }),
     );
@@ -824,7 +804,7 @@ describe("role management", () => {
   it("deleteRole refuses to remove system roles", async () => {
     signIn(ADMIN);
     db.role.findUnique.mockResolvedValue({ id: "r-1", label: "Admin", key: "ADMIN", isSystem: true });
-    await expect(deleteRole("r-1")).rejects.toThrow(/system role/i);
+    expectErr(await deleteRole("r-1"), /system role/i);
     expect(db.role.delete).not.toHaveBeenCalled();
   });
 
@@ -832,14 +812,14 @@ describe("role management", () => {
     signIn(ADMIN);
     db.role.findUnique.mockResolvedValue({ id: "r-2", label: "Contractor", key: "CONTRACTOR", isSystem: false });
     db.user.count.mockResolvedValue(3);
-    await expect(deleteRole("r-2")).rejects.toThrow(/3 user\(s\)/i);
+    expectErr(await deleteRole("r-2"), /3 user\(s\)/i);
     expect(db.role.delete).not.toHaveBeenCalled();
   });
 
   it("createRole rejects duplicate keys", async () => {
     signIn(ADMIN);
     db.role.findUnique.mockResolvedValue({ id: "r-1" });
-    await expect(createRole({ key: "MEMBER", label: "Dupe" })).rejects.toThrow(/already exists/i);
+    expectErr(await createRole({ key: "MEMBER", label: "Dupe" }), /already exists/i);
   });
 });
 
@@ -850,35 +830,29 @@ describe("role management", () => {
 describe("input validation (zod)", () => {
   it("rejects empty task titles server-side", async () => {
     signIn(MEMBER);
-    await expect(createTask({ title: "   " })).rejects.toThrow(/title/i);
+    expectErr(await createTask({ title: " " }), /title/i);
     expect(db.task.create).not.toHaveBeenCalled();
   });
 
   it("rejects absurdly long task titles", async () => {
     signIn(MEMBER);
-    await expect(createTask({ title: "x".repeat(500) })).rejects.toThrow();
+    expectErr(await createTask({ title: "x".repeat(500) }));
   });
 
   it("rejects an invalid member email", async () => {
     signIn(ADMIN);
-    await expect(
-      createMember({ name: "N", role: "Dev", department: "DESIGN", email: "not-an-email" }),
-    ).rejects.toThrow(/valid email/i);
+    expectErr(await createMember({ name: "N", role: "Dev", department: "DESIGN", email: "not-an-email" }), /valid email/i);
     expect(db.teamMember.create).not.toHaveBeenCalled();
   });
 
   it("rejects invalid event durations", async () => {
     signIn(ADMIN);
-    await expect(
-      createEvent({ title: "X", date: new Date().toISOString(), durationMin: 9999 }),
-    ).rejects.toThrow();
+    expectErr(await createEvent({ title: "X", date: new Date().toISOString(), durationMin: 9999 }));
   });
 
   it("rejects empty message bodies", async () => {
     signIn(MEMBER);
-    await expect(
-      sendMessage({ direction: "OUT", senderName: "Mia", recipientName: "Oli", subject: "s", body: "" }),
-    ).rejects.toThrow(/body/i);
+    expectErr(await sendMessage({ direction: "OUT", senderName: "Mia", recipientName: "Oli", subject: "s", body: "" }), /body/i);
   });
 
   it("normalises member emails to lowercase", async () => {
@@ -906,9 +880,7 @@ describe("workspace-configured password policy (P2-19)", () => {
       auditLogLimit: 300, entityHistoryLimit: 50, dashboardNotifLimit: 20,
     });
 
-    await expect(
-      createUser({ name: "A", email: "a@b.co", password: "short9chars", role: "MEMBER" }),
-    ).rejects.toThrow(/at least 12 characters/i);
+    expectErr(await createUser({ name: "A", email: "a@b.co", password: "short9chars", role: "MEMBER" }), /at least 12 characters/i);
     expect(db.user.create).not.toHaveBeenCalled();
   });
 });
@@ -918,13 +890,13 @@ describe("reminder ownership (P2-17)", () => {
     signIn(MEMBER);
     db.reminder.findUnique.mockResolvedValue({ id: "r-1", title: "Mine", completed: false, ownerId: MEMBER.userId });
     db.reminder.update.mockResolvedValue({});
-    await expect(toggleReminder("r-1", true)).resolves.toBeUndefined();
+    expectOk(await toggleReminder("r-1", true));
   });
 
   it("blocks another member from toggling a personal reminder", async () => {
     signIn(OTHER_MEMBER);
     db.reminder.findUnique.mockResolvedValue({ id: "r-1", title: "Mine", completed: false, ownerId: MEMBER.userId });
-    await expect(toggleReminder("r-1", true)).rejects.toThrow(/own reminders/i);
+    expectErr(await toggleReminder("r-1", true), /own reminders/i);
     expect(db.reminder.update).not.toHaveBeenCalled();
   });
 
@@ -932,14 +904,14 @@ describe("reminder ownership (P2-17)", () => {
     signIn(ADMIN);
     db.reminder.findUnique.mockResolvedValue({ id: "r-1", title: "Mine", completed: false, ownerId: MEMBER.userId });
     db.reminder.update.mockResolvedValue({});
-    await expect(toggleReminder("r-1", true)).resolves.toBeUndefined();
+    expectOk(await toggleReminder("r-1", true));
   });
 
   it("anyone signed in can toggle workspace-wide reminders (ownerId null)", async () => {
     signIn(MEMBER);
     db.reminder.findUnique.mockResolvedValue({ id: "r-1", title: "Shared", completed: false, ownerId: null });
     db.reminder.update.mockResolvedValue({});
-    await expect(toggleReminder("r-1", true)).resolves.toBeUndefined();
+    expectOk(await toggleReminder("r-1", true));
   });
 
   it("createReminder stamps the signed-in user as owner", async () => {
@@ -950,6 +922,29 @@ describe("reminder ownership (P2-17)", () => {
       expect.objectContaining({
         data: expect.objectContaining({ ownerId: MEMBER.userId, title: "Personal" }),
       }),
+    );
+  });
+
+  it("getDashboardData scopes notifications to own + workspace-wide (per-user routing)", async () => {
+    signIn(MEMBER);
+    const empty: unknown[] = [];
+    db.project.findMany.mockResolvedValue(empty);
+    db.task.findMany.mockResolvedValue(empty);
+    db.teamMember.findMany.mockResolvedValue(empty);
+    db.reminder.findMany.mockResolvedValue(empty);
+    db.notification.findMany.mockResolvedValue(empty);
+    db.timeEntry.findMany.mockResolvedValue(empty);
+    db.calendarEvent.findMany.mockResolvedValue(empty);
+    db.message.findMany.mockResolvedValue(empty);
+    db.projectAssignment.findMany.mockResolvedValue(empty);
+
+    await getDashboardData();
+    const notifCall = db.notification.findMany.mock.calls[0][0];
+    expect(notifCall.where.OR).toEqual(
+      expect.arrayContaining([
+        { recipientUserId: MEMBER.userId },
+        { recipientUserId: null },
+      ]),
     );
   });
 
