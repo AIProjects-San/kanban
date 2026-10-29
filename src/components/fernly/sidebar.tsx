@@ -16,10 +16,11 @@ import {
   UserCog,
   Settings2,
 } from "lucide-react";
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
+import { fernlySignOut } from "@/lib/signout";
 
 interface NavItem {
   key: ViewKey;
@@ -119,7 +120,7 @@ export function Sidebar() {
         {/* Logout */}
         <div className="p-3 border-t border-sidebar-border">
           <button
-            onClick={() => signOut({ callbackUrl: "/", redirect: false }).then(() => window.location.replace(window.location.pathname))}
+            onClick={() => { void fernlySignOut(); }}
             className="f-nav-item w-full"
           >
             <LogOut size={18} />

@@ -31,6 +31,22 @@ and regression-tested in this pass. Test evidence: **261 unit/integration tests 
 > no-secret passthrough). Toolchain green: `lint` + `tsc --noEmit` +
 > `268/268 tests` + end-to-end stale-cookie recovery verified against the
 > running dev server.
+>
+> **2026-10-30 third pass — signout hygiene + noImplicitAny.** Two remaining
+> backlog items closed: (a) signout now clears *every* auth cookie — the
+> NextAuth route handler in `app/api/auth/[...nextauth]/route.ts` wraps the
+> default handler and appends `Max-Age=0` `Set-Cookie` headers for all six
+> cookie name spaces (`next-auth.*` + `__Secure-next-auth.*`) on
+> `/api/auth/signout`, and `events.signOut` writes a best-effort
+> `auth.signed_out` audit row (DB-outage-safe). Both UI logout buttons funnel
+> through `lib/signout.ts` and hard-navigate to `/` instead of back to the
+> current view. (b) The last 12 `any` usages were eliminated (User type
+> augmented, ConfigTable union mirrored at the call site, Recharts formatter
+> typed, palette `icon` typed) and `tsconfig.noImplicitAny` flipped to `true`.
+> Toolchain green: `lint` + `tsc --noEmit` + `282/282 tests` (+
+> 11 new: 7 route-wrapper + 4 events.signOut); end-to-end verified
+> against the running dev server (cookies empty after signout, fresh
+> sign-in mints a clean set, audit row lands).
 
 ---
 
@@ -150,8 +166,36 @@ These were **consciously not** fixed in the original pass. Status after the
    A `.githooks/pre-commit` hook (lint + typecheck) ships with the repo —
    enable with `git config core.hooksPath .githooks`. HSTS added to the app's
    security headers.
-7. **`tsconfig` has `noImplicitAny: false`.** Tighten after the remaining `any`s are
-   eliminated.
+7. ~~**`tsconfig` has `noImplicitAny: false`.**~~ **FIXED 2026-10-30 (third pass).**
+   Every `any` in the source tree was either redundant (the `User` type
+   augmentation was incomplete, so `auth.ts` leaned on `as any` for
+   `id`/`role`) or a workaround for a dynamic API (`table as any` for the
+   six config tables; `formatter={(v: any) => …}` for Recharts). All
+   twelve were eliminated: `next-auth.d.ts` now augments `User` too; the
+   config-table call sites use a literal `ConfigTable` union; the Recharts
+   formatter takes `number | string`; the command palette's `icon: any`
+   became `React.ComponentType<{ size?: number }>`. `noImplicitAny: true`
+   flipped on, `tsc --noEmit` clean.
+
+8. **Signout must clear *every* auth cookie.** **FIXED 2026-10-30 (third pass).**
+   NextAuth's built-in `/api/auth/signout` only expires the session-token
+   cookie, leaving the CSRF and callback-url cookies behind. After a
+   `NEXTAUTH_SECRET` rotation the surviving CSRF cookie (signed with the
+   old secret, `httpOnly` so JS can't reach it) wedged the next sign-in
+   attempt. The route handler in `app/api/auth/[...nextauth]/route.ts`
+   now wraps NextAuth and — on POST/GET `/api/auth/signout` — appends
+   `Max-Age=0` `Set-Cookie` headers for all six cookie name spaces
+   (`next-auth.*` and `__Secure-next-auth.*`). A new
+   `events.signOut` callback in `src/lib/auth.ts` writes an
+   `auth.signed_out` audit entry (best-effort, DB-outage-safe). Both UI
+   logout buttons (sidebar + topbar profile menu) funnel through
+   `lib/signout.ts`, which calls `signOut({ callbackUrl: "/", redirect:
+   false })` then hard-navigates to `/` — replacing the prior inline
+   calls that bounced the user back to the page they were on. Regression
+   tests: `app/api/auth/__tests__/signout.test.ts` (7) +
+   `lib/__tests__/auth.test.ts` `events.signOut` block (4). End-to-end
+   verified against the live dev server: cookies after signout are
+   empty, fresh sign-in mints a clean set, audit row lands.
 
 ## 7. Maintainability & reuse assessment
 

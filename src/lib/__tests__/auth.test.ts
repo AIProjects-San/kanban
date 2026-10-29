@@ -207,6 +207,62 @@ describe("session callback", () => {
 });
 
 // ---------------------------------------------------------------------------
+// events.signOut — best-effort audit log entry
+// ---------------------------------------------------------------------------
+
+describe("events.signOut", () => {
+  it("writes an auth.signed_out audit entry when the token has a user id", async () => {
+    db.user.findUnique.mockResolvedValue({
+      id: "u-1",
+      name: "Ada",
+      role: "ADMIN",
+      email: "ada@fernly.dev",
+    });
+    db.auditLog.create.mockClear();
+
+    const fn = authOptions.events!.signOut!;
+    await fn({ token: { id: "u-1" } } as never);
+
+    expect(db.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "u-1" } }),
+    );
+    expect(db.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "auth.signed_out",
+          actorId: "u-1",
+          actorName: "Ada",
+          actorRole: "ADMIN",
+          entityLabel: "ada@fernly.dev",
+        }),
+      }),
+    );
+  });
+
+  it("is a no-op when the token has no user id (already signed out / pre-session)", async () => {
+    db.auditLog.create.mockClear();
+    const fn = authOptions.events!.signOut!;
+    await fn({ token: {} } as never);
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("swallows DB errors so a DB outage never blocks the sign-out", async () => {
+    db.user.findUnique.mockRejectedValue(new Error("db down"));
+    const fn = authOptions.events!.signOut!;
+    await expect(fn({ token: { id: "u-1" } } as never)).resolves.toBeUndefined();
+  });
+
+  it("is a no-op when the user record no longer exists (deleted mid-session)", async () => {
+    db.user.findUnique.mockResolvedValue(null);
+    db.auditLog.create.mockClear();
+    const fn = authOptions.events!.signOut!;
+    await fn({ token: { id: "ghost" } } as never);
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cookie / security posture
 // ---------------------------------------------------------------------------
 

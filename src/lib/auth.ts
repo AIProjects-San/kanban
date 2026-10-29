@@ -156,7 +156,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name,
           role: user.role,
-        } as any;
+        };
       },
     }),
   ],
@@ -164,8 +164,8 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         // Initial sign-in — stamp the token with the current role.
-        token.id = (user as any).id;
-        token.role = (user as any).role;
+        token.id = user.id;
+        token.role = user.role;
         token.roleCheckedAt = Date.now();
       } else if (
         typeof token.roleCheckedAt !== "number" ||
@@ -191,10 +191,42 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as any).id = token.id as string;
-        (session.user as any).role = token.role as string;
+        session.user.id = token.id as string;
+        session.user.role = token.role as string;
       }
       return session;
+    },
+  },
+  events: {
+    // NextAuth fires this *after* it has already expired the session-token
+    // cookie — the route wrapper in app/api/auth/[...nextauth]/route.ts
+    // then also expires the CSRF + callback-url cookies. We use the event
+    // purely to keep the audit trail symmetric with `auth.signed_in`.
+    // Best-effort: a DB outage here must NOT prevent the sign-out from
+    // completing.
+    async signOut(message) {
+      const id = (message as { token?: { id?: string } }).token?.id;
+      if (!id) return;
+      try {
+        const user = await db.user.findUnique({
+          where: { id },
+          select: { id: true, name: true, role: true, email: true },
+        });
+        if (!user) return;
+        await db.auditLog.create({
+          data: {
+            actorId: user.id,
+            actorName: user.name,
+            actorRole: user.role,
+            action: "auth.signed_out",
+            entityType: "AUTH",
+            entityLabel: user.email,
+            detail: `${user.name} signed out of the workspace`,
+          },
+        });
+      } catch (err) {
+        console.error("[audit] failed to log sign-out:", err);
+      }
     },
   },
   secret: resolveSecret(),

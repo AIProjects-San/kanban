@@ -16,6 +16,8 @@
 | Enumeration | Unknown emails still run a bcrypt compare (constant-time behaviour); identical error surface |
 | Role freshness | JWT callback re-reads the role from the DB every 5 min; deleted accounts are treated as signed out |
 | Secret rotation | `src/proxy.ts` verifies the session cookie against the current `NEXTAUTH_SECRET` on every page request; an undecryptable (rotated/corrupt) cookie is stripped from the forwarded request and expired in the browser, so clients self-heal to a clean sign-in instead of logging `JWT_SESSION_ERROR` on every render. Never active on `/api/auth/*` (NextAuth must stay free to rotate its own cookies) |
+| Signout cookie hygiene | `app/api/auth/[...nextauth]/route.ts` wraps the NextAuth handler and — on `/api/auth/signout` — appends `Max-Age=0` `Set-Cookie` headers for all six auth-cookie name spaces (`next-auth.session-token`, `next-auth.csrf-token`, `next-auth.callback-url` + `__Secure-` variants). NextAuth itself only expires the session-token; leaving the CSRF cookie behind wedged sign-in after a secret rotation. UI logout buttons funnel through `lib/signout.ts` and hard-navigate to `/` |
+| Audit trail | `auth.signed_in` and `auth.signed_out` rows in the audit log. The sign-out entry is written by `events.signOut` (best-effort, never blocks the sign-out on a DB outage) |
 | Notification routing | `Notification.recipientUserId`: private rows are visible/mutable only by their recipient; null-recipient broadcasts are visible to all and markable only by `role:manage` (flipping them affects every viewer). `markAllNotificationsRead` touches only the caller's own rows |
 
 ## 2. Authorization

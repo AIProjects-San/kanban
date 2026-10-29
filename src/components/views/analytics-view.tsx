@@ -236,7 +236,7 @@ export function AnalyticsView({ tasks, timeEntries, members, projects }: Analyti
                   <YAxis type="category" dataKey="name" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} width={120} />
                   <Tooltip
                     contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-                    formatter={(v: any) => [`${v}h`, "Hours"]}
+                    formatter={(v: number | string) => [`${v}h`, "Hours"]}
                   />
                   <Bar dataKey="hours" radius={[0, 4, 4, 0]} fill="var(--primary)" />
                 </BarChart>

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useSession } from "next-auth/react";
-import { useApp } from "@/store/app-store";
+import { useApp, type AccentTheme } from "@/store/app-store";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { Sidebar } from "@/components/fernly/sidebar";
 import { Topbar } from "@/components/fernly/topbar";
@@ -78,7 +78,11 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
   // so theme/dark mode follow the user across machines.
   useEffect(() => {
     if (user?.settings) {
-      setAccent(user.settings.accent as any);
+      // The DB column is a free-form string; narrow it back to the
+      // known AccentTheme union. Unknown values fall back to "forest"
+      // (the default) rather than crashing the store.
+      const accent = user.settings.accent as AccentTheme;
+      setAccent(accent);
       setDark(user.settings.dark);
     }
   }, [user?.settings?.accent, user?.settings?.dark, setAccent, setDark]);

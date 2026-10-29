@@ -59,7 +59,8 @@ export function CommandPalette() {
   }, [cmdkOpen]);
 
   const items: CmdItem[] = useMemo(() => {
-    const nav: { key: ViewKey; label: string; icon: any }[] = [
+    type NavEntry = { key: ViewKey; label: string; icon: React.ComponentType<{ size?: number }> };
+    const nav: NavEntry[] = [
       { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
       { key: "tasks", label: "Tasks", icon: CheckSquare },
       { key: "calendar", label: "Calendar", icon: Calendar },
@@ -68,7 +69,7 @@ export function CommandPalette() {
       { key: "settings", label: "Settings", icon: Settings },
       { key: "rbac", label: "Roles & Permissions", icon: Shield },
       ...(hasPermission(role, "audit:view")
-        ? [{ key: "audit" as ViewKey, label: "Audit Log", icon: History }]
+        ? [{ key: "audit" as ViewKey, label: "Audit Log", icon: History } satisfies NavEntry]
         : []),
       { key: "help", label: "Help & Shortcuts", icon: HelpCircle },
     ];

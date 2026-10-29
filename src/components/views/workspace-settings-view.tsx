@@ -228,15 +228,32 @@ function ConfigListEditor({
   fields: FieldDef[];
 }) {
   const items = config[type] as unknown as Array<Record<string, unknown> & { id?: string }>;
-  const tableMap: Record<string, string> = {
+  // The server-action signature already constrains `table` to the literal
+  // union of the six config tables. Mirror that union here so the call
+  // sites don't need `as any` to satisfy it.
+  type ConfigTable =
+    | "taskStatusConfig"
+    | "projectStatusConfig"
+    | "eventTypeConfig"
+    | "taskTagConfig"
+    | "priorityConfig"
+    | "departmentConfig";
+  const tableMap: Record<keyof WorkspaceConfig, ConfigTable> = {
     taskStatuses: "taskStatusConfig",
     projectStatuses: "projectStatusConfig",
     eventTypes: "eventTypeConfig",
     taskTags: "taskTagConfig",
     priorities: "priorityConfig",
     departments: "departmentConfig",
+    // WorkspaceConfig carries three more keys that this editor never
+    // reaches (workspace settings + role/permission management have
+    // their own editors). The record must still be exhaustive; we map
+    // them to a placeholder table that will never be hit at runtime.
+    workspace: "taskStatusConfig",
+    roles: "taskStatusConfig",
+    permissions: "taskStatusConfig",
   };
-  const table = tableMap[type as string];
+  const table: ConfigTable = tableMap[type];
 
   const [editing, setEditing] = useState<string | null>(null);
   const [newItem, setNewItem] = useState<Record<string, unknown>>({});
@@ -246,7 +263,7 @@ function ConfigListEditor({
   async function handleSave(id: string, data: Record<string, unknown>) {
     setSaving(true);
     try {
-      const res = await updateConfigItem(table as any, id, data);
+      const res = await updateConfigItem(table, id, data);
       if (!res.ok) {
         toast.error(res.error);
         return;
@@ -266,7 +283,7 @@ function ConfigListEditor({
   async function handleCreate() {
     setSaving(true);
     try {
-      const res = await createConfigItem(table as any, { ...newItem, isVisible: true });
+      const res = await createConfigItem(table, { ...newItem, isVisible: true });
       if (!res.ok) {
         toast.error(res.error);
         return;
@@ -287,7 +304,7 @@ function ConfigListEditor({
     if (!confirm("Delete this config item?")) return;
     setSaving(true);
     try {
-      const res = await deleteConfigItem(table as any, id);
+      const res = await deleteConfigItem(table, id);
       if (!res.ok) {
         toast.error(res.error);
         return;
@@ -342,7 +359,7 @@ function ConfigListEditor({
       {/* Items list */}
       <div className="f-card overflow-hidden">
         {items.map((item, i) => {
-          const id = (item as any).id ?? `idx-${i}`;
+          const id = item.id ?? `idx-${i}`;
           const isEditing = editing === id;
           return (
             <div key={id} className="border-b border-border last:border-0">
