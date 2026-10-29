@@ -235,13 +235,16 @@ function ProfileDrawer({
     .slice(0, 8);
   const totalHours = recentEntries.reduce((s, e) => s + e.hours, 0);
 
-  // Hours per project (recent)
+  // Hours per project (recent). Keyed by projectId so two missing
+  // projects (both rendered as "Unknown") don't collide as duplicate
+  // React keys in the breakdown list below.
   const hoursByProject = new Map<string, number>();
   for (const e of recentEntries) {
     if (e.projectId) hoursByProject.set(e.projectId, (hoursByProject.get(e.projectId) ?? 0) + e.hours);
   }
   const projectBreakdown = Array.from(hoursByProject.entries())
     .map(([pid, hours]) => ({
+      projectId: pid,
       name: projects.find((p) => p.id === pid)?.name ?? "Unknown",
       hours: Math.round(hours * 10) / 10,
     }))
@@ -409,7 +412,7 @@ function ProfileDrawer({
                   {projectBreakdown.map((p) => {
                     const pct = totalHours > 0 ? Math.round((p.hours / totalHours) * 100) : 0;
                     return (
-                      <div key={p.name}>
+                      <div key={p.projectId}>
                         <div className="flex items-center justify-between text-[0.6875rem] mb-1">
                           <span className="text-foreground truncate pr-2">{p.name}</span>
                           <span className="text-muted-foreground tabular-nums shrink-0">{p.hours}h · {pct}%</span>
@@ -424,10 +427,10 @@ function ProfileDrawer({
 
                 {/* Recent entries list */}
                 <div className="space-y-1.5">
-                  {recentEntries.slice(0, 5).map((e, i) => {
+                  {recentEntries.slice(0, 5).map((e) => {
                     const project = projects.find((p) => p.id === e.projectId);
                     return (
-                      <div key={i} className="flex items-center gap-2 text-xs py-1">
+                      <div key={e.id} className="flex items-center gap-2 text-xs py-1">
                         <span className="text-muted-foreground tabular-nums w-12 shrink-0">
                           {new Date(e.date).toLocaleDateString("en-NZ", { day: "numeric", month: "short" })}
                         </span>
