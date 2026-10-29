@@ -230,7 +230,7 @@ function UserForm({
             <option value="MEMBER">Member — own tasks only</option>
           </select>
         </Field>
-        <Field label="Reports to" hint="Who this user reports to in the org chart">
+        <Field label="Reports to">
           <select
             className="f-input"
             value={managerId ?? ""}
