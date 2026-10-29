@@ -18,6 +18,19 @@ and regression-tested in this pass. Test evidence: **261 unit/integration tests 
 > `.env.example` restored, scaffold leftovers (`tests/`, `mini-services/`, `examples/`,
 > `tool-results/`) deleted. Toolchain re-verified green: `lint` + `tsc --noEmit` +
 > `261/261 tests` + dev-server login flow.
+>
+> **2026-10-30 post-restart hardening.** After the container rebuild a browser
+> holding a session cookie signed by the *pre-restart* secret hit
+> `[next-auth][error][JWT_SESSION_ERROR] "decryption operation failed"` on every
+> request — the stale cookie never self-healed (30-day lifetime) and could wedge
+> the sign-in flow via the equally stale CSRF cookie. Fix: `src/proxy.ts` (Next 16
+> proxy convention) verifies the cookie against the current `NEXTAUTH_SECRET`,
+> strips the bad cookie from the forwarded request and expires it in the
+> response; `/api/auth/*` is excluded so NextAuth can always rotate its own
+> cookies. Regression tests in `src/proxy.test.ts` (stale cleared, valid kept,
+> no-secret passthrough). Toolchain green: `lint` + `tsc --noEmit` +
+> `268/268 tests` + end-to-end stale-cookie recovery verified against the
+> running dev server.
 
 ---
 
@@ -113,6 +126,8 @@ These were **consciously not** fixed in the original pass. Status after the
 3. **In-memory rate limiter** resets on restart and doesn't share state across instances.
    Fine for the current single-instance deployment; swap for Redis/Upstash before scaling
    horizontally.
+   *(Related 2026-10-30: stale-cookie self-healing after secret rotation is now
+   handled by `src/proxy.ts` — see the re-verification note above.)*
 4. **Error messages in production** may still be generic for *unexpected* errors (only
    `AuthorizationError`/`ValidationError` carry a digest marker). The complete fix is
    returning `{ ok: false, error }` result objects from every action — a sweeping but

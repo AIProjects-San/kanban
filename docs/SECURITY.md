@@ -15,6 +15,7 @@
 | Brute force | Sliding window: 5 failures / 15 min per email AND per source IP (first `x-forwarded-for` hop); success clears the email bucket |
 | Enumeration | Unknown emails still run a bcrypt compare (constant-time behaviour); identical error surface |
 | Role freshness | JWT callback re-reads the role from the DB every 5 min; deleted accounts are treated as signed out |
+| Secret rotation | `src/proxy.ts` verifies the session cookie against the current `NEXTAUTH_SECRET` on every page request; an undecryptable (rotated/corrupt) cookie is stripped from the forwarded request and expired in the browser, so clients self-heal to a clean sign-in instead of logging `JWT_SESSION_ERROR` on every render. Never active on `/api/auth/*` (NextAuth must stay free to rotate its own cookies) |
 
 ## 2. Authorization
 
