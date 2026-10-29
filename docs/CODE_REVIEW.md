@@ -197,6 +197,19 @@ These were **consciously not** fixed in the original pass. Status after the
    verified against the live dev server: cookies after signout are
    empty, fresh sign-in mints a clean set, audit row lands.
 
+   **Follow-up fix (CLIENT_FETCH_ERROR).** The first cut of
+   `fernlySignOut` used `signOut({ redirect: false })` and then
+   `window.location.replace("/")`. That raced against NextAuth's own
+   post-signout `__NEXTAUTH._getSession()` call (which fires
+   `GET /api/auth/session` to refresh the local cache): our hard
+   navigation aborted the in-flight fetch, and `fetchData`'s catch
+   block logged `[next-auth][error][CLIENT_FETCH_ERROR] … undefined {}`
+   on every logout. Switched to `signOut({ redirect: true })` so
+   NextAuth performs the navigation itself and skips the `_getSession`
+   call entirely — no in-flight fetch to abort, no console noise.
+   Verified with a headless browser: both logout paths (sidebar +
+   topbar) leave the console clean and the cookie jar empty.
+
 ## 7. Maintainability & reuse assessment
 
 **Good:** consistent component extraction under `components/fernly/` (Field, Toggle,
