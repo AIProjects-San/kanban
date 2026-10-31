@@ -140,7 +140,11 @@ export async function deleteProject(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("project:delete");
     const existing = await db.project.findUnique({ where: { id } });
-    await db.project.delete({ where: { id } });
+    // L-P0-14 — soft-delete instead of hard delete. Setting `deletedAt` hides
+    // the project from read paths (which filter `deletedAt: null`) WITHOUT
+    // nulling Task.projectId, so tasks keep their project reference and don't
+    // become orphans on the board.
+    await db.project.update({ where: { id }, data: { deletedAt: new Date() } });
     if (existing) {
       await logAudit({
         actor: auth,
@@ -148,7 +152,7 @@ export async function deleteProject(id: string): Promise<ActionResult<void>> {
         entityType: "PROJECT",
         entityId: id,
         entityLabel: existing.name,
-        detail: `Deleted project “${existing.name}”`,
+        detail: `Soft-deleted project “${existing.name}” (tasks preserved, hidden from board)`,
       });
     }
     revalidatePath("/");

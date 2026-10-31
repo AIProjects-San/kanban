@@ -51,7 +51,9 @@ export type AuditAction =
   | "reminder.reopened"
   | "time.logged"
   | "auth.signed_in"
-  | "auth.password_changed";
+  | "auth.signed_out"
+  | "auth.password_changed"
+  | "audit.pruned"; // L-P1-20 — records when the audit log was pruned
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -104,7 +106,9 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "time.logged": { icon: Clock, cls: "text-primary bg-primary/10" },
 
   "auth.signed_in": { icon: LogIn, cls: "text-muted-foreground bg-muted" },
+  "auth.signed_out": { icon: LogIn, cls: "text-muted-foreground bg-muted" },
   "auth.password_changed": { icon: ShieldCheck, cls: "text-success bg-success/10" },
+  "audit.pruned": { icon: Clock, cls: "text-muted-foreground bg-muted" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

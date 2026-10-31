@@ -19,10 +19,19 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
-  role         String   @default("Project Lead")
+  role         String   @default("MEMBER") // ADMIN | MANAGER | MEMBER — see lib/rbac.ts. Defaulting to MEMBER (was "Project Lead") closes L-P0-13.
+  // L-P0-8 — session revocation. Incremented on password change and role
+  // change. The JWT callback rejects tokens whose tokenVersion is stale,
+  // so a stolen cookie is invalidated the moment the user rotates their
+  // password or an admin rotates their role.
+  tokenVersion Int      @default(0)
   timezone     String   @default("Pacific/Auckland")
   bio          String   @default("")
   avatarColor  String   @default("forest")
+  // L-P0-14 — soft delete. Set by deleteUser instead of a hard delete, so
+  // messages and team-member references don't dangle. Read paths filter
+  // `where: { deletedAt: null }`.
+  deletedAt    DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -53,6 +62,9 @@ model User {
 
   // Per-recipient message read-state rows (L-P0-2 fix).
   messageReads MessageRead[]
+
+  // L-P0-11 — password reset tokens (single-use, time-boxed).
+  passwordResetTokens PasswordResetToken[]
 
   @@index([managerId])
 }
@@ -96,12 +108,19 @@ model Project {
   ownerName   String    @default("")
   ownerUserId String?
   ownerUser   User?     @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  // L-P0-14 — soft delete. Set by deleteProject instead of a hard delete, so
+  // tasks keep their projectId reference and don't become orphans.
+  deletedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   tasks       Task[]
   timeEntries TimeEntry[]
   assignments ProjectAssignment[]
+
+  // L-P0-5 — secondary indexes on the columns every scoped query filters on.
+  @@index([ownerUserId])
+  @@index([status])
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +142,11 @@ model Task {
   assignee    TeamMember? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+
+  // L-P0-5 — secondary indexes on the columns every scoped query filters on.
+  @@index([projectId])
+  @@index([assigneeId])
+  @@index([status])
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +169,8 @@ model TeamMember {
   // at most one roster entry.
   userId         String?  @unique
   user           User?    @relation("MemberProfile", fields: [userId], references: [id], onDelete: SetNull)
+  // L-P0-14 — soft delete. Set by deleteUser alongside the User soft-delete.
+  deletedAt      DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -205,6 +231,11 @@ model TimeEntry {
   project     Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
   member      TeamMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
   createdAt   DateTime    @default(now())
+
+  // L-P0-5 — secondary indexes on the columns every scoped query filters on.
+  @@index([memberId])
+  @@index([projectId])
+  @@index([date])
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +277,8 @@ model Message {
   // Legacy single-row read flag. Retained for backward-compat with seed rows
   // but new messages do NOT use it for read tracking — see MessageRead.
   read              Boolean  @default(false)
+  // L-P0-14 — soft delete. Set by deleteMessage instead of a hard delete.
+  deletedAt         DateTime?
   createdAt         DateTime @default(now())
 
   // Per-recipient read state (L-P0-2 fix). A row here means the recipient
@@ -456,4 +489,28 @@ model RolePermission {
   @@unique([roleId, permissionId])
   @@index([roleId])
   @@index([permissionId])
+}
+
+// ---------------------------------------------------------------------------
+// L-P0-11 — Password reset tokens.
+//
+// Single-use, time-boxed tokens for self-service password reset. The raw
+// token is sent to the user via email; only the SHA-256 hash is stored, so
+// a DB leak cannot be replayed. `usedAt` marks the token as consumed (one
+// use only); `expiresAt` caps the window (default 1 hour).
+// ---------------------------------------------------------------------------
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SHA-256 hash of the raw token. The raw token is NEVER stored — only sent
+  // via email. Lookup is by hash, so an attacker who reads the DB cannot
+  // reconstruct a usable token.
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

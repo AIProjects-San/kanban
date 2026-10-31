@@ -1,0 +1,318 @@
+"use server";
+
+// ---------------------------------------------------------------------------
+// L-P0-9 — Paginated list actions with server-side search.
+//
+// Four cursor-paginated + search-enabled list actions: getUsersPage,
+// getTasksPage, getProjectsPage, getTimeEntriesPage. Each accepts
+// { cursor?, limit?, search?, ...filters } and returns { items, nextCursor,
+// hasMore }. Uses Prisma's cursor idiom (cursor + skip:1 + take:limit+1) and
+// inspects the extra row to compute hasMore without a count query.
+//
+// limit defaults to 50, clamped to 200 max. Search is server-side ILIKE
+// (mode: "insensitive"). All actions apply the L-P0-14 soft-delete filter.
+// ---------------------------------------------------------------------------
+
+import { db } from "@/lib/db";
+import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { toResult } from "./result";
+import type { ActionResult } from "@/lib/action-result";
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+function clampLimit(limit: number | undefined): number {
+  if (!limit || limit <= 0) return DEFAULT_PAGE_SIZE;
+  return Math.min(limit, MAX_PAGE_SIZE);
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Users — paginated + search (role:manage gated)
+// ---------------------------------------------------------------------------
+
+export interface UserListItem {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  avatarColor: string;
+  createdAt: string;
+  managerId: string | null;
+  managerName: string | null;
+}
+
+export async function getUsersPage(input?: {
+  cursor?: string;
+  limit?: number;
+  search?: string;
+}): Promise<ActionResult<PaginatedResult<UserListItem>>> {
+  return toResult(async () => {
+    await requirePermission("role:manage");
+    const limit = clampLimit(input?.limit);
+    const search = input?.search?.trim().toLowerCase();
+
+    const where: Record<string, unknown> = { deletedAt: null };
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const rows = await db.user.findMany({
+      where,
+      select: {
+        id: true, email: true, name: true, role: true, avatarColor: true, createdAt: true,
+        managerId: true,
+        manager: { select: { name: true } },
+      },
+      orderBy: { id: "asc" },
+      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      take: limit + 1,
+    });
+
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+
+    return {
+      items: items.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        avatarColor: u.avatarColor,
+        createdAt: u.createdAt.toISOString(),
+        managerId: u.managerId,
+        managerName: u.manager?.name ?? null,
+      })),
+      nextCursor,
+      hasMore,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tasks — paginated + search (any signed-in user)
+// ---------------------------------------------------------------------------
+
+export interface TaskListItem {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  tag: string;
+  dueDate: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  createdAt: string;
+}
+
+export async function getTasksPage(input?: {
+  cursor?: string;
+  limit?: number;
+  search?: string;
+  projectId?: string;
+  status?: string;
+}): Promise<ActionResult<PaginatedResult<TaskListItem>>> {
+  return toResult(async () => {
+    const auth = await getSession();
+    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const limit = clampLimit(input?.limit);
+    const search = input?.search?.trim().toLowerCase();
+
+    const where: Record<string, unknown> = { project: { deletedAt: null } };
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
+      ];
+    }
+    if (input?.projectId) where.projectId = input.projectId;
+    if (input?.status) where.status = input.status;
+
+    const rows = await db.task.findMany({
+      where,
+      select: {
+        id: true, title: true, status: true, priority: true, tag: true,
+        dueDate: true, projectId: true, assigneeId: true, createdAt: true,
+        project: { select: { name: true } },
+        assignee: { select: { name: true } },
+      },
+      orderBy: { id: "asc" },
+      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      take: limit + 1,
+    });
+
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+
+    return {
+      items: items.map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        tag: t.tag,
+        dueDate: t.dueDate?.toISOString() ?? null,
+        projectId: t.projectId,
+        projectName: t.project?.name ?? null,
+        assigneeId: t.assigneeId,
+        assigneeName: t.assignee?.name ?? null,
+        createdAt: t.createdAt.toISOString(),
+      })),
+      nextCursor,
+      hasMore,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Projects — paginated + search (any signed-in user)
+// ---------------------------------------------------------------------------
+
+export interface ProjectListItem {
+  id: string;
+  name: string;
+  status: string;
+  priority: string;
+  dueDate: string | null;
+  progress: number;
+  color: string;
+  ownerName: string;
+  createdAt: string;
+}
+
+export async function getProjectsPage(input?: {
+  cursor?: string;
+  limit?: number;
+  search?: string;
+  status?: string;
+}): Promise<ActionResult<PaginatedResult<ProjectListItem>>> {
+  return toResult(async () => {
+    const auth = await getSession();
+    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const limit = clampLimit(input?.limit);
+    const search = input?.search?.trim().toLowerCase();
+
+    const where: Record<string, unknown> = { deletedAt: null };
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
+      ];
+    }
+    if (input?.status) where.status = input.status;
+
+    const rows = await db.project.findMany({
+      where,
+      select: {
+        id: true, name: true, status: true, priority: true, dueDate: true,
+        progress: true, color: true, ownerName: true, createdAt: true,
+      },
+      orderBy: { id: "asc" },
+      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      take: limit + 1,
+    });
+
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+
+    return {
+      items: items.map((p) => ({
+        id: p.id,
+        name: p.name,
+        status: p.status,
+        priority: p.priority,
+        dueDate: p.dueDate?.toISOString() ?? null,
+        progress: p.progress,
+        color: p.color,
+        ownerName: p.ownerName,
+        createdAt: p.createdAt.toISOString(),
+      })),
+      nextCursor,
+      hasMore,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Time entries — paginated + search (any signed-in user)
+// ---------------------------------------------------------------------------
+
+export interface TimeEntryListItem {
+  id: string;
+  projectId: string | null;
+  projectName: string | null;
+  memberId: string | null;
+  memberName: string | null;
+  date: string;
+  hours: number;
+  description: string;
+  createdAt: string;
+}
+
+export async function getTimeEntriesPage(input?: {
+  cursor?: string;
+  limit?: number;
+  search?: string;
+  projectId?: string;
+  memberId?: string;
+}): Promise<ActionResult<PaginatedResult<TimeEntryListItem>>> {
+  return toResult(async () => {
+    const auth = await getSession();
+    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const limit = clampLimit(input?.limit);
+    const search = input?.search?.trim().toLowerCase();
+
+    const where: Record<string, unknown> = { project: { deletedAt: null } };
+    if (search) {
+      where.description = { contains: search, mode: "insensitive" };
+    }
+    if (input?.projectId) where.projectId = input.projectId;
+    if (input?.memberId) where.memberId = input.memberId;
+
+    const rows = await db.timeEntry.findMany({
+      where,
+      select: {
+        id: true, projectId: true, memberId: true, date: true, hours: true,
+        description: true, createdAt: true,
+        project: { select: { name: true } },
+        member: { select: { name: true } },
+      },
+      orderBy: { id: "asc" },
+      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      take: limit + 1,
+    });
+
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+
+    return {
+      items: items.map((te) => ({
+        id: te.id,
+        projectId: te.projectId,
+        projectName: te.project?.name ?? null,
+        memberId: te.memberId,
+        memberName: te.member?.name ?? null,
+        date: te.date.toISOString(),
+        hours: te.hours,
+        description: te.description,
+        createdAt: te.createdAt.toISOString(),
+      })),
+      nextCursor,
+      hasMore,
+    };
+  });
+}

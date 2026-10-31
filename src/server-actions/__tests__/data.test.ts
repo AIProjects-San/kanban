@@ -264,7 +264,7 @@ describe("getDashboardData (P0-1 regression)", () => {
     expect(nameFilters).not.toContain(`ownerName`);
   });
 
-  it("lets ADMIN see everything (no scoping where clause on projects)", async () => {
+  it("lets ADMIN see everything (no scoping where clause on projects, only soft-delete filter)", async () => {
     signIn(ADMIN);
     db.project.findMany.mockResolvedValue([]);
     db.task.findMany.mockResolvedValue([]);
@@ -276,10 +276,10 @@ describe("getDashboardData (P0-1 regression)", () => {
     db.message.findMany.mockResolvedValue([]);
 
     await getDashboardData();
-    // Admin gets NO project scoping (where is undefined) but messages are
-    // still filtered to their own mailbox.
+    // Admin gets NO project scoping (no id: { in: [...] }) but the L-P0-14
+    // soft-delete filter still applies — soft-deleted projects are hidden.
     const projectCall = db.project.findMany.mock.calls.at(-1)![0];
-    expect(projectCall.where).toBeUndefined();
+    expect(projectCall.where).toEqual({ deletedAt: null });
     const messageCall = db.message.findMany.mock.calls.at(-1)![0];
     expect(messageCall.where).toEqual(
       expect.objectContaining({
@@ -498,22 +498,25 @@ describe("getUserProfile (P0-4 regression)", () => {
 // ---------------------------------------------------------------------------
 
 describe("deleteMessage ownership (P1-9)", () => {
-  it("lets the sender delete their message", async () => {
+  it("lets the sender delete their message (L-P0-14 soft-delete)", async () => {
     signIn(MEMBER);
     db.message.findUnique.mockResolvedValue({
       id: "m-1", senderUserId: MEMBER.userId, recipientUserId: "u-oli", subject: "hi",
     });
-    db.message.delete.mockResolvedValue({});
+    db.message.update.mockResolvedValue({});
     expectOk(await deleteMessage("m-1"));
-    expect(db.message.delete).toHaveBeenCalled();
+    // L-P0-14: soft-delete via update (sets deletedAt), not hard delete
+    expect(db.message.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "m-1" }, data: expect.objectContaining({ deletedAt: expect.any(Date) }) }),
+    );
   });
 
-  it("lets the recipient delete a message they received", async () => {
+  it("lets the recipient delete a message they received (L-P0-14 soft-delete)", async () => {
     signIn(MEMBER);
     db.message.findUnique.mockResolvedValue({
       id: "m-1", senderUserId: "u-oli", recipientUserId: MEMBER.userId, subject: "hi",
     });
-    db.message.delete.mockResolvedValue({});
+    db.message.update.mockResolvedValue({});
     expectOk(await deleteMessage("m-1"));
   });
 

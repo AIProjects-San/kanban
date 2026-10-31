@@ -18,6 +18,18 @@ const { db } = vi.hoisted(() => {
 
 vi.mock("@/lib/db", () => ({ db }));
 
+// L-P0-10 — auth.ts now uses createLoginLimiter() (async, Redis-capable).
+// Mock it to return the SAME in-memory loginLimiter the tests import below,
+// so the tests' .check()/.reset() calls operate on the instance auth.ts uses.
+const { loginLimiter: inMemoryLoginLimiter } = await import("@/lib/rate-limit");
+vi.mock("@/lib/rate-limit-redis", () => ({
+  createLoginLimiter: () => ({
+    check: async (key: string, now?: number) => inMemoryLoginLimiter.check(key, now),
+    hit: async (key: string, now?: number) => inMemoryLoginLimiter.hit(key, now),
+    reset: async (key: string) => inMemoryLoginLimiter.reset(key),
+  }),
+}));
+
 import { authOptions } from "@/lib/auth";
 import { loginLimiter } from "@/lib/rate-limit";
 import bcrypt from "bcryptjs";
@@ -47,6 +59,7 @@ const USER = {
   name: "Ada",
   role: "ADMIN",
   passwordHash: bcrypt.hashSync("correct-horse-1", 4),
+  tokenVersion: 0, // L-P0-8
 };
 
 const REQ = { headers: { "x-forwarded-for": "203.0.113.7" } };
@@ -149,13 +162,13 @@ describe("jwt callback", () => {
   const jwt = authOptions.callbacks!.jwt!;
 
   it("stamps id/role/roleCheckedAt on initial sign-in", async () => {
-    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN" } } as never);
-    expect(token).toMatchObject({ id: "u-1", role: "ADMIN" });
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
+    expect(token).toMatchObject({ id: "u-1", role: "ADMIN", tokenVersion: 0 });
     expect(typeof token.roleCheckedAt).toBe("number");
   });
 
   it("does NOT hit the database while the refresh window is fresh", async () => {
-    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN" } } as never);
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
     db.user.findUnique.mockClear();
     const again = await jwt({ token, user: undefined } as never);
     expect(again.role).toBe("ADMIN");
@@ -164,28 +177,85 @@ describe("jwt callback", () => {
 
   it("re-reads the role from the DB once the refresh window expires", async () => {
     vi.useFakeTimers();
-    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN" } } as never);
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
     // 6 minutes later (> ROLE_REFRESH_MS).
     vi.advanceTimersByTime(6 * 60 * 1000);
-    db.user.findUnique.mockResolvedValue({ role: "MEMBER" }); // demoted!
+    db.user.findUnique.mockResolvedValue({ role: "MEMBER", tokenVersion: 0 }); // demoted, no revocation
 
     const refreshed = await jwt({ token, user: undefined } as never);
     expect(refreshed.role).toBe("MEMBER");
     expect(db.user.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "u-1" }, select: { role: true } }),
+      expect.objectContaining({ where: { id: "u-1" }, select: { role: true, tokenVersion: true } }),
     );
     vi.useRealTimers();
   });
 
   it("invalidates the identity claim when the account was deleted", async () => {
     vi.useFakeTimers();
-    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN" } } as never);
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
     vi.advanceTimersByTime(6 * 60 * 1000);
     db.user.findUnique.mockResolvedValue(null);
 
     const refreshed = await jwt({ token, user: undefined } as never);
     expect(refreshed.id).toBe("");
     expect(refreshed.role).toBe("MEMBER");
+    vi.useRealTimers();
+  });
+
+  // -------------------------------------------------------------------------
+  // L-P0-8 — tokenVersion session revocation.
+  // -------------------------------------------------------------------------
+
+  it("L-P0-8: invalidates the session when tokenVersion is bumped (password changed)", async () => {
+    vi.useFakeTimers();
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
+    expect(token.id).toBe("u-1");
+    expect(token.tokenVersion).toBe(0);
+
+    // 6 minutes later — the user changed their password, bumping tokenVersion to 1
+    vi.advanceTimersByTime(6 * 60 * 1000);
+    db.user.findUnique.mockResolvedValue({ role: "ADMIN", tokenVersion: 1 });
+
+    const refreshed = await jwt({ token, user: undefined } as never);
+    expect(refreshed.id).toBe("");
+    expect(refreshed.role).toBe("MEMBER");
+    expect(refreshed.tokenVersion).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it("L-P0-8: invalidates the session when an admin changes the user's role (tokenVersion bumped)", async () => {
+    vi.useFakeTimers();
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "MEMBER", tokenVersion: 0 } } as never);
+    vi.advanceTimersByTime(6 * 60 * 1000);
+    db.user.findUnique.mockResolvedValue({ role: "MANAGER", tokenVersion: 1 });
+
+    const refreshed = await jwt({ token, user: undefined } as never);
+    expect(refreshed.id).toBe("");
+    expect(refreshed.role).toBe("MEMBER");
+    vi.useRealTimers();
+  });
+
+  it("L-P0-8: keeps the session alive when tokenVersion is unchanged (defensive)", async () => {
+    vi.useFakeTimers();
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
+    vi.advanceTimersByTime(6 * 60 * 1000);
+    db.user.findUnique.mockResolvedValue({ role: "ADMIN", tokenVersion: 0 });
+
+    const refreshed = await jwt({ token, user: undefined } as never);
+    expect(refreshed.id).toBe("u-1");
+    expect(refreshed.role).toBe("ADMIN");
+    vi.useRealTimers();
+  });
+
+  it("L-P0-8: does not false-positive invalidate when DB returns undefined tokenVersion (legacy)", async () => {
+    vi.useFakeTimers();
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
+    vi.advanceTimersByTime(6 * 60 * 1000);
+    db.user.findUnique.mockResolvedValue({ role: "ADMIN" }); // no tokenVersion field
+
+    const refreshed = await jwt({ token, user: undefined } as never);
+    expect(refreshed.id).toBe("u-1");
+    expect(refreshed.role).toBe("ADMIN");
     vi.useRealTimers();
   });
 });

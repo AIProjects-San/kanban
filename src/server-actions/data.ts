@@ -59,6 +59,30 @@ export {
   markThreadRead,
   deleteMessage,
 } from "./messages";
+// L-P0-9 — paginated list actions with server-side search.
+export {
+  getUsersPage,
+  getTasksPage,
+  getProjectsPage,
+  getTimeEntriesPage,
+  type PaginatedResult,
+  type UserListItem,
+  type TaskListItem,
+  type ProjectListItem,
+  type TimeEntryListItem,
+} from "./pagination";
+// L-P0-11 — self-service password reset.
+export {
+  requestPasswordReset,
+  validateResetToken,
+  resetPassword,
+} from "./password-reset";
+// L-P1-20 — audit log retention.
+export {
+  pruneAuditLogs,
+  getAuditRetentionInfo,
+} from "./audit-retention";
+export type { PruneResult } from "@/lib/audit-retention-config";
 export {
   assignUserToProject,
   unassignUserFromProject,

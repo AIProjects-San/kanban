@@ -65,9 +65,14 @@ export async function getDashboardData(): Promise<DashboardData> {
     ]);
   }
 
+  // L-P0-14 — soft-delete filter. All read paths must exclude rows whose
+  // `deletedAt` is set. We compose this with the existing scope filter so
+  // soft-deleted projects/members/messages never appear in the dashboard.
+  const notDeleted = { deletedAt: null };
+
   const projectWhere = isScoped && scopedProjectIds
-    ? { id: { in: Array.from(scopedProjectIds) } }
-    : undefined;
+    ? { id: { in: Array.from(scopedProjectIds) }, ...notDeleted }
+    : notDeleted;
 
   const taskWhere = isScoped && scopedProjectIds
     ? {
@@ -75,8 +80,11 @@ export async function getDashboardData(): Promise<DashboardData> {
           { projectId: { in: Array.from(scopedProjectIds) } },
           { assignee: { userId: currentUserId } },
         ],
+        // Hide tasks whose project was soft-deleted (the task itself has no
+        // deletedAt column — its lifecycle is tied to the project).
+        project: { deletedAt: null },
       }
-    : undefined;
+    : { project: { deletedAt: null } };
 
   // For scoped users, only show team members who have tasks in the user's
   // projects or who are explicitly assigned to those projects. Admins see all.
@@ -93,10 +101,13 @@ export async function getDashboardData(): Promise<DashboardData> {
         { userId: { in: assignedUserIds } },
         { userId: currentUserId }, // always include yourself
       ],
+      ...notDeleted,
     };
   } else if (isScoped) {
     // Scoped user with no projects — show only themselves
-    memberWhere = { userId: currentUserId };
+    memberWhere = { userId: currentUserId, ...notDeleted };
+  } else {
+    memberWhere = notDeleted;
   }
 
   const [projects, tasks, members, reminders, notifs, timeEntries, events, messages] = await Promise.all([
@@ -129,8 +140,9 @@ export async function getDashboardData(): Promise<DashboardData> {
               { senderUserId: currentUserId },
               { recipientUserId: currentUserId },
             ],
+            ...notDeleted, // L-P0-14: exclude soft-deleted messages
           }
-        : undefined,
+        : { ...notDeleted },
       orderBy: { createdAt: "desc" },
       // L-P0-2: include the per-recipient read-state rows so the loader can
       // derive `read` per viewer without an N+1.

@@ -7,6 +7,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { hasPermission, isValidRole, type Permission, type Role } from "@/lib/rbac";
 import { canManageUser, getSubtreeUserIds } from "@/lib/hierarchy";
+import { hasPermissionDb } from "@/lib/config-loader";
 import { db } from "@/lib/db";
 
 interface AuthResult {
@@ -32,6 +33,35 @@ export async function getSession(): Promise<AuthResult | null> {
   };
 }
 
+// ---------------------------------------------------------------------------
+// L-P0-7 — DB-driven RBAC enforcement.
+//
+// Effective permission is: static(role).includes(perm) || dbHas(role, perm)
+//
+//  • The static matrix is the FLOOR — compile-time baseline that admins
+//    cannot revoke. A misconfigured DB can never accidentally remove
+//    critical perms (e.g. can't leave ADMIN without role:manage).
+//  • The DB editor can ADD permissions on top of the floor — granting a
+//    role new capabilities that the static matrix doesn't include.
+//  • The DB lookup is cached for 60s via getWorkspaceConfig's cache.
+//  • On DB failure we fall back to static-only (deny-by-default) so a DB
+//    outage can't accidentally grant extra permissions.
+// ---------------------------------------------------------------------------
+async function hasPermissionEnforced(
+  role: Role,
+  permission: Permission,
+): Promise<boolean> {
+  // Floor: static matrix grants it.
+  if (hasPermission(role, permission)) return true;
+  // Ceiling: DB grants it on top of the floor.
+  try {
+    return await hasPermissionDb(role, permission);
+  } catch (err) {
+    console.error("[auth-guard] DB permission check failed; falling back to static only:", err);
+    return false;
+  }
+}
+
 /**
  * Require that the current user has a specific permission.
  * Throws an AuthorizationError if not.
@@ -41,7 +71,7 @@ export async function requirePermission(permission: Permission): Promise<AuthRes
   if (!auth) {
     throw new AuthorizationError("You must be signed in to perform this action.");
   }
-  if (!hasPermission(auth.role, permission)) {
+  if (!(await hasPermissionEnforced(auth.role, permission))) {
     throw new AuthorizationError(
       `Your role (${auth.role}) does not have permission to ${permission.replace(":", " ")}.`
     );

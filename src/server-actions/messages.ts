@@ -124,7 +124,10 @@ export async function deleteMessage(id: string): Promise<ActionResult<void>> {
     if (existing && existing.senderUserId !== auth.userId && existing.recipientUserId !== auth.userId) {
       throw new AuthorizationError("You can only delete messages you sent or received.");
     }
-    await db.message.delete({ where: { id } });
+    // L-P0-14 — soft-delete instead of hard delete. The message is hidden
+    // from read paths (which filter `deletedAt: null`) but the row is
+    // preserved so audit trails and MessageRead state stay intact.
+    await db.message.update({ where: { id }, data: { deletedAt: new Date() } });
     if (existing) {
       await logAudit({
         actor: auth,
@@ -132,7 +135,7 @@ export async function deleteMessage(id: string): Promise<ActionResult<void>> {
         entityType: "MESSAGE",
         entityId: id,
         entityLabel: existing.subject,
-        detail: `Deleted message “${existing.subject}”`,
+        detail: `Soft-deleted message “${existing.subject}”`,
       });
     }
     revalidatePath("/");

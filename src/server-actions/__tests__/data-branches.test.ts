@@ -210,11 +210,14 @@ describe("updateMember change-detection", () => {
 });
 
 describe("delete flows tolerate missing pre-images", () => {
-  it("deleteProject with no existing row skips the audit but still deletes", async () => {
+  it("deleteProject with no existing row skips the audit but still soft-deletes (L-P0-14)", async () => {
     db.project.findUnique.mockResolvedValue(null);
-    db.project.delete.mockResolvedValue({});
+    db.project.update.mockResolvedValue({});
     await deleteProject("ghost");
-    expect(db.project.delete).toHaveBeenCalled();
+    // L-P0-14: soft-delete via update, not hard delete
+    expect(db.project.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ghost" }, data: expect.objectContaining({ deletedAt: expect.any(Date) }) }),
+    );
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 
@@ -304,6 +307,7 @@ describe("getDashboardData MANAGER scoping", () => {
     await getDashboardData();
     const memberCall = db.teamMember.findMany.mock.calls.at(-1)![0];
     // "Only yourself" is resolved via the stable user-id link, never a name.
-    expect(memberCall.where).toEqual({ userId: MANAGER.userId });
+    // L-P0-14: also includes the soft-delete filter.
+    expect(memberCall.where).toEqual({ userId: MANAGER.userId, deletedAt: null });
   });
 });

@@ -2,18 +2,45 @@
 // Fernly seed script — generates rich, realistic mock data
 // Run: bun run db:seed
 
-const { PrismaClient } = require("@prisma/client");
-const bcrypt = require("bcryptjs");
+// ---------------------------------------------------------------------------
+// L-P0-12 — seed safety guard. MUST run BEFORE any require() that could
+// load .env (notably @prisma/client, which sources .env at import time).
+//
+// Requires an EXPLICIT `SEED_DEMO=1` env var, independent of NODE_ENV:
+//   - `NODE_ENV=production bun run db:seed`              → refused (production)
+//   - `bun run db:seed`                                  → refused (no SEED_DEMO)
+//   - `SEED_DEMO=1 bun run db:seed`                      → allowed (demo dev)
+//   - `SEED_DEMO=1 NODE_ENV=production bun run db:seed`  → refused (production)
+//
+// We snapshot the env vars NOW, before Prisma loads .env. Otherwise a .env
+// containing SEED_DEMO=1 would silently bypass this guard.
+// ---------------------------------------------------------------------------
+const SEED_DEMO_AT_BOOT = process.env.SEED_DEMO;
+const NODE_ENV_AT_BOOT = process.env.NODE_ENV;
 
-// Safety net: seeding WIPES existing data and inserts demo accounts with a
-// publicly-known password. Refuse to run against production.
-if (process.env.NODE_ENV === "production") {
+if (NODE_ENV_AT_BOOT === "production") {
   console.error(
     "[seed] Refusing to seed: NODE_ENV=production. Seeding resets data and " +
     "creates demo accounts with a known password."
   );
   process.exit(1);
 }
+if (SEED_DEMO_AT_BOOT !== "1") {
+  console.error(
+    "[seed] Refusing to seed: SEED_DEMO=1 not set.\n" +
+    "  Seeding WIPES existing data and creates demo accounts with a " +
+    "publicly-known password (demo/manager/member @fernly.app, password " +
+    "fernly123).\n" +
+    "  To run the seed explicitly: SEED_DEMO=1 bun run db:seed\n" +
+    "  This guard closes L-P0-12 — see docs/CODE_REVIEW.md §9.4."
+  );
+  process.exit(1);
+}
+
+// Only now is it safe to load Prisma — it will source .env, but the guard
+// above already snapshotted the real boot env so it can't be bypassed.
+const { PrismaClient } = require("@prisma/client");
+const bcrypt = require("bcryptjs");
 
 const db = new PrismaClient();
 

@@ -191,7 +191,9 @@ export async function changePassword(input: {
     const newHash = await hashPassword(input.newPassword);
     await db.user.update({
       where: { id: input.userId },
-      data: { passwordHash: newHash },
+      // L-P0-8 — bump tokenVersion so any stolen cookie from before the
+      // password change is rejected by the jwt callback on its next refresh.
+      data: { passwordHash: newHash, tokenVersion: { increment: 1 } },
     });
 
     await logAudit({
@@ -200,7 +202,7 @@ export async function changePassword(input: {
       entityType: "AUTH",
       entityId: input.userId,
       entityLabel: user.email,
-      detail: `${user.name} changed their password`,
+      detail: `${user.name} changed their password (session token rotated)`,
     });
     revalidatePath("/");
   });
@@ -422,6 +424,15 @@ export async function updateUser(userId: string, input: {
       data.passwordHash = await hashPassword(input.resetPassword);
     }
 
+    // L-P0-8 — bump tokenVersion when role or password changes, so any
+    // existing session for this user is invalidated on the next jwt refresh.
+    // This is the admin-side force-logout.
+    const roleChanged = input.role !== undefined && input.role !== target.role;
+    const passwordReset = input.resetPassword !== undefined && input.resetPassword.length > 0;
+    if (roleChanged || passwordReset) {
+      data.tokenVersion = { increment: 1 };
+    }
+
     await db.user.update({ where: { id: userId }, data });
 
     // Sync name/email/avatarColor to the matching TeamMember record (if any)
@@ -471,18 +482,31 @@ export async function deleteUser(userId: string): Promise<ActionResult<void>> {
     }
     const target = await db.user.findUnique({ where: { id: userId } });
     if (!target) throw new AuthorizationError("User not found.");
-    // ProjectAssignments are auto-deleted via onDelete: Cascade.
-    // managerId on the target's direct reports is auto-nullified via
-    // onDelete: SetNull (so those reports become roots, they are NOT
-    // deleted — important: deleting a manager must never delete their team).
-    await db.user.delete({ where: { id: userId } });
+    // L-P0-14 — soft-delete instead of hard delete. Setting `deletedAt` on
+    // both User and the linked TeamMember hides the row from read paths
+    // (which filter `deletedAt: null`) WITHOUT cascading deletes that would
+    // orphan messages (dangling senderUserId/recipientUserId) and team-member
+    // references. The user's auth is also implicitly invalidated: the jwt
+    // callback's role refresh sees `fresh = null` and clears the token id.
+    // ProjectAssignments still cascade (onDelete: Cascade); managerId on
+    // direct reports still SetNulls (those reports become roots — deleting
+    // a manager never deletes their team).
+    const now = new Date();
+    await db.user.update({ where: { id: userId }, data: { deletedAt: now } });
+    // Soft-delete the matching TeamMember row (if any) in the same operation.
+    if (target.email) {
+      await db.teamMember.updateMany({
+        where: { email: target.email.toLowerCase(), deletedAt: null },
+        data: { deletedAt: now },
+      });
+    }
     await logAudit({
       actor: auth,
       action: "user.deleted",
       entityType: "USER",
       entityId: userId,
       entityLabel: target.name,
-      detail: `Deleted user ${target.name} (${target.email})`,
+      detail: `Soft-deleted user ${target.name} (${target.email}) — roster row hidden, references preserved`,
     });
     revalidatePath("/");
   });

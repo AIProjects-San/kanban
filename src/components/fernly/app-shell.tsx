@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import dynamic from "next/dynamic";
 import { useSession } from "next-auth/react";
 import { useApp, type AccentTheme } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
@@ -16,20 +17,51 @@ import { UserModal } from "@/components/fernly/user-modal";
 import { AssignmentModal } from "@/components/fernly/assignment-modal";
 import { DashboardView } from "@/components/views/dashboard-view";
 import { TasksView } from "@/components/views/tasks-view";
-import { CalendarView } from "@/components/views/calendar-view";
-import { AnalyticsView } from "@/components/views/analytics-view";
+import { ProjectsView } from "@/components/views/projects-view";
 import { TeamView } from "@/components/views/team-view";
 import { SettingsView } from "@/components/views/settings-view";
-import { HelpView } from "@/components/views/help-view";
-import { AuditView } from "@/components/views/audit-view";
-import { UsersView } from "@/components/views/users-view";
-import { ProjectsView } from "@/components/views/projects-view";
-import { WorkspaceSettingsView } from "@/components/views/workspace-settings-view";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { markAllNotificationsRead } from "@/server-actions/data";
 import type {
   ProjectT, TaskT, TeamMemberT, CalendarEventT, NotificationT, ReminderT, TimeEntryT, MessageT,
 } from "@/lib/types";
+
+// ---------------------------------------------------------------------------
+// L-P1-17 — Code splitting. Heavy and rarely-opened views are lazy-loaded
+// via next/dynamic so they don't ship in the initial JS bundle. The biggest
+// win is AnalyticsView (Recharts is ~100KB gzipped). Each gets its own chunk
+// that only loads when the user opens that view.
+// ---------------------------------------------------------------------------
+
+const CalendarView = dynamic(() => import("@/components/views/calendar-view").then(m => ({ default: m.CalendarView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading calendar…</div>,
+});
+
+const AnalyticsView = dynamic(() => import("@/components/views/analytics-view").then(m => ({ default: m.AnalyticsView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading analytics…</div>,
+});
+
+const HelpView = dynamic(() => import("@/components/views/help-view").then(m => ({ default: m.HelpView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading help…</div>,
+});
+
+const AuditView = dynamic(() => import("@/components/views/audit-view").then(m => ({ default: m.AuditView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading audit log…</div>,
+});
+
+const UsersView = dynamic(() => import("@/components/views/users-view").then(m => ({ default: m.UsersView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading users…</div>,
+});
+
+const WorkspaceSettingsView = dynamic(() => import("@/components/views/workspace-settings-view").then(m => ({ default: m.WorkspaceSettingsView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading workspace settings…</div>,
+});
 
 interface AppShellProps {
   data: {

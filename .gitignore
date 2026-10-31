@@ -45,7 +45,7 @@ local-*
 .z-ai-config
 *.log
 dev.log
-dev.out.log
+dev.out
 test
 prompt
 

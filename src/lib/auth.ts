@@ -2,7 +2,11 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
-import { loginLimiter } from "@/lib/rate-limit";
+import { createLoginLimiter } from "@/lib/rate-limit-redis";
+
+// L-P0-10 — pick the Redis-backed limiter when REDIS_URL + a Redis client
+// are configured, fall back to the in-memory limiter otherwise.
+const loginLimiter = createLoginLimiter();
 
 // ---------------------------------------------------------------------------
 // Secret handling
@@ -47,9 +51,11 @@ const ROLE_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
-    // Re-check the role from the database at most every 15 minutes so that
-    // role/permission changes apply without waiting for a full re-login.
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    // L-P0-8 — shortened from 30 days to 7 days as defence in depth. With
+    // tokenVersion revocation now in place, a stolen cookie is invalidated
+    // the moment the user rotates their password; the shorter maxAge caps
+    // the worst-case exposure for users who DON'T notice the compromise.
+    maxAge: 7 * 24 * 60 * 60, // 7 days
   },
   pages: {
     signIn: "/",
@@ -107,7 +113,10 @@ export const authOptions: NextAuthOptions = {
 
         // Brute-force throttle: block before touching the database when the
         // email or the source IP is over the attempt budget.
-        if (loginLimiter.check(emailKey).blocked || loginLimiter.check(ipKey).blocked) {
+        // L-P0-10: limiter is now async (Redis-backed when REDIS_URL is set).
+        const emailState = await loginLimiter.check(emailKey);
+        const ipState = await loginLimiter.check(ipKey);
+        if (emailState.blocked || ipState.blocked) {
           console.warn(`[auth] login throttled for ${email} (ip ${ip})`);
           return null;
         }
@@ -122,19 +131,19 @@ export const authOptions: NextAuthOptions = {
             // Precomputed hash of a random throwaway string (cost 10).
             "$2b$10$GYrvjahdLkU.Jqm7PcKefutEUdE3LqKraZPNJ8M7q/FCSKaJdgWte",
           );
-          loginLimiter.hit(emailKey);
-          loginLimiter.hit(ipKey);
+          await loginLimiter.hit(emailKey);
+          await loginLimiter.hit(ipKey);
           return null;
         }
         const ok = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!ok) {
-          loginLimiter.hit(emailKey);
-          loginLimiter.hit(ipKey);
+          await loginLimiter.hit(emailKey);
+          await loginLimiter.hit(ipKey);
           return null;
         }
         // Successful sign-in clears the per-email budget (a legit user who
         // mistyped their password a few times shouldn't stay blocked).
-        loginLimiter.reset(emailKey);
+        await loginLimiter.reset(emailKey);
         // Audit trail: record successful sign-ins
         try {
           await db.auditLog.create({
@@ -156,6 +165,9 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name,
           role: user.role,
+          // L-P0-8 — stamp the tokenVersion so the jwt callback can detect
+          // revocation on subsequent refreshes.
+          tokenVersion: user.tokenVersion,
         };
       },
     }),
@@ -163,22 +175,46 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        // Initial sign-in — stamp the token with the current role.
+        // Initial sign-in — stamp the token with the current role and the
+        // current tokenVersion (L-P0-8 session revocation).
         token.id = user.id;
         token.role = user.role;
+        token.tokenVersion = user.tokenVersion ?? 0;
         token.roleCheckedAt = Date.now();
       } else if (
         typeof token.roleCheckedAt !== "number" ||
         Date.now() - (token.roleCheckedAt as number) > ROLE_REFRESH_MS
       ) {
-        // Periodically re-read the role from the database so promotions and
-        // demotions take effect without waiting for the JWT to expire.
+        // Periodically re-read the role AND tokenVersion from the database
+        // so promotions, demotions, and revocations take effect without
+        // waiting for the JWT to expire.
         const fresh = await db.user.findUnique({
           where: { id: token.id as string },
-          select: { role: true },
+          select: { role: true, tokenVersion: true },
         });
         if (fresh) {
-          token.role = fresh.role;
+          // L-P0-8 — reject tokens whose tokenVersion is stale. The user
+          // (or an admin) bumped tokenVersion after this token was issued,
+          // which means the password or role changed. Invalidate the
+          // identity claim; the app treats an empty id as "not signed in".
+          //
+          // Defensive: treat undefined values as 0 so legacy rows / partial
+          // mocks can't false-positive invalidate a session.
+          const dbVersion = typeof fresh.tokenVersion === "number" ? fresh.tokenVersion : 0;
+          const tokenVersion = typeof token.tokenVersion === "number" ? token.tokenVersion : 0;
+          if (dbVersion !== tokenVersion) {
+            console.warn(
+              `[auth] token version mismatch for user ${token.id} — ` +
+              `token has ${tokenVersion}, DB has ${dbVersion}. ` +
+              `Session invalidated (password or role changed).`,
+            );
+            token.id = "";
+            token.role = "MEMBER";
+            token.tokenVersion = dbVersion;
+          } else {
+            token.role = fresh.role;
+            token.tokenVersion = dbVersion;
+          }
         } else {
           // Account deleted mid-session — invalidate the identity claim; the
           // app treats an empty id as "not signed in".

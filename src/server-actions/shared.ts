@@ -79,13 +79,24 @@ export async function assertTaskEditPermission(
 /**
  * Recompute the denormalized workload counters on a team member after any
  * task mutation that could change them.
+ *
+ * Capacity is read from `Workspace.workloadFullCapacity` (admin-editable in
+ * Workspace Settings) — closing L-P0-16. Falls back to 6 if the workspace
+ * row is missing or the configured value is invalid (<= 0).
  */
 export async function recalcMemberStats(memberId: string | null) {
   if (!memberId) return;
   const tasks = await db.task.findMany({ where: { assigneeId: memberId } });
   const open = tasks.filter((t) => t.status !== "DONE").length;
   const completed = tasks.filter((t) => t.status === "DONE").length;
-  const workload = Math.min(100, Math.round((open / 6) * 100));
+  const workspace = await db.workspace.findUnique({
+    where: { id: "default" },
+    select: { workloadFullCapacity: true },
+  });
+  const capacity = workspace?.workloadFullCapacity && workspace.workloadFullCapacity > 0
+    ? workspace.workloadFullCapacity
+    : 6;
+  const workload = Math.min(100, Math.round((open / capacity) * 100));
   await db.teamMember.update({
     where: { id: memberId },
     data: { openTasks: open, completedTasks: completed, workload },

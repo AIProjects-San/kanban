@@ -69,6 +69,13 @@ jobs:
       - name: Build
         run: bun run build
 
+      # L-P1-17 — bundle budget gate. Fails the build if any initial route
+      # JS chunk exceeds its budget, so a regression that bloats the bundle
+      # (e.g. accidentally importing Recharts into the dashboard) is caught
+      # in CI before it ships.
+      - name: Bundle budget check
+        run: bun run bundle:check
+
   e2e:
     name: e2e (cucumber + selenium)
     runs-on: ubuntu-latest

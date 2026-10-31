@@ -2,6 +2,23 @@
 
 import { useEffect } from "react";
 import { useApp } from "@/store/app-store";
+import { usePermissions } from "@/hooks/use-permissions";
+import type { Permission } from "@/lib/rbac";
+
+// ---------------------------------------------------------------------------
+// L-P0-15 — Permission map for G-prefix view shortcuts.
+//
+// Mirrors the sidebar's gating exactly: u (Users) requires role:manage,
+// w (Workspace Config) requires role:manage, l (Audit Log) requires
+// audit:view. Shortcuts not in the gate map are unrestricted. When a user
+// lacks the required permission, the shortcut no-ops silently.
+// ---------------------------------------------------------------------------
+
+const SHORTCUT_PERMISSION_GATE: Record<string, Permission> = {
+  u: "role:manage",  // G U → users view — admin only
+  w: "role:manage",  // G W → workspace-settings — admin only
+  l: "audit:view",   // G L → audit log — admin + manager
+};
 
 export function useKeyboardShortcuts() {
   const {
@@ -11,6 +28,7 @@ export function useKeyboardShortcuts() {
     setShortcutsOpen,
     setNotifOpen,
   } = useApp();
+  const { can } = usePermissions();
 
   useEffect(() => {
     let lastG = 0;
@@ -75,8 +93,18 @@ export function useKeyboardShortcuts() {
           h: () => setView("help"),
           l: () => setView("audit"),
         };
-        const action = map[e.key.toLowerCase()];
+        const shortcutKey = e.key.toLowerCase();
+        const action = map[shortcutKey];
         if (action) {
+          // L-P0-15: gate admin/audit views by the same permissions the
+          // sidebar uses. If the user lacks the permission, no-op silently
+          // (do not navigate, do not fire the action, do not toast an error).
+          const requiredPermission = SHORTCUT_PERMISSION_GATE[shortcutKey];
+          if (requiredPermission && !can(requiredPermission)) {
+            e.preventDefault();
+            lastG = 0;
+            return;
+          }
           e.preventDefault();
           action();
           lastG = 0;
@@ -85,5 +113,5 @@ export function useKeyboardShortcuts() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [setView, openTaskModal, openProjectModal, setShortcutsOpen, setNotifOpen]);
+  }, [setView, openTaskModal, openProjectModal, setShortcutsOpen, setNotifOpen, can]);
 }

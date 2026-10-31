@@ -6,9 +6,19 @@ import { Leaf, Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { RoleBadge } from "../fernly/role-badge";
 
+// ---------------------------------------------------------------------------
+// L-P0-12 — demo credentials must not leak into production builds.
+//
+// All demo affordances are gated behind NEXT_PUBLIC_SEED_DEMO=1 (a build-time
+// env var inlined into the client bundle). Production builds that don't set
+// it get a clean login screen: no prefill, no demo accounts panel, no
+// credential hints in error toasts.
+// ---------------------------------------------------------------------------
+const SEED_DEMO = process.env.NEXT_PUBLIC_SEED_DEMO === "1";
+
 export function LoginScreen() {
-  const [email, setEmail] = useState("demo@fernly.app");
-  const [password, setPassword] = useState("fernly123");
+  const [email, setEmail] = useState(SEED_DEMO ? "demo@fernly.app" : "");
+  const [password, setPassword] = useState(SEED_DEMO ? "fernly123" : "");
   const [loading, setLoading] = useState(false);
 
   // If redirected back with ?error=CredentialsSignin, show toast
@@ -16,7 +26,10 @@ export function LoginScreen() {
     const params = new URLSearchParams(window.location.search);
     const error = params.get("error");
     if (error === "CredentialsSignin" || error === "Configuration") {
-      toast.error("Invalid credentials. Try demo@fernly.app / fernly123");
+      // L-P0-12: don't leak the demo credentials in the error toast.
+      toast.error(SEED_DEMO
+        ? "Invalid credentials. Try a demo account below."
+        : "Invalid email or password.");
       // Clean the URL
       window.history.replaceState({}, "", "/");
     }
@@ -38,7 +51,9 @@ export function LoginScreen() {
     });
     setLoading(false);
     if (res?.error) {
-      toast.error("Invalid credentials. Try demo@fernly.app / fernly123");
+      toast.error(SEED_DEMO
+        ? "Invalid credentials. Try a demo account below."
+        : "Invalid email or password.");
     } else if (res?.ok || res?.url) {
       // Success — reload the current page to pick up the session cookie.
       // Use replace so the login page doesn't stay in browser history.
@@ -108,16 +123,18 @@ export function LoginScreen() {
             </button>
           </form>
 
-          <div className="mt-6 p-3 rounded-lg bg-muted/60 border border-border">
-            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-              Demo accounts (all password: fernly123)
+          {SEED_DEMO && (
+            <div className="mt-6 p-3 rounded-lg bg-muted/60 border border-border">
+              <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Demo accounts (all password: fernly123)
+              </div>
+              <div className="space-y-1.5">
+                <DemoAccount email="demo@fernly.app" role="Admin" onClick={() => { setEmail("demo@fernly.app"); setPassword("fernly123"); }} />
+                <DemoAccount email="manager@fernly.app" role="Manager" onClick={() => { setEmail("manager@fernly.app"); setPassword("fernly123"); }} />
+                <DemoAccount email="member@fernly.app" role="Member" onClick={() => { setEmail("member@fernly.app"); setPassword("fernly123"); }} />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <DemoAccount email="demo@fernly.app" role="Admin" onClick={() => { setEmail("demo@fernly.app"); setPassword("fernly123"); }} />
-              <DemoAccount email="manager@fernly.app" role="Manager" onClick={() => { setEmail("manager@fernly.app"); setPassword("fernly123"); }} />
-              <DemoAccount email="member@fernly.app" role="Member" onClick={() => { setEmail("member@fernly.app"); setPassword("fernly123"); }} />
-            </div>
-          </div>
+          )}
         </div>
       </div>
 

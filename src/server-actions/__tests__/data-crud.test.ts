@@ -340,6 +340,8 @@ describe("task lifecycle", () => {
     db.task.findMany.mockResolvedValue(tasks);
     db.task.update.mockResolvedValue(existing);
     db.teamMember.update.mockResolvedValue({});
+    // L-P0-16: workspace row missing → fallback capacity of 6
+    db.workspace.findUnique.mockResolvedValue(null);
 
     await updateTask("t-1", { title: "New title" });
 
@@ -347,6 +349,28 @@ describe("task lifecycle", () => {
       (c) => c[0].where.id === "m-mia",
     );
     expect(updateCall?.[0].data).toEqual({ openTasks: 7, completedTasks: 1, workload: 100 });
+  });
+
+  it("recalcMemberStats honours Workspace.workloadFullCapacity (L-P0-16)", async () => {
+    // Workspace capacity set to 10 — 5 open tasks = 50% workload, not the
+    // hardcoded-6 default of 83%. Verifies the admin-editable setting is wired.
+    const tasks = Array.from({ length: 5 }, (_, i) => ({ id: `t-${i}`, status: "TODO", assigneeId: "m-mia" }))
+      .concat([{ id: "t-done", status: "DONE", assigneeId: "m-mia" }]);
+    db.task.findUnique.mockResolvedValue(existing);
+    db.task.findMany.mockResolvedValue(tasks);
+    db.task.update.mockResolvedValue(existing);
+    db.teamMember.update.mockResolvedValue({});
+    db.workspace.findUnique.mockResolvedValue({ workloadFullCapacity: 10 });
+
+    await updateTask("t-1", { title: "New title" });
+
+    const updateCall = db.teamMember.update.mock.calls.find(
+      (c) => c[0].where.id === "m-mia",
+    );
+    expect(updateCall?.[0].data).toEqual({ openTasks: 5, completedTasks: 1, workload: 50 });
+    expect(db.workspace.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "default" } }),
+    );
   });
 
   it("updateTask reports changed fields in the audit detail", async () => {
@@ -698,11 +722,22 @@ describe("user management", () => {
     expect(data.passwordHash).not.toBe("brand-new-pw");
   });
 
-  it("deleteUser removes the account and audits it", async () => {
+  it("deleteUser soft-deletes the account and audits it (L-P0-14)", async () => {
     db.user.findUnique.mockResolvedValue({ id: "u-oli", name: "Oli", email: "oli@fernly.dev" });
-    db.user.delete.mockResolvedValue({});
+    db.user.update.mockResolvedValue({});
+    db.teamMember.updateMany.mockResolvedValue({});
     await deleteUser("u-oli");
-    expect(db.user.delete).toHaveBeenCalledWith({ where: { id: "u-oli" } });
+    // L-P0-14: soft-delete via update (sets deletedAt), not hard delete
+    expect(db.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "u-oli" }, data: expect.objectContaining({ deletedAt: expect.any(Date) }) }),
+    );
+    // Also soft-deletes the matching TeamMember row
+    expect(db.teamMember.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ email: "oli@fernly.dev", deletedAt: null }),
+        data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+      }),
+    );
     expect(db.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ action: "user.deleted", detail: expect.stringContaining("oli@fernly.dev") }),
@@ -838,7 +873,6 @@ describe("read helpers", () => {
 describe("changePassword happy path", () => {
   it("verifies the current password and stores a new hash", async () => {
     signIn(MEMBER);
-    // Hash of "current-password-1"
     const bcrypt = (await import("bcryptjs")).default;
     const currentHash = bcrypt.hashSync("current-password-1", 4);
     db.user.findUnique.mockResolvedValue({
@@ -859,6 +893,27 @@ describe("changePassword happy path", () => {
         data: expect.objectContaining({ action: "auth.password_changed" }),
       }),
     );
+  });
+
+  it("bumps tokenVersion on password change — invalidates existing sessions (L-P0-8)", async () => {
+    signIn(MEMBER);
+    const bcrypt = (await import("bcryptjs")).default;
+    const currentHash = bcrypt.hashSync("current-password-1", 4);
+    db.user.findUnique.mockResolvedValue({
+      id: MEMBER.userId, email: MEMBER.email, name: MEMBER.name, passwordHash: currentHash,
+    });
+    db.user.update.mockResolvedValue({});
+
+    await changePassword({
+      userId: MEMBER.userId,
+      currentPassword: "current-password-1",
+      newPassword: "brand-new-pass",
+    });
+
+    // The Prisma increment form is { increment: 1 } — verifies the bump is
+    // atomic with the password hash update.
+    const data = db.user.update.mock.calls[0][0].data;
+    expect(data.tokenVersion).toEqual({ increment: 1 });
   });
 });
 

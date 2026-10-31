@@ -3,20 +3,19 @@ import nextTypescript from "eslint-config-next/typescript";
 
 // Fernly ESLint config.
 //
-// Two high-value rules are escalated to ERROR (not just warn) so CI blocks
-// new violations. Both were previously disabled globally; this pass cleaned
-// up the 36 existing violations and now blocks regressions:
+// High-value rules are escalated to ERROR (not just warn) so CI blocks
+// new violations. The audit (§9.5 L-P1-24) asked for these to be re-enabled
+// with an allow-list of legacy suppressions:
 //
-//   • @typescript-eslint/no-unused-vars — dead imports/vars/args hide bugs
-//     and bloat the bundle. Underscore-prefixed names (_x) are allowed.
+//   • @typescript-eslint/no-unused-vars — dead code hides bugs.
 //   • react-hooks/exhaustive-deps       — missing deps are the #1 source of
 //     stale-closure bugs in React effects.
-//
-// Other rules remain off — they are tracked as future work in
-// docs/CODE_REVIEW.md §6 (item 5: "Re-enable incrementally with an
-// allow-list of legacy suppressions; do not bulk-flip without a dedicated
-// pass"). Each of those needs its own focused cleanup pass before it can
-// be turned on without breaking CI.
+//   • no-debugger                       — stray debugger statements ship to
+//     production and pause execution for anyone with devtools open.
+//   • no-fallthrough                    — missing break is almost always a bug.
+//   • no-unreachable                    — dead code hides logic errors.
+//   • prefer-const                      — `let` that's never reassigned is
+//     misleading; `const` communicates intent.
 
 const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
   rules: {
@@ -41,18 +40,20 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "@next/next/no-html-link-for-pages": "off",
 
     // General JavaScript rules
-    "prefer-const": "off",
-    "no-unused-vars": "off",
+    // L-P1-24 — re-enabled high-value rules (were off globally):
+    "prefer-const": "error",
+    "no-debugger": "error",
+    "no-fallthrough": "error",
+    "no-unreachable": "error",
+    // Still off (need focused cleanup passes — see docs/CODE_REVIEW.md §6):
+    "no-unused-vars": "off", // handled by @typescript-eslint/no-unused-vars above
     "no-console": "off",
-    "no-debugger": "off",
     "no-empty": "off",
     "no-irregular-whitespace": "off",
     "no-case-declarations": "off",
-    "no-fallthrough": "off",
     "no-mixed-spaces-and-tabs": "off",
     "no-redeclare": "off",
-    "no-undef": "off",
-    "no-unreachable": "off",
+    "no-undef": "off", // TypeScript handles this
     "no-useless-escape": "off",
   },
 }, {

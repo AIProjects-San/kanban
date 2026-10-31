@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+import { withRequestId, generateRequestId, log } from "@/lib/observability";
 
 // ---------------------------------------------------------------------------
 // Self-healing session cookie guard
@@ -35,36 +36,50 @@ export const config = {
 };
 
 export default async function proxy(req: NextRequest) {
-  const raw = req.cookies.get(SESSION_COOKIE)?.value;
-  const secret = process.env.NEXTAUTH_SECRET;
+  // L-P1-19 — wrap every request in a request-id context so all log lines
+  // and captured errors can be correlated back to the request that produced
+  // them. The id is generated per-request (not from a header) so we don't
+  // trust client-supplied ids.
+  const requestId = generateRequestId();
+  return withRequestId(requestId, async () => {
+    const raw = req.cookies.get(SESSION_COOKIE)?.value;
+    const secret = process.env.NEXTAUTH_SECRET;
 
-  // No cookie to check, or no explicit secret: in dev without NEXTAUTH_SECRET
-  // the Node runtime signs with an ephemeral per-process secret that this
-  // bundle cannot verify against — pass through untouched rather than risk
-  // clearing cookies that are actually valid for that secret.
-  if (!raw || !secret) return NextResponse.next();
+    // No cookie to check, or no explicit secret: pass through untouched.
+    if (!raw || !secret) return NextResponse.next();
 
-  let valid = false;
-  try {
-    valid =
-      (await getToken({ req, secret, cookieName: SESSION_COOKIE })) !== null;
-  } catch {
-    // Treat unexpected decode failures (malformed cookie, crypto errors) the
-    // same as a stale cookie — clearing it is always the safe recovery.
-    valid = false;
-  }
-  if (valid) return NextResponse.next();
+    let valid = false;
+    try {
+      valid =
+        (await getToken({ req, secret, cookieName: SESSION_COOKIE })) !== null;
+    } catch (err) {
+      // Treat unexpected decode failures (malformed cookie, crypto errors) the
+      // same as a stale cookie — clearing it is always the safe recovery.
+      // L-P1-19: log the error with the request id so it's traceable.
+      log.warn("proxy: session cookie decode failed", {
+        path: req.nextUrl.pathname,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      valid = false;
+    }
+    if (valid) return NextResponse.next();
 
-  // Stale or corrupt session cookie. Strip it from the request we forward
-  // (RequestCookies.delete rewrites the cookie header) and expire it in the
-  // browser so it never comes back.
-  req.cookies.delete(SESSION_COOKIE);
-  const res = NextResponse.next({ request: { headers: req.headers } });
-  res.cookies.set(SESSION_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
+    // Stale or corrupt session cookie. Strip it from the request we forward
+    // and expire it in the browser so it never comes back.
+    log.info("proxy: clearing stale session cookie", {
+      path: req.nextUrl.pathname,
+    });
+    req.cookies.delete(SESSION_COOKIE);
+    const res = NextResponse.next({ request: { headers: req.headers } });
+    // Stamp the request id on the response so the client can reference it
+    // in support tickets.
+    res.headers.set("X-Request-Id", requestId);
+    res.cookies.set(SESSION_COOKIE, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+    return res;
   });
-  return res;
 }
