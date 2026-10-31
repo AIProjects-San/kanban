@@ -419,10 +419,10 @@ describe("NEXTAUTH_SECRET hardening (P0-6)", () => {
   it("uses the supplied secret in production when it is strong", async () => {
     const snap = snapshotEnv();
     env.NODE_ENV = "production";
-    env.NEXTAUTH_SECRET = "jGUR5Eto0JofIfWznpURe6MAfVfJH4xPMCNAEuO0Yw8=";
+    env.NEXTAUTH_SECRET = "obviously-fake-unit-test-secret-0000000000=";
     delete env.NEXT_PHASE;
     const opts = await freshAuthOptions();
-    expect(opts.secret).toBe("jGUR5Eto0JofIfWznpURe6MAfVfJH4xPMCNAEuO0Yw8=");
+    expect(opts.secret).toBe("obviously-fake-unit-test-secret-0000000000=");
     restoreEnv(snap);
   });
 });
@@ -456,7 +456,7 @@ describe("production cookie security (P0-7)", () => {
   it("flips useSecureCookies + Secure flag on every cookie in production", async () => {
     const snap = snapshotEnv();
     env.NODE_ENV = "production";
-    env.NEXTAUTH_SECRET = "jGUR5Eto0JofIfWznpURe6MAfVfJH4xPMCNAEuO0Yw8=";
+    env.NEXTAUTH_SECRET = "obviously-fake-unit-test-secret-0000000000=";
     delete env.NEXT_PHASE;
     const opts = await freshAuthOptions();
     expect(opts.useSecureCookies).toBe(true);

@@ -36,6 +36,7 @@ import type { ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import crypto from "node:crypto";
+import { APP } from "@/config/app";
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 const RESET_TOKEN_BYTES = 32;
@@ -154,15 +155,15 @@ export async function requestPasswordReset(email: string): Promise<ActionResult<
       const safeName = escapeHtml(user.name);
       await mailer.sendMail({
         to: user.email,
-        subject: "Fernly — reset your password",
+        subject: `${APP.name} — reset your password`,
         html: `
           <p>Hi ${safeName},</p>
-          <p>We received a request to reset your Fernly password. Click the link below to choose a new one:</p>
+          <p>We received a request to reset your ${APP.name} password. Click the link below to choose a new one:</p>
           <p><a href="${resetUrl}">${resetUrl}</a></p>
           <p>This link expires in 1 hour. If you didn't request a reset, you can safely ignore this email — your password is still unchanged.</p>
-          <p>The Fernly team</p>
+          <p>The ${APP.name} team</p>
         `,
-        text: `Hi ${user.name},\n\nWe received a request to reset your Fernly password. Open this link to choose a new one:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you didn't request a reset, you can safely ignore this email — your password is still unchanged.\n\nThe Fernly team`,
+        text: `Hi ${user.name},\n\nWe received a request to reset your ${APP.name} password. Open this link to choose a new one:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you didn't request a reset, you can safely ignore this email — your password is still unchanged.\n\nThe ${APP.name} team`,
       });
     } catch (err) {
       console.error("[password-reset] mail send failed:", err);

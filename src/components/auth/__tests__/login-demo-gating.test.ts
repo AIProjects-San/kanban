@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 describe("L-P0-12 seed safety guard (scripts/seed.js)", () => {
-  function runSeed(env: Record<string, string | undefined>): {
+  function runSeed(env: Record<string, string | undefined>, cwd = "/home/z/my-project"): {
     exitCode: number;
     stderr: string;
   } {
@@ -18,8 +18,8 @@ describe("L-P0-12 seed safety guard (scripts/seed.js)", () => {
       if (v !== undefined) envClean[k] = v;
     }
     try {
-      execFileSync("node", ["scripts/seed.js"], {
-        cwd: "/home/z/my-project",
+      execFileSync("node", [resolve(__dirname, "../../../../scripts/seed.js")], {
+        cwd,
         env: envClean as NodeJS.ProcessEnv,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
@@ -47,6 +47,22 @@ describe("L-P0-12 seed safety guard (scripts/seed.js)", () => {
     const { exitCode, stderr } = runSeed({ NODE_ENV: "production" });
     expect(exitCode).toBe(1);
     expect(stderr).toMatch(/NODE_ENV=production/);
+  });
+
+  it("refuses BEFORE wiping when NEXT_PUBLIC_DEMO_PASSWORD is unset (SEED_DEMO=1)", () => {
+    // Simulate the misconfiguration with an EMPTY override: Prisma's
+    // dotenv always finds the project .env via the schema dir (it never
+    // overrides an existing var), so an empty string is exactly the
+    // "not configured" state. The password check sits before the wipe +
+    // any DB call, so a bad environment can never destroy data and then
+    // fail (ADR-006).
+    const { exitCode, stderr } = runSeed({
+      SEED_DEMO: "1",
+      NODE_ENV: "development",
+      NEXT_PUBLIC_DEMO_PASSWORD: "",
+    });
+    expect(exitCode).toBe(1);
+    expect(stderr).toMatch(/NEXT_PUBLIC_DEMO_PASSWORD/);
   });
 });
 
@@ -90,8 +106,24 @@ describe("L-P0-12 login screen demo gating (src/components/auth/login-screen.tsx
     expect(i18n).not.toMatch(/fernly123/);
   });
 
-  it("the seed script (server-side only, never bundled) is the single literal owner", () => {
+  it("no source file owns the demo password literal — .env is the single home", () => {
+    // Secret hygiene (docs/SECURITY.md): NEXT_PUBLIC_DEMO_PASSWORD in .env
+    // is the ONLY place the demo credential lives. The seed reads it from
+    // the environment; scripts and e2e go through their shared helpers.
     const seed = readFileSync(resolve(__dirname, "../../../../scripts/seed.js"), "utf-8");
-    expect(seed).toMatch(/fernly123/); // the one sanctioned place the literal lives
+    expect(seed).not.toMatch(/fernly123/);
+    expect(seed).toMatch(/NEXT_PUBLIC_DEMO_PASSWORD/);
+
+    const e2eSteps = readFileSync(
+      resolve(__dirname, "../../../../e2e/steps/common-steps.js"),
+      "utf-8",
+    );
+    expect(e2eSteps).not.toMatch(/fernly123/);
+
+    const k6 = readFileSync(
+      resolve(__dirname, "../../../../scripts/load-test.k6.js"),
+      "utf-8",
+    );
+    expect(k6).not.toMatch(/fernly123/);
   });
 });

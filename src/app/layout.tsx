@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster as SonnerToaster } from "sonner";
+import { APP } from "@/config/app";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Fernly — Project Management Dashboard",
+  title: `${APP.name} — ${APP.tagline}`,
   description: "Plan sprints, track tasks, schedule events, and visualize team performance — all in one calm, focused workspace.",
-  keywords: ["Fernly", "project management", "kanban", "team", "analytics"],
+  keywords: [APP.name, "project management", "kanban", "team", "analytics"],
   icons: {
     icon: "/logo.svg",
   },

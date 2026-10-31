@@ -60,12 +60,12 @@ export const DOMAINS_B = [
       "deleteUser leaves the TeamMember roster row alive (userId SetNull) - the team directory shows ghosts of deleted accounts; messages keep dangling sender/recipient strings.",
       "The Users view renders ~40 columns of state per row in the DOM with no pagination; at thousands of users the page degrades linearly (getAllUsers returns every row to the client).",
       "Password resets are admin-only; there is no self-service anything (see 1.2).",
-      "The seeded demo accounts (demo/manager/member @fernly.app, all password fernly123) are created by the seed script, which only refuses when NODE_ENV=production - a misconfigured deployment environment silently seeds publicly-known admin credentials.",
+      "The seeded demo accounts (demo/manager/member demo accounts, password from .env NEXT_PUBLIC_DEMO_PASSWORD) are created by the seed script, which only refuses when NODE_ENV=production - a misconfigured deployment environment silently seeds publicly-known admin credentials.",
     ],
     fixes: [
       "On deleteUser, archive the roster row (soft-delete) and null out messages' sender/recipient display fields via the remodelled relations.",
       "Paginate + server-side search the directory; render virtualised rows.",
-      "Harden the seed guard: refuse unless an explicit SEED_DEMO=1 is set, independent of NODE_ENV; strip demo quick-fill buttons and the Try demo@fernly.app / fernly123 toast from the login screen behind the same flag (src/components/auth/login-screen.tsx lines 10-11, 19, 41).",
+      "Harden the seed guard: refuse unless an explicit SEED_DEMO=1 is set, independent of NODE_ENV; strip demo quick-fill buttons and the demo-credential toast from the login screen behind the same flag (src/components/auth/login-screen.tsx lines 10-11, 19, 41).",
     ],
   },
   {
@@ -225,7 +225,7 @@ export const PART2 = {
       ["9", "Pagination & server-side search", "Every list returns all rows (users, tasks, projects, time entries); payload and DOM cost grow linearly with the workspace.", "Cursor pagination + search on the four list surfaces; keep the dashboard loader for aggregates only. Pairs with item 5."],
       ["10", "Redis rate limiting", "In-memory limiter resets on deploy and does not share state; NAT offices get locked out collectively.", "Redis-backed limiter with the same 5/15min semantics; progressive delay + CAPTCHA after repeated failures."],
       ["11", "Mail service + password reset", "No self-service reset or verification at all; at 100k users this is an unbounded support queue and an account-takeover enabler for shared inboxes.", "Transactional provider (Resend/SES), time-boxed single-use reset tokens, email verification, and reset-required flow on first login."],
-      ["12", "Login demo gating", "The login screen prefills demo@fernly.app / fernly123 and tells users to try it; the seed creates public admin credentials unless NODE_ENV is exactly production.", "Gate quick-fill buttons + prefill + hint behind SEED_DEMO=1; make seed refuse without an explicit flag independent of NODE_ENV. login-screen.tsx + seed.js."],
+      ["12", "Login demo gating", "The login screen prefills the demo account credentials and tells users to try it; the seed creates public admin credentials unless NODE_ENV is exactly production.", "Gate quick-fill buttons + prefill + hint behind SEED_DEMO=1; make seed refuse without an explicit flag independent of NODE_ENV. login-screen.tsx + seed.js."],
       ["13", "User.role default fix", "Schema default is 'Project Lead' - an invalid role that sessions downgrade to MEMBER while the UI renders it literally.", "Default to 'MEMBER' in schema.prisma; add app-level guard on the three canonical values. One migration line."],
       ["14", "Delete semantics", "Deleting a project orphans its tasks; deleting a user leaves roster ghosts and dangling message ids. Data integrity decays from day one.", "Soft-delete (deletedAt) for projects/users/messages with a scheduled purge; deleteProject warns and offers task move/delete. One migration + three actions."],
       ["15", "Shortcut permission gating", "G U / G W / G L fire for every user; MEMBERS navigate into admin views and eat raw auth error toasts.", "Gate the G-prefix map with the same hasPermission calls the sidebar uses (use-keyboard-shortcuts.ts)."],

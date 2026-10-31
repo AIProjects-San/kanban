@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { t } from "@/lib/i18n";
+import { APP } from "@/config/app";
 
 export default function Loading() {
   return (
@@ -26,7 +27,7 @@ export default function Loading() {
         <p className="text-sm text-muted-foreground">
           {t("loading.workspace")}
         </p>
-        <span className="sr-only">Loading the Fernly workspace, please wait.</span>
+        <span className="sr-only">{t("loading.workspaceSr", { app: APP.name })}</span>
       </div>
     </div>
   );

@@ -84,10 +84,42 @@ entity (transparency for collaborators).
 
 ## 7. Secrets management
 
-- Secrets live only in environment variables; `.env` is git-ignored and a
-  `.env.example` documents the required variables.
-- The dev fallback secret is a per-process random value (never a public constant).
-- Database credentials rotate via Supabase; no secrets in the client bundle.
+**Policy (MUST — ADR-006): `.env` is the only home for secrets.** No credential,
+key, or password literal may be committed anywhere — source, tests, scripts, feature
+files, Dockerfiles, or docs. This is enforced socially by review and mechanically by:
+
+- `login-demo-gating.test.ts` greps the seed/e2e/k6 sources for the demo password and
+  fails if the literal reappears;
+- the CI bundle gate greps built client chunks for the demo password (X-05);
+- the CI secrets gate refuses a stray `.env` in the standalone build output (X-06).
+
+Current inventory and handling:
+
+- `.env` is git-ignored **and untracked** (deep-dive F-02: it was accidentally
+  committed in the initial commit — removed from the index, but history retains it;
+  see the incident log below). `.env.example` documents every variable with
+  placeholders, never values.
+- `DATABASE_URL`, `NEXTAUTH_SECRET`, `RESEND_API_KEY`, `REDIS_URL`, `CRON_SECRET`,
+  `SENTRY_DSN` — runtime-injected only. The Dockerfile refuses a stray `.env` in the
+  build context/output (X-06).
+- The dev fallback auth secret is a per-process random value (never a public
+  constant); production refuses to boot on a missing/weak `NEXTAUTH_SECRET`.
+- The demo password lives **only** in `NEXT_PUBLIC_DEMO_PASSWORD` (`.env`). The
+  seed, node scripts, k6 load test, and the e2e suite read it from the environment
+  through `scripts/lib/demo-env.mjs` / `__ENV` / the e2e loader — each fails loudly
+  when it is unset. Rotating the demo password is a one-line `.env` edit.
+- Password-reset mail requires `RESEND_API_KEY` in production. Without it mail
+  is **dropped, never logged** (deep-dive F-04) — single-use reset tokens must
+  never appear in server logs.
+- Unit tests use obviously-fake fixtures (`obviously-fake-unit-test-secret-…`),
+  never real values.
+
+### Incident log
+
+| Date | Incident | Remediation |
+|------|----------|-------------|
+| 2026-10-30 (F-02) | `.env` committed in the initial commit (DB password + auth secret in git history). | Removed from index; `.gitignore` hardened. **Action: rotate both before launch** — the DB password rotation is still pending ops action. |
+| 2026-10-31 (M-5) | The **real `NEXTAUTH_SECRET` was pasted as a fixture in a committed unit test** (`auth.test.ts`), leaking the live signing secret into history. | Fixture replaced with an obviously-fake value; **live secret rotated the same day** (new `openssl rand -base64 32` in `.env`; the proxy's self-healing cookie guard made the rotation transparent to signed-in clients). Demo-password literals scrubbed repo-wide (seed, 4 node scripts, 3 shell scripts, k6, 10 feature files, docs) and pinned by tests. |
 
 ## 8. Threat model (abridged STRIDE)
 
@@ -107,10 +139,24 @@ entity (transparency for collaborators).
 1. Name-based joins (`ownerName`, email-matched members) — two users with identical
    names can appear in each other's scope. Fix: stable-id columns (planned migration).
 2. Notifications are workspace-global (design decision for a single-team workspace).
-3. Rate limiting is in-process (single-instance assumption) — move to Redis before
-   scaling out.
+3. Rate limiting shares a real Redis client when `REDIS_URL` is set (deep-dive
+   F-12 closed: `src/lib/redis-client.ts` lazily constructs the process-wide
+   ioredis client; docker-compose ships Redis and both limiters use it). If
+   Redis errors mid-flight the limiters **fail open** (logins stay possible,
+   throttling degrades, warning rate-limited to 1/30s) — bcrypt cost 12 still
+   meters online attacks. Without `REDIS_URL` the limiter is per-instance
+   in-memory: acceptable single-instance, a known multi-instance gap.
 4. Unexpected server-action errors surface generically in production (only
    Authorization/Validation errors carry a digest marker).
+5. `getUserByEmail` + the search member directory let any signed-in user resolve
+   id/name/email/avatarColor for a known email (deep-dive F-17/F-18) — required
+   for message routing in a single-workspace product; revisit with L-P2-36
+   tenancy.
+6. CSP ships with `unsafe-inline`/`unsafe-eval` and `connect-src https:`
+   (deep-dive F-13); a nonce-based policy is the next hardening step.
+7. Config-table class/color strings are admin-authored and render into
+   classNames/inline styles (deep-dive F-16) — admin-only surface, cosmetic blast
+   radius.
 
 ## 10. Incident response
 
@@ -120,3 +166,22 @@ entity (transparency for collaborators).
    consider a `forceSignOut` flag as future work.
 4. Report vulnerabilities privately to the workspace admin; do not open public issues
    for security defects.
+
+## 11. Backup & recovery (RPO/RTO)
+
+Launch gate 6 (audit §Go/No-Go) requires the recovery targets to be on
+record **here**, not only in the ops runbook. Full procedures, the timed
+restore drill and the quarterly schedule live in
+[BACKUP_RECOVERY.md](./BACKUP_RECOVERY.md); the commitments are:
+
+| Target | Commitment | Basis |
+|--------|------------|-------|
+| **RPO** (max acceptable data loss) | ≤ 5 minutes | Supabase PITR archives WAL segments every 5 min (Pro tier). Worst case: 5 min of writes lost. |
+| **RTO** (max acceptable downtime) | ≤ 1 hour | Restore + WAL replay < 30 min at current dataset size + verification + DNS cutover. |
+
+- The **restore drill must be executed and timed against staging before
+  launch** (gate 6 is not closed by this document — it is closed by the
+  drill's recorded timings in BACKUP_RECOVERY.md).
+- Schema-level rollback safety is separate from data recovery: Prisma
+  migrations are committed and reversible (`prisma migrate resolve` +
+  the documented down-path in BACKUP_RECOVERY.md §migration-rollback).

@@ -5,6 +5,7 @@ import { signIn } from "next-auth/react";
 import { Leaf, Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { RoleBadge } from "../fernly/role-badge";
+import { APP } from "@/config/app";
 
 // ---------------------------------------------------------------------------
 // L-P0-12 — demo credentials must not leak into production builds.
@@ -92,7 +93,7 @@ export function LoginScreen() {
             <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center text-primary-foreground">
               <Leaf size={20} />
             </div>
-            <span className="text-lg font-semibold tracking-tight">Fernly</span>
+            <span className="text-lg font-semibold tracking-tight">{APP.name}</span>
           </div>
 
           <h1 className="text-2xl font-bold text-foreground tracking-tight">Welcome back</h1>

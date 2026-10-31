@@ -8,6 +8,7 @@
 
 import Link from "next/link";
 import { t } from "@/lib/i18n";
+import { APP } from "@/config/app";
 
 export default function NotFound() {
   return (
@@ -30,7 +31,7 @@ export default function NotFound() {
             href="/"
             className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors h-9 px-4 bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            Back to Fernly
+            {t("errors.backToApp", { app: APP.name })}
           </Link>
         </div>
       </div>

@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+import { DEFAULT_MAIL_FROM } from "@/config/app";
 // L-P0-11 — Pluggable transactional mail service.
 //
 // `Mailer` interface satisfied by any provider (Resend, SES, Postmark,
@@ -75,6 +76,9 @@ export class ResendMailer implements Mailer {
         html: input.html,
         text: input.text,
       }),
+      // Native fetch (ADR-001, docs/DECISIONS.md): no axios. A hard timeout
+      // keeps a wedged provider from stalling the password-reset action.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       // Read the body for the provider's error detail, but never log the
@@ -116,7 +120,7 @@ export function createMailer(opts?: MailerFactoryOptions): Mailer {
   if (resendKey) {
     cachedMailer = new ResendMailer(
       resendKey,
-      process.env.MAIL_FROM ?? "Fernly <onboarding@resend.dev>",
+      process.env.MAIL_FROM ?? DEFAULT_MAIL_FROM,
     );
     return cachedMailer;
   }

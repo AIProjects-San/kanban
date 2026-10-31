@@ -1,13 +1,16 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Design tokens — the single source of truth for colors/radii/themes.
+   Every rule below references tokens; raw color values live ONLY in
+   src/styles/tokens.css (see docs/CODING_STANDARDS.md). */
+@import "../styles/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /* =========================================================================
-   FERNLY DESIGN SYSTEM
-   Forest / Ocean / Plum / Ember accent themes
+   Theme wiring — maps the raw tokens onto Tailwind v4 utilities
+   (bg-background, text-foreground, border-border, …).
    ========================================================================= */
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -42,126 +45,6 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ---------------------------------------------------------------------------
-   Light theme (Forest default)
-   --------------------------------------------------------------------------- */
-:root {
-  --radius: 0.75rem;
-
-  /* Accent token — overridden by [data-accent] */
-  --accent-h: 152;
-  --accent-s: 0.45;
-  --accent-l-base: 0.42;
-  --accent-l-hover: 0.36;
-  --accent-l-soft: 0.95;
-  --accent-l-softer: 0.97;
-
-  --background: oklch(0.99 0.005 120);
-  --foreground: oklch(0.21 0.01 150);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.01 150);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.01 150);
-  --primary: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
-  --primary-foreground: oklch(0.99 0.005 120);
-  --secondary: oklch(0.96 0.005 120);
-  --secondary-foreground: oklch(0.30 0.02 150);
-  --muted: oklch(0.96 0.005 120);
-  --muted-foreground: oklch(0.55 0.015 150);
-  --accent: oklch(var(--accent-l-soft) 0.06 var(--accent-h));
-  --accent-foreground: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
-  --destructive: oklch(0.58 0.23 27);
-  --success: oklch(0.62 0.16 152);
-  --warning: oklch(0.72 0.16 70);
-  --border: oklch(0.92 0.005 120);
-  --input: oklch(0.94 0.005 120);
-  --ring: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
-  --sidebar: oklch(0.985 0.005 120);
-  --sidebar-foreground: oklch(0.30 0.015 150);
-  --sidebar-border: oklch(0.92 0.005 120);
-  --sidebar-accent: oklch(var(--accent-l-soft) 0.08 var(--accent-h));
-  --sidebar-accent-foreground: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
-
-  /* Tag colors */
-  --tag-frontend: oklch(0.62 0.16 220);
-  --tag-backend: oklch(0.60 0.18 280);
-  --tag-design: oklch(0.70 0.18 320);
-  --tag-qa: oklch(0.65 0.17 30);
-  --tag-marketing: oklch(0.70 0.16 160);
-}
-
-/* ---------------------------------------------------------------------------
-   Dark theme
-   --------------------------------------------------------------------------- */
-.dark {
-  --background: oklch(0.16 0.008 150);
-  --foreground: oklch(0.96 0.005 120);
-  --card: oklch(0.21 0.008 150);
-  --card-foreground: oklch(0.96 0.005 120);
-  --popover: oklch(0.21 0.008 150);
-  --popover-foreground: oklch(0.96 0.005 120);
-  --primary: oklch(calc(var(--accent-l-base) + 0.08) var(--accent-s) var(--accent-h));
-  --primary-foreground: oklch(0.99 0.005 120);
-  --secondary: oklch(0.27 0.01 150);
-  --secondary-foreground: oklch(0.96 0.005 120);
-  --muted: oklch(0.27 0.01 150);
-  --muted-foreground: oklch(0.70 0.015 150);
-  --accent: oklch(0.30 0.04 var(--accent-h));
-  --accent-foreground: oklch(0.92 0.05 var(--accent-h));
-  --destructive: oklch(0.68 0.21 27);
-  --success: oklch(0.70 0.16 152);
-  --warning: oklch(0.78 0.16 70);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(calc(var(--accent-l-base) + 0.08) var(--accent-s) var(--accent-h));
-  --sidebar: oklch(0.18 0.008 150);
-  --sidebar-foreground: oklch(0.92 0.005 120);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-accent: oklch(0.27 0.03 var(--accent-h));
-  --sidebar-accent-foreground: oklch(0.92 0.05 var(--accent-h));
-}
-
-/* ---------------------------------------------------------------------------
-   Accent themes — applied to <html data-accent="...">
-   --------------------------------------------------------------------------- */
-[data-accent="forest"] {
-  --accent-h: 152;
-  --accent-s: 0.45;
-  --accent-l-base: 0.42;
-  --accent-l-hover: 0.36;
-  --accent-l-soft: 0.95;
-  --accent-l-softer: 0.97;
-  --tag-frontend: oklch(0.62 0.16 220);
-  --tag-backend: oklch(0.60 0.18 280);
-  --tag-design: oklch(0.70 0.18 320);
-  --tag-qa: oklch(0.65 0.17 30);
-  --tag-marketing: oklch(0.70 0.16 160);
-}
-[data-accent="ocean"] {
-  --accent-h: 220;
-  --accent-s: 0.42;
-  --accent-l-base: 0.50;
-  --accent-l-hover: 0.43;
-  --accent-l-soft: 0.95;
-  --accent-l-softer: 0.97;
-}
-[data-accent="plum"] {
-  --accent-h: 320;
-  --accent-s: 0.40;
-  --accent-l-base: 0.48;
-  --accent-l-hover: 0.41;
-  --accent-l-soft: 0.95;
-  --accent-l-softer: 0.97;
-}
-[data-accent="ember"] {
-  --accent-h: 35;
-  --accent-s: 0.45;
-  --accent-l-base: 0.55;
-  --accent-l-hover: 0.48;
-  --accent-l-soft: 0.95;
-  --accent-l-softer: 0.97;
-}
-
 @layer base {
   * {
     border-color: var(--border);
@@ -178,21 +61,23 @@
   }
 }
 
-/* ---------------------------------------------------------------------------
+/* =========================================================================
    Fernly utility classes
-   --------------------------------------------------------------------------- */
+   One definition per class — dark-mode differences are token overrides
+   in src/styles/tokens.css, never `.dark .f-*` duplicates.
+   ========================================================================= */
 @layer components {
   .f-card {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: 0 1px 2px 0 oklch(0 0 0 / 0.04);
+    box-shadow: var(--shadow-card);
   }
   .f-card-hover {
     transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
   }
   .f-card-hover:hover {
-    box-shadow: 0 4px 12px 0 oklch(0 0 0 / 0.06);
+    box-shadow: var(--shadow-card-hover);
     border-color: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h) / 0.3);
   }
 
@@ -301,24 +186,17 @@
     text-transform: uppercase;
     letter-spacing: 0.02em;
   }
-  .f-tag-frontend { background: oklch(0.62 0.16 220 / 0.12); color: oklch(0.45 0.16 220); }
-  .f-tag-backend { background: oklch(0.60 0.18 280 / 0.12); color: oklch(0.43 0.18 280); }
-  .f-tag-design { background: oklch(0.70 0.18 320 / 0.12); color: oklch(0.50 0.18 320); }
-  .f-tag-qa { background: oklch(0.65 0.17 30 / 0.12); color: oklch(0.47 0.17 30); }
-  .f-tag-marketing { background: oklch(0.70 0.16 160 / 0.12); color: oklch(0.45 0.16 160); }
+  /* Tag colors come from §5 of the tokens file — light/dark handled there. */
+  .f-tag-frontend { background: var(--tag-frontend-bg); color: var(--tag-frontend-fg); }
+  .f-tag-backend { background: var(--tag-backend-bg); color: var(--tag-backend-fg); }
+  .f-tag-design { background: var(--tag-design-bg); color: var(--tag-design-fg); }
+  .f-tag-qa { background: var(--tag-qa-bg); color: var(--tag-qa-fg); }
+  .f-tag-marketing { background: var(--tag-marketing-bg); color: var(--tag-marketing-fg); }
 
-  .dark .f-tag-frontend { background: oklch(0.62 0.16 220 / 0.18); color: oklch(0.78 0.14 220); }
-  .dark .f-tag-backend { background: oklch(0.60 0.18 280 / 0.18); color: oklch(0.76 0.16 280); }
-  .dark .f-tag-design { background: oklch(0.70 0.18 320 / 0.18); color: oklch(0.80 0.16 320); }
-  .dark .f-tag-qa { background: oklch(0.65 0.17 30 / 0.18); color: oklch(0.78 0.15 30); }
-  .dark .f-tag-marketing { background: oklch(0.70 0.16 160 / 0.18); color: oklch(0.78 0.14 160); }
-
-  .f-priority-high { background: oklch(0.58 0.23 27 / 0.12); color: oklch(0.45 0.23 27); }
-  .f-priority-medium { background: oklch(0.72 0.16 70 / 0.15); color: oklch(0.50 0.16 70); }
-  .f-priority-low { background: oklch(0.62 0.16 152 / 0.12); color: oklch(0.42 0.16 152); }
-  .dark .f-priority-high { background: oklch(0.58 0.23 27 / 0.2); color: oklch(0.78 0.20 27); }
-  .dark .f-priority-medium { background: oklch(0.72 0.16 70 / 0.2); color: oklch(0.82 0.14 70); }
-  .dark .f-priority-low { background: oklch(0.62 0.16 152 / 0.2); color: oklch(0.78 0.14 152); }
+  /* Priority colors come from §6 of the tokens file. */
+  .f-priority-high { background: var(--priority-high-bg); color: var(--priority-high-fg); }
+  .f-priority-medium { background: var(--priority-medium-bg); color: var(--priority-medium-fg); }
+  .f-priority-low { background: var(--priority-low-bg); color: var(--priority-low-fg); }
 
   .f-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
   .f-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -340,11 +218,12 @@
     font-size: 0.75rem;
     letter-spacing: 0.02em;
   }
-  .f-avatar-forest { background: oklch(0.55 0.13 152); }
-  .f-avatar-ocean { background: oklch(0.55 0.13 220); }
-  .f-avatar-plum { background: oklch(0.55 0.15 320); }
-  .f-avatar-ember { background: oklch(0.60 0.15 35); }
-  .f-avatar-slate { background: oklch(0.50 0.02 250); }
+  /* Avatar fills come from §7 of the tokens file. */
+  .f-avatar-forest { background: var(--avatar-forest); }
+  .f-avatar-ocean { background: var(--avatar-ocean); }
+  .f-avatar-plum { background: var(--avatar-plum); }
+  .f-avatar-ember { background: var(--avatar-ember); }
+  .f-avatar-slate { background: var(--avatar-slate); }
 }
 
 /* Smooth view transitions */

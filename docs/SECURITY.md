@@ -84,16 +84,42 @@ entity (transparency for collaborators).
 
 ## 7. Secrets management
 
-- Secrets live only in environment variables; `.env` is git-ignored **and
-  untracked** (deep-dive F-02: it was accidentally committed in the initial
-  commit — it has been removed from the index, but **rotate the Supabase DB
-  password and `NEXTAUTH_SECRET` before launch** because both remain in git
-  history) and a `.env.example` documents the required variables.
-- The dev fallback secret is a per-process random value (never a public constant).
-- Database credentials rotate via Supabase; no secrets in the client bundle.
+**Policy (MUST — ADR-006): `.env` is the only home for secrets.** No credential,
+key, or password literal may be committed anywhere — source, tests, scripts, feature
+files, Dockerfiles, or docs. This is enforced socially by review and mechanically by:
+
+- `login-demo-gating.test.ts` greps the seed/e2e/k6 sources for the demo password and
+  fails if the literal reappears;
+- the CI bundle gate greps built client chunks for the demo password (X-05);
+- the CI secrets gate refuses a stray `.env` in the standalone build output (X-06).
+
+Current inventory and handling:
+
+- `.env` is git-ignored **and untracked** (deep-dive F-02: it was accidentally
+  committed in the initial commit — removed from the index, but history retains it;
+  see the incident log below). `.env.example` documents every variable with
+  placeholders, never values.
+- `DATABASE_URL`, `NEXTAUTH_SECRET`, `RESEND_API_KEY`, `REDIS_URL`, `CRON_SECRET`,
+  `SENTRY_DSN` — runtime-injected only. The Dockerfile refuses a stray `.env` in the
+  build context/output (X-06).
+- The dev fallback auth secret is a per-process random value (never a public
+  constant); production refuses to boot on a missing/weak `NEXTAUTH_SECRET`.
+- The demo password lives **only** in `NEXT_PUBLIC_DEMO_PASSWORD` (`.env`). The
+  seed, node scripts, k6 load test, and the e2e suite read it from the environment
+  through `scripts/lib/demo-env.mjs` / `__ENV` / the e2e loader — each fails loudly
+  when it is unset. Rotating the demo password is a one-line `.env` edit.
 - Password-reset mail requires `RESEND_API_KEY` in production. Without it mail
   is **dropped, never logged** (deep-dive F-04) — single-use reset tokens must
   never appear in server logs.
+- Unit tests use obviously-fake fixtures (`obviously-fake-unit-test-secret-…`),
+  never real values.
+
+### Incident log
+
+| Date | Incident | Remediation |
+|------|----------|-------------|
+| 2026-10-30 (F-02) | `.env` committed in the initial commit (DB password + auth secret in git history). | Removed from index; `.gitignore` hardened. **Action: rotate both before launch** — the DB password rotation is still pending ops action. |
+| 2026-10-31 (M-5) | The **real `NEXTAUTH_SECRET` was pasted as a fixture in a committed unit test** (`auth.test.ts`), leaking the live signing secret into history. | Fixture replaced with an obviously-fake value; **live secret rotated the same day** (new `openssl rand -base64 32` in `.env`; the proxy's self-healing cookie guard made the rotation transparent to signed-in clients). Demo-password literals scrubbed repo-wide (seed, 4 node scripts, 3 shell scripts, k6, 10 feature files, docs) and pinned by tests. |
 
 ## 8. Threat model (abridged STRIDE)
 

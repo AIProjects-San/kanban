@@ -6,7 +6,9 @@
 // Usage: node scripts/smoke-test.mjs [baseUrl]
 
 const BASE = process.argv[2] || "http://localhost:3000";
-const PASSWORD = "fernly123";
+// Demo password comes from .env via the shared helper — never a literal.
+import { demoPassword } from "./lib/demo-env.mjs";
+const PASSWORD = demoPassword();
 
 function cookieHeader(jar) {
   return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join("; ");

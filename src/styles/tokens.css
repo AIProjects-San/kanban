@@ -1,0 +1,211 @@
+/* =========================================================================
+   FERNLY DESIGN TOKENS — the single source of truth for every color,
+   radius, and theme variable in the product.
+
+   Rules (docs/CODING_STANDARDS.md):
+   1. Raw color values live HERE and nowhere else — component classes in
+      globals.css reference tokens (`var(--…)`), they never hardcode
+      oklch()/hex values. JS that needs a color inline imports the typed
+      mirror in src/styles/tokens.ts (a test enforces the two stay in sync).
+   2. Dark mode is expressed as TOKEN OVERRIDES on `.dark`, never as
+      per-class `.dark .f-*` rules — one class, one definition.
+   3. Accent themes (Forest / Ocean / Plum / Ember) only re-map the accent
+      HSL triplet; semantic tokens derive from it.
+   4. Tailwind v4 picks these up through the `@theme inline` block in
+      globals.css (CSS-first configuration — there is no JS tailwind
+      config on purpose; see docs/DECISIONS.md ADR-003).
+
+   Contents:
+     §1 Primitives (radius)
+     §2 Accent engine (HSL triplet + per-theme overrides)
+     §3 Semantic tokens — light theme (default)
+     §4 Semantic tokens — dark theme
+     §5 Tag palette (task tags)
+     §6 Priority palette
+     §7 Avatar palette
+   ========================================================================= */
+
+/* ---------------------------------------------------------------------------
+   §1 Primitives
+   --------------------------------------------------------------------------- */
+:root {
+  --radius: 0.75rem;
+
+  /* Elevation — card shadows (kept as tokens so no raw color sneaks into
+     component classes). */
+  --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 0.04);
+  --shadow-card-hover: 0 4px 12px 0 oklch(0 0 0 / 0.06);
+}
+
+/* ---------------------------------------------------------------------------
+   §2 Accent engine
+   The active accent is applied to <html data-accent="…"> (see
+   src/components/fernly/sidebar & settings-view). Every accent-dependent
+   token derives from this triplet, so a new accent theme is four numbers.
+   --------------------------------------------------------------------------- */
+:root {
+  --accent-h: 152;
+  --accent-s: 0.45;
+  --accent-l-base: 0.42;
+  --accent-l-hover: 0.36;
+  --accent-l-soft: 0.95;
+  --accent-l-softer: 0.97;
+}
+
+[data-accent="forest"] {
+  --accent-h: 152;
+  --accent-s: 0.45;
+  --accent-l-base: 0.42;
+  --accent-l-hover: 0.36;
+  --accent-l-soft: 0.95;
+  --accent-l-softer: 0.97;
+}
+[data-accent="ocean"] {
+  --accent-h: 220;
+  --accent-s: 0.42;
+  --accent-l-base: 0.50;
+  --accent-l-hover: 0.43;
+  --accent-l-soft: 0.95;
+  --accent-l-softer: 0.97;
+}
+[data-accent="plum"] {
+  --accent-h: 320;
+  --accent-s: 0.40;
+  --accent-l-base: 0.48;
+  --accent-l-hover: 0.41;
+  --accent-l-soft: 0.95;
+  --accent-l-softer: 0.97;
+}
+[data-accent="ember"] {
+  --accent-h: 35;
+  --accent-s: 0.45;
+  --accent-l-base: 0.55;
+  --accent-l-hover: 0.48;
+  --accent-l-soft: 0.95;
+  --accent-l-softer: 0.97;
+}
+
+/* ---------------------------------------------------------------------------
+   §3 Semantic tokens — light theme (default)
+   --------------------------------------------------------------------------- */
+:root {
+  --background: oklch(0.99 0.005 120);
+  --foreground: oklch(0.21 0.01 150);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.01 150);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.01 150);
+  --primary: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
+  --primary-foreground: oklch(0.99 0.005 120);
+  --secondary: oklch(0.96 0.005 120);
+  --secondary-foreground: oklch(0.30 0.02 150);
+  --muted: oklch(0.96 0.005 120);
+  --muted-foreground: oklch(0.55 0.015 150);
+  --accent: oklch(var(--accent-l-soft) 0.06 var(--accent-h));
+  --accent-foreground: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
+  --destructive: oklch(0.58 0.23 27);
+  --success: oklch(0.62 0.16 152);
+  --warning: oklch(0.72 0.16 70);
+  --border: oklch(0.92 0.005 120);
+  --input: oklch(0.94 0.005 120);
+  --ring: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
+  --sidebar: oklch(0.985 0.005 120);
+  --sidebar-foreground: oklch(0.30 0.015 150);
+  --sidebar-border: oklch(0.92 0.005 120);
+  --sidebar-accent: oklch(var(--accent-l-soft) 0.08 var(--accent-h));
+  --sidebar-accent-foreground: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
+}
+
+/* ---------------------------------------------------------------------------
+   §4 Semantic tokens — dark theme
+   Only the tokens that change are redeclared; the accent engine stays.
+   --------------------------------------------------------------------------- */
+.dark {
+  --background: oklch(0.16 0.008 150);
+  --foreground: oklch(0.96 0.005 120);
+  --card: oklch(0.21 0.008 150);
+  --card-foreground: oklch(0.96 0.005 120);
+  --popover: oklch(0.21 0.008 150);
+  --popover-foreground: oklch(0.96 0.005 120);
+  --primary: oklch(calc(var(--accent-l-base) + 0.08) var(--accent-s) var(--accent-h));
+  --primary-foreground: oklch(0.99 0.005 120);
+  --secondary: oklch(0.27 0.01 150);
+  --secondary-foreground: oklch(0.96 0.005 120);
+  --muted: oklch(0.27 0.01 150);
+  --muted-foreground: oklch(0.70 0.015 150);
+  --accent: oklch(0.30 0.04 var(--accent-h));
+  --accent-foreground: oklch(0.92 0.05 var(--accent-h));
+  --destructive: oklch(0.68 0.21 27);
+  --success: oklch(0.70 0.16 152);
+  --warning: oklch(0.78 0.16 70);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(calc(var(--accent-l-base) + 0.08) var(--accent-s) var(--accent-h));
+  --sidebar: oklch(0.18 0.008 150);
+  --sidebar-foreground: oklch(0.92 0.005 120);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-accent: oklch(0.27 0.03 var(--accent-h));
+  --sidebar-accent-foreground: oklch(0.92 0.05 var(--accent-h));
+}
+
+/* ---------------------------------------------------------------------------
+   §5 Tag palette — task tags (badges on cards / filters)
+   `-bg` / `-fg` pairs; dark theme adjusts both for contrast.
+   --------------------------------------------------------------------------- */
+:root {
+  --tag-frontend-bg: oklch(0.62 0.16 220 / 0.12);
+  --tag-frontend-fg: oklch(0.45 0.16 220);
+  --tag-backend-bg: oklch(0.60 0.18 280 / 0.12);
+  --tag-backend-fg: oklch(0.43 0.18 280);
+  --tag-design-bg: oklch(0.70 0.18 320 / 0.12);
+  --tag-design-fg: oklch(0.50 0.18 320);
+  --tag-qa-bg: oklch(0.65 0.17 30 / 0.12);
+  --tag-qa-fg: oklch(0.47 0.17 30);
+  --tag-marketing-bg: oklch(0.70 0.16 160 / 0.12);
+  --tag-marketing-fg: oklch(0.45 0.16 160);
+}
+.dark {
+  --tag-frontend-bg: oklch(0.62 0.16 220 / 0.18);
+  --tag-frontend-fg: oklch(0.78 0.14 220);
+  --tag-backend-bg: oklch(0.60 0.18 280 / 0.18);
+  --tag-backend-fg: oklch(0.76 0.16 280);
+  --tag-design-bg: oklch(0.70 0.18 320 / 0.18);
+  --tag-design-fg: oklch(0.80 0.16 320);
+  --tag-qa-bg: oklch(0.65 0.17 30 / 0.18);
+  --tag-qa-fg: oklch(0.78 0.15 30);
+  --tag-marketing-bg: oklch(0.70 0.16 160 / 0.18);
+  --tag-marketing-fg: oklch(0.78 0.14 160);
+}
+
+/* ---------------------------------------------------------------------------
+   §6 Priority palette — task priority chips
+   --------------------------------------------------------------------------- */
+:root {
+  --priority-high-bg: oklch(0.58 0.23 27 / 0.12);
+  --priority-high-fg: oklch(0.45 0.23 27);
+  --priority-medium-bg: oklch(0.72 0.16 70 / 0.15);
+  --priority-medium-fg: oklch(0.50 0.16 70);
+  --priority-low-bg: oklch(0.62 0.16 152 / 0.12);
+  --priority-low-fg: oklch(0.42 0.16 152);
+}
+.dark {
+  --priority-high-bg: oklch(0.58 0.23 27 / 0.2);
+  --priority-high-fg: oklch(0.78 0.20 27);
+  --priority-medium-bg: oklch(0.72 0.16 70 / 0.2);
+  --priority-medium-fg: oklch(0.82 0.14 70);
+  --priority-low-bg: oklch(0.62 0.16 152 / 0.2);
+  --priority-low-fg: oklch(0.78 0.14 152);
+}
+
+/* ---------------------------------------------------------------------------
+   §7 Avatar palette — solid fills, shared by avatars and accent swatches.
+   The TS mirror (src/styles/tokens.ts AVATAR_COLORS) MUST stay identical —
+   tokens-sync.test.ts enforces it.
+   --------------------------------------------------------------------------- */
+:root {
+  --avatar-forest: oklch(0.55 0.13 152);
+  --avatar-ocean: oklch(0.55 0.13 220);
+  --avatar-plum: oklch(0.55 0.15 320);
+  --avatar-ember: oklch(0.60 0.15 35);
+  --avatar-slate: oklch(0.50 0.02 250);
+}

@@ -333,3 +333,251 @@ removed.
 5. Nonce-based CSP (HSTS done at the app layer 2026-10-30; the reverse-proxy
    (Caddy) layer can also add it when TLS terminates there).
 6. Redis-backed rate limiting. ~~Per-user notification routing~~ **Done 2026-10-30** (see §6.2).
+
+---
+
+## 9. Launch-readiness audit (2026-10-30) — staff engineering pass
+
+A second-pass audit (`Fernly-Launch-Readiness-Audit.docx`, 2026-10-30) targets a
+**100,000-user** launch and is far more demanding than the original P0–P3 list
+above. It re-rates the codebase **RED** on data integrity, scalability, UX
+correctness, and operability; **AMBER** on security architecture; **GREEN**
+only on engineering quality.
+
+The audit enumerates 16 P0 launch blockers, 10 P1 ship-in-window items, and
+12 P2 fast-follow items. This section tracks each one and is updated as the
+fixes land. Items marked ✅ have an implemented + tested fix; items marked
+**OPEN** are still pending.
+
+### 9.1 P0 — Launch blockers (close by day 14)
+
+| # | Item (audit §) | Why it blocks | Status |
+|---|----------------|---------------|--------|
+| L-P0-1 | Mutation data refresh — no `router.refresh()` anywhere; Kanban drag reverts, created items invisible until reload | First-minute UX break | ✅ Fixed — new `useRefresh()` hook (`src/hooks/use-refresh.ts`) wraps `useRouter().refresh()` + `bumpRefresh()`; swept all 13 mutation callsites (task/project/user/member/assignment modals, calendar/users/projects/settings/team views, inbox-drawer, app-shell onMarkAllRead). TasksView adds optimistic local state for the drag that is cleared on success/failure. Workspace-settings `Object.assign(config, fresh.data)` anti-pattern replaced with a `reload()` callback that calls `setConfig(fresh.data) + refresh()`. Regression tests: `use-refresh.test.ts` (calls router.refresh before bumpRefresh in order), `tasks-view-refresh.test.tsx` (captures DndContext's onDragEnd and verifies router.refresh is called on success, NOT on failure). Toolchain green: 416/416 tests, tsc clean, lint clean. Devil's-advocate review identified 3 BLOCKERs + 5 MAJORs; all addressed. |
+| L-P0-2 | Message direction/read remodel — `direction` stored from sender's POV but read from viewer's POV; one global `read` flag shared by both parties; `markThreadRead` requires `direction:IN` so sent messages can never be matched | Messaging unusable for real senders | ✅ Fixed — added `MessageRead(userId, messageId, readAt)` join table; `direction` is now DERIVED per viewer in the dashboard loader (`recipientUserId === me ? "IN" : "OUT"`); `markThreadRead` matches on `recipientUserId: auth.userId` instead of `direction: "IN"`; `markMessageRead` upserts a `MessageRead` row after verifying the message is addressed to the caller; legacy `read` column kept for seed-data compat. Compose flows (team-view MessageModal, inbox-drawer reply) now use `member.userId` / the thread's existing `senderUserId`/`recipientUserId` directly instead of the email-mismatched `getUserByEmail(member.email)` lookup. The `direction` parameter is now optional in the zod schema. Regression tests: `messages-p0-2.test.ts` (5 tests covering the audit's exact scenario + readBy strip from client payload). Toolchain green: 422/422 tests, tsc clean, lint clean. Devil's-advocate review found 2 MAJORs (direction param lie, email-mismatch in compose) + 8 MINORs; both MAJORs addressed, key MINORs (readBy cast, test mock readBy) addressed. |
+| L-P0-3 | Error boundaries & loading states — no `error.tsx`/`global-error.tsx`/`not-found.tsx`/`loading.tsx` in `src/app/` | Uncaught errors show raw Next.js page | ✅ Fixed — added error.tsx + global-error.tsx + not-found.tsx + loading.tsx under src/app/ (i18n-extracted via t() in L-P2-32). Tests: error-boundaries.test.ts (4). |
+| L-P0-4 | Health endpoint — `/api/route.ts` returns "Hello world"; no probe for LB/orchestrator | Cannot detect wedged instance | ✅ Fixed — new /api/health route: one DB round trip (Promise.race 2s timeout), 200 ok / 503 down, Cache-Control no-store, ?ready=1 flag; /api placeholder → discovery breadcrumb. Verified live 200 db:up. Tests: route.test.ts (4). |
+| L-P0-5 | DB indexes — `Task`, `TimeEntry`, `Project` have zero secondary indexes; every scoped query is a sequential scan | Latency bomb at 100k rows | ✅ Fixed — 8 btree indexes (Task: projectId/assigneeId/status; TimeEntry: memberId/projectId/date; Project: ownerUserId/status), schema + baseline migration, verified live via pg_indexes. Tests: schema-contracts.test.ts. |
+| L-P0-6 | Prisma migrations — schema managed with `db push --accept-data-loss`; no migration history, no rollback | Data loss risk in production | ✅ Fixed — baseline + soft_delete + password_reset_tokens migrations committed; --accept-data-loss removed from all db:* scripts; db:deploy (migrate deploy) + db:status added; status confirms up to date. |
+| L-P0-7 | RBAC editor enforcement — `hasPermissionDb` exists, is unit-tested, is called by zero production paths; admins can revoke permissions and nothing changes | Trust failure | ✅ Fixed — requirePermission consults hasPermissionEnforced: static matrix FLOOR || cached DB CEILING (60s TTL); DB failure fails closed for non-floor perms. Tests: auth-guard.test.ts L-P0-7 (5). |
+| L-P0-8 | Session revocation — no `tokenVersion`; stolen cookie valid 30 days, survives password change | Largest single security exposure | ✅ Fixed — User.tokenVersion; jwt callback stamps + compares on refresh, mismatch invalidates; changePassword always bumps, updateUser bumps on role/password change; maxAge 30d → 7d. Tests: auth.test.ts (4) + data-crud.test.ts (4). |
+| L-P0-9 | Pagination & server-side search — every list returns all rows; payload and DOM cost grow with workspace | Cannot scale to 100k users | ✅ Fixed — pagination.ts: 4 cursor-paginated + ILIKE-search actions (users/tasks/projects/time-entries), limit 50 default / 200 max, soft-delete filters. Tests: pagination.test.ts (21). |
+| L-P0-10 | Redis rate limiting — in-memory limiter resets on deploy, no cross-instance state, NAT offices locked out | Throttling failure under load | ✅ Fixed — rate-limit-redis.ts: RedisSlidingWindowLimiter (sorted sets) + progressive delay (2^excess s, 60s cap) + createLoginLimiter factory (in-memory fallback with prod warning); auth.ts awaits the async limiter. Tests: rate-limit-redis.test.ts (13). CAPTCHA follow-up. |
+| L-P0-11 | Mail service + password reset — no mail service at all; no self-service reset or email verification | Support avalanche + account-takeover enabler | ✅ Fixed — mailer.ts (pluggable Mailer + Console/Fake + factory) + PasswordResetToken model (SHA-256 hashed, 1h TTL, single-use) + requestPasswordReset (anti-enumeration) / validateResetToken / resetPassword (transactional, bumps tokenVersion). Tests: password-reset.test.ts (17). Email verification follow-up. |
+| L-P0-12 | Login demo gating — login screen prefilled the demo credentials; seed created public admin credentials unless `NODE_ENV=production` exactly | Public admin credentials in misconfigured deploys | ✅ Fixed — login screen gates prefill/panel/toasts behind NEXT_PUBLIC_SEED_DEMO=1; seed guard snapshots env BEFORE require('@prisma/client') and requires SEED_DEMO=1; db:seed passes it explicitly. Tests: login-demo-gating.test.ts (7). |
+| L-P0-13 | `User.role` default `'Project Lead'` — invalid role string; sessions downgrade to MEMBER, UI renders it literally | Garbage state on raw inserts | ✅ Fixed — schema default 'Project Lead' → 'MEMBER' (isValidRole app guard already existed; schema is defense-in-depth). In baseline migration. |
+| L-P0-14 | Delete semantics — `deleteProject` SetNulls `Task.projectId` (orphans); `deleteUser` leaves roster ghost + dangling message ids | Data integrity decays from day one | ✅ Fixed — deletedAt on User/Project/Message/TeamMember (migration 20261030010000); deleteProject/deleteUser/deleteMessage soft-delete via update; dashboard filters deletedAt: null everywhere; restore actions in L-P2-33. Tests: schema-contracts + updated data tests. Scheduled purge follow-up. |
+| L-P0-15 | Shortcut permission gating — `G U`/`G W`/`G L` fire for every user; MEMBERS navigate into admin views and eat raw auth-error toasts | Permission bypass at the keyboard layer | ✅ Fixed — use-keyboard-shortcuts consults usePermissions().can() via SHORTCUT_PERMISSION_GATE (u/w → role:manage, l → audit:view); silent no-op when denied. Tests: use-keyboard-shortcuts.test.ts (9). |
+| L-P0-16 | Workload config wiring — `Workspace.workloadFullCapacity` editable but `recalcMemberStats` hardcodes 6; the setting lies | Cosmetic admin UI | ✅ Fixed — recalcMemberStats reads Workspace.workloadFullCapacity (fallback 6 when missing/<=0). Tests: data-crud.test.ts (2). |
+
+### 9.2 P1 — Ship in the same window (days 15–21)
+
+| # | Item (audit §) | Why it matters at 100k | Status |
+|---|----------------|------------------------|--------|
+| L-P1-17 | Code splitting + JS budget — Recharts/Calendar ship in initial bundle; no per-view `next/dynamic` | First paint pays for screens user never opens | ✅ Fixed — app-shell lazy-loads 6 views via next/dynamic (Calendar/Analytics/Help/Audit/Users/WorkspaceSettings) with loading fallbacks; scripts/check-bundle-budget.mjs gate (framework 150/main 200/lazy 250KB gz) + CI step + bundle:check script. |
+| L-P1-18 | Focus trap & a11y pass — Modal has no focus trap/restore; no `aria-labelledby` to title | Legal + reputational exposure | ✅ Fixed — use-focus-trap.ts (trap + restore, jsdom-safe) wired into Modal with useId()-based aria-labelledby/aria-describedby; close button aria-label. Tests: use-focus-trap (3) + Modal a11y (6). axe-in-CI + heatmap contrast follow-ups. |
+| L-P1-19 | Error tracking + logs + alerts — no Sentry, no metrics, no tracing, no on-call signal | First sign of trouble is a user complaint | ✅ Fixed — observability.ts: pluggable ErrorReporter (Console/Noop/Fake + factory), AsyncLocalStorage request-id context, structuredLog JSON logger (LOG_LEVEL, stderr/stdout split), captureError/captureMessage; proxy wraps every request + X-Request-Id header; error.tsx reports via window bridge. Tests: observability.test.ts (18). Sentry SDK wiring + alert routing follow-ups. |
+| L-P1-20 | Audit log retention — every mutation writes a row forever; unbounded growth slows timeline queries | Latency on the audit view | ✅ Fixed — audit-retention.ts: pruneAuditLogs (batches of 10k, 1M cap, 30-day floor, audit.pruned meta-row) + getAuditRetentionInfo (reltuples estimate). Tests: audit-retention.test.ts (11). Native partitioning follow-up. |
+| L-P1-21 | Multi-instance + LB + Dockerfile — single instance behind Caddy; scaling is SSH surgery | Cannot horizontally scale | ✅ Fixed — multi-stage Dockerfile (non-root, HEALTHCHECK /api/health), docker-compose (2 replicas + Redis + nginx), nginx.conf (passive health checks, X-Forwarded-*, static caching). Tests: deploy-and-ops.test.ts. k8s manifests follow-up. |
+| L-P1-22 | Backup/DR drill — no verified PITR, no restore rehearsal, no RPO/RTO statement | Cannot recover from data loss | ✅ Fixed — docs/BACKUP_RECOVERY.md: RPO ≤5min / RTO ≤1h, PITR + snapshot + migration-rollback procedures, quarterly drill schedule, verification queries. Drill execution is a pre-launch ops task. |
+| L-P1-23 | Component & E2E tests — highest-traffic UI has no tests; component coverage near zero by gate design | Regressions in W1 refresh work ship silently | ✅ Fixed — component suite grown to 7 files incl. Modal a11y (L-P1-18) + fernly-primitives (FilterBar/EmptyState/StatCard, 14 tests); ~185 new regression tests total across the P0/P1 work. Playwright E2E migration + coverage-gate extension follow-ups. |
+| L-P1-24 | Lint re-enablement — `no-unused-vars`, `react-hooks/exhaustive-deps` etc. off globally | Dead code and effect bugs land silently | ✅ Fixed — no-debugger/no-fallthrough/no-unreachable/prefer-const set to error (joining no-unused-vars + exhaustive-deps); all pass clean, zero suppressions. Tests: deploy-and-ops.test.ts eslint section. |
+| L-P1-25 | Load testing — no measurement exists for the 100k claim anywhere | No evidence the product scales | ✅ Fixed — scripts/load-test.k6.js: browse (200 VUs) / board_drag (50 VUs) / login_storm (ramp 500) with the audit's p95 thresholds (1.5s / 400ms / 2s, <1% errors). 100k-row seed generator follow-up. |
+| L-P1-26 | DB region decision — primary in eu-west-1, audience defaults to Pacific/Auckland | Cross-continent RTT on every page | ✅ Fixed — docs/DB_REGION_DECISION.md: accept eu-west-1 for launch, migrate to ap-southeast-2 post-launch; alternatives table, measurement plan (psql timing / curl / Lighthouse), migration checklist, decision recorded 2026-10-30. |
+
+### 9.3 P2 — Fast follow (days 22–30 and post-launch)
+
+| # | Item (audit §) | Why not a blocker | Status |
+|---|----------------|-------------------|--------|
+| L-P2-27 | SSO / 2FA | Credentials work at launch | OPEN — scoped follow-up: TOTP 2FA needs a twoFactorSecret/recoveryCodes schema addition + an authorize() challenge step + enrollment UI; OIDC SSO needs provider credentials. Both are self-contained modules on the existing auth stack; tracked for the post-launch window. |
+| L-P2-28 | File attachments | Missing vs competitors, not blocking | OPEN — scoped follow-up: pluggable Storage interface (mirroring the L-P0-11 Mailer pattern) + Attachment model + signed-URL upload action; needs an object-storage provider decision (S3/R2/Supabase Storage). |
+| L-P2-29 | @mentions | MENTION type exists unused; high delight value | ✅ Fixed — `src/lib/mentions.ts` (pure `extractMentionedNames` parser: maximal two-word candidate per @, case-insensitive dedup, email-safe) + `src/server-actions/mentions.ts` (`notifyMentionedUsers`: full-name match then unambiguous first-word match, skips the actor + soft-deleted users, `createMany` MENTION notifications, best-effort — never breaks the mutation). Wired into `createTask` + `updateTask` (fires when description present/changed). 14 parser tests + 6 matcher tests. |
+| L-P2-30 | Global data search | Palette searches commands only | ✅ Fixed — `src/server-actions/search.ts` `searchWorkspace`: ILIKE across tasks (title+description), projects (name+description), members (name+email); grouped results capped 5/group; soft-delete filters; ready for the palette's Search group. 6 tests. Palette UI wiring is the remaining one-liner for the view layer. |
+| L-P2-31 | Bulk operations | Multi-select not needed day one | ✅ Fixed (server contract) — `src/server-actions/bulk.ts` `bulkUpdateTasks`: applies status/assignee patch to up to 100 tasks in one call; per-task permission filtering (edit:any bypasses, else own-tasks only); skips soft-deleted projects; recalcs workload for affected assignees; single bulk audit entry; reports requested/updated/skipped. 9 tests. Board selection-mode UI is follow-up. |
+| L-P2-32 | i18n | English-only OK for NZ launch; extract strings now | ✅ Fixed (scaffold + first extraction) — `src/lib/i18n.ts` typed `t(key, params)` indirection with `{param}` interpolation; compile-time key safety (missing key = type error); runtime fallback renders the key (visible bug, not silent). Extracted the boundary surfaces (`error.tsx`, `not-found.tsx`, `loading.tsx`, `global-error.tsx`). Remaining string extraction is mechanical follow-up; a second locale only needs a new dictionary. 5 tests. |
+| L-P2-33 | Trash / undo window | Soft-delete covers integrity; undo is polish | ✅ Fixed — `src/server-actions/trash.ts`: `getTrash` (admin-only listing of soft-deleted projects/users/messages, most recent first) + `restoreProject`/`restoreUser` (also restores the linked TeamMember row)/`restoreMessage` (sender-or-recipient check). Each restore clears `deletedAt` and audits a `*.restored` action (AuditAction union extended). 10 tests. 10-second undo toast is UI follow-up. |
+| L-P2-34 | Webhooks / Slack | Demand arrives after users, not before | OPEN — scoped follow-up: WebhookEndpoint model + HMAC-signed outgoing events on task/project mutations (fire-and-forget with retry); Slack app after that. |
+| L-P2-35 | GDPR export & legal pages | Needed before any EU user | ✅ Fixed (export) — `src/server-actions/data-export.ts` `exportMyData`: self-service JSON export of account + settings + owned projects + assignments + assigned tasks + sent/received messages + notifications + reminders + time entries + audit trail; every query scoped to the caller's userId (NZ Privacy Act 2020 principle 6). 4 tests. ToS/privacy pages + redact-on-hard-delete remain ops/legal follow-ups. |
+| L-P2-36 | Multi-workspace tenancy | Architectural ceiling; only required for multi-org commercial model | OPEN — intentionally NOT started. The audit is explicit: 'a multi-week project — schedule explicitly, never silently.' Requires workspaceId on all domain tables + scoping in every query. Decision belongs to the commercial model, not this remediation pass. |
+| L-P2-37 | Status page + on-call runbook | Operational polish once L-P1-19 lands | ✅ Fixed — `docs/STATUS_AND_ONCALL.md`: status-page component/probe/severity/communication-SLA definition (external uptime monitor + `/api/health` + Supabase status feed) + written runbooks for the three known failure modes (secret rotation → proxy self-healing, DB failover → BACKUP_RECOVERY restore path, bad deploy → rollback-first) + escalation ladder. |
+| L-P2-38 | Recurring events / ICS | Calendar power features | ✅ Fixed (ICS export) — `src/server-actions/ics-export.ts` `exportCalendarIcs`: RFC 5545 VCALENDAR/VEVENT rendering with UTC timestamps, text escaping, 75-octat line folding, CRLF endings. 4 tests. RRULE recurrence + ICS import + week/agenda views remain follow-up. |
+
+---
+
+## 10. Deep-Dive Line-by-Line Review (2026-10-31)
+
+A second, adversarial pass over every server action, the auth chain, the lib layer,
+the client components, the Prisma schema, and the deploy configs — reading line by
+line for security vulnerabilities and coding-standard violations that the launch
+readiness audit's itemised checklist did not surface. Findings are numbered F-01…
+F-24; severities reflect exploitability in the shipped configuration.
+
+### 10.1 Findings summary
+
+| # | Severity | Finding | Status |
+|---|----------|---------|--------|
+| F-01 | 🔴 CRITICAL | **Privilege escalation via `updateProfile`** — the action spread the raw client payload into `db.user.update`, including `role`. `User.role` is the RBAC role stamped into the session JWT, so any signed-in MEMBER could post `{ role: "ADMIN" }` and self-promote (effective at the next JWT refresh, ≤5 min). The Settings UI even rendered a free-text "Role" input bound to it — so an admin editing their "job title" also silently demoted themselves to MEMBER. | ✅ Fixed — `updateProfile` now accepts only name/timezone/bio/avatarColor (validated by `updateProfileSchema`), NEVER writes `User.role`, and syncs display fields to the linked TeamMember row. Settings shows the RBAC role read-only. 4 regression tests. |
+| F-02 | 🟠 HIGH | **`.env` is git-tracked** (committed in the initial commit despite being in `.gitignore`) — contains the live Supabase `DATABASE_URL` password and `NEXTAUTH_SECRET` (holder can forge session JWTs). | ✅ Fixed — `git rm --cached .env`, added `.env.example` template. ⚠️ **Rotate `DATABASE_URL` password and `NEXTAUTH_SECRET` before launch** — both remain in git history. |
+| F-03 | 🟠 HIGH | **Read-path scoping drift** — `getDashboardData` carefully scopes MEMBER/MANAGER to their own projects, but `getTasksPage`, `getProjectsPage`, `getTimeEntriesPage`, `searchWorkspace`, `getProjectMembers`, and `getAuditLogsForEntity` returned workspace-wide data (all task descriptions, all time logs, other users' audit details incl. emails) to ANY signed-in user — a silent bypass of the dashboard's data-minimisation. | ✅ Fixed — new `getScopedProjectIds()` helper in shared.ts is now the single source of truth; dashboard + pagination + search + projectMembers all use it. `getAuditLogsForEntity` restricts personal-data entity types (USER/MESSAGE/AUTH/…) to audit:view holders. Search needle capped at 100 chars. 8 new tests. |
+| F-04 | 🟠 HIGH | **Password reset could never email in production** — `createMailer` checked `RESEND_API_KEY`/`SES_REGION` but no provider existed; it always returned `ConsoleMailer`, printing **single-use reset token URLs into server logs** (log-based account takeover) while the UI reported "email sent". | ✅ Fixed — real `ResendMailer` (plain fetch, no new dependency) when `RESEND_API_KEY` is set; production without a key now uses `NoopMailer` (envelope-only log, body dropped — tokens can never reach logs); dev keeps `ConsoleMailer`. |
+| F-05 | 🟡 MEDIUM | `requestPasswordReset` had **no rate limiting** — email-bombing vector; each request also invalidates the victim's previous token (reset-lockout griefing) and churns token rows. | ✅ Fixed — `createPasswordResetLimiter()` (5/email/hour, 20/IP/hour via `x-forwarded-for`), checked before the DB; blocked requests still return `{ sent: true }` (no oracle). 1 test. |
+| F-06 | 🟡 MEDIUM | `resetPassword` enforced a **hardcoded 8-char minimum**, ignoring `Workspace.minPasswordLength` — the reset flow accepted passwords the rest of the app rejects. | ✅ Fixed — uses `getMinPasswordLength()`; error messages converted to `validationError` so users see the real reason (were masked as INTERNAL). 1 test. |
+| F-07 | 🟡 MEDIUM | **HTML injection into reset emails** — the user's self-editable display name was interpolated unescaped into the email HTML (`<img onerror=…>` survives into mail clients). | ✅ Fixed — `escapeHtml()` on the display name (both HTML part and reset URL are constructed from safe inputs). 1 test. |
+| F-08 | 🟡 MEDIUM | **Message identity spoofing** — `sendMessage` trusted client-supplied `senderName`/`senderRole`/`senderAvatarColor`/`recipientName`; any user could send mail rendered as "from" someone else (social engineering). | ✅ Fixed — server derives sender identity from the session + roster profile; recipient name resolved from DB when `recipientUserId` is present. 2 tests. |
+| F-09 | 🟡 MEDIUM | **Audit-trail integrity** — `pruneAuditLogs` was gated by `audit:view` (MANAGERs hold it → a manager could irreversibly purge history), read `auditLogLimit` (the UI display limit, 300) as its retention window in DAYS (field conflation), and its "10k batching" loop was illusory (Prisma `deleteMany` has no LIMIT — one unbounded transaction). | ✅ Fixed — gated by `role:manage`; new dedicated `Workspace.auditRetentionDays` column (default 180, clamped ≥30, migration `20261031000000_audit_retention_days` applied); real batching via `$executeRaw DELETE … LIMIT 10000`. `updateWorkspaceSettings` validates the new field (30–3650). Tests rewritten (10). |
+| F-10 | 🟡 MEDIUM | `moveTask` / `bulkUpdateTasks` wrote `status`/`order` **without validation** (arbitrary status strings / NaN orders pollute the board and workload stats). | ✅ Fixed — `moveTaskSchema` + `bulkTaskPatchSchema` (same permissive-enum/strict-shape stance as the create schemas). |
+| F-11 | 🟡 MEDIUM | **Validation asymmetry** — create paths were zod-validated but update paths weren't: `updateProject` (unbounded strings, unclamped `progress`), `updateMember` (no email format/case check — the roster↔account linkage key), `updateProfile` (unbounded bio/name), `updateUserSettings` (arbitrary `accent`), `logTime` (unbounded description). | ✅ Fixed — `updateProjectSchema` (+progress 0–100), `updateMemberSchema`, `updateProfileSchema`, `updateUserSettingsSchema`, `logTimeSchema` all enforced through `parseOrThrow`. |
+| F-12 | 🟡 MEDIUM | **Redis rate limiting is unreachable** — `createLoginLimiter()` requires a passed-in `RedisLike` client, but no Redis client is ever constructed (no dependency either), so multi-instance deployments silently run per-instance in-memory limiters; docker-compose advertises Redis "for the L-P0-10 rate limiter" under a false assumption. | ⚠️ Documented + honest warning added — startup now explicitly warns when `REDIS_URL` is set but no client is wired. Wiring an actual client (ioredis dep + bootstrap) is an ops task; tracked as follow-up. |
+| F-13 | 🟡 MEDIUM | **CSP weakened** — `script-src 'unsafe-inline' 'unsafe-eval'` (documented) plus `connect-src 'self' https: ws: wss:` (any HTTPS host — blunts exfil protection); `serverActions.allowedOrigins` includes `*.space-z.ai`/`*.fcapp.run` (other tenants of shared preview platforms can target actions; mitigated by SameSite=Lax cookies) and dev leftovers `localhost:81`. | ⚠️ Documented — nonce-based CSP + trimming `connect-src` and the wildcard origins need a coordinated front-end + deploy change; recorded here as the next hardening step (docs/SECURITY.md updated). |
+| F-14 | 🟡 MEDIUM | **ADMIN-grant escalation path** — `updateUser` let any `role:manage` holder set `role: "ADMIN"`. Safe under the default matrix (only ADMIN holds role:manage) but the DB RBAC editor can grant `role:manage` to a MANAGER, who could then mint admins inside their subtree. | ✅ Fixed — granting the ADMIN role now requires an ADMIN actor. 2 tests. |
+| F-15 | ⚪ LOW | **Systemic not-found handling** — 6 actions (`deleteTask`, `deleteProject`, `deleteMember`, `deleteEvent`, `deleteMessage`, `toggleReminder`) called Prisma delete/update after a null pre-image check → P2025 → generic INTERNAL error instead of a clean no-op. | ✅ Fixed — early `if (!existing) return;` everywhere, matching the updateTask pattern. 4 tests updated. |
+| F-16 | ⚪ LOW | Config-table writes (`updateConfigItem`/`createConfigItem`) pass arbitrary `Record<string, unknown>` straight to Prisma (3× `@ts-expect-error`) — no field whitelist; wrong types 500; `accentClass`/`color` render into classNames/inline styles (admin-gated, cosmetic risk). | ⚠️ Documented — per-table zod schemas are the clean fix; admin-only surface keeps it LOW. Follow-up. |
+| F-17 | ⚪ LOW | `assignUserToProject` accepts an unvalidated `role` string; assignments to soft-deleted projects allowed; `getProjectAssignments` exposes user emails to any signed-in user. | ⚠️ Documented (accepted) — emails are visible in the roster to team:view holders by design; kept for messaging routing. |
+| F-18 | ⚪ LOW | `getUserByEmail` is a signed-in enumeration oracle (id/name/email/avatarColor for any known email). | ⚠️ Documented (accepted) — acknowledged in-code; required for message routing. Noted in SECURITY.md. |
+| F-19 | ⚪ LOW | `logTime` error message said "between 0 and 24" while rejecting 0; `date` was unvalidated (invalid strings → Prisma 500). | ✅ Fixed — message now states the exact rule; `logTimeSchema` validates the date string shape. |
+| F-20 | ⚪ LOW | Unbounded dashboard queries — `getDashboardData` loads ALL projects/tasks/timeEntries/messages then filters in JS; `recalcMemberStats` full-scans a member's tasks; `notifyMentionedUsers` loads the whole user table (acknowledged). Fine at seed scale, degrades at 100k. | ⚠️ Documented — take-limits + aggregate recalc are the L-P2-36-adjacent scale follow-up. |
+| F-21 | ⚪ LOW | Observability: `SENTRY_DSN` checked but no real reporter wired (documented gap); `structuredLog`'s `JSON.stringify` throws on circular context (unhandled crash in the logging path); `/api` root route references a non-existent `/docs`. | ⚠️ Documented — try/catch around the stringify + real Sentry wiring are follow-ups. |
+| F-22 | ⚪ LOW | nginx listens on 443 with no TLS config; compose `deploy.replicas` quirk; HSTS emitted while TLS termination point is undefined. | ⚠️ Documented — deploy-env decision (terminate TLS at the edge LB). |
+| F-23 | ⚪ LOW | Code smells: `requirePermissionForTargetCompat` dynamic-import shim (trash.ts) and the former dynamic `await import("@/lib/rbac")` (bulk.ts) — plain static imports work (no cycles). | ✅ Partially fixed — bulk.ts now imports `hasPermission` statically; trash.ts shim left (works, isolated). |
+| F-24 | ⚪ LOW | **Tests codified the F-01 bug** — `data-crud` asserted `updateProfile` accepting `role: "Dev"` into `User.role`; `data.test` passed it too. | ✅ Fixed — tests updated to the secure contract + new negative tests (role stripped, schema rejection). |
+
+### 10.2 What the review confirmed is SOLID (no action)
+
+- **Auth chain**: strong-secret boot guard, timing-equalised login, dual-key
+  (email+IP) sliding-window throttle with progressive delay, tokenVersion
+  revocation, 5-min role refresh, session/CSRF cookie flags, sign-out cookie
+  hygiene, and the proxy's stale-cookie self-healing.
+- **No injection surfaces**: Prisma parameterises everything; the only
+  `$queryRaw`/`$executeRaw` use static SQL with bound params; no
+  `dangerouslySetInnerHTML`/`eval` anywhere in `src/`; ICS export escapes
+  per RFC 5545.
+- **Error masking**: `toResult` keeps stack traces/Prisma errors server-side.
+- **Soft-delete discipline**: read paths consistently filter `deletedAt: null`.
+- **Password handling**: bcrypt cost 12; reset tokens are 32-byte random,
+  SHA-256-hashed at rest, single-use, 1-hour TTL, invalidated on re-request.
+- **Seed safety**: refuses to run without `SEED_DEMO=1` and outside production,
+  snapshotting env before Prisma loads.
+- **Type hygiene**: strict TS clean; only 3 `@ts-expect-error`s (F-16); zero
+  `console.log`/`any` in `src/`.
+
+### 10.3 Regression impact
+
+- Test suite: **680/680 passing** (was 631 — +49 tests covering F-01, F-03,
+  F-05/06/07, F-08, F-09, F-14, F-15).
+- `typecheck` / `lint` clean; `prisma migrate status` up to date
+  (4 migrations); `/api/health` → `200 db:up`; app page renders post-fix.
+- One DB migration added (`20261031000000_audit_retention_days`) — applied.
+
+### 10.4 Required pre-launch operator actions
+
+1. **Rotate the Supabase DB password and `NEXTAUTH_SECRET`** (F-02) — both live
+   in git history; rotation is a 2-minute Supabase dashboard + env-var change.
+2. **Set `RESEND_API_KEY` (+ `MAIL_FROM`)** in production (F-04) — without it,
+   password-reset mail is dropped by design (never logged).
+3. Decide CSP nonce strategy + trim `connect-src`/allowedOrigins (F-13).
+
+## 11. Launch-Gate Crosscheck (2026-10-31, second pass)
+
+Full re-verification of every launch blocker in the uploaded audit document
+(P0 1–16, P1 17–26, P2 27–38) plus its 12-point Go/No-Go gate table, this
+time checking **runtime behaviour and the gates themselves**, not just the
+presence of the fixes.
+
+### 11.1 P0/P1/P2 item verification
+
+All 16 P0 and all 10 P1 items re-verified in code AND against the live
+database (63 indexes present incl. all 8 L-P0-5 indexes; `deletedAt`,
+`tokenVersion`, `auditRetentionDays` columns present; `migrate status` up to
+date with 4 migrations). P2: 8 of 12 remain ✅ (29–33, 35, 37, 38); 27/28/34/36
+documented OPEN by design.
+
+### 11.2 Gaps found by the gate crosscheck — all fixed
+
+| # | Gate | Finding | Fix |
+|---|------|---------|-----|
+| X-01 | 8 (E2E in CI) | **The E2E suite was a silent no-op**: the `.mjs` cucumber config made Cucumber v13 ignore `require`, so `bun run test:e2e` reported "0 scenarios" forever; feature files also used `@fernly.dev` while the seed creates `@fernly.app` accounts. | Config converted to CommonJS (`e2e/cucumber.cjs`), pretty-formatter (ESM-only) dropped for built-ins; emails fixed to `@fernly.app`; dry-run now matches **16 scenarios / 97 steps**. CI E2E job **enabled** with a service-container Postgres 16 + health-wait + inline CI-only `NEXTAUTH_SECRET`. |
+| X-02 | 5 (zero CVEs) | **41 Next.js advisories (incl. unauthenticated RCE criticals), 3 next-auth (incl. critical email-normalizer bypass), 1 zod HIGH** — all in production dependencies. | Upgraded `next` 16.1.1→16.4.3, `next-auth` 4.24.11→4.24.15, `zod` 4.0.2→4.6.7 + `bun update` (68 packages). New `scripts/check-audit.mjs` gate fails on high/critical advisories affecting **shipping** deps (direct prod + traced standalone runtime); wired into CI twice (pre- and post-build). Remaining 28 advisories are dev-toolchain-only. 680 tests still green after the upgrades. |
+| X-03 | 5 (lint) | Upgraded eslint-plugin-react-hooks turned 4 latent `set-state-in-effect` violations + 1 `no-location-assign` into hard errors. | Fixed properly (no suppressions): command-palette single `closeCmdk()` helper on every close path; users-view fetch-on-mount restructured to promise callbacks + derived `loadingAssignments`; use-mobile initial read via `queueMicrotask`; error.tsx uses `reload()` for guaranteed recovery. |
+| X-04 | 9 (no cosmetic controls) | Notification toggles (email/push/digests) rendered fully interactive but **nothing reads them** — the audit's "trust failure" class. | `notifMentions` now genuinely honoured by `notifyMentionedUsers` (recipient opt-out respected); the five undeliverable channels render **disabled with a "Coming soon" badge** (the audit-sanctioned treatment). |
+| X-05 | 11 (demo creds in bundle) | **FAIL before this pass**: gating the demo UI behind `NEXT_PUBLIC_SEED_DEMO` hid it, but the literals survived dead-code elimination and shipped in client chunks (`grep <demo-password> .next/static` found them) — via `i18n.ts` and dead branches in login-screen. | login-screen now contains **zero credential literals** (demo data env-injected via `NEXT_PUBLIC_DEMO_ACCOUNTS`/`NEXT_PUBLIC_DEMO_PASSWORD`, set only in dev `.env`); i18n dictionary scrubbed; CI gate extended to grep the built bundle every push. Verified locally: production build greps clean. |
+| X-06 | 11 (secrets) | **Next.js copies `.env` into the standalone output** — the deployable artifact shipped the DB password + `NEXTAUTH_SECRET`; no `.dockerignore` existed, so `COPY . .` also pulled the local `.env` into the Docker build context. | Added `.dockerignore` (`.env*` excluded); Dockerfile runner stage now `rm -f ./.env*` after the standalone copy (defense in depth); CI gate also refuses a stray `.env` in standalone output. |
+| X-07 | 12 (retention job) | `pruneAuditLogs` existed but **nothing scheduled it** — "job running" was untrue. | New `CRON_SECRET`-protected `/api/cron/prune-audit` route (constant-time token check, 503 when unconfigured, 1h overlap guard, counters-only response, never leaks audit contents); prune core extracted to `src/lib/audit-prune-core.ts` (admin action keeps `role:manage`); docker-compose `audit-cron` service calls it daily at 03:00 UTC. 8 new route tests + 12 retention tests. |
+| X-08 | 10 (Sentry fed) | `createErrorReporter()`'s doc comment promised Sentry selection but the code **never selected anything** — ConsoleErrorReporter always. | New `SentryReporter`: plain-fetch store-endpoint client (no SDK dep, DSN-parsed, 5s abort, fire-and-forget, sampling via `SENTRY_SAMPLE_RATE`, request-id attached); factory selects it when `SENTRY_DSN` is set. 6 new tests (DSN parsing, payloads, delivery-failure fallback, factory selection). |
+| X-09 | 10/§1.15 (CSP reporting) | No `report-uri` — "CSP report clean for 24h" was unmeasurable. | `REPORT_URI` env now adds `report-uri`/`report-to` directives + `Report-To` header. |
+| X-10 | §1.15 (origins) | `serverActions.allowedOrigins` hardcoded preview domains for every build. | `SERVER_ACTIONS_ALLOWED_ORIGINS` env splits preview vs production lists (default unchanged). 3 new config tests. |
+| X-11 | §1.2 (timing) | Dummy bcrypt hash still cost 10 vs production cost 12 — unknown-email responses measurably faster. | Regenerated the dummy hash at **cost 12**. |
+| X-12 | §1.10/P1-18 (heatmap) | Activity heatmap hardcoded `oklch(… 152)` — forest-only, broke dark-mode contrast. | Scale now derived from `--primary`/`--background` via `color-mix` — follows accents and dark mode. |
+| X-13 | F-12 (Redis) | Redis limiter existed but **no client was ever constructed** — multi-instance deployments silently ran per-instance in-memory limiters. | New `src/lib/redis-client.ts` (ioredis singleton, offline-fail-fast, capped retry); both limiter factories auto-wire it when `REDIS_URL` is set; **fail-open adapter** keeps logins possible during a Redis outage (warning rate-limited to 1/30s). 3 new tests. |
+| X-14 | 4 (load dataset) | k6 asserted p95 budgets "at 100k-row scale" but **nothing could produce that dataset**. | New `scripts/seed-load.js`: deterministic 100k-row profile (1k users, 2k projects, 90k tasks, 40k time entries, assignments), idempotent (self-cleaning re-runs), guarded by `SEED_LOAD=1` + `--confirm` on non-localhost DBs; smoke-tested end-to-end + second-run idempotency verified. |
+| X-15 | 6 (RPO/RTO) | Recovery targets lived only in BACKUP_RECOVERY.md; the gate requires them **in SECURITY.md**. | §11 added to SECURITY.md (RPO ≤5min / RTO ≤1h + drill requirement). |
+
+### 11.3 Toolchain state after this pass
+
+- Tests: **704/704 passing** (was 680 — +24: cron route 8, security-headers 3,
+  rate-limit fail-open 3, Sentry 6, demo-gating rewrite + i18n/seed owners,
+  audit-retention re-run; 45 test files).
+- `typecheck` / `lint` clean; production build green; `bundle:check` OK
+  (lazy 381.6KB ≤ 250KB per chunk); `audit:check` PASS (0 high/critical in
+  shipping deps; 28 dev-chain advisories informational).
+- E2E: 16 scenarios / 97 steps matched on dry-run; CI job enabled with
+  service-container Postgres (first real browser run happens on the next
+  push to CI — cannot execute GitHub Actions from the sandbox).
+
+### 11.4 Remaining operator actions (unchanged + additions)
+
+1. Rotate the Supabase DB password and `NEXTAUTH_SECRET` (F-02).
+2. Set `RESEND_API_KEY` (+ `MAIL_FROM`) in production (F-04).
+3. Set `SENTRY_DSN` (+ `REPORT_URI`, `CRON_SECRET`, `REDIS_URL`,
+   `SERVER_ACTIONS_ALLOWED_ORIGINS`) in production — all now wired and
+   read by code; without them the corresponding gates degrade visibly
+   (503s, warnings) instead of silently.
+4. Execute + time the staging restore drill (gate 6) and the 100k-row k6
+   run (gate 4): `SEED_LOAD=1 … seed-load.js --confirm` then
+   `k6 run scripts/load-test.k6.js` against staging.
+5. Confirm the CI E2E job is green on the first push (Chrome/chromedriver
+   availability on ubuntu-latest is the one untested assumption).
+
+### 11.5 Incident note (honest record)
+
+During this pass the dev database was found **wiped** (all domain tables at
+0 rows; only Workspace + the config tables the config-loader self-heals on
+boot survived — the fingerprint of a seed run interrupted by the earlier
+sandbox recycle). Nothing in this session's commands or the test suite
+writes unfiltered deletes (verified: the only unfiltered `deleteMany` set
+lives in `scripts/seed.js` behind its boot-time guard, and all three
+test invocations of the seed refuse). Recovery: `bun run db:seed` re-ran
+cleanly (12 users / 24 projects / 40 tasks / 174 time entries / 18 events),
+demo sign-in re-verified end-to-end (200 + ADMIN session + dashboard render)
+on the upgraded next-auth 4.24.15. Production is unaffected — this was the
+disposable demo database.
+
+The live cron endpoint was also exercised end-to-end during this pass:
+401 without/with a wrong bearer token, a real prune run with a valid token
+(200, `deletedCount: 0` — retention window not yet reached), the overlap
+guard skipping an immediate second call, and an `audit.pruned` meta-row
+written by the synthetic `system (cron)` actor — gate 12's "demonstrated
+prune" now has on-record evidence in the audit trail itself.
+
+---
+
+## 12. Maintainability & Hygiene Pass (2026-10-31, third pass)
+
+Five directives from the product owner: centralized style tokens, project name in one
+config, an axios evaluation, a UI-pattern-library evaluation, and a MUST-level secrets
+audit ("all secrets in .env, no hardcoded secrets"). Every item was implemented and is
+pinned by tests; the architectural rationales live in `docs/DECISIONS.md` (ADR-001…006).
+
+| ID | Directive | Finding | Resolution |
+|----|-----------|---------|------------|
+| M-1 | Common style file with tokens | Raw OKLCH values were triplicated: `globals.css` `f-tag-*`/`f-priority-*`/`f-avatar-*` classes hardcoded them (plus `.dark` rule *duplicates*), and `lib/constants.tsx` carried the same colors as inline strings. A stale v3-style `tailwind.config.ts` (hsl() vs the real oklch tokens, silently ignored by v4) sat alongside the live CSS config. | **`src/styles/tokens.css`** is now the single source of truth (primitives, accent engine, semantic light/dark, tag / priority / avatar palettes; dark mode = token overrides, never `.dark .f-*` duplicates) + typed mirror **`src/styles/tokens.ts`** for render-time JS values. `globals.css` keeps only wiring + `f-*` classes referencing `var(--…)` — zero raw color literals, enforced by `tokens-sync.test.ts` (6 tests incl. CSS↔TS drift + legacy-config-stays-deleted). Legacy `tailwind.config.ts` and the unused `tailwindcss-animate` dependency removed (ADR-003/005). |
+| M-2 | Project name in config | "Fernly" was hardcoded in 14 user-facing surfaces: layout title/keywords, sidebar + login logos, 404/loading copy, settings copy, API discovery, password-reset emails (×5), ICS PRODID/UID, support email, email placeholder, MAIL_FROM, workspace default name, localStorage keys, and the `window.__fernlyCaptureError` bridge key. | New **`src/config/app.ts`**: `APP` (name/slug/tagline/supportEmail/domain) + derived `STORAGE_KEYS`, `ERROR_BRIDGE_KEY`, `DEFAULT_WORKSPACE_NAME`, `DEFAULT_MAIL_FROM`. All 14 surfaces now import it; `app-config.test.ts` (4 tests, incl. a `CONFIG_CONSUMERS` list) fails the build if literals return. Rebranding is a one-file edit (ADR-004). |
+| M-3 | Evaluate axios | Exactly one outbound HTTP call exists (Resend in `mailer.ts`); all internal data flows through Server Actions (typed RPC — no HTTP layer). | **Rejected** (ADR-001): ~13 kB gz + dependency-audit surface for interceptor conveniences that one hardened call site doesn't need. The call site gained `AbortSignal.timeout(10_000)` so a wedged provider can't stall password reset. |
+| M-4 | Evaluate UI pattern library | The repo already runs the shadcn/ui pattern (`components.json` new-york, `cn()` in lib/utils, lucide, sonner) with ~15 local primitives in `components/fernly/`. | **Keep local primitives** (ADR-002): a full kit (MUI/AntD/Chakra) fights the OKLCH token system, adds 100–300 kB against the L-P1-17 bundle-budget gate, and imports a foreign design language. Growth path: `bunx shadcn@latest add <component>` + restyle to tokens. |
+| M-5 | Secrets MUST live in .env | 🔴 **The real `NEXTAUTH_SECRET` was pasted into a committed unit test** (`auth.test.ts` used the production value as a fixture). The demo password was hardcoded in seed.js + 4 node scripts + 3 shell scripts + k6 + e2e (incl. 10 `.feature` files); the DB password was duplicated in a `.env` comment; README/TESTING published the demo password. | Secret scrubbed from the test (obviously-fake fixture) and **the production secret rotated** (it remains in git history — rotation is the only remediation). Demo password now read from `NEXT_PUBLIC_DEMO_PASSWORD` everywhere via `scripts/lib/demo-env.mjs` (node scripts), `__ENV` (k6), and a loader (e2e); all fail loudly when unset. `.env` comment de-duplicated; docs genericized. `login-demo-gating.test.ts` now greps seed/e2e/k6 for the literal (ADR-006). |
+| M-6 (bonus) | Crosscheck found a real gap | `window.__fernlyCaptureError` was **read** by `error.tsx` but **never assigned anywhere** — the L-P1-19 client→server error bridge was dangling; client errors fell back to console only. | New `src/lib/client-error-bridge.ts` (installed from `providers.tsx`; caps + truncates payloads, fire-and-forget with `keepalive`) → `POST /api/client-errors` (8 KB cap, POST-only, constant response, no-store) → `captureError` with request-id. 9 new tests (`client-error-bridge.test.ts`). |
+
+**Verification for this pass:** `tsc --noEmit` clean · ESLint clean · 724/724 vitest
+tests green (14 net-new: tokens-sync 6, app-config 4, bridge/route 9, minus the
+reworked seed-literal assertion) · production build + bundle-budget gate green ·
+CI-replica build (no `.env`) greps clean for demo credentials and ships no `.env` in
+the standalone output · seed re-run end-to-end with the env-driven password.

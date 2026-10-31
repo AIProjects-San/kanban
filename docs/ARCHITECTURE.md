@@ -126,7 +126,9 @@ code defaults when tables are empty, and caches for 60 s. Mutations call
 
 ## 7. Front-end architecture
 
-- **Theme:** OKLCH design tokens in `globals.css`, four accent themes, dark mode via a
+- **Theme:** OKLCH design tokens in `src/styles/tokens.css` (single source of truth,
+  mirrored to TS in `src/styles/tokens.ts`; imported by `globals.css`), four accent
+  themes, dark mode via a
   `dark` class + per-user persistence (applied server-side pre-hydration to avoid flash).
 - **State:** server data arrives as props from the server component; Zustand holds only
   view/session state (active view, open modals, inbox, palette, refresh counter).

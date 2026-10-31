@@ -8,25 +8,28 @@
 
 import { Leaf, Waves, Grape, Flame } from "lucide-react";
 import type { AccentTheme } from "@/store/app-store";
+import { AVATAR_COLORS } from "@/styles/tokens";
 
 // ---------------------------------------------------------------------------
 // Accent color palette — used by avatar pickers, theme pickers, and the
-// settings appearance section.
+// settings appearance section. The color VALUES come from the design-token
+// mirror (src/styles/tokens.ts ← src/styles/tokens.css §7) so CSS classes
+// and inline styles can never disagree.
 // ---------------------------------------------------------------------------
 
 interface AccentDef {
   key: AccentTheme;
   label: string;
-  /** OKLCH color string for inline styles. */
+  /** OKLCH color string for inline styles (token-mirrored). */
   color: string;
   icon: React.ComponentType<{ size?: number }>;
 }
 
 export const ACCENTS: AccentDef[] = [
-  { key: "forest", label: "Forest", color: "oklch(0.55 0.13 152)", icon: Leaf },
-  { key: "ocean", label: "Ocean", color: "oklch(0.55 0.13 220)", icon: Waves },
-  { key: "plum", label: "Plum", color: "oklch(0.55 0.15 320)", icon: Grape },
-  { key: "ember", label: "Ember", color: "oklch(0.60 0.15 35)", icon: Flame },
+  { key: "forest", label: "Forest", color: AVATAR_COLORS.forest, icon: Leaf },
+  { key: "ocean", label: "Ocean", color: AVATAR_COLORS.ocean, icon: Waves },
+  { key: "plum", label: "Plum", color: AVATAR_COLORS.plum, icon: Grape },
+  { key: "ember", label: "Ember", color: AVATAR_COLORS.ember, icon: Flame },
 ];
 
 /** Project-only colors (includes "slate" which isn't an avatar theme). */

@@ -14,15 +14,15 @@
 //  - Receives { error, reset } — reset() re-attempts the render.
 //  - Must NOT rethrow the error (it would bubble to global-error).
 //  - L-P1-19: reports the error to the configured error tracker via
-//    `window.__fernlyCaptureError` (a client-safe bridge). Falls back to
-//    console.error — importing the observability module directly would pull
-//    node:async_hooks into the browser bundle, which cannot run there.
+//    `window[ERROR_BRIDGE_KEY]` (a client-safe bridge installed by
+//    src/lib/client-error-bridge.ts, mounted in providers.tsx). Falls back
+//    to console.error — importing the observability module directly would
+//    pull node:async_hooks into the browser bundle, which cannot run there.
 // ---------------------------------------------------------------------------
 
 import { useEffect } from "react";
 import { t } from "@/lib/i18n";
-
-type CaptureFn = (e: unknown, c?: Record<string, unknown>) => void;
+import { ERROR_BRIDGE_KEY } from "@/config/app";
 
 export default function Error({
   error,
@@ -34,7 +34,9 @@ export default function Error({
   useEffect(() => {
     console.error("[app/error]", error);
     if (typeof window !== "undefined") {
-      const capture = (window as unknown as { __fernlyCaptureError?: CaptureFn }).__fernlyCaptureError;
+      const capture = (window as unknown as Record<string, unknown>)[ERROR_BRIDGE_KEY] as
+        | ((e: unknown, c?: Record<string, unknown>) => void)
+        | undefined;
       if (typeof capture === "function") {
         capture(error, { digest: error.digest, source: "app/error.tsx" });
       }

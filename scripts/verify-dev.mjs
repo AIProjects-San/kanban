@@ -1,4 +1,5 @@
 // Verify dev server: DB connectivity + credentials login flow
+import { demoPassword } from "./lib/demo-env.mjs";
 const BASE = "http://localhost:3000";
 
 async function main() {
@@ -14,7 +15,7 @@ async function main() {
     body: new URLSearchParams({
       csrfToken,
       email: "demo@fernly.app",
-      password: "fernly123",
+      password: demoPassword(),
       json: "true",
     }),
     redirect: "manual",

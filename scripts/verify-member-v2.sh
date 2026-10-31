@@ -1,6 +1,14 @@
 #!/bin/bash
 # Carefully test member visibility - sign out admin, sign in member, verify dashboard scope.
 set -e
+
+# Demo password lives in .env (NEXT_PUBLIC_DEMO_PASSWORD) — never in this repo.
+DEMO_PASSWORD="${NEXT_PUBLIC_DEMO_PASSWORD:-$(grep -m1 '^NEXT_PUBLIC_DEMO_PASSWORD=' "$(dirname "$0")/../.env" 2>/dev/null | cut -d= -f2-)}"
+if [[ -z "${DEMO_PASSWORD}" ]]; then
+  echo "ERROR: NEXT_PUBLIC_DEMO_PASSWORD not set — add it to .env (see .env.example)." >&2
+  exit 1
+fi
+
 BASE="http://localhost:3000"
 
 echo "=== Step 1: Sign out Admin via sidebar Logout button ==="
@@ -15,7 +23,7 @@ agent-browser read 2>&1 | grep -i "Welcome back\|Sign in\|Demo accounts" | head 
 echo ""
 echo "=== Step 3: Fill member@fernly.app credentials ==="
 agent-browser fill 'input[type="email"]' 'member@fernly.app' 2>&1 | tail -2
-agent-browser fill 'input[type="password"]' 'fernly123' 2>&1 | tail -2
+agent-browser fill 'input[type="password"]' "${DEMO_PASSWORD}" 2>&1 | tail -2
 agent-browser click 'button:has-text("Sign in")' 2>&1 | tail -2
 sleep 4
 

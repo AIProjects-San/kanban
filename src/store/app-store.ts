@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { STORAGE_KEYS } from "@/config/app";
 
 export type ViewKey =
   | "dashboard"
@@ -89,8 +90,8 @@ function loadInitial() {
   if (typeof window === "undefined") {
     return { accent: "forest" as AccentTheme, dark: false };
   }
-  const savedAccent = localStorage.getItem("fernly-accent") as AccentTheme | null;
-  const savedDark = localStorage.getItem("fernly-dark") === "1";
+  const savedAccent = localStorage.getItem(STORAGE_KEYS.accent) as AccentTheme | null;
+  const savedDark = localStorage.getItem(STORAGE_KEYS.dark) === "1";
   // Apply immediately so first paint is correct
   if (savedAccent) document.documentElement.setAttribute("data-accent", savedAccent);
   if (savedDark) document.documentElement.classList.add("dark");
@@ -155,7 +156,7 @@ export const useApp = create<AppState>((set) => ({
     set({ accent });
     if (typeof document !== "undefined") {
       document.documentElement.setAttribute("data-accent", accent);
-      localStorage.setItem("fernly-accent", accent);
+      localStorage.setItem(STORAGE_KEYS.accent, accent);
     }
   },
   dark: initial.dark,
@@ -163,7 +164,7 @@ export const useApp = create<AppState>((set) => ({
     set({ dark });
     if (typeof document !== "undefined") {
       document.documentElement.classList.toggle("dark", dark);
-      localStorage.setItem("fernly-dark", dark ? "1" : "0");
+      localStorage.setItem(STORAGE_KEYS.dark, dark ? "1" : "0");
     }
   },
 }));

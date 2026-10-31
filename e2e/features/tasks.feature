@@ -3,7 +3,7 @@ Feature: Task board
 
   Background:
     Given the app is running
-    And I sign in as "demo@fernly.app" with password "fernly123"
+    And I sign in as "demo@fernly.app" with the demo password
 
   Scenario: Create a task with the minimum required fields
     When I open the "Tasks" view

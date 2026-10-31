@@ -62,14 +62,50 @@ Every exported action in a `"use server"` file is a **public HTTP endpoint**. Th
 - Effects fetch data only via server actions with a `cancelled` guard (see any modal for
   the pattern).
 
-## 5. Styling
+## 5. Styling & design tokens
 
-- Custom CSS design system: OKLCH tokens + `f-*` utility classes in `globals.css`.
-  Tailwind utilities are allowed for layout/spacing; **colors always via tokens**
-  (`text-primary`, `bg-card`, …) so themes and dark mode keep working.
-- Never hardcode hex/oklch values in components — use the accent/priority/tag class
-  helpers (`priorityClass()`, `tagClass()`) or picker components.
-- Dark mode = `dark` class on `<html>`, driven by the persisted per-user setting.
+- **`src/styles/tokens.css` is the single source of truth** for every color, radius,
+  and shadow value (semantic light/dark themes, accent engine, tag / priority /
+  avatar palettes — see the file's table of contents). It is imported by
+  `src/app/globals.css`, which keeps only theme wiring (`@theme inline`), base
+  styles, `f-*` component classes (referencing `var(--…)`), and animations.
+- **Never hardcode hex/oklch values** in components or in `globals.css` classes —
+  use the `f-*` classes / Tailwind token utilities (`text-primary`, `bg-card`, …).
+  A few render-time values JS needs inline (accent swatches, chart anchors) come
+  from the typed mirror `src/styles/tokens.ts`.
+- `tokens-sync.test.ts` enforces the CSS ↔ TS mirror stays identical **and** that
+  `globals.css` contains no raw color literals. If you change a token, change its
+  mirror in the same commit or the build goes red.
+- Dark mode = token overrides on `.dark` (in tokens.css), **never**
+  `.dark .f-*` rule duplicates. Accent themes only re-map the `--accent-*`
+  triplet.
+- Tailwind is configured **CSS-first (v4)** — there is no `tailwind.config.ts` on
+  purpose (ADR-003). Do not reintroduce one.
+- Status/tag/priority labels and their classes are defined once in
+  `src/lib/config.ts` (`TASK_STATUSES`, `EVENT_TYPES`, `priorityClass()`, …) —
+  import them, never redeclare locally.
+
+## 5b. Product identity (branding)
+
+- The product name, slug, tagline, support email and identifier domain live **only**
+  in `src/config/app.ts` (`APP`), which also derives `STORAGE_KEYS`,
+  `ERROR_BRIDGE_KEY`, `DEFAULT_WORKSPACE_NAME`, `DEFAULT_MAIL_FROM`.
+- Any user-visible surface (title metadata, sidebar/logo, emails, ICS PRODID/UID,
+  placeholders, 404 copy) **imports from the config** — no `"Fernly"` string
+  literals. `app-config.test.ts` pins the swept files; add new surfaces to its
+  `CONFIG_CONSUMERS` list. Rebranding = one file (ADR-004).
+
+## 5c. Secrets hygiene (MUST)
+
+- **`.env` is the only home for secrets.** No credential, key, or password literal
+  may appear in source, tests, scripts, features, Dockerfiles, or docs
+  (ADR-006). Tests use obviously-fake values; scripts that need the demo
+  password read it via `scripts/lib/demo-env.mjs` or `NEXT_PUBLIC_DEMO_PASSWORD`
+  and fail loudly when unset.
+- `.env` is gitignored; `.env.example` documents keys with placeholders. New env
+  var → `.env.example` + `SECURITY.md` if security-relevant.
+- If a secret ever lands in a commit (even a test fixture): scrub it, **rotate it**,
+  and note the incident in `SECURITY.md`.
 
 ## 6. Database & Prisma
 
@@ -98,6 +134,8 @@ Every exported action in a `"use server"` file is a **public HTTP endpoint**. Th
 - Before adding a dependency: justify it against (a) a `lib/` implementation under 50
   lines, (b) an existing dependency, (c) the security surface. Prefer zero-dep code for
   small utilities.
+- Architecture-level choices are recorded as ADRs in `docs/DECISIONS.md` — read them
+  before re-litigating axios / a UI kit / a Tailwind JS config (ADRs 001–003).
 - Unused dependencies are removed in the same PR that orphans them (45 dead UI files and
   49 packages accumulated once — never again).
 - Lockfile (`bun.lock`) is committed; updates go through `bun update <pkg>` with the

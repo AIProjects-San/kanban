@@ -15,6 +15,7 @@ import { db } from "@/lib/db";
 import { getSession, AuthorizationError } from "./auth-guard";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+import { APP } from "@/config/app";
 
 /**
  * Format a Date as an RFC 5545 UTC timestamp: YYYYMMDDTHHMMSSZ.
@@ -74,7 +75,7 @@ export async function exportCalendarIcs(): Promise<ActionResult<IcsExport>> {
     const lines: string[] = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
-      "PRODID:-//Fernly//Calendar//EN",
+      `PRODID:-//${APP.name}//Calendar//EN`,
       "CALSCALE:GREGORIAN",
     ];
 
@@ -91,7 +92,7 @@ export async function exportCalendarIcs(): Promise<ActionResult<IcsExport>> {
       const end = new Date(start.getTime() + e.durationMin * 60 * 1000);
 
       lines.push("BEGIN:VEVENT");
-      lines.push(`UID:${e.id}@fernly.app`);
+      lines.push(`UID:${e.id}@${APP.domain}`);
       lines.push(`DTSTAMP:${icsUtc(e.createdAt)}`);
       lines.push(`DTSTART:${icsUtc(start)}`);
       lines.push(`DTEND:${icsUtc(end)}`);

@@ -14,7 +14,12 @@
 //
 // The dictionary is intentionally typed: a missing or misspelled key is a
 // compile error, not a silent empty string at runtime.
+//
+// Branding: product names in dictionary strings are interpolated from
+// src/config/app.ts ({app}) so a rebrand never touches this file.
 // ---------------------------------------------------------------------------
+
+import { APP } from "@/config/app";
 
 // The dictionary type — every key must exist in EN. Adding a locale means
 // adding a dictionary with the same shape.
@@ -35,11 +40,12 @@ const EN = {
   "errors.genericBody": "The page hit an unexpected error while loading. Your data is safe — you can try again, or reload the workspace.",
   "errors.tryAgain": "Try again",
   "errors.reloadWorkspace": "Reload workspace",
-  "errors.backToFernly": "Back to Fernly",
+  "errors.backToApp": `Back to ${APP.name}`,
   "errors.applicationError": "Application error",
   "errors.applicationErrorBody": "A critical error occurred while loading the application. Please try again.",
   // Loading
   "loading.workspace": "Loading workspace…",
+  "loading.workspaceSr": `Loading the ${APP.name} workspace, please wait.`,
   // Status labels (audit's L-P0-12 gated strings)
   "auth.demoAccounts": "Demo accounts",
 } as const;

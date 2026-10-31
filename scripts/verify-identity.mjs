@@ -4,11 +4,12 @@
 // 3. Projects owned by other users do not leak into the MEMBER's payload
 
 import { PrismaClient } from "@prisma/client";
+import { demoPassword } from "./lib/demo-env.mjs";
 
 const BASE = "http://localhost:3000";
 const db = new PrismaClient();
 
-async function login(email, password = "fernly123") {
+async function login(email, password = demoPassword()) {
   const csrfRes = await fetch(`${BASE}/api/auth/csrf`);
   const { csrfToken } = await csrfRes.json();
   const cookie = csrfRes.headers.get("set-cookie")?.split(";")[0] ?? "";

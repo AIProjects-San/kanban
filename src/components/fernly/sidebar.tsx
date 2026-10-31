@@ -21,6 +21,7 @@ import { useApp, type ViewKey } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
 import { fernlySignOut } from "@/lib/signout";
+import { APP } from "@/config/app";
 
 interface NavItem {
   key: ViewKey;
@@ -84,7 +85,7 @@ export function Sidebar() {
               <Leaf size={18} />
             </div>
             <span className="text-base font-semibold text-sidebar-foreground tracking-tight">
-              Fernly
+              {APP.name}
             </span>
           </div>
           <button

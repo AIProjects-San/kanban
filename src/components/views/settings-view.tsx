@@ -15,6 +15,7 @@ import { PasswordInput } from "../fernly/password-input";
 import { AvatarColorPicker } from "../fernly/avatar-color-picker";
 import { Toggle } from "../fernly/toggle";
 import { ACCENTS, TIMEZONES } from "@/lib/constants";
+import { APP } from "@/config/app";
 
 interface SettingsViewProps {
   user: {
@@ -195,7 +196,7 @@ export function SettingsView({ user }: SettingsViewProps) {
       </Section>
 
       {/* Appearance */}
-      <Section icon={Palette} title="Appearance" description="Customize how Fernly looks for you">
+      <Section icon={Palette} title="Appearance" description={`Customize how ${APP.name} looks for you`}>
         <div className="space-y-5">
           <div>
             <label className="block text-xs font-medium text-foreground mb-2">Accent color</label>

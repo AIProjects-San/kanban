@@ -19,6 +19,7 @@ import { PasswordInput, generatePassword } from "./password-input";
 import { AvatarColorPicker } from "./avatar-color-picker";
 import { TIMEZONES, DEPARTMENTS } from "@/lib/constants";
 import type { AccentTheme } from "@/store/app-store";
+import { APP } from "@/config/app";
 
 interface UserRecord {
   id: string;
@@ -219,7 +220,7 @@ function UserForm({
           <input className="f-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" />
         </Field>
         <Field label="Email (login)">
-          <input className="f-input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@fernly.app" type="email" />
+          <input className="f-input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={`jane@${APP.domain}`} type="email" />
         </Field>
       </FormRow>
 

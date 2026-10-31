@@ -7,6 +7,7 @@ import {
 } from "@/lib/config";
 import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
 import { ROLE_PERMISSIONS, ROLE_LABELS, ROLE_DESCRIPTIONS } from "@/lib/rbac";
+import { DEFAULT_WORKSPACE_NAME } from "@/config/app";
 
 // ---------------------------------------------------------------------------
 // Types — the shape of the config object passed to the client.
@@ -171,7 +172,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
-          name: "Fernly Workspace",
+          name: DEFAULT_WORKSPACE_NAME,
           defaultTimezone: "Pacific/Auckland",
           defaultUserRole: "MEMBER",
           defaultDepartment: "ENGINEERING",

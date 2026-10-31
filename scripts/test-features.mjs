@@ -2,6 +2,7 @@
 // Run with: node --experimental-vm-modules scripts/test-features.mjs
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { demoPassword } from "./lib/demo-env.mjs";
 
 const db = new PrismaClient();
 
@@ -91,8 +92,9 @@ async function main() {
   // Test the password hashing logic without actually changing the user's password
   const testUser = theo;
   const currentHash = testUser.passwordHash;
-  const matches = await bcrypt.compare("fernly123", currentHash);
-  console.log(`Current password matches "fernly123": ${matches}`);
+  const demoPw = demoPassword();
+  const matches = await bcrypt.compare(demoPw, currentHash);
+  console.log(`Current password matches NEXT_PUBLIC_DEMO_PASSWORD (.env): ${matches}`);
 
   const newHash = await bcrypt.hash("newPassword123", 10);
   const newMatches = await bcrypt.compare("newPassword123", newHash);

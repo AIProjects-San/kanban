@@ -6,7 +6,7 @@ Feature: Authentication
     Given the app is running
 
   Scenario: Successful sign-in with valid credentials
-    When I sign in as "demo@fernly.app" with password "fernly123"
+    When I sign in as "demo@fernly.app" with the demo password
     Then I should see the dashboard within 15 seconds
     And the sidebar should contain "Dashboard"
 

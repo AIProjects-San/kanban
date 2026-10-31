@@ -6,10 +6,38 @@ const { Given, When, Then } = require("@cucumber/cucumber");
 const { By, until } = require("selenium-webdriver");
 const assert = require("node:assert");
 
+// Secret hygiene (docs/SECURITY.md): the demo password's only home is .env
+// (NEXT_PUBLIC_DEMO_PASSWORD). Cucumber does not load .env itself, so the
+// helper below parses it. Feature files say "with the demo password" —
+// they must never contain the literal credential.
+const fs = require("node:fs");
+const path = require("node:path");
+
+function loadDemoPassword() {
+  if (process.env.NEXT_PUBLIC_DEMO_PASSWORD) return process.env.NEXT_PUBLIC_DEMO_PASSWORD;
+  const envPath = path.join(__dirname, "..", "..", ".env");
+  try {
+    const line = fs
+      .readFileSync(envPath, "utf8")
+      .split("\n")
+      .find((l) => l.startsWith("NEXT_PUBLIC_DEMO_PASSWORD="));
+    const value = line ? line.slice("NEXT_PUBLIC_DEMO_PASSWORD=".length).trim() : "";
+    if (value) return value;
+  } catch {
+    /* fall through to the error below */
+  }
+  throw new Error(
+    "e2e: NEXT_PUBLIC_DEMO_PASSWORD is not set — add it to .env " +
+      "(see .env.example) or export it before `bun run test:e2e`.",
+  );
+}
+
+const DEMO_PASSWORD = loadDemoPassword();
+
 const CREDENTIALS = {
-  "demo@fernly.app": "fernly123",
-  "manager@fernly.app": "fernly123",
-  "member@fernly.app": "fernly123",
+  "demo@fernly.app": DEMO_PASSWORD,
+  "manager@fernly.app": DEMO_PASSWORD,
+  "member@fernly.app": DEMO_PASSWORD,
 };
 
 Given("the app is running", async function () {
@@ -23,9 +51,9 @@ Given("the app is running", async function () {
   );
 });
 
-When("I sign in as {string} with password {string}", async function (email, password) {
+When("I sign in as {string} with the demo password", async function (email) {
   this.lastEmail = email;
-  await this.login(email, password);
+  await this.login(email, DEMO_PASSWORD);
 });
 
 When("I sign in as {string} with the correct password", async function (email) {
@@ -75,7 +103,7 @@ Then("the dashboard project count should be lower than the admin count", async f
   await driver.wait(until.elementsLocated(By.css("[data-testid='project-card'], article")), 10_000);
   const memberCount = (await driver.findElements(By.css("[data-testid='project-card'], article"))).length;
   await this.logout();
-  await this.login("demo@fernly.app", "fernly123");
+  await this.login("demo@fernly.app", DEMO_PASSWORD);
   const adminCount = (await driver.findElements(By.css("[data-testid='project-card'], article"))).length;
   assert.ok(
     memberCount < adminCount,

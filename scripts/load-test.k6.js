@@ -5,6 +5,13 @@
 // p95 thresholds: page <1.5s, board drag <400ms, login <2s, errors <1%.
 // Usage: k6 run --env BASE_URL=http://localhost:3000 scripts/load-test.k6.js
 
+// Demo credentials come from the environment — never hardcoded.
+// k6 does not read .env: pass it explicitly, e.g.
+//   k6 run -e NEXT_PUBLIC_DEMO_PASSWORD="$(grep '^NEXT_PUBLIC_DEMO_PASSWORD=' .env | cut -d= -f2-)" scripts/load-test.k6.js
+const DEMO_PASSWORD = __ENV.NEXT_PUBLIC_DEMO_PASSWORD;
+if (!DEMO_PASSWORD) {
+  throw new Error("NEXT_PUBLIC_DEMO_PASSWORD is not set — see the comment above this check.");
+}
 import http from "k6/http";
 import { check, sleep, group } from "k6";
 import { Rate, Trend } from "k6/metrics";
@@ -94,7 +101,7 @@ export function loginStorm() {
       `${BASE_URL}/api/auth/callback/credentials`,
       {
         email: "demo@fernly.app",
-        password: "fernly123",
+        password: DEMO_PASSWORD,
         callbackUrl: "/",
         csrfToken: "load-test",
       },

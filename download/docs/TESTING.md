@@ -31,7 +31,8 @@ the Selenium suite where a browser is available.
 ## 2. Manual test plan
 
 Environment: `bun run dev` + seeded database (`bun run db:seed`).
-Demo accounts (password `fernly123`): `demo@fernly.app` (ADMIN), `manager@fernly.app`
+Demo accounts (password = `NEXT_PUBLIC_DEMO_PASSWORD` from `.env` — never a literal
+in this repo): `demo@fernly.app` (ADMIN), `manager@fernly.app`
 (MANAGER), `member@fernly.app` (MEMBER), plus `maya@`, `lena@`, `oliver@`, `priya@`,
 `jack@`, `aria@`, `elena@`, `marcus@`, `nina@` (MEMBERs).
 
@@ -41,7 +42,7 @@ Execute each group per persona. ✅ = pass criterion.
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
-| AUTH-1 | Valid login | Sign in as `demo@fernly.app` / `fernly123` | Dashboard renders; sidebar shows all items incl. Users, Audit, Workspace Settings |
+| AUTH-1 | Valid login | Sign in as `demo@fernly.app` / `NEXT_PUBLIC_DEMO_PASSWORD` (`.env`) | Dashboard renders; sidebar shows all items incl. Users, Audit, Workspace Settings |
 | AUTH-2 | Wrong password | `demo@fernly.app` / `wrong` | Stays on login; no app shell; no user enumeration hint |
 | AUTH-3 | Unknown email | `ghost@fernly.app` / `whatever` | Same failure appearance and (roughly) same delay as AUTH-2 |
 | AUTH-4 | Empty fields | Submit with blank email/password | No request loop; form stays |

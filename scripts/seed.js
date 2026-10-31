@@ -29,8 +29,8 @@ if (SEED_DEMO_AT_BOOT !== "1") {
   console.error(
     "[seed] Refusing to seed: SEED_DEMO=1 not set.\n" +
     "  Seeding WIPES existing data and creates demo accounts with a " +
-    "publicly-known password (demo/manager/member @fernly.app, password " +
-    "fernly123).\n" +
+    "publicly-known password (see NEXT_PUBLIC_DEMO_ACCOUNTS / " +
+    "NEXT_PUBLIC_DEMO_PASSWORD in .env).\n" +
     "  To run the seed explicitly: SEED_DEMO=1 bun run db:seed\n" +
     "  This guard closes L-P0-12 — see docs/CODE_REVIEW.md §9.4."
   );
@@ -62,6 +62,22 @@ function pick(arr) {
 }
 
 async function main() {
+  // Secret hygiene: the demo password is NEVER a literal in this file. It
+  // lives in .env (NEXT_PUBLIC_DEMO_PASSWORD) — the same value the login
+  // screen and the e2e/scripts tooling read — so there is exactly one place
+  // to change it and the repo stays greppable-clean. Checked BEFORE the
+  // wipe below so a misconfigured environment can never destroy data and
+  // then fail. (.env is on process.env now — Prisma loaded it above.)
+  const DEMO_PASSWORD = process.env.NEXT_PUBLIC_DEMO_PASSWORD;
+  if (!DEMO_PASSWORD || DEMO_PASSWORD.length < 8) {
+    console.error(
+      "[seed] NEXT_PUBLIC_DEMO_PASSWORD is not set (or too short) in .env.\n" +
+      "  The demo accounts need a password to hash. Set it in .env and retry:\n" +
+      "  NEXT_PUBLIC_DEMO_PASSWORD=<choose-a-dev-only-password>"
+    );
+    process.exit(1);
+  }
+
   console.log("🌱 Seeding Fernly database...");
 
   await db.notification.deleteMany();
@@ -258,7 +274,7 @@ async function main() {
   // -----------------------------------------------------------------
   // Users — multiple roles for RBAC testing + realistic team
   // -----------------------------------------------------------------
-  const passwordHash = await bcrypt.hash("fernly123", 12);
+  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
   const demoUser = await db.user.create({
     data: {
       email: "demo@fernly.app",
@@ -307,8 +323,8 @@ async function main() {
   for (const u of extraUsers) {
     await db.user.create({ data: { ...u, passwordHash } });
   }
-  console.log(`  ✓ ${3 + extraUsers.length} users (ADMIN, MANAGER, MEMBER) — all password: fernly123`);
-  console.log(`  ✓ User: ${demoUser.email} (password: fernly123)`);
+  console.log(`  ✓ ${3 + extraUsers.length} users (ADMIN, MANAGER, MEMBER) — all password: $NEXT_PUBLIC_DEMO_PASSWORD (from .env)`);
+  console.log(`  ✓ User: ${demoUser.email}`);
 
   // Name → user map for the stable-identity links below. Seed names are
   // unique, so a name map is deterministic here.
@@ -838,7 +854,7 @@ async function main() {
   }
   console.log(`  ✓ ${auditEntries.length} audit log entries across 10 days`);
 
-  console.log("\n✅ Seed complete. Login: demo@fernly.app / fernly123");
+  console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }
 
 main()

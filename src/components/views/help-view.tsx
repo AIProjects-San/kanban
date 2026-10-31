@@ -5,6 +5,7 @@ import { Search, BookOpen, Keyboard, Mail, MessageCircle, ChevronDown, LifeBuoy,
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
 import { Modal } from "../fernly/modal";
+import { APP } from "@/config/app";
 
 const CATEGORIES = [
   { key: "getting-started", label: "Getting Started", icon: Zap, count: 5, color: "text-primary" },
@@ -176,8 +177,8 @@ export function HelpView() {
           <p className="text-xs text-muted-foreground mb-3">
             Can't find what you're looking for? Drop us a line and we'll get back within 24 hours.
           </p>
-          <a href="mailto:support@fernly.app" className="text-xs text-primary hover:underline">
-            support@fernly.app
+          <a href={`mailto:${APP.supportEmail}`} className="text-xs text-primary hover:underline">
+            {APP.supportEmail}
           </a>
         </div>
         <div className="f-card p-5">
