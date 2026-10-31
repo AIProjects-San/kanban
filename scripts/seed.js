@@ -854,6 +854,225 @@ async function main() {
   }
   console.log(`  ✓ ${auditEntries.length} audit log entries across 10 days`);
 
+  // -------------------------------------------------------------------------
+  // Bug tracking seed — demo bugs across the full lifecycle so the Bugs
+  // view has data to show. Reporter = QA (theo), assignee = developers.
+  // -------------------------------------------------------------------------
+  await db.bug.deleteMany();
+  await db.bugComment.deleteMany();
+
+  // Look up user IDs for reporter + assignee + a project for linking.
+  const bugReporter = memberUser.id; // MEMBER (QA role in this demo)
+  const bugAssignee1 = allUsers.find((u) => u.name === "Mira Hale") ?? allUsers[0];
+  const bugAssignee2 = allUsers.find((u) => u.name === "Sam Chen") ?? allUsers[1];
+  const bugProject = await db.project.findFirst({ select: { id: true, name: true } });
+
+  const bugNow = new Date();
+  function daysAgoDate(d) {
+    const dt = new Date(bugNow);
+    dt.setDate(dt.getDate() - d);
+    return dt;
+  }
+
+  const bugSeed = [
+    {
+      title: "Login page crashes on Safari 17 when password autofill is used",
+      description: "When a user with iCloud Keychain autofill submits the login form on Safari 17, the page crashes with a blank white screen. The crash does not happen on Chrome or Firefox.",
+      stepsToReproduce: "1. Open Safari 17 on macOS 14\n2. Navigate to /login\n3. Let Keychain autofill the email + password\n4. Click Sign In\n5. Page goes blank",
+      expectedBehavior: "User is redirected to the dashboard.",
+      actualBehavior: "Page goes blank; console shows a React hydration error.",
+      severity: "CRITICAL",
+      priority: "P0",
+      status: "IN_PROGRESS",
+      reporterUserId: bugReporter,
+      assigneeUserId: bugAssignee1.id,
+      projectId: bugProject?.id ?? null,
+      environment: "Production / Safari 17 / macOS 14",
+      createdAt: daysAgoDate(3),
+      triagedAt: daysAgoDate(2),
+      comments: [
+        { authorId: bugAssignee1.id, authorName: bugAssignee1.name, body: "Reproduced on Safari 17.1. Looks like the autofill event fires during hydration.", createdAt: daysAgoDate(2) },
+        { authorId: bugReporter, authorName: "Theo Park", body: "Any update? This is blocking ~15% of our Safari users.", createdAt: daysAgoDate(1) },
+        { authorId: bugAssignee1.id, authorName: bugAssignee1.name, body: "Working on a fix — will have a PR up today.", createdAt: daysAgoDate(0) },
+      ],
+    },
+    {
+      title: "Dashboard charts don't render on mobile viewport (375px)",
+      description: "The Recharts area chart on the dashboard overflows horizontally on iPhone SE (375px). The chart container doesn't shrink to fit.",
+      stepsToReproduce: "1. Open dashboard on iPhone SE\n2. Scroll to the analytics section\n3. Observe horizontal overflow",
+      expectedBehavior: "Chart scales to fit the viewport.",
+      actualBehavior: "Chart overflows; horizontal scrollbar appears.",
+      severity: "MAJOR",
+      priority: "P1",
+      status: "RESOLVED",
+      resolution: "FIXED",
+      reporterUserId: bugReporter,
+      assigneeUserId: bugAssignee2.id,
+      projectId: bugProject?.id ?? null,
+      environment: "Production / Chrome 120 / iPhone SE 375px",
+      createdAt: daysAgoDate(5),
+      triagedAt: daysAgoDate(4),
+      resolvedAt: daysAgoDate(1),
+      comments: [
+        { authorId: bugAssignee2.id, authorName: bugAssignee2.name, body: "The chart container needs a `ResponsiveContainer` wrapper. Fix in PR #142.", createdAt: daysAgoDate(1) },
+        { authorId: bugReporter, authorName: "Theo Park", body: "Verified on iPhone SE — no overflow. Looks good.", createdAt: daysAgoDate(0) },
+      ],
+    },
+    {
+      title: "Email field accepts trailing spaces on sign-up (but not sign-in)",
+      description: "The sign-up form stores the email as-typed (with spaces), but the sign-in form trims. A user who signs up with ' ada@x.co ' cannot sign in.",
+      stepsToReproduce: "1. Sign up with email ' ada@x.co ' (note spaces)\n2. Sign out\n3. Sign in with 'ada@x.co'\n4. Login fails",
+      expectedBehavior: "Both forms normalize email the same way.",
+      actualBehavior: "Sign-up stores with spaces; sign-in trims → mismatch.",
+      severity: "MAJOR",
+      priority: "P2",
+      status: "TRIAGED",
+      reporterUserId: bugReporter,
+      assigneeUserId: null,
+      projectId: null,
+      environment: "Staging / Chrome 120 / macOS",
+      createdAt: daysAgoDate(2),
+      triagedAt: daysAgoDate(1),
+      comments: [
+        { authorId: bugReporter, authorName: "Theo Park", body: "This is likely a trim().toLowerCase() inconsistency between the two forms.", createdAt: daysAgoDate(2) },
+      ],
+    },
+    {
+      title: "Audit log page shows 'Loading…' forever when audit:view permission is revoked mid-session",
+      description: "If a MANAGER's audit:view permission is revoked while they have the audit page open, the page shows 'Loading…' indefinitely. The 403 response is not surfaced.",
+      stepsToReproduce: "1. MANAGER opens the audit page\n2. Admin revokes audit:view from MANAGER role\n3. MANAGER refreshes\n4. Page stuck on Loading…",
+      expectedBehavior: "Show 'You do not have permission to view the audit log.'",
+      actualBehavior: "Infinite loading spinner.",
+      severity: "MINOR",
+      priority: "P2",
+      status: "NEW",
+      reporterUserId: bugReporter,
+      assigneeUserId: null,
+      projectId: null,
+      environment: "Production / Chrome 120 / macOS",
+      createdAt: daysAgoDate(1),
+      comments: [],
+    },
+    {
+      title: "Calendar event tooltip shows wrong date when timezone is changed",
+      description: "After changing the timezone in Settings, existing calendar event tooltips still show the old timezone until the page is hard-refreshed.",
+      stepsToReproduce: "1. Set timezone to UTC\n2. Create an event at 14:00\n3. Change timezone to NZST (UTC+12)\n4. Hover over the event\n5. Tooltip still shows 14:00 UTC instead of 02:00 NZST",
+      expectedBehavior: "Tooltip updates to reflect the new timezone immediately.",
+      actualBehavior: "Stale until hard refresh.",
+      severity: "MINOR",
+      priority: "P3",
+      status: "CLOSED",
+      resolution: "WORKS_AS_INTENDED",
+      reporterUserId: bugReporter,
+      assigneeUserId: bugAssignee1.id,
+      projectId: null,
+      environment: "Production / Chrome 120 / macOS",
+      createdAt: daysAgoDate(10),
+      triagedAt: daysAgoDate(9),
+      resolvedAt: daysAgoDate(7),
+      closedAt: daysAgoDate(6),
+      comments: [
+        { authorId: bugAssignee1.id, authorName: bugAssignee1.name, body: "The tooltip caches the timezone at mount. This is expected — a hard refresh is the documented recovery.", createdAt: daysAgoDate(7) },
+        { authorId: bugReporter, authorName: "Theo Park", body: "Fair enough. Closing as works-as-intended.", createdAt: daysAgoDate(6) },
+      ],
+    },
+    {
+      title: "Kanban drag-and-drop loses card position when dropped on empty column",
+      description: "When dragging a task card to an empty column, the card briefly appears then snaps back to the original column. A second drag attempt succeeds.",
+      stepsToReproduce: "1. Create an empty column (move all DONE tasks to IN_REVIEW)\n2. Drag a TODO task to the empty DONE column\n3. Card snaps back\n4. Drag again — succeeds",
+      expectedBehavior: "First drop succeeds.",
+      actualBehavior: "First drop fails; second succeeds.",
+      severity: "MAJOR",
+      priority: "P1",
+      status: "REOPENED",
+      reporterUserId: bugReporter,
+      assigneeUserId: bugAssignee2.id,
+      projectId: bugProject?.id ?? null,
+      environment: "Production / Chrome 120 / macOS",
+      createdAt: daysAgoDate(7),
+      triagedAt: daysAgoDate(6),
+      resolvedAt: daysAgoDate(3),
+      comments: [
+        { authorId: bugAssignee2.id, authorName: bugAssignee2.name, body: "Fixed in PR #138 — the DnD library needed `setNodeRef` on the empty column.", createdAt: daysAgoDate(3) },
+        { authorId: bugReporter, authorName: "Theo Park", body: "Reopening — still happens on Firefox. The fix only covered Chrome.", createdAt: daysAgoDate(0) },
+      ],
+    },
+    {
+      title: "Password reset email subject line truncated in Outlook desktop client",
+      description: "The subject 'Fernly — reset your password' is truncated to 'Fernly — reset your pa…' in Outlook desktop. Gmail and Apple Mail show it fine.",
+      stepsToReproduce: "1. Request a password reset\n2. Open the email in Outlook desktop\n3. Subject is truncated",
+      expectedBehavior: "Full subject visible.",
+      actualBehavior: "Truncated at ~30 chars.",
+      severity: "TRIVIAL",
+      priority: "P3",
+      status: "NEW",
+      reporterUserId: bugReporter,
+      assigneeUserId: null,
+      projectId: null,
+      environment: "Production / Outlook desktop / Windows 11",
+      createdAt: daysAgoDate(0),
+      comments: [],
+    },
+  ];
+
+  for (const b of bugSeed) {
+    const { comments, ...bugData } = b;
+    const created = await db.bug.create({ data: { ...bugData, updatedAt: bugData.createdAt } });
+    for (const c of comments) {
+      await db.bugComment.create({
+        data: { ...c, bugId: created.id },
+      });
+    }
+    // Audit the bug creation (so the audit trail has the bug entries).
+    await audit(
+      memberUser,
+      "MEMBER",
+      "bug.created",
+      "BUG",
+      bugData.title,
+      `Bug “${bugData.title}” raised (${bugData.severity}, ${bugData.priority})`,
+      Math.floor((bugNow - bugData.createdAt) / (24 * 60 * 60 * 1000)),
+      0,
+    );
+    if (bugData.status === "RESOLVED" || bugData.status === "CLOSED") {
+      await audit(
+        bugAssignee1,
+        "MEMBER",
+        "bug.resolved",
+        "BUG",
+        bugData.title,
+        `Resolved as ${bugData.resolution ?? "FIXED"}`,
+        Math.floor((bugNow - (bugData.resolvedAt ?? bugData.createdAt)) / (24 * 60 * 60 * 1000)),
+        0,
+      );
+    }
+    if (bugData.status === "CLOSED") {
+      await audit(
+        memberUser,
+        "MEMBER",
+        "bug.closed",
+        "BUG",
+        bugData.title,
+        `Closed (${bugData.resolution ?? "FIXED"})`,
+        Math.floor((bugNow - (bugData.closedAt ?? bugData.createdAt)) / (24 * 60 * 60 * 1000)),
+        0,
+      );
+    }
+    if (bugData.status === "REOPENED") {
+      await audit(
+        memberUser,
+        "MEMBER",
+        "bug.reopened",
+        "BUG",
+        bugData.title,
+        "Reopened",
+        0,
+        0,
+      );
+    }
+  }
+  console.log(`  ✓ ${bugSeed.length} bugs seeded across all lifecycle states (NEW, TRIAGED, IN_PROGRESS, RESOLVED, CLOSED, REOPENED)`);
+
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }
 

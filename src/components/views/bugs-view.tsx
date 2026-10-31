@@ -17,6 +17,7 @@ import type { BugStatus, BugSeverity, BugPriority, BugResolution } from "@/lib/t
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
 import { Avatar } from "../ui/avatar";
+import { EntityHistorySection } from "../ui/entity-history-section";
 import {
   createBug, getBugsPage, getBug, changeBugStatus,
   assignBug, addBugComment, deleteBug,
@@ -141,20 +142,23 @@ export function BugsView({ currentUser, projects }: BugsViewProps) {
         )}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Filter size={14} className="text-muted-foreground" />
-        <input
-          type="text"
-          placeholder="Search bugs…"
-          value={filters.search}
-          onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-          className="f-input flex-1 min-w-[200px]"
-        />
+      {/* Filters — single row: search (flex) + status + severity + priority */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          <Filter size={14} className="text-muted-foreground shrink-0" />
+          <input
+            type="text"
+            placeholder="Search bugs…"
+            value={filters.search}
+            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+            className="f-input w-full"
+          />
+        </div>
         <select
           value={filters.status}
           onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-          className="f-input"
+          className="f-input w-auto shrink-0"
+          aria-label="Filter by status"
         >
           <option value="">All statuses</option>
           {BUG_STATUSES.map((s) => (
@@ -164,7 +168,8 @@ export function BugsView({ currentUser, projects }: BugsViewProps) {
         <select
           value={filters.severity}
           onChange={(e) => setFilters((f) => ({ ...f, severity: e.target.value }))}
-          className="f-input"
+          className="f-input w-auto shrink-0"
+          aria-label="Filter by severity"
         >
           <option value="">All severities</option>
           {BUG_SEVERITIES.map((s) => (
@@ -174,7 +179,8 @@ export function BugsView({ currentUser, projects }: BugsViewProps) {
         <select
           value={filters.priority}
           onChange={(e) => setFilters((f) => ({ ...f, priority: e.target.value }))}
-          className="f-input"
+          className="f-input w-auto shrink-0"
+          aria-label="Filter by priority"
         >
           <option value="">All priorities</option>
           {BUG_PRIORITIES.map((p) => (
@@ -702,6 +708,14 @@ function BugDetailDrawer({
             </div>
           </div>
         </div>
+
+        {/* Audit history — full traceability of every bug lifecycle event */}
+        <EntityHistorySection
+          entityType="BUG"
+          entityId={bug.id}
+          entityLabel={bug.title}
+          title="Bug History & Audit Trail"
+        />
 
         {/* Delete (admin only) */}
         {canDelete && (
