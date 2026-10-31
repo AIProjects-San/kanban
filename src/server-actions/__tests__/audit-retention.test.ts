@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // L-P1-20 — audit log retention tests.
+// Deep-dive review F-09 updates covered here:
+//   • prune/getInfo require role:manage (not audit:view — MANAGERs hold that)
+//   • retention reads Workspace.auditRetentionDays (not auditLogLimit)
+//   • batching goes through $executeRaw with a real LIMIT
 
 const db = vi.hoisted(() => ({
   workspace: { findUnique: vi.fn() },
   auditLog: { deleteMany: vi.fn() },
   $queryRaw: vi.fn(),
+  $executeRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ db }));
@@ -32,14 +37,14 @@ const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN", name: "Admin", email: "a@
 beforeEach(() => {
   vi.clearAllMocks();
   requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
-  db.workspace.findUnique.mockResolvedValue({ auditLogLimit: 180 });
-  db.auditLog.deleteMany.mockResolvedValue({ count: 0 });
+  db.workspace.findUnique.mockResolvedValue({ auditRetentionDays: 180 });
+  db.$executeRaw.mockResolvedValue(0);
   db.$queryRaw.mockResolvedValue([{ estimate: 12345 }]);
 });
 
 describe("L-P1-20 pruneAuditLogs", () => {
   it("deletes rows older than the retention window and writes a meta-audit row", async () => {
-    db.auditLog.deleteMany.mockResolvedValue({ count: 42 });
+    db.$executeRaw.mockResolvedValue(42);
     const res = await pruneAuditLogs();
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -59,57 +64,70 @@ describe("L-P1-20 pruneAuditLogs", () => {
 
   it("uses the default 180-day retention when workspace config is missing", async () => {
     db.workspace.findUnique.mockResolvedValue(null);
-    db.auditLog.deleteMany.mockResolvedValue({ count: 0 });
+    db.$executeRaw.mockResolvedValue(0);
     const res = await pruneAuditLogs();
     if (!res.ok) throw new Error("expected ok");
     expect(res.data.retentionDays).toBe(DEFAULT_AUDIT_RETENTION_DAYS);
   });
 
   it("clamps retention to the 30-day minimum (safety floor)", async () => {
-    db.workspace.findUnique.mockResolvedValue({ auditLogLimit: 1 });
-    db.auditLog.deleteMany.mockResolvedValue({ count: 0 });
+    db.workspace.findUnique.mockResolvedValue({ auditRetentionDays: 1 });
+    db.$executeRaw.mockResolvedValue(0);
     const res = await pruneAuditLogs();
     if (!res.ok) throw new Error("expected ok");
     expect(res.data.retentionDays).toBe(MIN_AUDIT_RETENTION_DAYS);
   });
 
-  it("clamps retention to the minimum when the value is invalid (0, negative)", async () => {
-    db.workspace.findUnique.mockResolvedValue({ auditLogLimit: 0 });
-    db.auditLog.deleteMany.mockResolvedValue({ count: 0 });
+  it("clamps retention to the default when the value is invalid (0, negative)", async () => {
+    db.workspace.findUnique.mockResolvedValue({ auditRetentionDays: 0 });
+    db.$executeRaw.mockResolvedValue(0);
     const res = await pruneAuditLogs();
     if (!res.ok) throw new Error("expected ok");
     expect(res.data.retentionDays).toBe(DEFAULT_AUDIT_RETENTION_DAYS);
   });
 
-  it("batches deletes and loops until fewer than BATCH_SIZE are returned", async () => {
-    db.auditLog.deleteMany
-      .mockResolvedValueOnce({ count: 10_000 })
-      .mockResolvedValueOnce({ count: 10_000 })
-      .mockResolvedValueOnce({ count: 5_000 });
+  it("no longer conflates the UI display limit with retention (F-09)", async () => {
+    // auditLogLimit is how many rows the audit PAGE shows. Setting it to 90
+    // must NOT change the retention window.
+    db.workspace.findUnique.mockResolvedValue({ auditLogLimit: 90, auditRetentionDays: 180 });
+    db.$executeRaw.mockResolvedValue(0);
+    const res = await pruneAuditLogs();
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.retentionDays).toBe(180);
+  });
+
+  it("batches deletes via $executeRaw with a LIMIT and loops until a short batch", async () => {
+    db.$executeRaw
+      .mockResolvedValueOnce(10_000)
+      .mockResolvedValueOnce(10_000)
+      .mockResolvedValueOnce(5_000);
     const res = await pruneAuditLogs();
     if (!res.ok) throw new Error("expected ok");
     expect(res.data.deletedCount).toBe(25_000);
-    expect(db.auditLog.deleteMany).toHaveBeenCalledTimes(3);
+    expect(db.$executeRaw).toHaveBeenCalledTimes(3);
+    expect(db.auditLog.deleteMany).not.toHaveBeenCalled();
   });
 
   it("stops after 1M rows to avoid a single prune running for hours", async () => {
-    db.auditLog.deleteMany.mockResolvedValue({ count: 10_000 });
+    db.$executeRaw.mockResolvedValue(10_000);
     const res = await pruneAuditLogs();
     if (!res.ok) throw new Error("expected ok");
     expect(res.data.deletedCount).toBe(1_010_000);
-    expect(db.auditLog.deleteMany.mock.calls.length).toBeLessThan(150);
+    expect(db.$executeRaw.mock.calls.length).toBeLessThan(150);
   });
 
-  it("requires audit:view permission", async () => {
+  it("requires role:manage permission — audit:view holders (MANAGER) cannot purge (F-09)", async () => {
     requirePermissionMock.mockRejectedValue(new Error("no perm"));
     const res = await pruneAuditLogs();
     expect(res.ok).toBe(false);
+    // And the permission it demanded was role:manage, not audit:view.
+    expect(requirePermissionMock).toHaveBeenCalledWith("role:manage");
   });
 
   it("is idempotent — running twice deletes 0 rows the second time", async () => {
-    db.auditLog.deleteMany
-      .mockResolvedValueOnce({ count: 100 })
-      .mockResolvedValueOnce({ count: 0 });
+    db.$executeRaw
+      .mockResolvedValueOnce(100)
+      .mockResolvedValueOnce(0);
     const first = await pruneAuditLogs();
     const second = await pruneAuditLogs();
     if (!first.ok || !second.ok) throw new Error("expected ok");
@@ -120,7 +138,7 @@ describe("L-P1-20 pruneAuditLogs", () => {
 
 describe("L-P1-20 getAuditRetentionInfo", () => {
   it("returns the retention config + a row-count estimate", async () => {
-    db.workspace.findUnique.mockResolvedValue({ auditLogLimit: 90 });
+    db.workspace.findUnique.mockResolvedValue({ auditRetentionDays: 90 });
     db.$queryRaw.mockResolvedValue([{ estimate: 50000 }]);
     const res = await getAuditRetentionInfo();
     if (!res.ok) throw new Error("expected ok");
@@ -129,10 +147,11 @@ describe("L-P1-20 getAuditRetentionInfo", () => {
     expect(res.data.cutoff).toBeTruthy();
   });
 
-  it("requires audit:view permission", async () => {
+  it("requires role:manage permission (F-09)", async () => {
     requirePermissionMock.mockRejectedValue(new Error("no perm"));
     const res = await getAuditRetentionInfo();
     expect(res.ok).toBe(false);
+    expect(requirePermissionMock).toHaveBeenCalledWith("role:manage");
   });
 
   it("returns 0 estimate when the table doesn't exist yet (pg_class miss)", async () => {

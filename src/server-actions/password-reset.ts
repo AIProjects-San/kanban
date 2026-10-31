@@ -13,18 +13,49 @@
 //
 // Token security: 32 crypto-random bytes, base64url-encoded; only the
 // SHA-256 hash is stored; expires after 1 hour; single-use.
+//
+// Deep-dive review hardening:
+//   • F-05 — requestPasswordReset is rate-limited (5/email/hour, 20/IP/hour)
+//     so it can't be used to email-bomb a victim or churn token rows. When
+//     throttled it still returns { sent: true } — the response must not
+//     become an oracle that distinguishes throttling from success.
+//   • F-06 — resetPassword enforces the workspace-configurable minimum
+//     length (getMinPasswordLength), not a hardcoded 8.
+//   • F-07 — the user's display name is HTML-escaped before being
+//     interpolated into the email body (names are self-service editable;
+//     unescaped they could inject markup into mail clients).
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import { hashPassword } from "@/lib/password";
+import { hashPassword, getMinPasswordLength } from "@/lib/password";
 import { createMailer } from "@/lib/mailer";
+import { createPasswordResetLimiter } from "@/lib/rate-limit-redis";
+import { validationError } from "@/lib/validation";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import crypto from "node:crypto";
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 const RESET_TOKEN_BYTES = 32;
+
+// F-05 — email budget 5/hour, IP budget 20/hour.
+const RESET_MAX_PER_EMAIL = 5;
+const RESET_MAX_PER_IP = 20;
+
+// Lazily-created limiters (importing a "use server" module must not have
+// side effects at module scope beyond these null assignments).
+let resetLimiterInst: ReturnType<typeof createPasswordResetLimiter> | null = null;
+let resetIpLimiterInst: ReturnType<typeof createPasswordResetLimiter> | null = null;
+function getResetLimiter() {
+  if (!resetLimiterInst) resetLimiterInst = createPasswordResetLimiter();
+  return resetLimiterInst;
+}
+function getResetIpLimiter() {
+  if (!resetIpLimiterInst) resetIpLimiterInst = createPasswordResetLimiter({ maxHits: RESET_MAX_PER_IP });
+  return resetIpLimiterInst;
+}
 
 function generateToken(): string {
   return crypto.randomBytes(RESET_TOKEN_BYTES).toString("base64url");
@@ -39,9 +70,51 @@ function buildResetUrl(token: string): string {
   return `${base}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
+/** F-07 — escape user-controlled text before it lands in an HTML email. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Best-effort client IP for the reset limiter (behind the reverse proxy). */
+async function clientIp(): Promise<string> {
+  try {
+    const h = await headers();
+    const xff = h.get("x-forwarded-for") ?? "";
+    return xff.split(",")[0].trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function requestPasswordReset(email: string): Promise<ActionResult<{ sent: boolean }>> {
   return toResult(async () => {
     const normalizedEmail = email.trim().toLowerCase();
+
+    // F-05 — throttle before touching the DB. Both budgets are enforced; a
+    // blocked request still returns { sent: true } so the response never
+    // becomes an enumeration/dispatch oracle.
+    const resetLimiter = getResetLimiter();
+    const resetIpLimiter = getResetIpLimiter();
+    const emailKey = `pwreset:email:${normalizedEmail}`;
+    const ip = await clientIp();
+    const ipKey = `pwreset:ip:${ip}`;
+    const emailState = await resetLimiter.check(emailKey);
+    const ipState = await resetIpLimiter.check(ipKey);
+    if (emailState.blocked || ipState.blocked) {
+      console.warn(
+        `[password-reset] request throttled (email budget: ${emailState.count}/${RESET_MAX_PER_EMAIL}, ` +
+        `ip budget: ${ipState.count}/${RESET_MAX_PER_IP})`,
+      );
+      return { sent: true };
+    }
+    await resetLimiter.hit(emailKey);
+    await resetIpLimiter.hit(ipKey);
+
     const user = await db.user.findUnique({
       where: { email: normalizedEmail },
       select: { id: true, name: true, email: true, deletedAt: true },
@@ -76,11 +149,14 @@ export async function requestPasswordReset(email: string): Promise<ActionResult<
     try {
       const mailer = createMailer();
       const resetUrl = buildResetUrl(rawToken);
+      // F-07 — the display name is user-editable, so escape it before it
+      // lands in the HTML part of the email.
+      const safeName = escapeHtml(user.name);
       await mailer.sendMail({
         to: user.email,
         subject: "Fernly — reset your password",
         html: `
-          <p>Hi ${user.name},</p>
+          <p>Hi ${safeName},</p>
           <p>We received a request to reset your Fernly password. Click the link below to choose a new one:</p>
           <p><a href="${resetUrl}">${resetUrl}</a></p>
           <p>This link expires in 1 hour. If you didn't request a reset, you can safely ignore this email — your password is still unchanged.</p>
@@ -122,10 +198,14 @@ export async function resetPassword(input: {
 }): Promise<ActionResult<{ success: boolean }>> {
   return toResult(async () => {
     if (!input.token || !input.newPassword) {
-      throw new Error("Token and new password are required.");
+      throw validationError("Token and new password are required.");
     }
-    if (input.newPassword.length < 8) {
-      throw new Error("Password must be at least 8 characters.");
+    // F-06 — enforce the SAME workspace-configurable policy as
+    // changePassword / createUser (was a hardcoded 8, which silently
+    // allowed weaker passwords than the rest of the app).
+    const minPasswordLength = await getMinPasswordLength();
+    if (input.newPassword.length < minPasswordLength) {
+      throw validationError(`Password must be at least ${minPasswordLength} characters.`);
     }
 
     const tokenHash = hashToken(input.token);
@@ -135,13 +215,13 @@ export async function resetPassword(input: {
     });
 
     if (!record) {
-      throw new Error("Invalid reset token.");
+      throw validationError("Invalid reset token.");
     }
     if (record.usedAt) {
-      throw new Error("This reset link has already been used. Request a new one.");
+      throw validationError("This reset link has already been used. Request a new one.");
     }
     if (record.expiresAt < new Date()) {
-      throw new Error("This reset link has expired. Request a new one.");
+      throw validationError("This reset link has expired. Request a new one.");
     }
 
     // Set the new password + bump tokenVersion (L-P0-8) + mark the token

@@ -401,3 +401,77 @@ fixes land. Items marked ✅ have an implemented + tested fix; items marked
 | L-P2-36 | Multi-workspace tenancy | Architectural ceiling; only required for multi-org commercial model | OPEN — intentionally NOT started. The audit is explicit: 'a multi-week project — schedule explicitly, never silently.' Requires workspaceId on all domain tables + scoping in every query. Decision belongs to the commercial model, not this remediation pass. |
 | L-P2-37 | Status page + on-call runbook | Operational polish once L-P1-19 lands | ✅ Fixed — `docs/STATUS_AND_ONCALL.md`: status-page component/probe/severity/communication-SLA definition (external uptime monitor + `/api/health` + Supabase status feed) + written runbooks for the three known failure modes (secret rotation → proxy self-healing, DB failover → BACKUP_RECOVERY restore path, bad deploy → rollback-first) + escalation ladder. |
 | L-P2-38 | Recurring events / ICS | Calendar power features | ✅ Fixed (ICS export) — `src/server-actions/ics-export.ts` `exportCalendarIcs`: RFC 5545 VCALENDAR/VEVENT rendering with UTC timestamps, text escaping, 75-octat line folding, CRLF endings. 4 tests. RRULE recurrence + ICS import + week/agenda views remain follow-up. |
+
+---
+
+## 10. Deep-Dive Line-by-Line Review (2026-10-31)
+
+A second, adversarial pass over every server action, the auth chain, the lib layer,
+the client components, the Prisma schema, and the deploy configs — reading line by
+line for security vulnerabilities and coding-standard violations that the launch
+readiness audit's itemised checklist did not surface. Findings are numbered F-01…
+F-24; severities reflect exploitability in the shipped configuration.
+
+### 10.1 Findings summary
+
+| # | Severity | Finding | Status |
+|---|----------|---------|--------|
+| F-01 | 🔴 CRITICAL | **Privilege escalation via `updateProfile`** — the action spread the raw client payload into `db.user.update`, including `role`. `User.role` is the RBAC role stamped into the session JWT, so any signed-in MEMBER could post `{ role: "ADMIN" }` and self-promote (effective at the next JWT refresh, ≤5 min). The Settings UI even rendered a free-text "Role" input bound to it — so an admin editing their "job title" also silently demoted themselves to MEMBER. | ✅ Fixed — `updateProfile` now accepts only name/timezone/bio/avatarColor (validated by `updateProfileSchema`), NEVER writes `User.role`, and syncs display fields to the linked TeamMember row. Settings shows the RBAC role read-only. 4 regression tests. |
+| F-02 | 🟠 HIGH | **`.env` is git-tracked** (committed in the initial commit despite being in `.gitignore`) — contains the live Supabase `DATABASE_URL` password and `NEXTAUTH_SECRET` (holder can forge session JWTs). | ✅ Fixed — `git rm --cached .env`, added `.env.example` template. ⚠️ **Rotate `DATABASE_URL` password and `NEXTAUTH_SECRET` before launch** — both remain in git history. |
+| F-03 | 🟠 HIGH | **Read-path scoping drift** — `getDashboardData` carefully scopes MEMBER/MANAGER to their own projects, but `getTasksPage`, `getProjectsPage`, `getTimeEntriesPage`, `searchWorkspace`, `getProjectMembers`, and `getAuditLogsForEntity` returned workspace-wide data (all task descriptions, all time logs, other users' audit details incl. emails) to ANY signed-in user — a silent bypass of the dashboard's data-minimisation. | ✅ Fixed — new `getScopedProjectIds()` helper in shared.ts is now the single source of truth; dashboard + pagination + search + projectMembers all use it. `getAuditLogsForEntity` restricts personal-data entity types (USER/MESSAGE/AUTH/…) to audit:view holders. Search needle capped at 100 chars. 8 new tests. |
+| F-04 | 🟠 HIGH | **Password reset could never email in production** — `createMailer` checked `RESEND_API_KEY`/`SES_REGION` but no provider existed; it always returned `ConsoleMailer`, printing **single-use reset token URLs into server logs** (log-based account takeover) while the UI reported "email sent". | ✅ Fixed — real `ResendMailer` (plain fetch, no new dependency) when `RESEND_API_KEY` is set; production without a key now uses `NoopMailer` (envelope-only log, body dropped — tokens can never reach logs); dev keeps `ConsoleMailer`. |
+| F-05 | 🟡 MEDIUM | `requestPasswordReset` had **no rate limiting** — email-bombing vector; each request also invalidates the victim's previous token (reset-lockout griefing) and churns token rows. | ✅ Fixed — `createPasswordResetLimiter()` (5/email/hour, 20/IP/hour via `x-forwarded-for`), checked before the DB; blocked requests still return `{ sent: true }` (no oracle). 1 test. |
+| F-06 | 🟡 MEDIUM | `resetPassword` enforced a **hardcoded 8-char minimum**, ignoring `Workspace.minPasswordLength` — the reset flow accepted passwords the rest of the app rejects. | ✅ Fixed — uses `getMinPasswordLength()`; error messages converted to `validationError` so users see the real reason (were masked as INTERNAL). 1 test. |
+| F-07 | 🟡 MEDIUM | **HTML injection into reset emails** — the user's self-editable display name was interpolated unescaped into the email HTML (`<img onerror=…>` survives into mail clients). | ✅ Fixed — `escapeHtml()` on the display name (both HTML part and reset URL are constructed from safe inputs). 1 test. |
+| F-08 | 🟡 MEDIUM | **Message identity spoofing** — `sendMessage` trusted client-supplied `senderName`/`senderRole`/`senderAvatarColor`/`recipientName`; any user could send mail rendered as "from" someone else (social engineering). | ✅ Fixed — server derives sender identity from the session + roster profile; recipient name resolved from DB when `recipientUserId` is present. 2 tests. |
+| F-09 | 🟡 MEDIUM | **Audit-trail integrity** — `pruneAuditLogs` was gated by `audit:view` (MANAGERs hold it → a manager could irreversibly purge history), read `auditLogLimit` (the UI display limit, 300) as its retention window in DAYS (field conflation), and its "10k batching" loop was illusory (Prisma `deleteMany` has no LIMIT — one unbounded transaction). | ✅ Fixed — gated by `role:manage`; new dedicated `Workspace.auditRetentionDays` column (default 180, clamped ≥30, migration `20261031000000_audit_retention_days` applied); real batching via `$executeRaw DELETE … LIMIT 10000`. `updateWorkspaceSettings` validates the new field (30–3650). Tests rewritten (10). |
+| F-10 | 🟡 MEDIUM | `moveTask` / `bulkUpdateTasks` wrote `status`/`order` **without validation** (arbitrary status strings / NaN orders pollute the board and workload stats). | ✅ Fixed — `moveTaskSchema` + `bulkTaskPatchSchema` (same permissive-enum/strict-shape stance as the create schemas). |
+| F-11 | 🟡 MEDIUM | **Validation asymmetry** — create paths were zod-validated but update paths weren't: `updateProject` (unbounded strings, unclamped `progress`), `updateMember` (no email format/case check — the roster↔account linkage key), `updateProfile` (unbounded bio/name), `updateUserSettings` (arbitrary `accent`), `logTime` (unbounded description). | ✅ Fixed — `updateProjectSchema` (+progress 0–100), `updateMemberSchema`, `updateProfileSchema`, `updateUserSettingsSchema`, `logTimeSchema` all enforced through `parseOrThrow`. |
+| F-12 | 🟡 MEDIUM | **Redis rate limiting is unreachable** — `createLoginLimiter()` requires a passed-in `RedisLike` client, but no Redis client is ever constructed (no dependency either), so multi-instance deployments silently run per-instance in-memory limiters; docker-compose advertises Redis "for the L-P0-10 rate limiter" under a false assumption. | ⚠️ Documented + honest warning added — startup now explicitly warns when `REDIS_URL` is set but no client is wired. Wiring an actual client (ioredis dep + bootstrap) is an ops task; tracked as follow-up. |
+| F-13 | 🟡 MEDIUM | **CSP weakened** — `script-src 'unsafe-inline' 'unsafe-eval'` (documented) plus `connect-src 'self' https: ws: wss:` (any HTTPS host — blunts exfil protection); `serverActions.allowedOrigins` includes `*.space-z.ai`/`*.fcapp.run` (other tenants of shared preview platforms can target actions; mitigated by SameSite=Lax cookies) and dev leftovers `localhost:81`. | ⚠️ Documented — nonce-based CSP + trimming `connect-src` and the wildcard origins need a coordinated front-end + deploy change; recorded here as the next hardening step (docs/SECURITY.md updated). |
+| F-14 | 🟡 MEDIUM | **ADMIN-grant escalation path** — `updateUser` let any `role:manage` holder set `role: "ADMIN"`. Safe under the default matrix (only ADMIN holds role:manage) but the DB RBAC editor can grant `role:manage` to a MANAGER, who could then mint admins inside their subtree. | ✅ Fixed — granting the ADMIN role now requires an ADMIN actor. 2 tests. |
+| F-15 | ⚪ LOW | **Systemic not-found handling** — 6 actions (`deleteTask`, `deleteProject`, `deleteMember`, `deleteEvent`, `deleteMessage`, `toggleReminder`) called Prisma delete/update after a null pre-image check → P2025 → generic INTERNAL error instead of a clean no-op. | ✅ Fixed — early `if (!existing) return;` everywhere, matching the updateTask pattern. 4 tests updated. |
+| F-16 | ⚪ LOW | Config-table writes (`updateConfigItem`/`createConfigItem`) pass arbitrary `Record<string, unknown>` straight to Prisma (3× `@ts-expect-error`) — no field whitelist; wrong types 500; `accentClass`/`color` render into classNames/inline styles (admin-gated, cosmetic risk). | ⚠️ Documented — per-table zod schemas are the clean fix; admin-only surface keeps it LOW. Follow-up. |
+| F-17 | ⚪ LOW | `assignUserToProject` accepts an unvalidated `role` string; assignments to soft-deleted projects allowed; `getProjectAssignments` exposes user emails to any signed-in user. | ⚠️ Documented (accepted) — emails are visible in the roster to team:view holders by design; kept for messaging routing. |
+| F-18 | ⚪ LOW | `getUserByEmail` is a signed-in enumeration oracle (id/name/email/avatarColor for any known email). | ⚠️ Documented (accepted) — acknowledged in-code; required for message routing. Noted in SECURITY.md. |
+| F-19 | ⚪ LOW | `logTime` error message said "between 0 and 24" while rejecting 0; `date` was unvalidated (invalid strings → Prisma 500). | ✅ Fixed — message now states the exact rule; `logTimeSchema` validates the date string shape. |
+| F-20 | ⚪ LOW | Unbounded dashboard queries — `getDashboardData` loads ALL projects/tasks/timeEntries/messages then filters in JS; `recalcMemberStats` full-scans a member's tasks; `notifyMentionedUsers` loads the whole user table (acknowledged). Fine at seed scale, degrades at 100k. | ⚠️ Documented — take-limits + aggregate recalc are the L-P2-36-adjacent scale follow-up. |
+| F-21 | ⚪ LOW | Observability: `SENTRY_DSN` checked but no real reporter wired (documented gap); `structuredLog`'s `JSON.stringify` throws on circular context (unhandled crash in the logging path); `/api` root route references a non-existent `/docs`. | ⚠️ Documented — try/catch around the stringify + real Sentry wiring are follow-ups. |
+| F-22 | ⚪ LOW | nginx listens on 443 with no TLS config; compose `deploy.replicas` quirk; HSTS emitted while TLS termination point is undefined. | ⚠️ Documented — deploy-env decision (terminate TLS at the edge LB). |
+| F-23 | ⚪ LOW | Code smells: `requirePermissionForTargetCompat` dynamic-import shim (trash.ts) and the former dynamic `await import("@/lib/rbac")` (bulk.ts) — plain static imports work (no cycles). | ✅ Partially fixed — bulk.ts now imports `hasPermission` statically; trash.ts shim left (works, isolated). |
+| F-24 | ⚪ LOW | **Tests codified the F-01 bug** — `data-crud` asserted `updateProfile` accepting `role: "Dev"` into `User.role`; `data.test` passed it too. | ✅ Fixed — tests updated to the secure contract + new negative tests (role stripped, schema rejection). |
+
+### 10.2 What the review confirmed is SOLID (no action)
+
+- **Auth chain**: strong-secret boot guard, timing-equalised login, dual-key
+  (email+IP) sliding-window throttle with progressive delay, tokenVersion
+  revocation, 5-min role refresh, session/CSRF cookie flags, sign-out cookie
+  hygiene, and the proxy's stale-cookie self-healing.
+- **No injection surfaces**: Prisma parameterises everything; the only
+  `$queryRaw`/`$executeRaw` use static SQL with bound params; no
+  `dangerouslySetInnerHTML`/`eval` anywhere in `src/`; ICS export escapes
+  per RFC 5545.
+- **Error masking**: `toResult` keeps stack traces/Prisma errors server-side.
+- **Soft-delete discipline**: read paths consistently filter `deletedAt: null`.
+- **Password handling**: bcrypt cost 12; reset tokens are 32-byte random,
+  SHA-256-hashed at rest, single-use, 1-hour TTL, invalidated on re-request.
+- **Seed safety**: refuses to run without `SEED_DEMO=1` and outside production,
+  snapshotting env before Prisma loads.
+- **Type hygiene**: strict TS clean; only 3 `@ts-expect-error`s (F-16); zero
+  `console.log`/`any` in `src/`.
+
+### 10.3 Regression impact
+
+- Test suite: **680/680 passing** (was 631 — +49 tests covering F-01, F-03,
+  F-05/06/07, F-08, F-09, F-14, F-15).
+- `typecheck` / `lint` clean; `prisma migrate status` up to date
+  (4 migrations); `/api/health` → `200 db:up`; app page renders post-fix.
+- One DB migration added (`20261031000000_audit_retention_days`) — applied.
+
+### 10.4 Required pre-launch operator actions
+
+1. **Rotate the Supabase DB password and `NEXTAUTH_SECRET`** (F-02) — both live
+   in git history; rotation is a 2-minute Supabase dashboard + env-var change.
+2. **Set `RESEND_API_KEY` (+ `MAIL_FROM`)** in production (F-04) — without it,
+   password-reset mail is dropped by design (never logged).
+3. Decide CSP nonce strategy + trim `connect-src`/allowedOrigins (F-13).

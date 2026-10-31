@@ -371,6 +371,11 @@ model Workspace {
   minPasswordLength    Int      @default(8)
   workloadFullCapacity Int      @default(6)
   auditLogLimit        Int      @default(300)
+  // Deep-dive review F-09 — retention window for pruneAuditLogs, in days.
+  // Distinct from auditLogLimit (the UI display limit): the previous code
+  // conflated the two, so changing the display limit silently changed the
+  // retention window. 180 days default, clamped to >= 30 at read time.
+  auditRetentionDays   Int      @default(180)
   entityHistoryLimit   Int      @default(50)
   dashboardNotifLimit  Int      @default(20)
   createdAt            DateTime @default(now())

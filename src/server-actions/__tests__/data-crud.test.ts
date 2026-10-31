@@ -610,15 +610,59 @@ describe("reminders & notifications", () => {
 describe("profile & settings", () => {
   it("updateProfile diffs and audits own-profile changes", async () => {
     signIn(MEMBER);
-    db.user.findUnique.mockResolvedValue({ id: MEMBER.userId, name: "Mia", role: "Dev", timezone: "UTC", bio: "", avatarColor: "forest" });
+    db.user.findUnique.mockResolvedValue({ id: MEMBER.userId, name: "Mia", role: "MEMBER", timezone: "UTC", bio: "", avatarColor: "forest" });
     db.user.update.mockResolvedValue({});
+    db.teamMember.updateMany.mockResolvedValue({ count: 1 });
     await updateProfile(MEMBER.userId, {
-      name: "Mia", role: "Dev", timezone: "Pacific/Auckland", bio: "new bio", avatarColor: "ocean",
+      name: "Mia", timezone: "Pacific/Auckland", bio: "new bio", avatarColor: "ocean",
     });
     const audit = db.auditLog.create.mock.calls[0][0];
     expect(audit.data.detail).toMatch(/timezone/);
     expect(audit.data.detail).toMatch(/bio/);
     expect(audit.data.detail).toMatch(/avatar color/);
+  });
+
+  // Deep-dive review F-01 (CRITICAL) — regression tests. updateProfile used
+  // to spread the raw client payload into db.user.update, so a client could
+  // set `role: "ADMIN"` on its own account and self-promote.
+  it("updateProfile NEVER writes User.role — a client-sent role is stripped (F-01)", async () => {
+    signIn(MEMBER);
+    db.user.findUnique.mockResolvedValue({ id: MEMBER.userId, name: "Mia", role: "MEMBER", timezone: "UTC", bio: "", avatarColor: "forest" });
+    db.user.update.mockResolvedValue({});
+    db.teamMember.updateMany.mockResolvedValue({ count: 1 });
+    await updateProfile(MEMBER.userId, {
+      name: "Mia", timezone: "UTC", bio: "", avatarColor: "forest",
+      // forged extra field — must be ignored by the schema + never reach Prisma
+      role: "ADMIN",
+    } as never);
+    const data = db.user.update.mock.calls[0][0].data;
+    expect(data.role).toBeUndefined();
+    expect(data).not.toHaveProperty("role");
+  });
+
+  it("updateProfile rejects payloads that fail the profile schema (F-11)", async () => {
+    signIn(MEMBER);
+    const res = await updateProfile(MEMBER.userId, {
+      name: "", timezone: "UTC", bio: "", avatarColor: "forest",
+    });
+    expect(res.ok).toBe(false);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+
+  it("updateProfile syncs the new name/avatar to the linked roster row", async () => {
+    signIn(MEMBER);
+    db.user.findUnique.mockResolvedValue({ id: MEMBER.userId, name: "Mia", role: "MEMBER", timezone: "UTC", bio: "", avatarColor: "forest" });
+    db.user.update.mockResolvedValue({});
+    db.teamMember.updateMany.mockResolvedValue({ count: 1 });
+    await updateProfile(MEMBER.userId, {
+      name: "Mia Renamed", timezone: "UTC", bio: "", avatarColor: "ocean",
+    });
+    expect(db.teamMember.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: MEMBER.userId },
+        data: expect.objectContaining({ name: "Mia Renamed", avatarColor: "ocean" }),
+      }),
+    );
   });
 
   it("getUserSettings returns DB values when present", async () => {
@@ -663,6 +707,40 @@ describe("profile & settings", () => {
     }));
     expect(generated).toBeTruthy();
     expect(generated).not.toBe("th-42");
+  });
+
+  // Deep-dive review F-08 — the sender's display identity must be derived
+  // from the session, never from the client payload.
+  it("sendMessage derives sender identity from the session, not the payload (F-08)", async () => {
+    signIn(MEMBER);
+    db.message.create.mockResolvedValue({});
+    db.teamMember.findUnique.mockResolvedValue({ name: "Mia Roster", role: "Designer", avatarColor: "plum" });
+    await sendMessage({
+      senderName: "Imposter Name",
+      senderRole: "CEO",
+      senderAvatarColor: "ember",
+      recipientName: "Oli",
+      subject: "s",
+      body: "b",
+    });
+    const data = db.message.create.mock.calls[0][0].data;
+    expect(data.senderName).toBe("Mia Roster");
+    expect(data.senderRole).toBe("Designer");
+    expect(data.senderAvatarColor).toBe("plum");
+  });
+
+  it("sendMessage resolves the recipient name from the DB when recipientUserId is set (F-08)", async () => {
+    signIn(MEMBER);
+    db.message.create.mockResolvedValue({});
+    db.user.findUnique.mockResolvedValue({ name: "Real Recipient" });
+    await sendMessage({
+      recipientUserId: "u-oli",
+      recipientName: "Forged Recipient",
+      subject: "s",
+      body: "b",
+    });
+    const data = db.message.create.mock.calls[0][0].data;
+    expect(data.recipientName).toBe("Real Recipient");
   });
 
   it("getUserByEmail returns the recipient lookup result", async () => {

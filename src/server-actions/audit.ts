@@ -9,6 +9,7 @@
 
 import { db } from "@/lib/db";
 import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { hasPermission } from "@/lib/rbac";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -60,6 +61,20 @@ export async function getAuditLogsForEntity(
     const auth = await getSession();
     if (!auth) throw new AuthorizationError("You must be signed in.");
     if (!entityId) return [];
+    // Deep-dive review F-03 — entityType was previously unrestricted, so any
+    // signed-in MEMBER could read the audit trail of arbitrary entities —
+    // including USER rows, whose detail lines contain emails. Entity types
+    // that can carry personal data (USER, MESSAGE, AUTH, ROLE, WORKSPACE,
+    // CONFIG, AUDIT) now require audit:view (MANAGER+). Operational entity
+    // types (TASK, PROJECT, MEMBER, EVENT, TIME, REMINDER, NOTIFICATION)
+    // stay open to signed-in users — they are the board context the entity
+    // history panel renders.
+    const openEntityTypes = new Set([
+      "TASK", "PROJECT", "MEMBER", "EVENT", "TIME", "REMINDER", "NOTIFICATION",
+    ]);
+    if (!openEntityTypes.has(entityType) && !hasPermission(auth.role, "audit:view")) {
+      throw new AuthorizationError("You can only view history for tasks, projects and team entities.");
+    }
     const logs = await db.auditLog.findMany({
       where: { entityType, entityId },
       orderBy: { createdAt: "desc" },

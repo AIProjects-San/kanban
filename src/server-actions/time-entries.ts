@@ -8,10 +8,11 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import { logAudit, getMyTeamMemberId } from "./shared";
+import { logTimeSchema, parseOrThrow } from "@/lib/validation";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
-export async function logTime(input: {
+export async function logTime(raw: {
   projectId: string;
   memberId?: string; // ignored — always derived from the session for integrity
   date: string;
@@ -20,12 +21,12 @@ export async function logTime(input: {
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await getSessionOrThrow();
+    // Deep-dive review F-11 — shape/length/range validation before the write
+    // (hours range, bounded description, sanity-checked date string).
+    const input = parseOrThrow(logTimeSchema, raw);
     const myMemberId = await getMyTeamMemberId(auth);
     if (!myMemberId) {
       throw new AuthorizationError("You don't have a team member profile to log time against.");
-    }
-    if (!Number.isFinite(input.hours) || input.hours <= 0 || input.hours > 24) {
-      throw new AuthorizationError("Hours must be between 0 and 24.");
     }
     const entry = await db.timeEntry.create({
       data: {

@@ -31,15 +31,27 @@ export async function updateWorkspaceSettings(input: Partial<{
   minPasswordLength: number;
   workloadFullCapacity: number;
   auditLogLimit: number;
+  auditRetentionDays: number;
   entityHistoryLimit: number;
   dashboardNotifLimit: number;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
+    // Deep-dive review F-09 — auditRetentionDays is the prune window (days);
+    // clamp it so a typo can't set retention to 1 day (min 30). The other
+    // numeric fields are display/UX limits with read-time guards.
+    const data = { ...input };
+    if (data.auditRetentionDays !== undefined) {
+      if (!Number.isFinite(data.auditRetentionDays) || data.auditRetentionDays < 30 || data.auditRetentionDays > 3650) {
+        throw new AuthorizationError("Audit retention must be between 30 and 3650 days.");
+      }
+      data.auditRetentionDays = Math.round(data.auditRetentionDays);
+    }
+    if (data.name !== undefined) data.name = String(data.name).slice(0, 120);
     await db.workspace.upsert({
       where: { id: "default" },
-      create: { id: "default", ...input },
-      update: input,
+      create: { id: "default", ...data },
+      update: data,
     });
     bumpConfigCache();
     await logAudit({

@@ -38,6 +38,18 @@ vi.mock("next-auth", () => ({ getServerSession }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db }));
 
+// Deep-dive review F-14 test support — control the DB RBAC ceiling without
+// touching the config cache. Default: nothing extra granted (deny by
+// default, matching a failed/empty DB read).
+const hasPermissionDbMock = vi.fn();
+vi.mock("@/lib/config-loader", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/config-loader")>("@/lib/config-loader");
+  return {
+    ...actual,
+    hasPermissionDb: (...a: unknown[]) => hasPermissionDbMock(...(a as [])),
+  };
+});
+
 import {
   getDashboardData,
   getUserProfile,
@@ -162,6 +174,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   signIn(null);
   wireMemberLookup();
+  // Default DB RBAC ceiling: nothing extra granted (deny by default).
+  hasPermissionDbMock.mockResolvedValue(false);
   db.auditLog.create.mockResolvedValue({});
   db.task.aggregate.mockResolvedValue({ _max: { order: 0 } });
   // Default: recalcMemberStats() calls db.task.findMany({ where: { assigneeId } })
@@ -563,9 +577,16 @@ describe("logTime (P1-10)", () => {
     expectErr(await logTime({ projectId: "p-1", date: iso(new Date()), hours: 2 }), /team member profile/i);
   });
 
-  it.each([0, -1, 25, NaN])("rejects invalid hours: %s", async (hours) => {
+  it.each([0, -1, 25])("rejects invalid hours: %s", async (hours) => {
     signIn(MEMBER);
-    expectErr(await logTime({ projectId: "p-1", date: iso(new Date()), hours }), /between 0 and 24/i);
+    // F-11 — validation moved into logTimeSchema; the message now states
+    // the exact rule (0 is rejected, not just >24).
+    expectErr(await logTime({ projectId: "p-1", date: iso(new Date()), hours }), /greater than 0 and at most 24/i);
+  });
+
+  it("rejects NaN hours at the schema layer", async () => {
+    signIn(MEMBER);
+    expectErr(await logTime({ projectId: "p-1", date: iso(new Date()), hours: NaN }), /hours/i);
   });
 });
 
@@ -743,6 +764,27 @@ describe("updateUser guards", () => {
     db.user.findUnique.mockResolvedValue({ id: "u-oli", role: "MEMBER", email: "o@x.co", name: "Oli" });
     expectErr(await updateUser("u-oli", { role: "GOD" }), /invalid role/i);
   });
+
+  // Deep-dive review F-14 — only an ADMIN may grant the ADMIN role. Under
+  // the default matrix only admins hold role:manage, but the DB RBAC editor
+  // can grant role:manage to a MANAGER — that must not let them mint admins.
+  it("prevents a non-admin role:manage holder from granting the ADMIN role (F-14)", async () => {
+    // Simulate the DB ceiling granting MANAGER the role:manage permission.
+    hasPermissionDbMock.mockResolvedValue(true);
+    signIn(MANAGER);
+    db.user.findUnique.mockResolvedValue({ id: "u-oli", role: "MEMBER", email: "o@x.co", name: "Oli", managerId: null });
+    db.user.findMany.mockResolvedValue([]); // subtree lookup
+    expectErr(await updateUser("u-oli", { role: "ADMIN" }), /only an admin can grant/i);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+
+  it("allows an admin to grant the ADMIN role", async () => {
+    signIn(ADMIN);
+    db.user.findUnique.mockResolvedValue({ id: "u-oli", role: "MANAGER", email: "o@x.co", name: "Oli" });
+    db.user.update.mockResolvedValue({});
+    db.teamMember.updateMany.mockResolvedValue({});
+    expectOk(await updateUser("u-oli", { role: "ADMIN" }));
+  });
 });
 
 describe("deleteUser guards", () => {
@@ -793,7 +835,7 @@ describe("changePassword", () => {
 describe("self-profile & settings", () => {
   it("updateProfile rejects editing someone else's profile", async () => {
     signIn(MEMBER);
-    expectErr(await updateProfile("u-oli", { name: "x", role: "Dev", timezone: "UTC", bio: "", avatarColor: "forest" }), /own profile/i);
+    expectErr(await updateProfile("u-oli", { name: "x", timezone: "UTC", bio: "", avatarColor: "forest" }), /own profile/i);
   });
 
   it("updateUserSettings rejects editing someone else's settings", async () => {

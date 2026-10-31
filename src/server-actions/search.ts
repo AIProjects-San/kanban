@@ -17,6 +17,7 @@
 
 import { db } from "@/lib/db";
 import { getSession, AuthorizationError } from "./auth-guard";
+import { getScopedProjectIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -39,24 +40,51 @@ export interface SearchResults {
 
 const PER_GROUP = 5;
 const MIN_QUERY_LENGTH = 2;
+const MAX_QUERY_LENGTH = 100; // Deep-dive review F-03: cap the ILIKE needle.
 
 export async function searchWorkspace(query: string): Promise<ActionResult<SearchResults>> {
   return toResult(async () => {
     const auth = await getSession();
     if (!auth) throw new AuthorizationError("You must be signed in.");
 
-    const q = query.trim();
+    const q = query.trim().slice(0, MAX_QUERY_LENGTH);
     const empty: SearchResults = { query: q, tasks: [], projects: [], members: [] };
     if (q.length < MIN_QUERY_LENGTH) return empty;
 
+    // Deep-dive review F-03 — apply the SAME scoping as the dashboard loader:
+    // MEMBER/MANAGER only search tasks/projects inside projects they own /
+    // are assigned to / have tasks in (plus their own tasks anywhere). The
+    // member directory group stays unscoped — MEMBERS hold team:view and the
+    // roster is the messaging routing surface by design (see getUserByEmail).
+    const scopedIds = await getScopedProjectIds(auth);
+
     const contains = { contains: q, mode: "insensitive" as const };
+    const searchOr = [
+      { title: contains },
+      { description: contains },
+    ];
+    const taskWhere: Record<string, unknown> =
+      scopedIds
+        ? {
+            project: { deletedAt: null }, // L-P0-14 soft-delete filter
+            AND: [
+              {
+                OR: [
+                  { projectId: { in: Array.from(scopedIds) } },
+                  { assignee: { userId: auth.userId } },
+                ],
+              },
+              { OR: searchOr },
+            ],
+          }
+        : {
+            project: { deletedAt: null }, // L-P0-14 soft-delete filter
+            OR: searchOr,
+          };
 
     const [tasks, projects, members] = await Promise.all([
       db.task.findMany({
-        where: {
-          project: { deletedAt: null }, // L-P0-14 soft-delete filter
-          OR: [{ title: contains }, { description: contains }],
-        },
+        where: taskWhere,
         select: {
           id: true, title: true, status: true,
           project: { select: { name: true } },
@@ -67,6 +95,7 @@ export async function searchWorkspace(query: string): Promise<ActionResult<Searc
       db.project.findMany({
         where: {
           deletedAt: null, // L-P0-14 soft-delete filter
+          ...(scopedIds ? { id: { in: Array.from(scopedIds) } } : {}),
           OR: [{ name: contains }, { description: contains }],
         },
         select: { id: true, name: true, status: true },

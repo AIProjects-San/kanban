@@ -60,6 +60,46 @@ export async function getMyTeamMemberId(auth: { userId: string; email: string })
   return member?.id ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Deep-dive review F-03 — one canonical data-scoping helper.
+//
+// getDashboardData always scoped MEMBER/MANAGER reads to "projects you own,
+// have tasks in, or are explicitly assigned to". Several later read paths
+// (pagination, search, project members) forgot that rule and returned
+// workspace-wide data to any signed-in user. Everything now funnels through
+// this helper so the scopes can never drift apart again.
+//
+// Returns:
+//   • null  → unscoped (ADMIN) — the caller sees the whole workspace.
+//   • Set   → the caller's project ids (possibly empty).
+// ---------------------------------------------------------------------------
+
+export async function getScopedProjectIds(
+  auth: { userId: string; role: string },
+): Promise<Set<string> | null> {
+  if (auth.role === "ADMIN") return null;
+  const [owned, assignedProjects, explicitAssignments] = await Promise.all([
+    db.project.findMany({
+      where: { ownerUserId: auth.userId },
+      select: { id: true },
+    }),
+    db.task.findMany({
+      where: { assignee: { userId: auth.userId } },
+      select: { projectId: true },
+      distinct: ["projectId"],
+    }),
+    db.projectAssignment.findMany({
+      where: { userId: auth.userId },
+      select: { projectId: true },
+    }),
+  ]);
+  return new Set([
+    ...owned.map((p) => p.id),
+    ...assignedProjects.map((t) => t.projectId).filter(Boolean) as string[],
+    ...explicitAssignments.map((a) => a.projectId),
+  ]);
+}
+
 /**
  * Enforce task edit rights for the signed-in user.
  * `task:edit:any` — may edit anything. `task:edit:own` (without :any) — may

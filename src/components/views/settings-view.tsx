@@ -42,7 +42,6 @@ export function SettingsView({ user }: SettingsViewProps) {
   const { accent, setAccent, dark, setDark } = useApp();
   const refresh = useRefresh();
   const [name, setName] = useState(user.name);
-  const [role, setRole] = useState(user.role);
   const [timezone, setTimezone] = useState(user.timezone);
   const [bio, setBio] = useState(user.bio);
   const [avatarColor, setAvatarColor] = useState<AccentTheme>(user.avatarColor as AccentTheme);
@@ -58,7 +57,9 @@ export function SettingsView({ user }: SettingsViewProps) {
   });
 
   const saveProfile = async () => {
-    const res = await updateProfile(user.id, { name, role, timezone, bio, avatarColor });
+    // Deep-dive review F-01: no `role` is sent — the RBAC role is managed by
+    // admins via the People view; job titles are edited on the roster there.
+    const res = await updateProfile(user.id, { name, timezone, bio, avatarColor });
     if (!res.ok) {
       toast.error(res.error);
       return;
@@ -124,7 +125,9 @@ export function SettingsView({ user }: SettingsViewProps) {
             <input className="f-input" value={user.email} disabled />
           </Field>
           <Field label="Role">
-            <input className="f-input" value={role} onChange={(e) => setRole(e.target.value)} />
+            {/* F-01: read-only — User.role is the RBAC role (ADMIN/MANAGER/MEMBER),
+                managed by admins in the People view. It is NOT a job title. */}
+            <input className="f-input" value={user.role} disabled title="Roles are managed by workspace admins" />
           </Field>
           <Field label="Time zone">
             <select className="f-input" value={timezone} onChange={(e) => setTimezone(e.target.value)}>

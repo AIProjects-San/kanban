@@ -17,12 +17,14 @@ export async function toggleReminder(id: string, completed: boolean): Promise<Ac
   return toResult(async () => {
     const auth = await getSessionOrThrow();
     const existing = await db.reminder.findUnique({ where: { id } });
+    // Deep-dive review F-15 — not-found is a clean no-op, not a P2025.
+    if (!existing) return;
     // Personal reminders can only be toggled by their owner (or an admin).
-    if (existing?.ownerId && existing.ownerId !== auth.userId && !hasPermission(auth.role, "role:manage")) {
+    if (existing.ownerId && existing.ownerId !== auth.userId && !hasPermission(auth.role, "role:manage")) {
       throw new AuthorizationError("You can only change your own reminders.");
     }
     await db.reminder.update({ where: { id }, data: { completed } });
-    if (existing && existing.completed !== completed) {
+    if (existing.completed !== completed) {
       await logAudit({
         actor: auth,
         action: completed ? "reminder.completed" : "reminder.reopened",

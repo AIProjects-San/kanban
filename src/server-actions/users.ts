@@ -12,7 +12,7 @@ import { getSession, getSessionOrThrow, requirePermission, requirePermissionForT
 import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/rbac";
 import { assertNoCycle } from "@/lib/hierarchy";
 import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/password";
-import { emailSchema } from "@/lib/validation";
+import { emailSchema, updateProfileSchema, updateUserSettingsSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -107,10 +107,13 @@ export async function updateUserSettings(userId: string, input: Partial<{
     if (auth.userId !== userId) {
       throw new AuthorizationError("You can only update your own settings.");
     }
+    // Deep-dive review F-11 — shape/length validation (accent is rendered
+    // into class names, so cap it).
+    const data = parseOrThrow(updateUserSettingsSchema, input);
     await db.userSettings.upsert({
       where: { userId },
-      create: { userId, ...input },
-      update: input,
+      create: { userId, ...data },
+      update: data,
     });
     revalidatePath("/");
   });
@@ -118,11 +121,21 @@ export async function updateUserSettings(userId: string, input: Partial<{
 
 // ---------------------------------------------------------------------------
 // Self-service profile update
+//
+// Deep-dive review F-01 (CRITICAL): this action previously spread the raw
+// client payload into db.user.update — including `role`. User.role is the
+// RBAC role used by the session/JWT, so any signed-in user could self-promote
+// to ADMIN by posting { role: "ADMIN" } (and an admin editing their "job
+// title" in Settings silently demoted themselves to MEMBER). The action now:
+//   • accepts ONLY name/timezone/bio/avatarColor for the User row,
+//   • validates lengths via updateProfileSchema,
+//   • never writes User.role.
+// Job titles live on TeamMember.role and are edited through member:edit
+// paths (updateMember / updateUser.jobTitle).
 // ---------------------------------------------------------------------------
 
 export async function updateProfile(userId: string, input: {
   name: string;
-  role: string;
   timezone: string;
   bio: string;
   avatarColor: string;
@@ -133,26 +146,35 @@ export async function updateProfile(userId: string, input: {
     if (auth.userId !== userId) {
       throw new AuthorizationError("You can only update your own profile.");
     }
+    const data = parseOrThrow(updateProfileSchema, input);
     const existing = await db.user.findUnique({ where: { id: userId } });
-    await db.user.update({ where: { id: userId }, data: input });
-    if (existing) {
-      const changes: string[] = [];
-      if (input.name !== existing.name) changes.push("name");
-      if (input.role !== existing.role) changes.push("job title");
-      if (input.timezone !== existing.timezone) changes.push("timezone");
-      if (input.bio !== existing.bio) changes.push("bio");
-      if (input.avatarColor !== existing.avatarColor) changes.push("avatar color");
-      await logAudit({
-        actor: auth,
-        action: "profile.updated",
-        entityType: "USER",
-        entityId: userId,
-        entityLabel: input.name,
-        detail: changes.length
-          ? `Updated ${changes.join(", ")} on their profile`
-          : "Saved their profile",
-      });
-    }
+    if (!existing) throw new AuthorizationError("Account not found.");
+    await db.user.update({
+      where: { id: userId },
+      // NOTE: no `role` — RBAC role changes go through updateUser (role:manage).
+      data: { name: data.name, timezone: data.timezone, bio: data.bio, avatarColor: data.avatarColor },
+    });
+    // Keep the linked roster row's display fields in sync (same contract as
+    // updateUser) so the team directory reflects the new name/avatar.
+    await db.teamMember.updateMany({
+      where: { userId },
+      data: { name: data.name, avatarColor: data.avatarColor },
+    });
+    const changes: string[] = [];
+    if (data.name !== existing.name) changes.push("name");
+    if (data.timezone !== existing.timezone) changes.push("timezone");
+    if (data.bio !== existing.bio) changes.push("bio");
+    if (data.avatarColor !== existing.avatarColor) changes.push("avatar color");
+    await logAudit({
+      actor: auth,
+      action: "profile.updated",
+      entityType: "USER",
+      entityId: userId,
+      entityLabel: data.name,
+      detail: changes.length
+        ? `Updated ${changes.join(", ")} on their profile`
+        : "Saved their profile",
+    });
     revalidatePath("/");
   });
 }
@@ -376,6 +398,13 @@ export async function updateUser(userId: string, input: {
     // Self-protection: cannot demote yourself
     if (userId === auth.userId && input.role && input.role !== "ADMIN") {
       throw new AuthorizationError("You cannot change your own role. Ask another admin to do it.");
+    }
+    // Deep-dive review F-14 — only an ADMIN may grant the ADMIN role. Under
+    // the default matrix only admins hold role:manage anyway, but the DB
+    // ceiling lets an admin grant role:manage to a MANAGER — without this
+    // rule that MANAGER could then mint ADMIN accounts inside their subtree.
+    if (input.role === "ADMIN" && auth.role !== "ADMIN") {
+      throw new AuthorizationError("Only an admin can grant the ADMIN role.");
     }
     // Self-protection: cannot unmanage yourself (would let you escape the
     // hierarchy). Only an admin (who is above the hierarchy) can change

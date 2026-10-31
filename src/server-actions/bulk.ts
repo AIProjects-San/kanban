@@ -15,6 +15,8 @@
 import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit, recalcMemberStats } from "./shared";
+import { bulkTaskPatchSchema, parseOrThrow } from "@/lib/validation";
+import { hasPermission } from "@/lib/rbac";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
@@ -41,7 +43,7 @@ const MAX_BULK = 100;
  */
 export async function bulkUpdateTasks(
   taskIds: string[],
-  patch: BulkTaskPatch,
+  rawPatch: BulkTaskPatch,
 ): Promise<ActionResult<BulkUpdateResult>> {
   return toResult(async () => {
     // task:edit:own is the floor permission; assertTaskEditPermission inside
@@ -54,6 +56,10 @@ export async function bulkUpdateTasks(
     if (taskIds.length > MAX_BULK) {
       throw new AuthorizationError(`Bulk updates are capped at ${MAX_BULK} tasks per call.`);
     }
+    // Deep-dive review F-10 — the patch (status/assigneeId) previously
+    // reached Prisma unvalidated, so arbitrary status strings could be
+    // bulk-written into the board.
+    const patch = parseOrThrow(bulkTaskPatchSchema, rawPatch);
     if (patch.status === undefined && patch.assigneeId === undefined) {
       throw new AuthorizationError("Nothing to update — provide a status or assignee.");
     }
@@ -64,7 +70,6 @@ export async function bulkUpdateTasks(
     });
 
     // Permission filter: keep only tasks the caller may edit.
-    const { hasPermission } = await import("@/lib/rbac");
     const canEditAny = hasPermission(auth.role, "task:edit:any");
     const permitted = tasks.filter((t) => {
       if (canEditAny) return true;

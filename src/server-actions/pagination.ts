@@ -15,6 +15,7 @@
 
 import { db } from "@/lib/db";
 import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { getScopedProjectIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -129,13 +130,34 @@ export async function getTasksPage(input?: {
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
 
-    const where: Record<string, unknown> = { project: { deletedAt: null } };
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
-      ];
+    // Deep-dive review F-03 — apply the SAME data scoping as the dashboard
+    // loader: MEMBER/MANAGER only see tasks in projects they own / are
+    // assigned to / have tasks in (plus tasks assigned to them anywhere).
+    // Previously this action returned every task in the workspace to any
+    // signed-in user, quietly bypassing the dashboard's scoping.
+    const scopedIds = await getScopedProjectIds(auth);
+
+    const conditions: Record<string, unknown>[] = [];
+    if (scopedIds) {
+      conditions.push({
+        OR: [
+          { projectId: { in: Array.from(scopedIds) } },
+          { assignee: { userId: auth.userId } },
+        ],
+      });
     }
+    if (search) {
+      conditions.push({
+        OR: [
+          { title: { contains: search, mode: "insensitive" } },
+          { description: { contains: search, mode: "insensitive" } },
+        ],
+      });
+    }
+    const where: Record<string, unknown> = {
+      project: { deletedAt: null }, // L-P0-14 soft-delete filter
+      ...(conditions.length ? { AND: conditions } : {}),
+    };
     if (input?.projectId) where.projectId = input.projectId;
     if (input?.status) where.status = input.status;
 
@@ -204,7 +226,12 @@ export async function getProjectsPage(input?: {
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
 
-    const where: Record<string, unknown> = { deletedAt: null };
+    // Deep-dive review F-03 — same scoping as getDashboardData: scoped roles
+    // only see projects they own / are assigned to / have tasks in.
+    const scopedIds = await getScopedProjectIds(auth);
+
+    const where: Record<string, unknown> = { deletedAt: null }; // L-P0-14
+    if (scopedIds) where.id = { in: Array.from(scopedIds) };
     if (search) {
       where.OR = [
         { name: { contains: search, mode: "insensitive" } },
@@ -275,7 +302,19 @@ export async function getTimeEntriesPage(input?: {
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
 
+    // Deep-dive review F-03 — the dashboard filters time entries to members
+    // the viewer can see for scoped roles; this action previously returned
+    // every entry in the workspace. Scope to the viewer's projects + their
+    // own entries.
+    const scopedIds = await getScopedProjectIds(auth);
+
     const where: Record<string, unknown> = { project: { deletedAt: null } };
+    if (scopedIds) {
+      where.OR = [
+        { projectId: { in: Array.from(scopedIds) } },
+        { member: { userId: auth.userId } },
+      ];
+    }
     if (search) {
       where.description = { contains: search, mode: "insensitive" };
     }

@@ -32,6 +32,20 @@ export const createTaskSchema = z.object({
 
 export const updateTaskSchema = createTaskSchema.partial();
 
+// Deep-dive review F-10 — moveTask writes status + order directly; give them
+// the same shape/length guarantees the create/update schemas enforce.
+export const moveTaskSchema = z.object({
+  status: z.string().trim().min(1, "Status is required.").max(40),
+  order: z.number().int("Order must be an integer.").min(0).max(1_000_000_000),
+});
+
+// Deep-dive review F-10 — bulk task patches take the same permissive-enum /
+// strict-shape stance as createTaskSchema.
+export const bulkTaskPatchSchema = z.object({
+  status: z.string().trim().min(1).max(40).optional(),
+  assigneeId: cuidish.nullable().optional(),
+});
+
 export const createProjectSchema = z.object({
   name: title,
   description: text.optional(),
@@ -42,6 +56,13 @@ export const createProjectSchema = z.object({
   ownerMemberId: z.string().max(64).optional(),
 });
 
+// Deep-dive review F-11 — updateProject previously accepted unvalidated
+// payloads (unbounded strings, unclamped progress). Same fields as create,
+// all optional, plus the progress percent.
+export const updateProjectSchema = createProjectSchema.partial().extend({
+  progress: z.number().int("Progress must be an integer.").min(0).max(100).optional(),
+});
+
 export const createMemberSchema = z.object({
   name: z.string().trim().min(1, "Name is required.").max(120),
   role: z.string().max(120),
@@ -50,6 +71,10 @@ export const createMemberSchema = z.object({
   avatarColor: z.string().max(30).optional(),
   online: z.boolean().optional(),
 });
+
+// Deep-dive review F-11 — updateMember previously bypassed the schema the
+// create path enforces (email format/case, length caps).
+export const updateMemberSchema = createMemberSchema.partial();
 
 export const createEventSchema = z.object({
   title,
@@ -69,10 +94,14 @@ export const sendMessageSchema = z.object({
   direction: z.enum(["IN", "OUT"]).optional(),
   threadId: z.string().max(80).optional(),
   memberId: cuidish.nullable().optional(),
-  senderName: z.string().max(120),
+  // Deep-dive review F-08 — sender identity fields are accepted for
+  // backward-compat but IGNORED server-side (derived from the session).
+  senderName: z.string().max(120).optional(),
   senderAvatarColor: z.string().max(30).optional(),
   senderRole: z.string().max(60).optional(),
-  recipientName: z.string().max(120),
+  // Display fallback for roster-only recipients (no User account); the real
+  // name is resolved from recipientUserId when present.
+  recipientName: z.string().max(120).optional(),
   recipientUserId: z.string().max(64).optional(),
   subject: z.string().trim().min(1, "Subject is required.").max(200),
   body: z.string().trim().min(1, "Message body is required.").max(10_000),
@@ -84,6 +113,43 @@ export const createReminderSchema = z.object({
 });
 
 export const emailSchema = email;
+
+// ---------------------------------------------------------------------------
+// Deep-dive review F-01 / F-11 — self-service + settings payloads that
+// previously reached Prisma unvalidated.
+// ---------------------------------------------------------------------------
+
+// updateProfile: NOTE — there is deliberately NO `role` field. User.role is
+// the RBAC role (ADMIN | MANAGER | MEMBER); a client-supplied value here was
+// a privilege-escalation vector (any signed-in user could self-promote).
+// Job titles live on TeamMember.role and are edited via member:edit paths.
+export const updateProfileSchema = z.object({
+  name: z.string().trim().min(1, "Name is required.").max(120),
+  timezone: z.string().trim().min(1).max(64),
+  bio: z.string().max(2_000),
+  avatarColor: z.string().max(30),
+});
+
+export const updateUserSettingsSchema = z.object({
+  accent: z.string().max(30).optional(),
+  dark: z.boolean().optional(),
+  notifEmail: z.boolean().optional(),
+  notifPush: z.boolean().optional(),
+  notifMentions: z.boolean().optional(),
+  notifDueToday: z.boolean().optional(),
+  notifWeekly: z.boolean().optional(),
+  notifProduct: z.boolean().optional(),
+});
+
+export const logTimeSchema = z.object({
+  projectId: z.string().trim().min(1, "Project is required.").max(64),
+  date: isoDate,
+  hours: z.number().finite("Hours must be a number.").refine(
+    (h) => h > 0 && h <= 24,
+    "Hours must be greater than 0 and at most 24.",
+  ),
+  description: z.string().max(2_000).optional(),
+});
 
 /**
  * Parse `input` against `schema`, throwing an AuthorizationError-compatible

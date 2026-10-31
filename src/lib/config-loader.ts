@@ -87,6 +87,7 @@ export interface WorkspaceSettingsT {
   minPasswordLength: number;
   workloadFullCapacity: number;
   auditLogLimit: number;
+  auditRetentionDays: number;
   entityHistoryLimit: number;
   dashboardNotifLimit: number;
 }
@@ -164,6 +165,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           minPasswordLength: workspace.minPasswordLength,
           workloadFullCapacity: workspace.workloadFullCapacity,
           auditLogLimit: workspace.auditLogLimit,
+          auditRetentionDays: workspace.auditRetentionDays,
           entityHistoryLimit: workspace.entityHistoryLimit,
           dashboardNotifLimit: workspace.dashboardNotifLimit,
         }
@@ -178,6 +180,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           minPasswordLength: 8,
           workloadFullCapacity: 6,
           auditLogLimit: 300,
+          auditRetentionDays: 180,
           entityHistoryLimit: 50,
           dashboardNotifLimit: 20,
         },

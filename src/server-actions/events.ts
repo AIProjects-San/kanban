@@ -49,17 +49,17 @@ export async function deleteEvent(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("event:delete");
     const existing = await db.calendarEvent.findUnique({ where: { id } });
+    // Deep-dive review F-15 — not-found is a clean no-op, not a P2025.
+    if (!existing) return;
     await db.calendarEvent.delete({ where: { id } });
-    if (existing) {
-      await logAudit({
-        actor: auth,
-        action: "event.deleted",
-        entityType: "EVENT",
-        entityId: id,
-        entityLabel: existing.title,
-        detail: `Deleted event “${existing.title}”`,
-      });
-    }
+    await logAudit({
+      actor: auth,
+      action: "event.deleted",
+      entityType: "EVENT",
+      entityId: id,
+      entityLabel: existing.title,
+      detail: `Deleted event “${existing.title}”`,
+    });
     revalidatePath("/");
   });
 }

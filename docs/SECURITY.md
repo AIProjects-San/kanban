@@ -84,10 +84,16 @@ entity (transparency for collaborators).
 
 ## 7. Secrets management
 
-- Secrets live only in environment variables; `.env` is git-ignored and a
-  `.env.example` documents the required variables.
+- Secrets live only in environment variables; `.env` is git-ignored **and
+  untracked** (deep-dive F-02: it was accidentally committed in the initial
+  commit — it has been removed from the index, but **rotate the Supabase DB
+  password and `NEXTAUTH_SECRET` before launch** because both remain in git
+  history) and a `.env.example` documents the required variables.
 - The dev fallback secret is a per-process random value (never a public constant).
 - Database credentials rotate via Supabase; no secrets in the client bundle.
+- Password-reset mail requires `RESEND_API_KEY` in production. Without it mail
+  is **dropped, never logged** (deep-dive F-04) — single-use reset tokens must
+  never appear in server logs.
 
 ## 8. Threat model (abridged STRIDE)
 
@@ -107,10 +113,20 @@ entity (transparency for collaborators).
 1. Name-based joins (`ownerName`, email-matched members) — two users with identical
    names can appear in each other's scope. Fix: stable-id columns (planned migration).
 2. Notifications are workspace-global (design decision for a single-team workspace).
-3. Rate limiting is in-process (single-instance assumption) — move to Redis before
-   scaling out.
+3. Rate limiting is in-process (single-instance assumption) — `REDIS_URL` is
+   honoured by the limiter factory but **no Redis client is wired in code yet**
+   (deep-dive F-12); move to a shared client before scaling out.
 4. Unexpected server-action errors surface generically in production (only
    Authorization/Validation errors carry a digest marker).
+5. `getUserByEmail` + the search member directory let any signed-in user resolve
+   id/name/email/avatarColor for a known email (deep-dive F-17/F-18) — required
+   for message routing in a single-workspace product; revisit with L-P2-36
+   tenancy.
+6. CSP ships with `unsafe-inline`/`unsafe-eval` and `connect-src https:`
+   (deep-dive F-13); a nonce-based policy is the next hardening step.
+7. Config-table class/color strings are admin-authored and render into
+   classNames/inline styles (deep-dive F-16) — admin-only surface, cosmetic blast
+   radius.
 
 ## 10. Incident response
 

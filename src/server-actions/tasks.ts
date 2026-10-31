@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission } from "./auth-guard";
 import { TASK_STATUS_LABELS } from "@/lib/config";
-import { createTaskSchema, updateTaskSchema, parseOrThrow } from "@/lib/validation";
+import { createTaskSchema, updateTaskSchema, moveTaskSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit, assertTaskEditPermission, recalcMemberStats } from "./shared";
 import { notifyMentionedUsers } from "./mentions";
 import { toResult } from "./result";
@@ -147,23 +147,26 @@ export async function updateTask(id: string, raw: Partial<{
 export async function moveTask(id: string, newStatus: string, newOrder: number): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("task:edit:own");
+    // Deep-dive review F-10 — status/order were previously written without
+    // any validation (arbitrary strings / NaN orders polluted the board).
+    const move = parseOrThrow(moveTaskSchema, { status: newStatus, order: newOrder });
     const task = await db.task.findUnique({ where: { id } });
     if (!task) return;
     await assertTaskEditPermission(auth, task);
     const oldAssignee = task.assigneeId;
     await db.task.update({
       where: { id },
-      data: { status: newStatus, order: newOrder },
+      data: { status: move.status, order: move.order },
     });
     await recalcMemberStats(oldAssignee);
-    if (task.status !== newStatus) {
+    if (task.status !== move.status) {
       await logAudit({
         actor: auth,
         action: "task.moved",
         entityType: "TASK",
         entityId: id,
         entityLabel: task.title,
-        detail: `Moved “${task.title}” to ${TASK_STATUS_LABELS[newStatus as keyof typeof TASK_STATUS_LABELS] ?? newStatus}`,
+        detail: `Moved “${task.title}” to ${TASK_STATUS_LABELS[move.status as keyof typeof TASK_STATUS_LABELS] ?? move.status}`,
       });
     }
     revalidatePath("/");
@@ -174,6 +177,8 @@ export async function deleteTask(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("task:delete");
     const task = await db.task.findUnique({ where: { id } });
+    // Deep-dive review F-15 — not-found is a clean no-op, not a P2025
+    // INTERNAL error from Prisma.
     if (!task) return;
     await db.task.delete({ where: { id } });
     await recalcMemberStats(task.assigneeId);

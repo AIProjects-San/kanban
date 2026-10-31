@@ -212,6 +212,18 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
             <input type="number" className="f-input" value={form.auditLogLimit} onChange={(e) => setForm({ ...form, auditLogLimit: Number(e.target.value) })} />
           </Field>
         </FormRow>
+        <FormRow>
+          {/* Deep-dive review F-09 — retention window (days) for pruneAuditLogs.
+              Distinct from the display limit above; server clamps to 30–3650. */}
+          <Field label="Audit retention (days, min 30)">
+            <input
+              type="number"
+              className="f-input"
+              value={form.auditRetentionDays ?? 180}
+              onChange={(e) => setForm({ ...form, auditRetentionDays: Number(e.target.value) })}
+            />
+          </Field>
+        </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">
             {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Save size={14} /> Save settings</>}

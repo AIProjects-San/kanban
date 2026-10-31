@@ -18,8 +18,36 @@ const db = vi.hoisted(() => {
 vi.mock("@/lib/db", () => ({ db }));
 
 const hashPasswordMock = vi.fn();
+const getMinPasswordLengthMock = vi.fn();
 vi.mock("@/lib/password", () => ({
   hashPassword: (...a: unknown[]) => hashPasswordMock(...a),
+  getMinPasswordLength: () => getMinPasswordLengthMock(),
+}));
+
+// Deep-dive review F-05 — control the reset-request limiter per test.
+const limiterState = vi.hoisted(() => ({
+  blocked: false,
+  count: 0,
+  hits: 0,
+}));
+vi.mock("@/lib/rate-limit-redis", () => {
+  const makeLimiter = () => ({
+    check: vi.fn(async () => ({ blocked: limiterState.blocked, count: limiterState.count, retryAfterSec: 0 })),
+    hit: vi.fn(async () => {
+      limiterState.hits++;
+      return { blocked: false, count: limiterState.hits, retryAfterSec: 0 };
+    }),
+    reset: vi.fn(),
+  });
+  return {
+    createLoginLimiter: makeLimiter,
+    createPasswordResetLimiter: makeLimiter,
+  };
+});
+
+// F-05 — the action reads the caller's IP from request headers.
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.9" }),
 }));
 
 const { FakeMailer, _resetMailerCacheForTests } = await import("@/lib/mailer");
@@ -43,6 +71,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   fakeMailer.clear();
   _resetMailerCacheForTests();
+  limiterState.blocked = false;
+  limiterState.count = 0;
+  limiterState.hits = 0;
+  getMinPasswordLengthMock.mockResolvedValue(8);
   db.user.findUnique.mockResolvedValue(null);
   db.passwordResetToken.findUnique.mockResolvedValue(null);
   db.passwordResetToken.create.mockResolvedValue({});
@@ -118,6 +150,33 @@ describe("L-P0-11 requestPasswordReset", () => {
     createMailerMock.mockReturnValueOnce(errorMailer as never);
     const res = await requestPasswordReset("ada@fernly.app");
     expect(res.ok).toBe(true);
+  });
+
+  // Deep-dive review F-05 — throttling must short-circuit BEFORE the DB and
+  // still return sent:true (no oracle).
+  it("returns sent:true WITHOUT touching the DB when throttled (F-05)", async () => {
+    limiterState.blocked = true;
+    limiterState.count = 5;
+    db.user.findUnique.mockResolvedValue(USER);
+    const res = await requestPasswordReset("ada@fernly.app");
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.sent).toBe(true);
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+    expect(db.passwordResetToken.create).not.toHaveBeenCalled();
+    expect(fakeMailer.sent.length).toBe(0);
+  });
+
+  // Deep-dive review F-07 — the display name is user-editable and must be
+  // HTML-escaped before landing in the email body.
+  it("escapes the user's display name in the HTML email body (F-07)", async () => {
+    db.user.findUnique.mockResolvedValue({
+      ...USER,
+      name: 'Ada <img src=x onerror="alert(1)">',
+    });
+    await requestPasswordReset("ada@fernly.app");
+    expect(fakeMailer.sent.length).toBe(1);
+    expect(fakeMailer.sent[0].html).not.toContain("<img src=x");
+    expect(fakeMailer.sent[0].html).toContain("&lt;img src=x");
   });
 });
 
@@ -222,6 +281,18 @@ describe("L-P0-11 resetPassword", () => {
     db.passwordResetToken.findUnique.mockResolvedValue(VALID_TOKEN_RECORD);
     const res = await resetPassword({ token: "good-token", newPassword: "short" });
     expect(res.ok).toBe(false);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  // Deep-dive review F-06 — the reset flow must honour the workspace policy,
+  // not a hardcoded 8.
+  it("enforces the workspace-configured minimum length (F-06)", async () => {
+    getMinPasswordLengthMock.mockResolvedValue(12);
+    db.passwordResetToken.findUnique.mockResolvedValue(VALID_TOKEN_RECORD);
+    // 11 characters — fine under the hardcoded-8 policy, too short for 12.
+    const res = await resetPassword({ token: "good-token", newPassword: "elevenchars" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/at least 12/i);
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 });

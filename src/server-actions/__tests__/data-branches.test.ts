@@ -210,35 +210,39 @@ describe("updateMember change-detection", () => {
 });
 
 describe("delete flows tolerate missing pre-images", () => {
-  it("deleteProject with no existing row skips the audit but still soft-deletes (L-P0-14)", async () => {
+  // Deep-dive review F-15 — not-found is now a CLEAN NO-OP everywhere
+  // (matching the updateTask pattern). Previously these actions still called
+  // Prisma delete/update on a ghost id, which raised P2025 and surfaced as a
+  // generic INTERNAL error to the user.
+  it("deleteProject with no existing row is a clean no-op (no write, no audit)", async () => {
     db.project.findUnique.mockResolvedValue(null);
     db.project.update.mockResolvedValue({});
-    await deleteProject("ghost");
-    // L-P0-14: soft-delete via update, not hard delete
-    expect(db.project.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "ghost" }, data: expect.objectContaining({ deletedAt: expect.any(Date) }) }),
-    );
+    expectOk(await deleteProject("ghost"));
+    expect(db.project.update).not.toHaveBeenCalled();
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 
-  it("deleteMember with no existing row skips the audit", async () => {
+  it("deleteMember with no existing row is a clean no-op", async () => {
     db.teamMember.findUnique.mockResolvedValue(null);
     db.teamMember.delete.mockResolvedValue({});
-    await deleteMember("ghost");
+    expectOk(await deleteMember("ghost"));
+    expect(db.teamMember.delete).not.toHaveBeenCalled();
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 
-  it("deleteEvent with no existing row skips the audit", async () => {
+  it("deleteEvent with no existing row is a clean no-op", async () => {
     db.calendarEvent.findUnique.mockResolvedValue(null);
     db.calendarEvent.delete.mockResolvedValue({});
-    await deleteEvent("ghost");
+    expectOk(await deleteEvent("ghost"));
+    expect(db.calendarEvent.delete).not.toHaveBeenCalled();
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 
-  it("deleteMessage with no existing row deletes without auditing", async () => {
+  it("deleteMessage with no existing row is a clean no-op", async () => {
     db.message.findUnique.mockResolvedValue(null);
-    db.message.delete.mockResolvedValue({});
+    db.message.update.mockResolvedValue({});
     expectOk(await deleteMessage("ghost"));
+    expect(db.message.update).not.toHaveBeenCalled();
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 });

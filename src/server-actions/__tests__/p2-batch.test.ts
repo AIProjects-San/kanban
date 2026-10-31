@@ -35,8 +35,10 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
+const getScopedProjectIdsMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
+  getScopedProjectIds: (...a: unknown[]) => getScopedProjectIdsMock(...(a as [])),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -54,6 +56,9 @@ beforeEach(() => {
   getSessionMock.mockResolvedValue(MEMBER_AUTH);
   requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
   requirePermissionForTargetMock.mockResolvedValue(ADMIN_AUTH);
+  // Deep-dive review F-03 — default to unscoped so the existing where-shape
+  // assertions stay meaningful; scoping tests override this.
+  getScopedProjectIdsMock.mockResolvedValue(null);
   for (const m of Object.values(db)) {
     for (const fn of Object.values(m)) fn.mockResolvedValue([]);
   }
@@ -229,6 +234,41 @@ describe("L-P2-30 searchWorkspace", () => {
     getSessionMock.mockResolvedValue(null);
     const res = await searchWorkspace("anything");
     expect(res.ok).toBe(false);
+  });
+
+  // Deep-dive review F-03 — scoped roles must not be able to search into
+  // projects/tasks they cannot see.
+  it("scopes task + project results to the caller's projects for MEMBER/MANAGER (F-03)", async () => {
+    getScopedProjectIdsMock.mockResolvedValue(new Set(["p-1", "p-2"]));
+    await searchWorkspace("apollo");
+    const taskCall = db.task.findMany.mock.calls[0][0];
+    expect(taskCall.where.AND[0].OR).toEqual([
+      { projectId: { in: ["p-1", "p-2"] } },
+      { assignee: { userId: MEMBER_AUTH.userId } },
+    ]);
+    expect(taskCall.where.AND[1].OR).toEqual([
+      { title: { contains: "apollo", mode: "insensitive" } },
+      { description: { contains: "apollo", mode: "insensitive" } },
+    ]);
+    const projectCall = db.project.findMany.mock.calls[0][0];
+    expect(projectCall.where.id).toEqual({ in: ["p-1", "p-2"] });
+  });
+
+  it("leaves the member directory group unscoped (team:view semantics, F-03)", async () => {
+    getScopedProjectIdsMock.mockResolvedValue(new Set(["p-1"]));
+    await searchWorkspace("ada");
+    const memberCall = db.teamMember.findMany.mock.calls[0][0];
+    expect(memberCall.where.id).toBeUndefined();
+    expect(memberCall.where.OR).toEqual([
+      { name: { contains: "ada", mode: "insensitive" } },
+      { email: { contains: "ada", mode: "insensitive" } },
+    ]);
+  });
+
+  it("caps the query length at 100 characters (F-03)", async () => {
+    const res = await searchWorkspace("a".repeat(500));
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.query.length).toBe(100);
   });
 });
 

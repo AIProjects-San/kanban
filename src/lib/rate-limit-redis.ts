@@ -162,6 +162,7 @@ class RedisLimiterAdapter implements LimiterLike {
 }
 
 let cachedLoginLimiter: LimiterLike | null = null;
+let cachedPasswordResetLimiter: LimiterLike | null = null;
 
 /**
  * Create (and cache) the login limiter. Picks Redis when `REDIS_URL` is set
@@ -193,7 +194,17 @@ export function createLoginLimiter(opts?: {
     cachedLoginLimiter = new RedisLimiterAdapter(limiter);
     console.info("[rate-limit] login limiter backed by Redis (shared across instances, L-P0-10)");
   } else {
-    if (process.env.NODE_ENV === "production" && !redisUrl) {
+    // Deep-dive review F-12 — be explicit when REDIS_URL is set but no client
+    // is wired: the Redis path is then unreachable and every instance runs
+    // its own in-memory window.
+    if (process.env.NODE_ENV === "production" && redisUrl && !redisClient) {
+      console.warn(
+        "[rate-limit] REDIS_URL is set but no Redis client is wired — " +
+        "running the login limiter in-memory. In a multi-instance deployment " +
+        "the per-instance budgets do NOT add up to a shared one. Pass a " +
+        "RedisLike client to createLoginLimiter() to close this (L-P0-10 / F-12).",
+      );
+    } else if (process.env.NODE_ENV === "production") {
       console.warn(
         "[rate-limit] REDIS_URL not set — falling back to in-memory login " +
         "limiter. In a multi-instance deployment this is a known gap (L-P0-10). " +
@@ -206,7 +217,47 @@ export function createLoginLimiter(opts?: {
   return cachedLoginLimiter;
 }
 
-/** Test-only: reset the cached limiter so a new one is created on next call. */
+/**
+ * Deep-dive review F-05 — rate limiter for the password-reset REQUEST
+ * endpoint. The login endpoint was throttled but requestPasswordReset was
+ * not, so an attacker could email-bomb a victim's inbox (each request also
+ * invalidates the previous token, locking the user out of resetting) and
+ * hammer the DB with token writes.
+ *
+ * Budget: 5 requests per email per hour, 20 per source IP per hour — enough
+ * for a legitimate user who retries a few times, too tight for bombing.
+ */
+export function createPasswordResetLimiter(opts?: {
+  redisClient?: RedisLike;
+  redisUrl?: string;
+  maxHits?: number;
+  windowMs?: number;
+}): LimiterLike {
+  if (cachedPasswordResetLimiter) return cachedPasswordResetLimiter;
+
+  const maxHits = opts?.maxHits ?? 5;
+  const windowMs = opts?.windowMs ?? 60 * 60 * 1000; // 1 hour
+  const redisUrl = opts?.redisUrl ?? process.env.REDIS_URL;
+  const redisClient = opts?.redisClient;
+
+  if (redisUrl && redisClient) {
+    const limiter = new RedisSlidingWindowLimiter({
+      maxHits,
+      windowMs,
+      redis: redisClient,
+      keyPrefix: "fernly:pwreset:",
+      progressiveDelayThreshold: 0, // no progressive delay — plain window
+    });
+    cachedPasswordResetLimiter = new RedisLimiterAdapter(limiter);
+  } else {
+    const inner = new SlidingWindowLimiter(maxHits, windowMs);
+    cachedPasswordResetLimiter = new InMemoryLimiterAdapter(inner);
+  }
+  return cachedPasswordResetLimiter;
+}
+
+/** Test-only: reset the cached limiters so new ones are created on next call. */
 export function _resetLoginLimiterCacheForTests(): void {
   cachedLoginLimiter = null;
+  cachedPasswordResetLimiter = null;
 }

@@ -5,7 +5,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission } from "./auth-guard";
-import { createProjectSchema, parseOrThrow, validationError } from "@/lib/validation";
+import { createProjectSchema, updateProjectSchema, parseOrThrow, validationError } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -61,7 +61,7 @@ export async function createProject(input: {
   });
 }
 
-export async function updateProject(id: string, input: Partial<{
+export async function updateProject(id: string, raw: Partial<{
   name: string;
   description: string;
   status: string;
@@ -74,7 +74,13 @@ export async function updateProject(id: string, input: Partial<{
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("project:edit");
+    // Deep-dive review F-11 — the create path is schema-validated but the
+    // update path previously accepted raw payloads (unbounded strings,
+    // unclamped progress). Same schema, partial.
+    const input = parseOrThrow(updateProjectSchema, raw);
     const existing = await db.project.findUnique({ where: { id } });
+    // Deep-dive review F-15 — not-found is a clean no-op, not a P2025.
+    if (!existing) return;
     // Owner reassignment: client sends the owner's TeamMember id; the server
     // resolves the stable user id + display name.
     let ownerUserId: string | null | undefined;
@@ -140,6 +146,8 @@ export async function deleteProject(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("project:delete");
     const existing = await db.project.findUnique({ where: { id } });
+    // Deep-dive review F-15 — not-found is a clean no-op, not a P2025.
+    if (!existing) return;
     // L-P0-14 — soft-delete instead of hard delete. Setting `deletedAt` hides
     // the project from read paths (which filter `deletedAt: null`) WITHOUT
     // nulling Task.projectId, so tasks keep their project reference and don't

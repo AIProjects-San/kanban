@@ -9,6 +9,7 @@
 
 import { db } from "@/lib/db";
 import { getSession, AuthorizationError } from "./auth-guard";
+import { getScopedProjectIds } from "./shared";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 import { toResult } from "./result";
@@ -21,12 +22,16 @@ import type { ActionResult } from "@/lib/action-result";
 // Access scope (ALWAYS derived from the server-side session — never from
 // caller-provided arguments, since any "use server" export can be invoked
 // directly by an authenticated client):
-//   • ADMIN / MANAGER — sees every project, task and member in the workspace.
-//   • MEMBER          — sees ONLY projects they own or have tasks assigned to,
-//                       and only tasks belonging to those projects (plus any
-//                       task directly assigned to them). Other members are
-//                       still listed so they can be messaged, but their
-//                       workload stats are not exposed.
+//   • ADMIN            — sees every project, task and member in the workspace.
+//   • MANAGER / MEMBER — sees ONLY projects they own or have tasks assigned
+//                        to (or are explicitly staffed on), and only tasks
+//                        belonging to those projects (plus any task directly
+//                        assigned to them). Other members are still listed
+//                        (scoped — see memberWhere) so they can be messaged,
+//                        but their workload stats are not exposed.
+//
+// The same scoping is shared with the paginated/search read paths via
+// getScopedProjectIds (deep-dive review F-03) so the scopes can't drift.
 
 export async function getDashboardData(): Promise<DashboardData> {
   const session = await getSession();
@@ -37,32 +42,18 @@ export async function getDashboardData(): Promise<DashboardData> {
   const role = session.role;
   const currentUserId = session.userId;
   const isMember = role === "MEMBER";
+  // NOTE: MANAGER is scoped like MEMBER here (they see projects they own /
+  // are assigned to / have tasks in). Deep-dive review F-03 documented this
+  // as a deliberate design choice — RBAC's task:edit:any lets a MANAGER edit
+  // any task they can SEE; visibility itself is hierarchy-driven.
   const isScoped = isMember || role === "MANAGER";
 
   // For scoped users, compute the set of project IDs they are associated with.
   // All identity matching goes through the stable user id — never the name.
+  // (F-03: shared with the pagination/search read paths.)
   let scopedProjectIds: Set<string> | null = null;
   if (isScoped && currentUserId) {
-    const [owned, assignedProjects, explicitAssignments] = await Promise.all([
-      db.project.findMany({
-        where: { ownerUserId: currentUserId },
-        select: { id: true },
-      }),
-      db.task.findMany({
-        where: { assignee: { userId: currentUserId } },
-        select: { projectId: true },
-        distinct: ["projectId"],
-      }),
-      db.projectAssignment.findMany({
-        where: { userId: currentUserId },
-        select: { projectId: true },
-      }),
-    ]);
-    scopedProjectIds = new Set([
-      ...owned.map((p) => p.id),
-      ...assignedProjects.map((t) => t.projectId).filter(Boolean) as string[],
-      ...explicitAssignments.map((a) => a.projectId),
-    ]);
+    scopedProjectIds = await getScopedProjectIds(session);
   }
 
   // L-P0-14 — soft-delete filter. All read paths must exclude rows whose
@@ -318,9 +309,15 @@ export async function getProjectMembers(projectId: string): Promise<ActionResult
 
     const project = await db.project.findUnique({
       where: { id: projectId },
-      select: { id: true, name: true, ownerUserId: true },
+      select: { id: true, name: true, ownerUserId: true, deletedAt: true },
     });
-    if (!project) return [];
+    if (!project || project.deletedAt) return [];
+
+    // Deep-dive review F-03 — scoped roles may only enumerate the roster of
+    // projects they can already see (the dashboard applies the same rule to
+    // the member list). Admins are unscoped.
+    const scopedIds = await getScopedProjectIds(auth);
+    if (scopedIds && !scopedIds.has(projectId)) return [];
 
     // Members who already have at least one task in this project.
     const assignedMembers = await db.teamMember.findMany({

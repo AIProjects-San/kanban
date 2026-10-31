@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // L-P0-9 — paginated list actions.
 
 const db = vi.hoisted(() => {
-  const models = ["user", "task", "project", "timeEntry"];
+  const models = ["user", "task", "project", "timeEntry", "projectAssignment", "teamMember"];
   const methods = ["findMany", "findUnique", "findFirst", "create", "update", "updateMany", "delete", "deleteMany", "count", "aggregate"];
   const obj: Record<string, Record<string, ReturnType<typeof vi.fn>>> = {};
   for (const m of models) {
@@ -144,14 +144,43 @@ describe("L-P0-9 getTasksPage (cursor pagination + search + filters)", () => {
   it("applies the soft-delete filter on the project relation — L-P0-14", async () => {
     db.task.findMany.mockResolvedValue([]);
     await getTasksPage();
-    expect(db.task.findMany.mock.calls[0][0].where.project).toEqual({ deletedAt: null });
+    // .at(-1): getScopedProjectIds also calls db.task.findMany (F-03).
+    expect(db.task.findMany.mock.calls.at(-1)![0].where.project).toEqual({ deletedAt: null });
   });
 
   it("applies the search filter on title + description", async () => {
     db.task.findMany.mockResolvedValue([]);
     await getTasksPage({ search: "login" });
-    const call = db.task.findMany.mock.calls[0][0];
-    expect(call.where.OR).toEqual([
+    const call = db.task.findMany.mock.calls.at(-1)![0];
+    // MEMBER is signed in, so the scope condition lands in AND[0] and the
+    // search condition in AND[1] (deep-dive review F-03).
+    expect(call.where.AND[1].OR).toEqual([
+      { title: { contains: "login", mode: "insensitive" } },
+      { description: { contains: "login", mode: "insensitive" } },
+    ]);
+  });
+
+  it("scopes tasks to the caller's projects for MEMBER/MANAGER (F-03)", async () => {
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
+      Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    db.task.findMany.mockResolvedValue([]);
+    await getTasksPage();
+    const call = db.task.findMany.mock.calls.at(-1)![0];
+    expect(call.where.AND[0].OR).toEqual([
+      { projectId: { in: ["p-owned"] } },
+      { assignee: { userId: MEMBER_AUTH.userId } },
+    ]);
+  });
+
+  it("does NOT scope tasks for ADMIN (F-03)", async () => {
+    getSessionMock.mockResolvedValue(ADMIN_AUTH);
+    db.task.findMany.mockResolvedValue([]);
+    await getTasksPage({ search: "login" });
+    const call = db.task.findMany.mock.calls.at(-1)![0];
+    // Unscoped: no project-scope condition — only the search condition,
+    // which lands as a single AND entry (equivalent to a top-level OR).
+    expect(call.where.AND).toHaveLength(1);
+    expect(call.where.AND[0].OR).toEqual([
       { title: { contains: "login", mode: "insensitive" } },
       { description: { contains: "login", mode: "insensitive" } },
     ]);
@@ -160,7 +189,7 @@ describe("L-P0-9 getTasksPage (cursor pagination + search + filters)", () => {
   it("passes projectId and status filters through to the where clause", async () => {
     db.task.findMany.mockResolvedValue([]);
     await getTasksPage({ projectId: "p-1", status: "DONE" });
-    const call = db.task.findMany.mock.calls[0][0];
+    const call = db.task.findMany.mock.calls.at(-1)![0];
     expect(call.where.projectId).toBe("p-1");
     expect(call.where.status).toBe("DONE");
   });
@@ -200,6 +229,15 @@ describe("L-P0-9 getProjectsPage (cursor pagination + search)", () => {
     ]);
   });
 
+  it("scopes projects to the caller's own set for MEMBER/MANAGER (F-03)", async () => {
+    getSessionMock.mockResolvedValue(MEMBER_AUTH);
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
+      Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    await getProjectsPage();
+    const call = db.project.findMany.mock.calls.at(-1)![0];
+    expect(call.where.id).toEqual({ in: ["p-owned"] });
+  });
+
   it("passes the status filter through", async () => {
     db.project.findMany.mockResolvedValue([]);
     await getProjectsPage({ status: "ENDED" });
@@ -237,5 +275,18 @@ describe("L-P0-9 getTimeEntriesPage (cursor pagination + search + filters)", () 
     const call = db.timeEntry.findMany.mock.calls[0][0];
     expect(call.where.projectId).toBe("p-1");
     expect(call.where.memberId).toBe("m-1");
+  });
+
+  it("scopes time entries to the caller's projects + own entries for MEMBER/MANAGER (F-03)", async () => {
+    getSessionMock.mockResolvedValue(MEMBER_AUTH);
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
+      Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    db.timeEntry.findMany.mockResolvedValue([]);
+    await getTimeEntriesPage();
+    const call = db.timeEntry.findMany.mock.calls[0][0];
+    expect(call.where.OR).toEqual([
+      { projectId: { in: ["p-owned"] } },
+      { member: { userId: MEMBER_AUTH.userId } },
+    ]);
   });
 });

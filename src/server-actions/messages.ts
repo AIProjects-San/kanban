@@ -21,10 +21,18 @@ export async function sendMessage(raw: {
   direction?: "OUT" | "IN";
   threadId?: string;
   memberId?: string | null;
-  senderName: string;
+  // senderName / senderAvatarColor / senderRole are IGNORED — deep-dive
+  // review F-08: they are display identity and were client-controlled, so
+  // any signed-in user could send a message that rendered as "from" someone
+  // else (impersonation / social engineering). The server now derives them
+  // from the session user + their roster profile.
+  senderName?: string;
   senderAvatarColor?: string;
   senderRole?: string;
-  recipientName: string;
+  // recipientName is a display fallback used when the recipient has no User
+  // account (roster-only member); when recipientUserId is provided the name
+  // is resolved from the database.
+  recipientName?: string;
   recipientUserId?: string;
   subject: string;
   body: string;
@@ -32,6 +40,28 @@ export async function sendMessage(raw: {
   return toResult(async () => {
     const auth = await requirePermission("message:send");
     const input = parseOrThrow(sendMessageSchema, raw);
+
+    // F-08 — server-side sender identity. Prefer the roster profile (has the
+    // job title + avatar color); fall back to the session user.
+    const senderProfile = await db.teamMember.findUnique({
+      where: { userId: auth.userId },
+      select: { name: true, role: true, avatarColor: true },
+    });
+    const senderName = senderProfile?.name || auth.name;
+    const senderRole = senderProfile?.role ?? "";
+    const senderAvatarColor = senderProfile?.avatarColor ?? "forest";
+
+    // Resolve the recipient's display name from the DB when we have a user
+    // id, so the client can't spoof who a thread is "with".
+    let recipientName = input.recipientName ?? "";
+    if (input.recipientUserId) {
+      const recipient = await db.user.findUnique({
+        where: { id: input.recipientUserId },
+        select: { name: true },
+      });
+      if (recipient) recipientName = recipient.name;
+    }
+
     // Generate a threadId if not provided (new conversation)
     const threadId = input.threadId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await db.message.create({
@@ -43,10 +73,10 @@ export async function sendMessage(raw: {
         memberId: input.memberId || null,
         senderUserId: auth.userId,
         recipientUserId: input.recipientUserId || "",
-        senderName: input.senderName,
-        senderAvatarColor: input.senderAvatarColor || "forest",
-        senderRole: input.senderRole || "",
-        recipientName: input.recipientName,
+        senderName,
+        senderAvatarColor,
+        senderRole,
+        recipientName,
         subject: input.subject,
         body: input.body,
         // Legacy: false for the recipient (who hasn't seen it yet). The
@@ -59,7 +89,7 @@ export async function sendMessage(raw: {
       action: "message.sent",
       entityType: "MESSAGE",
       entityLabel: input.subject,
-      detail: `Sent “${input.subject}” to ${input.recipientName}`,
+      detail: `Sent “${input.subject}” to ${recipientName}`,
     });
     revalidatePath("/");
     return threadId;
@@ -120,24 +150,25 @@ export async function deleteMessage(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("message:send"); // anyone who can send can delete their own
     const existing = await db.message.findUnique({ where: { id } });
+    // Deep-dive review F-15 — not-found is a clean no-op (matching the
+    // updateTask pattern), not a P2025 INTERNAL error.
+    if (!existing) return;
     // Ownership: only the sender or the recipient of a message may delete it.
-    if (existing && existing.senderUserId !== auth.userId && existing.recipientUserId !== auth.userId) {
+    if (existing.senderUserId !== auth.userId && existing.recipientUserId !== auth.userId) {
       throw new AuthorizationError("You can only delete messages you sent or received.");
     }
     // L-P0-14 — soft-delete instead of hard delete. The message is hidden
     // from read paths (which filter `deletedAt: null`) but the row is
     // preserved so audit trails and MessageRead state stay intact.
     await db.message.update({ where: { id }, data: { deletedAt: new Date() } });
-    if (existing) {
-      await logAudit({
-        actor: auth,
-        action: "message.deleted",
-        entityType: "MESSAGE",
-        entityId: id,
-        entityLabel: existing.subject,
-        detail: `Soft-deleted message “${existing.subject}”`,
-      });
-    }
+    await logAudit({
+      actor: auth,
+      action: "message.deleted",
+      entityType: "MESSAGE",
+      entityId: id,
+      entityLabel: existing.subject,
+      detail: `Soft-deleted message “${existing.subject}”`,
+    });
     revalidatePath("/");
   });
 }
