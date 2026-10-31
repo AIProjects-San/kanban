@@ -18,7 +18,7 @@
 // client. Falls back to the in-memory limiter when REDIS_URL is unset.
 // ---------------------------------------------------------------------------
 
-import { logError,logInfo,logWarn } from "@/lib/observability";
+import { logInfo, logWarn, log } from "@/lib/observability";
 import { SlidingWindowLimiter, type RateLimitState } from "./rate-limit";
 import { getSharedRedisClient } from "./redis-client";
 
@@ -189,9 +189,17 @@ class FailOpenRedisLimiterAdapter implements LimiterLike {
       const now = Date.now();
       if (now - this.lastWarnedAt > 30_000) {
         this.lastWarnedAt = now;
-        logError(
-          `[rate-limit] Redis unavailable — ${this.label} limiter running UNTHROTTLED (fail-open):`,
-          err instanceof Error ? err.message : err,
+        // P2 (production-readiness re-audit) — emit a structured `metric`
+        // field so operators can alert on `metric=rate_limit_fail_open`. The
+        // 30s throttle prevents log spam; the metric lets dashboards surface
+        // "brute-force protection is degraded" without grepping message text.
+        log.error(
+          `[rate-limit] Redis unavailable — ${this.label} limiter running UNTHROTTLED (fail-open)`,
+          {
+            metric: "rate_limit_fail_open",
+            limiter: this.label,
+            error: err instanceof Error ? err.message : String(err),
+          },
         );
       }
       return fallback;

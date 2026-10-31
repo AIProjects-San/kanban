@@ -36,19 +36,35 @@ export async function notifyMentionedUsers(ctx: MentionContext): Promise<string[
     const mentionedNames = extractMentionedNames(ctx.text);
     if (mentionedNames.length === 0) return [];
 
-    // Load all non-deleted users once and match locally — workspaces are
-    // small (100s–1000s of users) and this avoids one query per mention.
-    // We also fetch each user's notification preferences so the Settings →
+    // P2 (production-readiness re-audit) — previously loaded ALL non-deleted
+    // users into memory on every mention-bearing task/message write. A 10k-
+    // user workspace would load 10k rows on every @mention. Now we scope the
+    // query to only users whose name could plausibly match one of the
+    // mentioned names (case-insensitive contains on each token), capped at
+    // a generous take limit as a safety net.
+    //
+    // We still fetch each user's notification preferences so the Settings →
     // "Mentions" toggle is genuinely honoured (audit gate 9: no cosmetic
     // controls — a toggle must either work or be absent/labelled).
-    const users = await db.user.findMany({
-      where: { deletedAt: null },
-      select: {
-        id: true,
-        name: true,
-        settings: { select: { notifMentions: true } },
-      },
-    });
+    const mentionTokens = mentionedNames
+      .flatMap((n) => n.trim().split(/\s+/))
+      .filter((t) => t.length >= 2);
+    const users = mentionTokens.length > 0
+      ? await db.user.findMany({
+          where: {
+            deletedAt: null,
+            OR: mentionTokens.map((token) => ({
+              name: { contains: token, mode: "insensitive" as const },
+            })),
+          },
+          take: 500, // safety cap — a single mention list rarely matches >50
+          select: {
+            id: true,
+            name: true,
+            settings: { select: { notifMentions: true } },
+          },
+        })
+      : [];
 
     const byName = new Map<string, string>(); // normalised full name → userId
     const byFirstName = new Map<string, string[]>(); // first word → userIds

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "bash scripts/run-with-env.sh next dev -p 3000 2>&1 | tee dev.log",
     "build": "bash scripts/run-with-env.sh next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/ && rm -f .next/standalone/.env*",
-    "start": "bash scripts/run-with-env.sh bun .next/standalone/server.js 2>&1 | tee server.log",
+    "start": "bash scripts/run-with-env.sh bun .next/standalone/server.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

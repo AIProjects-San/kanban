@@ -154,6 +154,20 @@ export async function updateRole(roleId: string, data: {
 
     // Update permissions if provided
     if (data.permissions !== undefined) {
+      // P2 (production-readiness re-audit) — prevent privilege escalation:
+      // `role:manage` is an ADMIN-only capability. A MANAGER with `role:manage`
+      // (granted by an admin via the DB) could otherwise grant `role:manage`
+      // to their own role, then grant `user:manage:any` to themselves, etc.
+      // Only ADMIN may add `role:manage` to any role.
+      const PROTECTED_PERMS = ["role:manage"];
+      if (auth.role !== "ADMIN") {
+        const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
+        if (conflicting.length > 0) {
+          throw new AuthorizationError(
+            `Only ADMIN may grant: ${conflicting.join(", ")}.`,
+          );
+        }
+      }
       // Replace atomically — a failure mid-way can never leave the role with
       // zero or duplicated permissions.
       await db.$transaction(async (tx) => {
@@ -206,6 +220,16 @@ export async function createRole(data: {
     });
 
     if (data.permissions && data.permissions.length > 0) {
+      // P2 re-audit — same protected-permission guard as updateRole.
+      const PROTECTED_PERMS = ["role:manage"];
+      if (auth.role !== "ADMIN") {
+        const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
+        if (conflicting.length > 0) {
+          throw new AuthorizationError(
+            `Only ADMIN may grant: ${conflicting.join(", ")}.`,
+          );
+        }
+      }
       const perms = await db.permission.findMany({
         where: { key: { in: data.permissions } },
       });

@@ -91,4 +91,9 @@ export class SlidingWindowLimiter {
 export const LOGIN_MAX_ATTEMPTS = 5;
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
+// P2 (production-readiness re-audit) — this in-memory singleton is retained
+// for test compatibility (auth.test.ts imports it directly to reset throttle
+// buckets between cases). Production code uses `createLoginLimiter()` from
+// `rate-limit-redis.ts` instead, which picks the Redis-backed limiter when
+// REDIS_URL is set. Do NOT import this in new server code — use the factory.
 export const loginLimiter = new SlidingWindowLimiter(LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS);

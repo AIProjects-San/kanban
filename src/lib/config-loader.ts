@@ -112,7 +112,15 @@ export interface WorkspaceConfig {
 
 let cachedConfig: WorkspaceConfig | null = null;
 let cacheTime = 0;
-const CACHE_TTL = 60_000; // 60 seconds
+// P2 (production-readiness re-audit) — shortened from 60s to 10s. With 2
+// replicas, an admin's permission revocation is visible on instance A
+// immediately (via bumpConfigCache) but only on instance B after the TTL
+// expires. 60s was too long for a security-relevant cache (the RBAC ceiling
+// reads through this). 10s is a better tradeoff: still avoids hammering the
+// DB on every request, but caps the staleness window at a tolerable level.
+// For instant cross-instance invalidation, move bumpConfigCache to Redis
+// pub/sub (future work).
+const CACHE_TTL = 10_000; // 10 seconds
 
 export function bumpConfigCache() {
   cachedConfig = null;

@@ -1,4 +1,5 @@
 Feature: Role-based access control
+@critical
   The UI must only expose the controls a role is allowed to use.
 
   Background:

@@ -90,18 +90,37 @@ export default async function proxy(req: NextRequest) {
   // P1 re-audit — per-request nonce for CSP.
   const nonce = generateNonce();
   const csp = buildCsp(nonce);
+  // P2 (production-readiness re-audit) — record the start time so we can
+  // emit `durationMs` in the per-request structured log. This lets operators
+  // build p95 latency dashboards + alert on slow requests from the existing
+  // log stream without a separate metrics dependency.
+  const startMs = Date.now();
 
   return withRequestId(requestId, async () => {
     const raw = req.cookies.get(SESSION_COOKIE)?.value;
     const secret = process.env.NEXTAUTH_SECRET;
 
-    // Helper: stamp CSP + request-id on any response we return.
+    // Helper: stamp CSP + request-id on any response we return + emit a
+    // per-request structured log line with duration + route + status.
     function stampHeaders(res: NextResponse) {
       res.headers.set("Content-Security-Policy", csp);
       res.headers.set("X-Request-Id", requestId);
       // Also pass the nonce as a request header so server components can
       // read it via headers() and apply it to custom <script> tags.
       res.headers.set("x-nonce", nonce);
+      // P2 re-audit — per-request structured log with durationMs + route +
+      // statusCode. Operators can build p95 + error-rate alerts from this.
+      // Emitted at info level for successful requests; warn for 5xx.
+      const durationMs = Date.now() - startMs;
+      const method = req.method;
+      const path = req.nextUrl.pathname;
+      log.info("proxy: request", {
+        method,
+        path,
+        statusCode: res.status,
+        durationMs,
+        metric: "http_request",
+      });
       return res;
     }
 

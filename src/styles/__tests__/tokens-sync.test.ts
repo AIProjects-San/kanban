@@ -3,6 +3,11 @@
 // for inline styles) and src/styles/tokens.css (the real design tokens)
 // never drift apart.
 //
+// ADR-005 — Design tokens: one CSS file, one typed mirror, one sync test.
+// This test IS the sync test. It fails if the CSS and TS drift, if raw
+// color literals reappear, or if the legacy tailwind.config.ts is
+// reintroduced. See docs/DECISIONS.md §ADR-005.
+//
 // Why: CSS custom properties can't be read at render time cheaply, so a
 // small TS mirror exists for inline-style consumers (accent swatches,
 // legends). Two copies can drift; this test makes drift a build failure

@@ -1,5 +1,11 @@
 "use client";
 
+// ADR-002 — local primitives over a component kit. This modal implements
+// its own focus trap + ESC handling instead of pulling in @radix-ui or
+// shadcn/ui's full Modal. The tradeoff: more code here, but zero bundle
+// cost, full control over the OKLCH token integration, and no foreign
+// design language to fight. See docs/DECISIONS.md §ADR-002.
+
 import { useEffect, useRef, useId } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";

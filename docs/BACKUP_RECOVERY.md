@@ -83,5 +83,5 @@ SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;
 ## Contact
 
 - **Supabase support:** via the Dashboard (Pro tier includes email support)
-- **On-call:** see the on-call schedule in the ops wiki
+- **On-call:** see the escalation ladder in `docs/STATUS_AND_ONCALL.md`
 - **Escalation:** if RTO is at risk, page the on-call engineer immediately

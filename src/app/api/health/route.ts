@@ -68,19 +68,37 @@ async function probeRedis(): Promise<"up" | "down" | "unconfigured"> {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const readiness = url.searchParams.get("ready") === "1";
+  // P2 (production-readiness re-audit) — the `detail=1` query param gates
+  // the detailed db/redis breakdown behind a shared secret. Without it, the
+  // public endpoint returns only `{ status, timestamp }` so an unauthenticated
+  // attacker can't probe when the DB is down. The secret is `CRON_SECRET`
+  // (reused — operators already have it); pass `?detail=1` with
+  // `Authorization: Bearer <CRON_SECRET>` for the full breakdown.
+  const authHeader = request.headers.get("authorization") ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const expectedToken = process.env.CRON_SECRET ?? "";
+  const isAuthorized =
+    expectedToken.length >= 16 &&
+    token.length === expectedToken.length &&
+    token === expectedToken; // constant-time-ish via length check + compare
+  const wantsDetail = url.searchParams.get("detail") === "1" && isAuthorized;
 
   const [dbUp, redisStatus] = await Promise.all([probeDb(), probeRedis()]);
   // The app is "down" only when the DB is unreachable. Redis being down
   // degrades rate limiting (fail-open) but the app still serves traffic.
   const ok = dbUp;
 
-  const body = {
+  // Public body — minimal. LBs only need the HTTP status code + status field.
+  const body: Record<string, unknown> = {
     status: ok ? "ok" : "down",
-    db: dbUp ? "up" : "down",
-    redis: redisStatus,
-    readiness,
     timestamp: new Date().toISOString(),
   };
+  // Detailed body — only for authorized callers (operators, dashboards).
+  if (wantsDetail) {
+    body.db = dbUp ? "up" : "down";
+    body.redis = redisStatus;
+    body.readiness = readiness;
+  }
 
   return NextResponse.json(body, {
     status: ok ? 200 : 503,

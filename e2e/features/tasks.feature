@@ -1,11 +1,13 @@
 Feature: Task board
+@critical
   Tasks can be created and moved on the Kanban board according to RBAC rules.
 
   Background:
     Given the app is running
     And I sign in as "demo@fernly.app" with the demo password
 
-  Scenario: Create a task with the minimum required fields
+  @smoke
+Scenario: Create a task with the minimum required fields
     When I open the "Tasks" view
     And I create a task titled "E2E smoke task"
     Then a task named "E2E smoke task" should appear on the board

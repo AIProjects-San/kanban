@@ -136,7 +136,9 @@ describe("L-P2-29 notifyMentionedUsers", () => {
   });
 
   it("skips soft-deleted users (L-P0-14)", async () => {
-    // The user.findMany where clause must filter deletedAt: null.
+    // The user.findMany where clause must filter deletedAt: null. The
+    // mention-scoped query also adds an OR clause on the name tokens, but
+    // the deletedAt filter must still be present.
     await notifyMentionedUsers({
       text: "hey @Ada",
       actorUserId: "u-mia",
@@ -145,7 +147,9 @@ describe("L-P2-29 notifyMentionedUsers", () => {
       entityLabel: "T",
     });
     expect(db.user.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { deletedAt: null } }),
+      expect.objectContaining({
+        where: expect.objectContaining({ deletedAt: null }),
+      }),
     );
   });
 

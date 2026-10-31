@@ -21,9 +21,17 @@ import { captureError } from "@/lib/observability";
 //   • Never returns audit contents — only the prune counters.
 //   • One-shot guard: a run is skipped when another prune ran within the
 //     last hour, so overlapping cron triggers cannot churn the table.
+//     ⚠️ P2 (production-readiness re-audit) — the lastRunAt guard is
+//     per-INSTANCE (module memory). With docker-compose replicas: 2 and
+//     the cron calling through nginx (which load-balances), the second
+//     replica won't see the first's lastRunAt. Practical impact is low
+//     (the prune is idempotent + batched + takes ~seconds), but the
+//     comment previously over-stated the guarantee. For true cross-
+//     instance dedup, move lastRunAt to Redis (`SET nx EX 3600`).
 // ---------------------------------------------------------------------------
 
 const MIN_INTERVAL_MS = 60 * 60 * 1_000; // 1 hour
+// P2 re-audit — per-instance. See header comment.
 let lastRunAt = 0;
 
 function timingSafeEqual(a: string, b: string): boolean {

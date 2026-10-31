@@ -425,7 +425,90 @@ function SecuritySection({ userId, email }: { userId: string; email: string }) {
             {saving ? <><Loader2 size={14} className="animate-spin" /> Updating…</> : <><Lock size={14} /> Update password</>}
           </button>
         </div>
+
+        {/* P2 (production-readiness re-audit) — sign out all devices */}
+        <div className="border-t border-border pt-4 mt-4">
+          <h4 className="text-sm font-semibold text-foreground mb-1">Sign out all devices</h4>
+          <p className="text-xs text-muted-foreground mb-3">
+            Revokes every active session for your account — on this device, on
+            other browsers, on every device you've signed in from. You'll need
+            to sign in again afterward. Useful if you suspect someone else has
+            your credentials, or if you simply want a clean slate.
+          </p>
+          <SignOutAllDevicesButton />
+        </div>
       </div>
     </Section>
+  );
+}
+
+/**
+ * P2 (production-readiness re-audit) — "Sign out all devices" button.
+ * Bumps tokenVersion via the signOutAllDevices server action, then
+ * navigates to / so the proxy re-evaluates the (now-invalid) session
+ * cookie and shows the login screen.
+ */
+function SignOutAllDevicesButton() {
+  const [revoking, setRevoking] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+
+  const revoke = async () => {
+    if (revoking) return;
+    setRevoking(true);
+    try {
+      const { signOutAllDevices } = await import("@/server-actions/users");
+      const res = await signOutAllDevices();
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("All sessions revoked", {
+        description: "You'll be redirected to the login screen.",
+      });
+      // The tokenVersion bump invalidates this session too — navigate to /
+      // so the proxy strips the stale cookie and shows the login screen.
+      setTimeout(() => {
+        if (typeof window !== "undefined") window.location.replace("/");
+      }, 1000);
+    } catch {
+      toast.error("Failed to revoke sessions");
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  if (!confirm) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirm(true)}
+        className="f-btn f-btn-sm"
+        style={{ background: "var(--destructive)", color: "var(--destructive-foreground)" }}
+      >
+        Sign out all devices
+      </button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-muted-foreground">Are you sure?</span>
+      <button
+        type="button"
+        onClick={revoke}
+        disabled={revoking}
+        className="f-btn f-btn-sm"
+        style={{ background: "var(--destructive)", color: "var(--destructive-foreground)" }}
+      >
+        {revoking ? <><Loader2 size={14} className="animate-spin" /> Revoking…</> : "Yes, sign out everywhere"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setConfirm(false)}
+        disabled={revoking}
+        className="f-btn f-btn-sm"
+      >
+        Cancel
+      </button>
+    </div>
   );
 }

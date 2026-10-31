@@ -755,7 +755,7 @@ describe("profile & settings", () => {
     db.user.findUnique.mockResolvedValue(null);
     await getUserByEmail("MiXeD@Case.dev");
     expect(db.user.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { email: "mixed@case.dev" } }),
+      expect.objectContaining({ where: { email: "mixed@case.dev", deletedAt: null } }),
     );
   });
 });

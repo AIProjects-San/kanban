@@ -1,11 +1,13 @@
 Feature: Authentication
+@critical
   As a workspace member I want to sign in with my email and password,
   and the system must resist brute-force attacks.
 
   Background:
     Given the app is running
 
-  Scenario: Successful sign-in with valid credentials
+  @smoke
+Scenario: Successful sign-in with valid credentials
     When I sign in as "demo@fernly.app" with the demo password
     Then I should see the dashboard within 15 seconds
     And the sidebar should contain "Dashboard"

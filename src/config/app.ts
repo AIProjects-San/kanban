@@ -2,6 +2,10 @@
  * Application configuration — the SINGLE source of truth for the product
  * name and every derived identifier.
  *
+ * ADR-004 — Product identity is code, in one config module. Rebranding =
+ * editing this file. Tests in src/config/__tests__/app-config.test.ts pin
+ * the contract so literals cannot quietly return. See docs/DECISIONS.md.
+ *
  * Rule (see docs/CODING_STANDARDS.md): user-visible product names, email
  * subjects, metadata titles, storage keys and protocol identifiers must be
  * imported from here — never written as a literal. To rebrand the app,

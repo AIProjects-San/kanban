@@ -555,9 +555,25 @@ export async function deleteUser(userId: string): Promise<ActionResult<void>> {
 }
 
 // Look up a user by email — used by the messaging UI to find the recipient's
-// userId. Self-addressed messaging is the only PII this exposes (id, name,
-// email, avatar color of an arbitrary known email), which is required for
-// routing messages.
+// userId.
+//
+// P2 (production-readiness re-audit) — TRUST BOUNDARY: this endpoint is an
+// enumeration oracle. A signed-in MEMBER can probe any email and learn
+// whether it's registered (non-null response = exists, null = doesn't).
+// This is inconsistent with the anti-enumeration mitigations on
+// `requestPasswordReset` (which always returns `{sent: true}`), but is
+// required for the messaging use case (you need to resolve an email to a
+// userId to send a message). The tradeoff is documented here so it's a
+// deliberate decision, not an oversight:
+//
+//   • Acceptable because: only signed-in users can call it; the data
+//     exposed (id/name/email/avatarColor) is already visible in the team
+//     roster to any signed-in user; messaging requires it.
+//   • Mitigation: rate-limit at the reverse-proxy level (nginx) if abuse
+//     is detected. Consider adding a per-user call budget here in the
+//     future if enumeration becomes a real attack vector.
+//
+// Soft-deleted users are excluded (deletedAt: null filter).
 export async function getUserByEmail(email: string): Promise<ActionResult<{
   id: string;
   name: string;
@@ -568,9 +584,41 @@ export async function getUserByEmail(email: string): Promise<ActionResult<{
     const auth = await getSessionOrThrow();
     void auth; // signed-in check only — the lookup itself exposes no PII beyond routing needs
     const user = await db.user.findUnique({
-      where: { email: email.toLowerCase() },
+      where: { email: email.toLowerCase(), deletedAt: null },
       select: { id: true, name: true, email: true, avatarColor: true },
     });
     return user;
+  });
+}
+
+/**
+ * P2 (production-readiness re-audit) — Sign out ALL devices for the signed-in
+ * user by bumping their `tokenVersion`. Every JWT issued before this call
+ * becomes stale at the next refresh window (≤5 min) and the session is
+ * cleared. The caller's own current session is also invalidated — they will
+ * need to sign in again.
+ *
+ * Use cases: suspicious activity on the account, lost device, credential
+ * hygiene. Wired to the Settings → Security → "Sign out all devices" button.
+ */
+export async function signOutAllDevices(): Promise<ActionResult<{ revokedAt: string }>> {
+  return toResult(async () => {
+    const auth = await getSessionOrThrow();
+    // Bump tokenVersion — the jwt callback's refresh path sees the mismatch
+    // and clears the token id for every outstanding session.
+    await db.user.update({
+      where: { id: auth.userId },
+      data: { tokenVersion: { increment: 1 } },
+    });
+    await logAudit({
+      actor: auth,
+      action: "user.updated",
+      entityType: "USER",
+      entityId: auth.userId,
+      entityLabel: auth.name,
+      detail: `${auth.name} signed out all devices (tokenVersion bumped)`,
+    });
+    revalidatePath("/");
+    return { revokedAt: new Date().toISOString() };
   });
 }

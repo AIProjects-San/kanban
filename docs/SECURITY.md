@@ -185,3 +185,39 @@ restore drill and the quarterly schedule live in
 - Schema-level rollback safety is separate from data recovery: Prisma
   migrations are committed and reversible (`prisma migrate resolve` +
   the documented down-path in BACKUP_RECOVERY.md §migration-rollback).
+
+---
+
+## 11. PII Inventory (P2 — production-readiness re-audit)
+
+The application stores the following personal data. "Encryption at rest"
+relies on Supabase's PostgreSQL disk encryption + TLS in transit;
+passwords and reset tokens are additionally hashed at the application
+layer. No field is application-level encrypted beyond hashing.
+
+| Field | Model | Sensitivity | Protection |
+|---|---|---|---|
+| `email` | User, TeamMember | High (login identifier) | bcrypt-hashed password gates access; logs redacted via `hashPii()`; Sentry payloads scrubbed via `redactSecrets()` |
+| `passwordHash` | User | Critical | bcrypt cost-12 — never logged, never returned by any server action |
+| `name` | User, TeamMember | Medium (display) | Visible to signed-in users via roster; not logged |
+| `bio` | User | Medium (user-entered) | Visible to signed-in users via profile |
+| `avatarColor` | User | Low (UI preference) | — |
+| `timezone` | User | Low (UI preference) | — |
+| `tokenVersion` | User | Critical (session revocation) | Integer; bumped on password/role change + sign-out-all-devices |
+| `deletedAt` | User, Project, TeamMember, Message | — (soft-delete marker) | Filters read paths; soft-deleted users cannot authenticate |
+| `ipAddress` | AuditLog | Medium (forensics) | Captured on `auth.signed_in`; stored as-is (hash at read time if exporting) |
+| `userAgent` | AuditLog | Low (forensics) | Captured on `auth.signed_in`; truncated to 500 chars |
+| `subject` / `body` | Message | Medium (user content) | Visible to sender + recipient only; soft-deletable |
+| `description` | Task, TimeEntry | Medium (user content) | Scoped to the caller's visible projects |
+| `detail` | AuditLog | Low (action summary) | Human-readable sentence; never contains secrets (mailer drops bodies) |
+| `tokenHash` | PasswordResetToken | Critical (single-use) | SHA-256 hash stored; raw token never persisted; 1h TTL; single-use |
+
+**Data subject rights (NZ Privacy Act 2020 / GDPR):**
+- **Access:** `exportMyData()` server action (Settings → Privacy →
+  "Download my data") returns every row referencing the caller's userId.
+- **Rectification:** Settings → Profile (name, bio, avatar, timezone) +
+  Settings → Security (password).
+- **Erasure:** Soft-delete via admin (`deleteUser`) hides the user from
+  all read paths + invalidates their session. Hard-erase is a follow-up
+  (audit retention expires the audit trail after `auditRetentionDays`).
+- **Portability:** `exportMyData()` returns JSON.

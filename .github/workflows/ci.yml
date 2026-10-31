@@ -43,6 +43,19 @@ jobs:
       - name: Unit & integration tests (coverage-gated)
         run: bun run test:coverage
 
+      # P2 (production-readiness re-audit) — upload the coverage report as a
+      # CI artifact so it's downloadable from the Actions run summary. Lets
+      # reviewers inspect line-level coverage without re-running the suite
+      # locally. Retained for 7 days to keep storage costs bounded.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65db92c48a1d4eb048 # v4.4.3
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
       # Launch gate 5 — dependency audit. Fails on high/critical advisories
       # affecting a SHIPPING dependency (direct prod deps +, after the build
       # job runs it again, the traced standalone runtime). Dev-toolchain-only
