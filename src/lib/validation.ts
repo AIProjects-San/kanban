@@ -195,6 +195,42 @@ export const configItemSchema = z.object({
   isSystem: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
+// ---------------------------------------------------------------------------
+// Bug tracking schemas — QA raises bugs; developers work them through a
+// lifecycle. Every field is bounded; status/severity/priority/resolution
+// are enums so a typo can't write an orphan string.
+// ---------------------------------------------------------------------------
+
+export const createBugSchema = z.object({
+  title: z.string().trim().min(1, "Title is required.").max(200),
+  description: z.string().max(10_000).optional(),
+  stepsToReproduce: z.string().max(10_000).optional(),
+  expectedBehavior: z.string().max(5_000).optional(),
+  actualBehavior: z.string().max(5_000).optional(),
+  severity: z.enum(["CRITICAL", "MAJOR", "MINOR", "TRIVIAL"]).optional(),
+  priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+  projectId: cuidish.nullable().optional(),
+  taskId: cuidish.nullable().optional(),
+  environment: z.string().trim().max(500).optional(),
+}).strict();
+
+export const updateBugSchema = createBugSchema.partial();
+
+export const changeBugStatusSchema = z.object({
+  status: z.enum(["NEW", "TRIAGED", "IN_PROGRESS", "IN_REVIEW", "RESOLVED", "CLOSED", "REOPENED"]),
+  resolution: z.enum(["FIXED", "WONT_FIX", "DUPLICATE", "CANNOT_REPRODUCE", "WORKS_AS_INTENDED"]).optional(),
+  comment: z.string().max(5_000).optional(),
+}).strict();
+
+export const assignBugSchema = z.object({
+  assigneeUserId: cuidish.nullable(),
+}).strict();
+
+export const createBugCommentSchema = z.object({
+  bugId: cuidish,
+  body: z.string().trim().min(1, "Comment cannot be empty.").max(5_000),
+}).strict();
+
 /**
  * Parse `input` against `schema`, throwing an AuthorizationError-compatible
  * Error whose message is safe to show to the user.

@@ -92,6 +92,7 @@ export function useKeyboardShortcuts() {
           w: () => setView("workspace-settings"),
           h: () => setView("help"),
           l: () => setView("audit"),
+          b: () => setView("bugs"),
         };
         const shortcutKey = e.key.toLowerCase();
         const action = map[shortcutKey];

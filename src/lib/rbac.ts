@@ -21,7 +21,13 @@ export type Permission =
   | "role:manage"
   | "analytics:view"
   | "team:view"
-  | "audit:view";
+  | "audit:view"
+  // Bug tracking — QA raises bugs; developers work them.
+  | "bug:create"
+  | "bug:edit:any"
+  | "bug:edit:own"
+  | "bug:delete"
+  | "bug:assign";
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ADMIN: [
@@ -31,6 +37,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "message:send", "event:create", "event:delete",
     "settings:edit", "role:manage", "analytics:view", "team:view",
     "audit:view",
+    "bug:create", "bug:edit:any", "bug:edit:own", "bug:delete", "bug:assign",
   ],
   MANAGER: [
     "task:create", "task:edit:any", "task:edit:own",
@@ -39,11 +46,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "message:send", "event:create", "event:delete",
     "settings:edit", "analytics:view", "team:view",
     "audit:view",
+    "bug:create", "bug:edit:any", "bug:edit:own", "bug:assign",
   ],
   MEMBER: [
     "task:create", "task:edit:own",
     "message:send",
     "settings:edit", "analytics:view", "team:view",
+    "bug:create", "bug:edit:own",
   ],
 };
 
@@ -78,6 +87,11 @@ export const ALL_PERMISSIONS: { key: Permission; label: string; description: str
   { key: "analytics:view", label: "View analytics", description: "Access the analytics dashboard" },
   { key: "team:view", label: "View team", description: "See the team member directory" },
   { key: "audit:view", label: "View audit log", description: "See the full history of who changed what in the workspace" },
+  { key: "bug:create", label: "Raise bugs", description: "Report a new bug" },
+  { key: "bug:edit:own", label: "Edit own bugs", description: "Edit bugs you reported or are assigned to" },
+  { key: "bug:edit:any", label: "Edit any bug", description: "Edit any bug regardless of reporter/assignee" },
+  { key: "bug:delete", label: "Delete bugs", description: "Permanently remove a bug report" },
+  { key: "bug:assign", label: "Assign bugs", description: "Assign a bug to a developer" },
 ];
 
 export function hasPermission(role: Role | undefined | null, permission: Permission): boolean {

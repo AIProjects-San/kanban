@@ -17,6 +17,7 @@ import {
   UserPlus,
   Moon,
   Sun,
+  Bug,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
@@ -80,6 +81,7 @@ export function CommandPalette() {
       { key: "calendar", label: "Calendar", icon: Calendar },
       { key: "analytics", label: "Analytics", icon: BarChart3 },
       { key: "team", label: "Team", icon: Users },
+      { key: "bugs", label: "Bugs", icon: Bug },
       { key: "settings", label: "Settings", icon: Settings },
       ...(canManageRoles
         ? [{ key: "users" as ViewKey, label: "Users", icon: UserPlus } satisfies NavEntry]

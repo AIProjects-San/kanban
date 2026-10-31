@@ -8,6 +8,24 @@ export type Department = "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT";
 export type EventType = "MEETING" | "DEADLINE" | "REVIEW" | "SOCIAL" | "FOCUS";
 type AccentColor = "forest" | "ocean" | "plum" | "ember" | "slate";
 
+// Bug tracking lifecycle
+export type BugSeverity = "CRITICAL" | "MAJOR" | "MINOR" | "TRIVIAL";
+export type BugPriority = "P0" | "P1" | "P2" | "P3";
+export type BugStatus =
+  | "NEW"
+  | "TRIAGED"
+  | "IN_PROGRESS"
+  | "IN_REVIEW"
+  | "RESOLVED"
+  | "CLOSED"
+  | "REOPENED";
+export type BugResolution =
+  | "FIXED"
+  | "WONT_FIX"
+  | "DUPLICATE"
+  | "CANNOT_REPRODUCE"
+  | "WORKS_AS_INTENDED";
+
 export interface ProjectT {
   id: string;
   name: string;

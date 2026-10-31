@@ -15,6 +15,7 @@ import {
   Leaf,
   UserCog,
   Settings2,
+  Bug,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
@@ -37,6 +38,7 @@ const mainNav: NavItem[] = [
   { key: "calendar", label: "Calendar", icon: Calendar, shortcut: "G C" },
   { key: "analytics", label: "Analytics", icon: BarChart3, shortcut: "G A" },
   { key: "team", label: "Team", icon: Users, shortcut: "G M" },
+  { key: "bugs", label: "Bugs", icon: Bug, shortcut: "G B" },
 ];
 
 const generalNav: NavItem[] = [

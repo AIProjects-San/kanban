@@ -10,7 +10,7 @@
 import {
   Plus, Pencil, Trash2, ArrowRightLeft, FolderPlus, UserPlus, UserMinus,
   UserCog, CalendarPlus, CalendarX, Send, ShieldCheck, Settings, BellPlus,
-  CheckCircle2, RotateCcw, Clock, LogIn, CircleDot,
+  CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -56,7 +56,17 @@ export type AuditAction =
   | "audit.pruned" // L-P1-20 — records when the audit log was pruned
   | "project.restored" // L-P2-33 — restored from the trash
   | "user.restored" // L-P2-33
-  | "message.restored"; // L-P2-33
+  | "message.restored" // L-P2-33
+  // Bug tracking lifecycle
+  | "bug.created"
+  | "bug.updated"
+  | "bug.assigned"
+  | "bug.status_changed"
+  | "bug.resolved"
+  | "bug.reopened"
+  | "bug.closed"
+  | "bug.commented"
+  | "bug.deleted";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -115,6 +125,16 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "project.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
   "user.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
   "message.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
+
+  "bug.created": { icon: Bug, cls: "text-red-500 bg-red-500/10" },
+  "bug.updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "bug.assigned": { icon: UserPlus, cls: "text-indigo-500 bg-indigo-500/10" },
+  "bug.status_changed": { icon: ArrowRightLeft, cls: "text-amber-500 bg-amber-500/10" },
+  "bug.resolved": { icon: CheckCircle2, cls: "text-success bg-success/10" },
+  "bug.reopened": { icon: RotateCcw, cls: "text-red-500 bg-red-500/10" },
+  "bug.closed": { icon: CheckCircle2, cls: "text-muted-foreground bg-muted" },
+  "bug.commented": { icon: MessageSquare, cls: "text-blue-500 bg-blue-500/10" },
+  "bug.deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with
@@ -150,6 +170,7 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   AUTH: { label: "Auth", cls: "bg-muted text-muted-foreground" },
   WORKSPACE: { label: "Workspace", cls: "bg-purple-500/10 text-purple-500" },
   CONFIG: { label: "Config", cls: "bg-violet-500/10 text-violet-500" },
+  BUG: { label: "Bug", cls: "bg-red-500/10 text-red-500" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -175,6 +196,7 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "all", label: "All activity", types: null },
   { key: "tasks", label: "Tasks", types: ["TASK"] },
   { key: "projects", label: "Projects", types: ["PROJECT"] },
+  { key: "bugs", label: "Bugs", types: ["BUG"] },
   { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },

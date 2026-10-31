@@ -70,7 +70,7 @@ export async function getAuditLogsForEntity(
     // stay open to signed-in users — they are the board context the entity
     // history panel renders.
     const openEntityTypes = new Set([
-      "TASK", "PROJECT", "MEMBER", "EVENT", "TIME", "REMINDER", "NOTIFICATION",
+      "TASK", "PROJECT", "MEMBER", "EVENT", "TIME", "REMINDER", "NOTIFICATION", "BUG",
     ]);
     if (!openEntityTypes.has(entityType) && !hasPermission(auth.role, "audit:view")) {
       throw new AuthorizationError("You can only view history for tasks, projects and team entities.");

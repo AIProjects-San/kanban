@@ -14,6 +14,10 @@ import type {
   TaskTag,
   Department,
   EventType,
+  BugSeverity,
+  BugPriority,
+  BugStatus,
+  BugResolution,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -117,3 +121,101 @@ export const DEPARTMENT_LABELS: { key: Department; label: string }[] = [
 export function departmentLabel(d: string): string {
   return d.charAt(0) + d.slice(1).toLowerCase();
 }
+
+// ---------------------------------------------------------------------------
+// Bug tracking — severity, priority, status, resolution labels + styles.
+// Used by bugs-view (badges, filters), bug-modal (selects), bug-detail
+// (lifecycle timeline), and server-actions (audit detail strings).
+// ---------------------------------------------------------------------------
+
+export interface BugSeverityDef {
+  key: BugSeverity;
+  label: string;
+  /** Tailwind bg class for the badge. */
+  badge: string;
+  /** Tailwind text color class. */
+  dot: string;
+}
+
+export const BUG_SEVERITIES: BugSeverityDef[] = [
+  { key: "CRITICAL", label: "Critical", badge: "bg-red-500/10 text-red-600 dark:text-red-400", dot: "bg-red-500" },
+  { key: "MAJOR", label: "Major", badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400", dot: "bg-orange-500" },
+  { key: "MINOR", label: "Minor", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "TRIVIAL", label: "Trivial", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", dot: "bg-zinc-400" },
+];
+
+export const BUG_SEVERITY_LABELS: Record<BugSeverity, string> = Object.fromEntries(
+  BUG_SEVERITIES.map((s) => [s.key, s.label]),
+) as Record<BugSeverity, string>;
+
+export const BUG_SEVERITY_BADGE: Record<BugSeverity, string> = Object.fromEntries(
+  BUG_SEVERITIES.map((s) => [s.key, s.badge]),
+) as Record<BugSeverity, string>;
+
+export interface BugPriorityDef {
+  key: BugPriority;
+  label: string;
+  badge: string;
+}
+
+export const BUG_PRIORITIES: BugPriorityDef[] = [
+  { key: "P0", label: "P0 — Urgent", badge: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  { key: "P1", label: "P1 — High", badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
+  { key: "P2", label: "P2 — Medium", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  { key: "P3", label: "P3 — Low", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" },
+];
+
+export const BUG_PRIORITY_LABELS: Record<BugPriority, string> = Object.fromEntries(
+  BUG_PRIORITIES.map((p) => [p.key, p.label]),
+) as Record<BugPriority, string>;
+
+export interface BugStatusDef {
+  key: BugStatus;
+  label: string;
+  badge: string;
+  dot: string;
+}
+
+export const BUG_STATUSES: BugStatusDef[] = [
+  { key: "NEW", label: "New", badge: "bg-blue-500/10 text-blue-600 dark:text-blue-400", dot: "bg-blue-500" },
+  { key: "TRIAGED", label: "Triaged", badge: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400", dot: "bg-indigo-500" },
+  { key: "IN_PROGRESS", label: "In Progress", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "IN_REVIEW", label: "In Review", badge: "bg-purple-500/10 text-purple-600 dark:text-purple-400", dot: "bg-purple-500" },
+  { key: "RESOLVED", label: "Resolved", badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { key: "CLOSED", label: "Closed", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", dot: "bg-zinc-400" },
+  { key: "REOPENED", label: "Reopened", badge: "bg-red-500/10 text-red-600 dark:text-red-400", dot: "bg-red-500" },
+];
+
+export const BUG_STATUS_LABELS: Record<BugStatus, string> = Object.fromEntries(
+  BUG_STATUSES.map((s) => [s.key, s.label]),
+) as Record<BugStatus, string>;
+
+export const BUG_STATUS_BADGE: Record<BugStatus, string> = Object.fromEntries(
+  BUG_STATUSES.map((s) => [s.key, s.badge]),
+) as Record<BugStatus, string>;
+
+export const BUG_RESOLUTIONS: { key: BugResolution; label: string }[] = [
+  { key: "FIXED", label: "Fixed" },
+  { key: "WONT_FIX", label: "Won't Fix" },
+  { key: "DUPLICATE", label: "Duplicate" },
+  { key: "CANNOT_REPRODUCE", label: "Cannot Reproduce" },
+  { key: "WORKS_AS_INTENDED", label: "Works as Intended" },
+];
+
+export const BUG_RESOLUTION_LABELS: Record<BugResolution, string> = Object.fromEntries(
+  BUG_RESOLUTIONS.map((r) => [r.key, r.label]),
+) as Record<BugResolution, string>;
+
+/**
+ * Valid lifecycle transitions. A status NOT in this map for the current
+ * status means the transition is rejected. Enforced by changeBugStatus.
+ */
+export const BUG_STATUS_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
+  NEW: ["TRIAGED", "IN_PROGRESS", "CLOSED"],
+  TRIAGED: ["IN_PROGRESS", "CLOSED"],
+  IN_PROGRESS: ["IN_REVIEW", "RESOLVED", "CLOSED"],
+  IN_REVIEW: ["IN_PROGRESS", "RESOLVED", "CLOSED"],
+  RESOLVED: ["REOPENED", "CLOSED"],
+  CLOSED: ["REOPENED"],
+  REOPENED: ["IN_PROGRESS", "CLOSED"],
+};

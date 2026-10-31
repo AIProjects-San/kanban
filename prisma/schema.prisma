@@ -526,3 +526,66 @@ model PasswordResetToken {
 
   @@index([userId])
 }
+
+// ---------------------------------------------------------------------------
+// Bug Tracking — QA engineers raise bugs; developers work them through a
+// full lifecycle (New → Triaged → In Progress → In Review → Resolved →
+// Closed, with Reopened). Bugs can link to a Project and/or Task for
+// traceability. Comments support discussion; the audit log captures every
+// status change (bug.created, bug.assigned, bug.status_changed,
+// bug.resolved, bug.reopened, bug.closed).
+// ---------------------------------------------------------------------------
+
+model Bug {
+  id              String   @id @default(cuid())
+  title           String
+  description     String   @default("")
+  // Structured reproduction steps (QA fills these in).
+  stepsToReproduce String  @default("")
+  expectedBehavior String  @default("")
+  actualBehavior   String  @default("")
+  // Severity = impact on the system; Priority = order to fix.
+  severity        String   @default("MAJOR") // CRITICAL | MAJOR | MINOR | TRIVIAL
+  priority        String   @default("P2")    // P0 | P1 | P2 | P3
+  // Lifecycle: NEW → TRIAGED → IN_PROGRESS → IN_REVIEW → RESOLVED → CLOSED
+  //            (RESOLVED/CLOSED can go back to REOPENED → IN_PROGRESS)
+  status          String   @default("NEW")
+  resolution      String?  // FIXED | WONT_FIX | DUPLICATE | CANNOT_REPRODUCE | WORKS_AS_INTENDED
+  // People: reporter (QA) raised it; assignee (developer) works it.
+  reporterUserId  String   @default("")
+  assigneeUserId  String?
+  // Optional links for traceability.
+  projectId       String?
+  taskId          String?
+  // Environment where the bug was observed.
+  environment     String   @default("") // e.g. "Production / Chrome 120 / macOS"
+  // Timestamps for lifecycle metrics.
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  triagedAt       DateTime?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+
+  comments        BugComment[]
+
+  @@index([status])
+  @@index([severity])
+  @@index([priority])
+  @@index([reporterUserId])
+  @@index([assigneeUserId])
+  @@index([projectId])
+  @@index([createdAt])
+}
+
+model BugComment {
+  id        String   @id @default(cuid())
+  bugId     String
+  bug       Bug      @relation(fields: [bugId], references: [id], onDelete: Cascade)
+  authorId  String   @default("")
+  authorName String  @default("")
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([bugId])
+  @@index([authorId])
+}

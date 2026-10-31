@@ -63,6 +63,11 @@ const WorkspaceSettingsView = dynamic(() => import("@/components/views/workspace
   loading: () => <div className="p-6 text-sm text-muted-foreground">Loading workspace settings…</div>,
 });
 
+const BugsView = dynamic(() => import("@/components/views/bugs-view").then(m => ({ default: m.BugsView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading bugs…</div>,
+});
+
 interface AppShellProps {
   data: {
     projects: ProjectT[];
@@ -216,6 +221,9 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
             )}
             {view === "workspace-settings" && (
               <WorkspaceSettingsView currentUser={user} />
+            )}
+            {view === "bugs" && (
+              <BugsView currentUser={user} projects={data.projects} />
             )}
           </div>
         </main>
