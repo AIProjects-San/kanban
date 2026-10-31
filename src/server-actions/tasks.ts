@@ -9,6 +9,7 @@ import { requirePermission } from "./auth-guard";
 import { TASK_STATUS_LABELS } from "@/lib/config";
 import { createTaskSchema, updateTaskSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit, assertTaskEditPermission, recalcMemberStats } from "./shared";
+import { notifyMentionedUsers } from "./mentions";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -44,6 +45,17 @@ export async function createTask(input: {
       include: { project: true },
     });
     await recalcMemberStats(data.assigneeId ?? null);
+    // L-P2-29 — emit MENTION notifications for any @Name in the description.
+    if (data.description) {
+      await notifyMentionedUsers({
+        text: data.description,
+        actorUserId: auth.userId,
+        actorName: auth.name,
+        entityType: "TASK",
+        entityLabel: task.title,
+        detail: `in ${task.project?.name ?? "a task"}`,
+      });
+    }
     await logAudit({
       actor: auth,
       action: "task.created",
@@ -92,6 +104,18 @@ export async function updateTask(id: string, raw: Partial<{
     await recalcMemberStats(existing.assigneeId);
     if (input.assigneeId && input.assigneeId !== existing.assigneeId) {
       await recalcMemberStats(input.assigneeId);
+    }
+    // L-P2-29 — emit MENTION notifications for any @Name in the description.
+    // Only fires when the description actually changed.
+    if (input.description !== undefined && input.description !== existing.description) {
+      await notifyMentionedUsers({
+        text: input.description,
+        actorUserId: auth.userId,
+        actorName: auth.name,
+        entityType: "TASK",
+        entityLabel: input.title ?? existing.title,
+        detail: "updated a task description",
+      });
     }
     const changes: string[] = [];
     if (input.title !== undefined && input.title !== existing.title) changes.push("title");

@@ -53,7 +53,10 @@ export type AuditAction =
   | "auth.signed_in"
   | "auth.signed_out"
   | "auth.password_changed"
-  | "audit.pruned"; // L-P1-20 — records when the audit log was pruned
+  | "audit.pruned" // L-P1-20 — records when the audit log was pruned
+  | "project.restored" // L-P2-33 — restored from the trash
+  | "user.restored" // L-P2-33
+  | "message.restored"; // L-P2-33
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -109,6 +112,9 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "auth.signed_out": { icon: LogIn, cls: "text-muted-foreground bg-muted" },
   "auth.password_changed": { icon: ShieldCheck, cls: "text-success bg-success/10" },
   "audit.pruned": { icon: Clock, cls: "text-muted-foreground bg-muted" },
+  "project.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
+  "user.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
+  "message.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

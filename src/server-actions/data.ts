@@ -83,6 +83,25 @@ export {
   getAuditRetentionInfo,
 } from "./audit-retention";
 export type { PruneResult } from "@/lib/audit-retention-config";
+// L-P2-30 — global data search.
+export {
+  searchWorkspace,
+  type SearchResults,
+  type SearchHit,
+} from "./search";
+// L-P2-33 — trash / restore.
+export {
+  getTrash,
+  restoreProject,
+  restoreUser,
+  restoreMessage,
+  type TrashItem,
+} from "./trash";
+// L-P2-35 — GDPR data export.
+export {
+  exportMyData,
+  type UserDataExport,
+} from "./data-export";
 export {
   assignUserToProject,
   unassignUserFromProject,
