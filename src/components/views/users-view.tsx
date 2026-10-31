@@ -17,10 +17,10 @@ import {
   ROLE_LABELS, ALL_PERMISSIONS,
   hasPermission,
 } from "@/lib/rbac";
-import { Avatar } from "../fernly/avatar";
-import { RoleBadge } from "../fernly/role-badge";
-import { FilterBar } from "../fernly/filter-bar";
-import { Section } from "../fernly/section";
+import { Avatar } from "../ui/avatar";
+import { RoleBadge } from "../ui/role-badge";
+import { FilterBar } from "../ui/filter-bar";
+import { Section } from "../ui/section";
 
 interface UserRecord {
   id: string;

@@ -11,9 +11,9 @@ vi.mock("next-auth/react", () => ({
   signOut: signOutMock,
 }));
 
-import { fernlySignOut } from "@/lib/signout";
+import { appSignOut } from "@/lib/signout";
 
-describe("fernlySignOut", () => {
+describe("appSignOut", () => {
   const originalWindow = globalThis.window;
 
   beforeEach(() => {
@@ -36,29 +36,29 @@ describe("fernlySignOut", () => {
   });
 
   it("calls next-auth signOut with callbackUrl=/ and redirect:true", async () => {
-    await fernlySignOut();
+    await appSignOut();
     expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/", redirect: true });
   });
 
   it("falls through to window.location.replace('/') on the success path too (belt-and-braces)", async () => {
-    await fernlySignOut();
+    await appSignOut();
     expect(replaceMock).toHaveBeenCalledWith("/");
   });
 
   it("still navigates to / when signOut throws (network error / server hiccup)", async () => {
     signOutMock.mockRejectedValue(new Error("network down"));
-    await fernlySignOut();
+    await appSignOut();
     expect(replaceMock).toHaveBeenCalledWith("/");
   });
 
   it("does NOT throw when signOut throws — the catch swallows it", async () => {
     signOutMock.mockRejectedValue(new Error("boom"));
-    await expect(fernlySignOut()).resolves.toBeUndefined();
+    await expect(appSignOut()).resolves.toBeUndefined();
   });
 
   it("skips window.location.replace when window is undefined (SSR safety)", async () => {
     delete (globalThis as Record<string, unknown>).window;
-    await expect(fernlySignOut()).resolves.toBeUndefined();
+    await expect(appSignOut()).resolves.toBeUndefined();
     expect(replaceMock).not.toHaveBeenCalled();
   });
 });

@@ -18,7 +18,7 @@ import { ROLE_LABELS, type Role } from "@/lib/rbac";
 import { Avatar } from "./avatar";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time";
-import { fernlySignOut } from "@/lib/signout";
+import { appSignOut } from "@/lib/signout";
 import type { NotificationT, MessageT } from "@/lib/types";
 
 interface TopbarProps {
@@ -153,7 +153,7 @@ function ProfileMenu({
 }) {
   const roleLabel = ROLE_LABELS[user.role as Role] ?? user.role;
   const handleSignOut = () => {
-    void fernlySignOut();
+    void appSignOut();
   };
 
   return (

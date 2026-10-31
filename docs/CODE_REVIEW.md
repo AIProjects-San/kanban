@@ -81,8 +81,8 @@ and regression-tested in this pass. Test evidence: **261 unit/integration tests 
 >   missing, now added; clarify the Users-page → Create-user flow).
 > - **Renamed** the sidebar "Logout" button to "Sign out" for label
 >   consistency with the topbar profile menu.
-> Regression tests: `src/components/fernly/__tests__/command-palette.test.tsx`
-> (12) + `src/components/fernly/__tests__/member-modal.test.tsx` (5).
+> Regression tests: `src/components/ui/__tests__/command-palette.test.tsx`
+> (12) + `src/components/ui/__tests__/member-modal.test.tsx` (5).
 > Toolchain green: `lint` + `tsc --noEmit` + `299/299 tests`; verified
 > end-to-end against the running dev server (cmdk nav mirrors sidebar,
 > "Create user" opens UserModal, "Add Member" opens the trimmed
@@ -292,7 +292,7 @@ These were **consciously not** fixed in the original pass. Status after the
    empty, fresh sign-in mints a clean set, audit row lands.
 
    **Follow-up fix (CLIENT_FETCH_ERROR).** The first cut of
-   `fernlySignOut` used `signOut({ redirect: false })` and then
+   `appSignOut` used `signOut({ redirect: false })` and then
    `window.location.replace("/")`. That raced against NextAuth's own
    post-signout `__NEXTAUTH._getSession()` call (which fires
    `GET /api/auth/session` to refresh the local cache): our hard
@@ -306,7 +306,7 @@ These were **consciously not** fixed in the original pass. Status after the
 
 ## 7. Maintainability & reuse assessment
 
-**Good:** consistent component extraction under `components/fernly/` (Field, Toggle,
+**Good:** consistent component extraction under `components/ui/` (Field, Toggle,
 StatCard, Section, EntityHistorySection, …) replacing repeated inline copies; a single
 `lib/config` for status/label maps; typed audit actions; zod schemas; `cn()` utility.
 
@@ -572,9 +572,11 @@ pinned by tests; the architectural rationales live in `docs/DECISIONS.md` (ADR-0
 | M-1 | Common style file with tokens | Raw OKLCH values were triplicated: `globals.css` `f-tag-*`/`f-priority-*`/`f-avatar-*` classes hardcoded them (plus `.dark` rule *duplicates*), and `lib/constants.tsx` carried the same colors as inline strings. A stale v3-style `tailwind.config.ts` (hsl() vs the real oklch tokens, silently ignored by v4) sat alongside the live CSS config. | **`src/styles/tokens.css`** is now the single source of truth (primitives, accent engine, semantic light/dark, tag / priority / avatar palettes; dark mode = token overrides, never `.dark .f-*` duplicates) + typed mirror **`src/styles/tokens.ts`** for render-time JS values. `globals.css` keeps only wiring + `f-*` classes referencing `var(--…)` — zero raw color literals, enforced by `tokens-sync.test.ts` (6 tests incl. CSS↔TS drift + legacy-config-stays-deleted). Legacy `tailwind.config.ts` and the unused `tailwindcss-animate` dependency removed (ADR-003/005). |
 | M-2 | Project name in config | "Fernly" was hardcoded in 14 user-facing surfaces: layout title/keywords, sidebar + login logos, 404/loading copy, settings copy, API discovery, password-reset emails (×5), ICS PRODID/UID, support email, email placeholder, MAIL_FROM, workspace default name, localStorage keys, and the `window.__fernlyCaptureError` bridge key. | New **`src/config/app.ts`**: `APP` (name/slug/tagline/supportEmail/domain) + derived `STORAGE_KEYS`, `ERROR_BRIDGE_KEY`, `DEFAULT_WORKSPACE_NAME`, `DEFAULT_MAIL_FROM`. All 14 surfaces now import it; `app-config.test.ts` (4 tests, incl. a `CONFIG_CONSUMERS` list) fails the build if literals return. Rebranding is a one-file edit (ADR-004). |
 | M-3 | Evaluate axios | Exactly one outbound HTTP call exists (Resend in `mailer.ts`); all internal data flows through Server Actions (typed RPC — no HTTP layer). | **Rejected** (ADR-001): ~13 kB gz + dependency-audit surface for interceptor conveniences that one hardened call site doesn't need. The call site gained `AbortSignal.timeout(10_000)` so a wedged provider can't stall password reset. |
-| M-4 | Evaluate UI pattern library | The repo already runs the shadcn/ui pattern (`components.json` new-york, `cn()` in lib/utils, lucide, sonner) with ~15 local primitives in `components/fernly/`. | **Keep local primitives** (ADR-002): a full kit (MUI/AntD/Chakra) fights the OKLCH token system, adds 100–300 kB against the L-P1-17 bundle-budget gate, and imports a foreign design language. Growth path: `bunx shadcn@latest add <component>` + restyle to tokens. |
+| M-4 | Evaluate UI pattern library | The repo already runs the shadcn/ui pattern (`components.json` new-york, `cn()` in lib/utils, lucide, sonner) with ~15 local primitives in `components/ui/`. | **Keep local primitives** (ADR-002): a full kit (MUI/AntD/Chakra) fights the OKLCH token system, adds 100–300 kB against the L-P1-17 bundle-budget gate, and imports a foreign design language. Growth path: `bunx shadcn@latest add <component>` + restyle to tokens. |
 | M-5 | Secrets MUST live in .env | 🔴 **The real `NEXTAUTH_SECRET` was pasted into a committed unit test** (`auth.test.ts` used the production value as a fixture). The demo password was hardcoded in seed.js + 4 node scripts + 3 shell scripts + k6 + e2e (incl. 10 `.feature` files); the DB password was duplicated in a `.env` comment; README/TESTING published the demo password. | Secret scrubbed from the test (obviously-fake fixture) and **the production secret rotated** (it remains in git history — rotation is the only remediation). Demo password now read from `NEXT_PUBLIC_DEMO_PASSWORD` everywhere via `scripts/lib/demo-env.mjs` (node scripts), `__ENV` (k6), and a loader (e2e); all fail loudly when unset. `.env` comment de-duplicated; docs genericized. `login-demo-gating.test.ts` now greps seed/e2e/k6 for the literal (ADR-006). |
 | M-6 (bonus) | Crosscheck found a real gap | `window.__fernlyCaptureError` was **read** by `error.tsx` but **never assigned anywhere** — the L-P1-19 client→server error bridge was dangling; client errors fell back to console only. | New `src/lib/client-error-bridge.ts` (installed from `providers.tsx`; caps + truncates payloads, fire-and-forget with `keepalive`) → `POST /api/client-errors` (8 KB cap, POST-only, constant response, no-store) → `captureError` with request-id. 9 new tests (`client-error-bridge.test.ts`). |
+| M-7 | Generic folder + code structure | The product-name refactor surface still hardcoded the brand in two places unrelated to user-visible branding: `src/components/fernly/` (the design-system folder, ~50 import paths) and the wrapper `fernlySignOut()` in `src/lib/signout.ts` (12 callers). Rebranding would have required a code-wide rename of folders and identifiers, conflating infra concerns with branding. | `src/components/fernly/` → **`src/components/ui/`** (generic — the folder is the design system, not the product). All ~50 imports updated via path alias. Test files renamed: `fernly-basics.test.tsx`/`fernly-forms.test.tsx` → `basics.test.tsx`/`forms.test.tsx`. Identifier `fernlySignOut` → **`appSignOut`** (12 callers + tests). The `app-config.test.ts` `CONFIG_CONSUMERS` list was updated to the new path. **No branding surface was lost**: `APP.name` / `APP.slug` in `src/config/app.ts` still drive every user-visible string; only internal identifiers moved. |
+| M-8 | Redis key prefix in env | The Redis rate-limit key prefix was hardcoded `"fernly:login:"` / `"fernly:pwreset:"` in `src/lib/rate-limit-redis.ts`. Two instances sharing one Redis (or two environments) collided; rebranding required editing source. | New **`REDIS_KEY_PREFIX`** env var (defaults to `app:` when unset; auto-suffixes `:` if missing). `redisKeyPrefix()` reads it at limiter-construction; keys now read `<prefix>login:k1` / `<prefix>pwreset:k1`. Documented in `.env.example`. Two new test cases lock in the contract: explicit prefix (`fernly:`) and default (`app:`). ⚠️ Changing the prefix in production resets in-flight rate-limit counters — schedule a maintenance window. |
 
 **Verification for this pass:** `tsc --noEmit` clean · ESLint clean · 724/724 vitest
 tests green (14 net-new: tokens-sync 6, app-config 4, bridge/route 9, minus the

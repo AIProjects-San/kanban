@@ -20,7 +20,7 @@ import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
-import { fernlySignOut } from "@/lib/signout";
+import { appSignOut } from "@/lib/signout";
 import { APP } from "@/config/app";
 
 interface NavItem {
@@ -121,7 +121,7 @@ export function Sidebar() {
         {/* Sign out */}
         <div className="p-3 border-t border-sidebar-border">
           <button
-            onClick={() => { void fernlySignOut(); }}
+            onClick={() => { void appSignOut(); }}
             className="f-nav-item w-full"
           >
             <LogOut size={18} />

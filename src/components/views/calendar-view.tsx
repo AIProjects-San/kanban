@@ -6,10 +6,10 @@ import { cn } from "@/lib/utils";
 import { useRefresh } from "@/hooks/use-refresh";
 import { createEvent, deleteEvent } from "@/server-actions/data";
 import { toast } from "sonner";
-import { Modal } from "../fernly/modal";
-import { EntityHistorySection } from "../fernly/entity-history-section";
-import { Field, FormRow } from "../fernly/field";
-import { FormActions } from "../fernly/form-actions";
+import { Modal } from "../ui/modal";
+import { EntityHistorySection } from "../ui/entity-history-section";
+import { Field, FormRow } from "../ui/field";
+import { FormActions } from "../ui/form-actions";
 import { EVENT_TYPE_MAP, EVENT_TYPES } from "@/lib/config";
 import type { CalendarEventT, EventType } from "@/lib/types";
 

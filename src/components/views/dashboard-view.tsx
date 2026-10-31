@@ -15,8 +15,8 @@ import {
   Timer,
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { Avatar } from "../fernly/avatar";
-import { StatCard } from "../fernly/stat-card";
+import { Avatar } from "../ui/avatar";
+import { StatCard } from "../ui/stat-card";
 import { useApp } from "@/store/app-store";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";

@@ -30,7 +30,7 @@ vi.mock("@/server-actions/data", () => ({
   createMember: vi.fn(),
 }));
 
-import { CommandPalette } from "@/components/fernly/command-palette";
+import { CommandPalette } from "@/components/ui/command-palette";
 import { useApp } from "@/store/app-store";
 
 function openPalette() {

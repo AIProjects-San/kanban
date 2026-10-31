@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Toggle } from "@/components/fernly/toggle";
-import { EmptyState } from "@/components/fernly/empty-state";
-import { RoleBadge } from "@/components/fernly/role-badge";
-import { Modal } from "@/components/fernly/modal";
+import { Toggle } from "@/components/ui/toggle";
+import { EmptyState } from "@/components/ui/empty-state";
+import { RoleBadge } from "@/components/ui/role-badge";
+import { Modal } from "@/components/ui/modal";
 
 describe("Toggle", () => {
   it("renders as an accessible switch with the current state", () => {

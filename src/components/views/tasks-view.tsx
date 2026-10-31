@@ -15,8 +15,8 @@ import {
 import { useRefresh } from "@/hooks/use-refresh";
 import { Plus, MoreHorizontal, Calendar as CalIcon, FolderKanban } from "lucide-react";
 import { useApp } from "@/store/app-store";
-import { Avatar } from "../fernly/avatar";
-import { FilterBar } from "../fernly/filter-bar";
+import { Avatar } from "../ui/avatar";
+import { FilterBar } from "../ui/filter-bar";
 import { cn } from "@/lib/utils";
 import { TASK_STATUSES, priorityClass, tagClass } from "@/lib/config";
 import type { TaskT, TaskStatus, ProjectT, TeamMemberT } from "@/lib/types";

@@ -21,6 +21,22 @@
 import { SlidingWindowLimiter, type RateLimitState } from "./rate-limit";
 import { getSharedRedisClient } from "./redis-client";
 
+/**
+ * Redis key namespace prefix for all rate-limit keys. Read from
+ * `REDIS_KEY_PREFIX` (env) so multiple apps — or multiple environments —
+ * can share one Redis instance without colliding. Defaults to `app:` when
+ * unset. Changing it in production resets in-flight rate-limit counters
+ * (acceptable during a maintenance window).
+ *
+ * Always ends with `:` so the limiter-specific segment (e.g. `login:`,
+ * `pwreset:`) reads as `app:login:k1` rather than `applogin:k1`.
+ */
+function redisKeyPrefix(): string {
+  const raw = process.env.REDIS_KEY_PREFIX;
+  if (!raw) return "app:";
+  return raw.endsWith(":") ? raw : `${raw}:`;
+}
+
 // Minimal Redis client interface — satisfied by ioredis and node-redis
 // (with adapter wrappers).
 export interface RedisLike {
@@ -223,7 +239,7 @@ export function createLoginLimiter(opts?: {
       maxHits,
       windowMs,
       redis: redisClient,
-      keyPrefix: "fernly:login:",
+      keyPrefix: `${redisKeyPrefix()}login:`,
       progressiveDelayThreshold: 3,
       progressiveDelayMaxMs: 60_000,
     });
@@ -271,7 +287,7 @@ export function createPasswordResetLimiter(opts?: {
       maxHits,
       windowMs,
       redis: redisClient,
-      keyPrefix: "fernly:pwreset:",
+      keyPrefix: `${redisKeyPrefix()}pwreset:`,
       progressiveDelayThreshold: 0, // no progressive delay — plain window
     });
     cachedPasswordResetLimiter = new FailOpenRedisLimiterAdapter(limiter, "password-reset");

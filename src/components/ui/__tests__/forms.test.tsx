@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { CheckCircle2 } from "lucide-react";
-import { Field, FormRow } from "@/components/fernly/field";
-import { StatCard } from "@/components/fernly/stat-card";
-import { PasswordInput, generatePassword } from "@/components/fernly/password-input";
+import { Field, FormRow } from "@/components/ui/field";
+import { StatCard } from "@/components/ui/stat-card";
+import { PasswordInput, generatePassword } from "@/components/ui/password-input";
 
 describe("Field", () => {
   it("associates the label with the wrapped input", () => {

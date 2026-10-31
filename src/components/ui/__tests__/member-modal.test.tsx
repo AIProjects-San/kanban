@@ -29,7 +29,7 @@ vi.mock("@/server-actions/data", () => ({
 // Stub the Modal so we don't need to worry about portal/animation timing,
 // but pass through the title/description so the modal's intent is visible
 // in the rendered output.
-vi.mock("@/components/fernly/modal", () => ({
+vi.mock("@/components/ui/modal", () => ({
   Modal: ({
     children,
     open,
@@ -50,7 +50,7 @@ vi.mock("@/components/fernly/modal", () => ({
     ) : null,
 }));
 
-import { MemberModal } from "@/components/fernly/member-modal";
+import { MemberModal } from "@/components/ui/member-modal";
 import { useApp } from "@/store/app-store";
 
 beforeEach(() => {

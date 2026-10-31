@@ -70,7 +70,7 @@ export function CommandPalette() {
 
   const items: CmdItem[] = useMemo(() => {
     type NavEntry = { key: ViewKey; label: string; icon: React.ComponentType<{ size?: number }> };
-    // Navigation mirrors the sidebar exactly (src/components/fernly/sidebar.tsx)
+    // Navigation mirrors the sidebar exactly (src/components/ui/sidebar.tsx)
     // so ⌘K and the sidebar expose the same set of reachable views. Role-gated
     // entries are conditionally included to match the sidebar's filter logic.
     const nav: NavEntry[] = [

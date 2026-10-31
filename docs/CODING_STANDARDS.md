@@ -46,7 +46,7 @@ Every exported action in a `"use server"` file is a **public HTTP endpoint**. Th
   when possible.
 - Components ≤ ~250 lines; beyond that, extract sub-components into the same file or a
   sibling under the same directory.
-- Reuse the design system in `components/fernly/` (Field, FormRow, FormActions, Toggle,
+- Reuse the design system in `components/ui/` (Field, FormRow, FormActions, Toggle,
   StatCard, Section, EmptyState, RoleBadge, Modal, EntityHistorySection, …) — **do not**
   re-implement inline equivalents**; that was the source of 8+ duplicated blocks before.
 - Every icon-only button needs an `aria-label`. Every form input is wrapped in `Field`.

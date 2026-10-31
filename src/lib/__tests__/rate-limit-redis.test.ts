@@ -194,6 +194,11 @@ describe("createLoginLimiter factory (L-P0-10)", () => {
   });
 
   it("returns the Redis-backed limiter when a Redis client is provided", async () => {
+    // The Redis key namespace prefix is configurable via REDIS_KEY_PREFIX
+    // so multiple apps can share one Redis instance. Set it explicitly here
+    // so the assertion below stays deterministic regardless of test runner
+    // env. Default when unset is `app:` (covered by the next test).
+    process.env.REDIS_KEY_PREFIX = "fernly:";
     const fakeRedis = new FakeRedis();
     const limiter = createLoginLimiter({
       redisClient: fakeRedis,
@@ -207,6 +212,24 @@ describe("createLoginLimiter factory (L-P0-10)", () => {
     expect(state.count).toBe(2);
     expect(state.blocked).toBe(true);
     expect(fakeRedis._inspect("fernly:login:k1").length).toBe(2);
+    delete process.env.REDIS_KEY_PREFIX;
+  });
+
+  it("uses the `app:` default Redis key prefix when REDIS_KEY_PREFIX is unset", async () => {
+    delete process.env.REDIS_KEY_PREFIX;
+    const fakeRedis = new FakeRedis();
+    const limiter = createLoginLimiter({
+      redisClient: fakeRedis,
+      redisUrl: "redis://localhost:6379",
+      maxHits: 2,
+      windowMs: 1000,
+    });
+    await limiter.hit("k1");
+    await limiter.hit("k1");
+    // Default prefix is `app:` so the key reads `app:login:k1`.
+    expect(fakeRedis._inspect("app:login:k1").length).toBe(2);
+    // And the legacy hardcoded `fernly:` prefix is NOT used.
+    expect(fakeRedis._inspect("fernly:login:k1").length).toBe(0);
   });
 
   it("caches the limiter for the process lifetime", () => {

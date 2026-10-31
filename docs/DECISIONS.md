@@ -50,7 +50,7 @@ overhead.
 
 - The repo **already follows the shadcn/ui pattern**: `components.json` (new-york
   style, lucide icons), `cn()` in `src/lib/utils.ts` (clsx + tailwind-merge), local
-  primitives in `src/components/fernly/` (Modal with focus trap, Field/FormRow,
+  primitives in `src/components/ui/` (Modal with focus trap, Field/FormRow,
   StatCard, Toggle, EmptyState, RoleBadge, FilterBar, Section, Avatar, PasswordInput).
   "Code overhead" is already amortized into ~15 reusable primitives.
 - A full kit (MUI/AntD/Chakra) would (a) fight the OKLCH token system and four-accent
@@ -106,7 +106,7 @@ slug, tagline, support email and identifier domain. It derives `STORAGE_KEYS`,
 `ERROR_BRIDGE_KEY`, `DEFAULT_WORKSPACE_NAME` and `DEFAULT_MAIL_FROM`. Every
 user-facing surface imports from it; `app-config.test.ts` fails the build if a swept
 file stops importing the config. (Internal module paths such as
-`@/components/fernly/*` are code identifiers, not branding — they stay.)
+`@/components/ui/*` are code identifiers, not branding — they stay.)
 
 **Consequences.** Renaming the product = editing one file. Tests pin the contract so
 literals cannot quietly return.

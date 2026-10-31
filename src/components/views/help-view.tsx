@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { Search, BookOpen, Keyboard, Mail, MessageCircle, ChevronDown, LifeBuoy, Zap, Settings as SettingsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
-import { Modal } from "../fernly/modal";
+import { Modal } from "../ui/modal";
 import { APP } from "@/config/app";
 
 const CATEGORIES = [

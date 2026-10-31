@@ -36,7 +36,7 @@
 
 import { signOut } from "next-auth/react";
 
-export async function fernlySignOut(): Promise<void> {
+export async function appSignOut(): Promise<void> {
   try {
     // `redirect: true` makes NextAuth do `window.location.href = data.url`
     // itself (data.url is the absolute callbackUrl the server returns).

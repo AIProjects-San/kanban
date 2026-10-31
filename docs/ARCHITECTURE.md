@@ -46,7 +46,7 @@ contract — a DB outage there belongs in the error boundary, not an empty UI.
 
 ```
 app/page.tsx                — server component: session + initial payload
-components/fernly/          — design system + shells (app-shell, sidebar, modals…)
+components/ui/          — design system + shells (app-shell, sidebar, modals…)
 components/views/           — one component per ViewKey (dashboard, tasks, …)
 components/auth/            — login screen
 hooks/                      — use-keyboard-shortcuts, use-permissions (client RBAC)
@@ -133,7 +133,7 @@ code defaults when tables are empty, and caches for 60 s. Mutations call
 - **State:** server data arrives as props from the server component; Zustand holds only
   view/session state (active view, open modals, inbox, palette, refresh counter).
   `bumpRefresh()` triggers a server re-render after mutations.
-- **Design system:** `components/fernly/*` — no third-party UI kit. The shadcn
+- **Design system:** `components/ui/*` — no third-party UI kit. The shadcn
   scaffold was removed (49 dependencies dropped).
 - **Keyboard-first:** `G <key>` view jumps, `⌘K` palette, `?` shortcuts overlay.
 
@@ -143,7 +143,7 @@ code defaults when tables are empty, and caches for 60 s. Mutations call
 |-------|---------|----------|------|
 | Pure logic (rbac, config, time, rate-limit, validation, audit-meta, greeting) | Vitest | `src/lib/__tests__/` | 90% stmts / 80% branches |
 | Server actions incl. security regressions (mocked Prisma/next-auth) | Vitest | `src/server-actions/__tests__/` | 90% stmts / 80% branches |
-| Shared components | Vitest + Testing Library | `src/components/fernly/__tests__/` | — |
+| Shared components | Vitest + Testing Library | `src/components/ui/__tests__/` | — |
 | Browser E2E (login, RBAC, board, messaging) | Cucumber + Selenium | `e2e/` | run on machines with Chrome |
 
 See `docs/TESTING.md` for the full strategy, coverage numbers and the manual test plan.

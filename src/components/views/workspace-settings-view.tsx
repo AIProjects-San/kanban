@@ -8,8 +8,8 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useRefresh } from "@/hooks/use-refresh";
-import { Section } from "../fernly/section";
-import { Field, FormRow } from "../fernly/field";
+import { Section } from "../ui/section";
+import { Field, FormRow } from "../ui/field";
 import {
   loadWorkspaceConfig, updateWorkspaceSettings,
   updateConfigItem, createConfigItem, deleteConfigItem,

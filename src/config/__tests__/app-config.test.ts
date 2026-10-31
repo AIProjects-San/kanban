@@ -18,7 +18,7 @@ const CONFIG_CONSUMERS = [
   "src/app/not-found.tsx",
   "src/app/loading.tsx",
   "src/app/api/route.ts",
-  "src/components/fernly/sidebar.tsx",
+  "src/components/ui/sidebar.tsx",
   "src/components/auth/login-screen.tsx",
   "src/components/views/settings-view.tsx",
   "src/components/views/help-view.tsx",

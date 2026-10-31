@@ -11,7 +11,7 @@ import {
   ROLE_LABELS, ROLE_DESCRIPTIONS, ALL_PERMISSIONS,
   hasPermission,
 } from "@/lib/rbac";
-import { Section } from "../fernly/section";
+import { Section } from "../ui/section";
 
 /**
  * Embedded RBAC view — used as a tab inside the Users page.

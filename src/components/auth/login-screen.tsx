@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
 import { Leaf, Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { RoleBadge } from "../fernly/role-badge";
+import { RoleBadge } from "../ui/role-badge";
 import { APP } from "@/config/app";
 
 // ---------------------------------------------------------------------------

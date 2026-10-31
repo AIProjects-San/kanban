@@ -5,13 +5,13 @@ import {
   MessageSquare, User, Search, X, Mail, Clock,
   CheckCircle2, Loader2, Calendar, TrendingUp, Send,
 } from "lucide-react";
-import { Avatar } from "../fernly/avatar";
+import { Avatar } from "../ui/avatar";
 import { cn } from "@/lib/utils";
 import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
 import { sendMessage } from "@/server-actions/data";
 import { actionErrorMessage } from "@/lib/action-errors";
-import { EntityHistorySection } from "../fernly/entity-history-section";
+import { EntityHistorySection } from "../ui/entity-history-section";
 import { TASK_STATUS_ACCENT, tagClass, DEPARTMENT_LABELS } from "@/lib/config";
 import type { TeamMemberT, Department, TaskT, ProjectT, TimeEntryT } from "@/lib/types";
 

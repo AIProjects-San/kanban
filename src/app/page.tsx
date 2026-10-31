@@ -3,7 +3,7 @@ import { authOptions } from "@/lib/auth";
 import { getDashboardData, getUserProfile } from "@/server-actions/data";
 import { getGreeting, getTodayDateStr } from "@/lib/greeting";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
-import { AppShell } from "@/components/fernly/app-shell";
+import { AppShell } from "@/components/ui/app-shell";
 import { Providers } from "@/components/providers";
 
 export const dynamic = "force-dynamic";

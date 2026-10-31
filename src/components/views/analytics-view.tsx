@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { CheckCircle2, Clock, TrendingUp, Gauge, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Avatar } from "../fernly/avatar";
+import { Avatar } from "../ui/avatar";
 import { toast } from "sonner";
 import type { TaskT, TimeEntryT, TeamMemberT, ProjectT } from "@/lib/types";
 

@@ -22,7 +22,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 // ---------------------------------------------------------------------------
 
 // Stub the EntityHistorySection so we don't drag in server-action calls.
-vi.mock("@/components/fernly/entity-history-section", () => ({
+vi.mock("@/components/ui/entity-history-section", () => ({
   EntityHistorySection: () => <div data-testid="history" />,
 }));
 

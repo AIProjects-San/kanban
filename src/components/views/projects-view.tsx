@@ -11,8 +11,8 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { toast } from "sonner";
 import { deleteProject } from "@/server-actions/data";
 import { actionErrorMessage } from "@/lib/action-errors";
-import { EmptyState } from "../fernly/empty-state";
-import { FilterBar } from "../fernly/filter-bar";
+import { EmptyState } from "../ui/empty-state";
+import { FilterBar } from "../ui/filter-bar";
 import { PROJECT_STATUSES, PROJECT_STATUS_MAP, priorityClass } from "@/lib/config";
 import type { ProjectT, ProjectStatus } from "@/lib/types";
 
