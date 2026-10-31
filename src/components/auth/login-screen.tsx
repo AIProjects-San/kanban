@@ -9,16 +9,35 @@ import { RoleBadge } from "../fernly/role-badge";
 // ---------------------------------------------------------------------------
 // L-P0-12 — demo credentials must not leak into production builds.
 //
-// All demo affordances are gated behind NEXT_PUBLIC_SEED_DEMO=1 (a build-time
-// env var inlined into the client bundle). Production builds that don't set
-// it get a clean login screen: no prefill, no demo accounts panel, no
-// credential hints in error toasts.
+// Launch gate 11 goes further than the original fix: it requires that a
+// production build contains NO trace of the demo credentials — "verified
+// by building and inspecting the bundle". Gating JSX behind
+// NEXT_PUBLIC_SEED_DEMO hides the UI, but the string literals survived
+// dead-code elimination and shipped in the client chunks (found by grepping
+// the built bundle for the seed password/email).
+//
+// The fix: this file contains ZERO credential literals. The demo data is
+// injected at build time from NEXT_PUBLIC_DEMO_* env vars, which are only
+// set in demo/dev environments (.env). A production build that doesn't set
+// them compiles to `"".split(",")` — nothing to find, nothing to leak.
 // ---------------------------------------------------------------------------
 const SEED_DEMO = process.env.NEXT_PUBLIC_SEED_DEMO === "1";
+// e.g. NEXT_PUBLIC_DEMO_ACCOUNTS="<email>:Admin,<email>:Manager,..."
+const DEMO_ACCOUNTS: Array<{ email: string; role: string }> =
+  (process.env.NEXT_PUBLIC_DEMO_ACCOUNTS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [email, role] = entry.split(":");
+      return { email: (email ?? "").trim(), role: (role ?? "Member").trim() };
+    })
+    .filter((a) => a.email.length > 0);
+const DEMO_PASSWORD = process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? "";
 
 export function LoginScreen() {
-  const [email, setEmail] = useState(SEED_DEMO ? "demo@fernly.app" : "");
-  const [password, setPassword] = useState(SEED_DEMO ? "fernly123" : "");
+  const [email, setEmail] = useState(SEED_DEMO && DEMO_ACCOUNTS[0] ? DEMO_ACCOUNTS[0].email : "");
+  const [password, setPassword] = useState(SEED_DEMO ? DEMO_PASSWORD : "");
   const [loading, setLoading] = useState(false);
 
   // If redirected back with ?error=CredentialsSignin, show toast
@@ -123,15 +142,20 @@ export function LoginScreen() {
             </button>
           </form>
 
-          {SEED_DEMO && (
+          {SEED_DEMO && DEMO_ACCOUNTS.length > 0 && (
             <div className="mt-6 p-3 rounded-lg bg-muted/60 border border-border">
               <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Demo accounts (all password: fernly123)
+                {`Demo accounts${DEMO_PASSWORD ? ` (all password: ${DEMO_PASSWORD})` : ""}`}
               </div>
               <div className="space-y-1.5">
-                <DemoAccount email="demo@fernly.app" role="Admin" onClick={() => { setEmail("demo@fernly.app"); setPassword("fernly123"); }} />
-                <DemoAccount email="manager@fernly.app" role="Manager" onClick={() => { setEmail("manager@fernly.app"); setPassword("fernly123"); }} />
-                <DemoAccount email="member@fernly.app" role="Member" onClick={() => { setEmail("member@fernly.app"); setPassword("fernly123"); }} />
+                {DEMO_ACCOUNTS.map((a) => (
+                  <DemoAccount
+                    key={a.email}
+                    email={a.email}
+                    role={a.role}
+                    onClick={() => { setEmail(a.email); setPassword(DEMO_PASSWORD); }}
+                  />
+                ))}
               </div>
             </div>
           )}

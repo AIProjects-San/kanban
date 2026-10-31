@@ -56,38 +56,54 @@ export function UsersView({ currentUser, projects: _projects }: UsersViewProps) 
   const [roleFilter, setRoleFilter] = useState<"all" | Role>("all");
   const [assignmentsByUser, setAssignmentsByUser] = useState<Record<string, ProjectAssignment[]>>({});
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
-  const [loadingAssignments, setLoadingAssignments] = useState<string | null>(null);
 
   const role = currentUser.role as Role;
 
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getAllUsers();
-      if (result.ok) setUsers(result.data);
-      else toast.error(result.error);
-    } catch (e) {
-      toast.error(actionErrorMessage(e, "Failed to load users"));
-    } finally {
-      setLoading(false);
-    }
+  // Fetch-on-mount via promise callbacks (no setState reachable
+  // synchronously from the effect body — the upgraded react-hooks plugin
+  // flags that pattern even across `await` inside a called async function).
+  const loadUsers = useCallback((): Promise<void> => {
+    return getAllUsers()
+      .then((result) => {
+        if (result.ok) setUsers(result.data);
+        else toast.error(result.error);
+      })
+      .catch((e: unknown) => {
+        toast.error(actionErrorMessage(e, "Failed to load users"));
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
-  useEffect(() => { loadUsers(); }, [loadUsers]);
+  // `loading` starts true, so the first fetch shows the skeleton without a
+  // synchronous setState in the effect (the upgraded react-hooks plugin
+  // flags that pattern); explicit reloads flip it from their event handlers.
+  useEffect(() => { void loadUsers(); }, [loadUsers]);
 
   useEffect(() => {
     if (!expandedUser) return;
     if (assignmentsByUser[expandedUser]) return;
-    setLoadingAssignments(expandedUser);
+    let cancelled = false;
     getUserProjectAssignments(expandedUser)
       .then((result) => {
-        setAssignmentsByUser((prev) => ({ ...prev, [expandedUser]: result.ok ? result.data : [] }));
+        if (!cancelled) {
+          setAssignmentsByUser((prev) => ({ ...prev, [expandedUser]: result.ok ? result.data : [] }));
+        }
       })
       .catch(() => {
-        setAssignmentsByUser((prev) => ({ ...prev, [expandedUser]: [] }));
-      })
-      .finally(() => setLoadingAssignments(null));
+        if (!cancelled) {
+          setAssignmentsByUser((prev) => ({ ...prev, [expandedUser]: [] }));
+        }
+      });
+    return () => { cancelled = true; };
   }, [expandedUser, assignmentsByUser]);
+
+  // Derived (not stored): a user's assignments are "loading" exactly while
+  // they are expanded and their list hasn't arrived yet — same observable
+  // behaviour as the previous loadingAssignments state, minus a setter.
+  const loadingAssignments: string | null =
+    expandedUser && !assignmentsByUser[expandedUser] ? expandedUser : null;
 
   const filtered = useMemo(() => {
     return users.filter((u) => {
@@ -141,7 +157,7 @@ export function UsersView({ currentUser, projects: _projects }: UsersViewProps) 
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={loadUsers} className="f-btn f-btn-ghost f-btn-sm" aria-label="Refresh">
+          <button onClick={() => { setLoading(true); void loadUsers(); }} className="f-btn f-btn-ghost f-btn-sm" aria-label="Refresh">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </button>
           <button onClick={() => openUserModal()} className="f-btn f-btn-primary f-btn-sm">

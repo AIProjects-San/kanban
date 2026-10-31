@@ -37,14 +37,23 @@ export async function notifyMentionedUsers(ctx: MentionContext): Promise<string[
 
     // Load all non-deleted users once and match locally — workspaces are
     // small (100s–1000s of users) and this avoids one query per mention.
+    // We also fetch each user's notification preferences so the Settings →
+    // "Mentions" toggle is genuinely honoured (audit gate 9: no cosmetic
+    // controls — a toggle must either work or be absent/labelled).
     const users = await db.user.findMany({
       where: { deletedAt: null },
-      select: { id: true, name: true },
+      select: {
+        id: true,
+        name: true,
+        settings: { select: { notifMentions: true } },
+      },
     });
 
     const byName = new Map<string, string>(); // normalised full name → userId
     const byFirstName = new Map<string, string[]>(); // first word → userIds
+    const mentionsOptOut = new Set<string>(); // users with the Mentions toggle OFF
     for (const u of users) {
+      if (u.settings?.notifMentions === false) mentionsOptOut.add(u.id);
       byName.set(normaliseNameForMention(u.name), u.id);
       const first = u.name.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
       if (first) {
@@ -77,6 +86,8 @@ export async function notifyMentionedUsers(ctx: MentionContext): Promise<string[
 
       if (!userId || userId === ctx.actorUserId) continue;
       if (notifiedSet.has(userId)) continue;
+      // Honour the recipient's Settings → Notifications → Mentions toggle.
+      if (mentionsOptOut.has(userId)) continue;
       notifiedSet.add(userId);
       notified.push(userId);
     }

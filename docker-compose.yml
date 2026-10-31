@@ -1,6 +1,7 @@
 # L-P1-21 — docker-compose for multi-instance deployment.
 # 2 Fernly replicas behind nginx (probing /api/health) + shared Redis
-# (for the L-P0-10 rate limiter).
+# (for the L-P0-10 rate limiter) + the audit-retention scheduler
+# (launch gate 12: daily prune via /api/cron/prune-audit).
 
 services:
   redis:
@@ -61,6 +62,42 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Launch gate 12 — audit-log retention job. Calls the CRON_SECRET-protected
+  # /api/cron/prune-audit endpoint once a day (03:00-ish, drifts by design —
+  # the endpoint itself is idempotent and overlap-guarded). Requires a
+  # CRON_SECRET (>= 16 chars) in .env; without it the endpoint returns 503
+  # and the scheduler logs the failure visibly instead of silently no-op'ing.
+  # The loop prints a timestamped line per attempt for `docker logs audit-cron`.
+  audit-cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Compose interpolates at parse time; the shell inside the container
+      # re-expands $${CRON_SECRET} at runtime from the env_file.
+      CRON_SECRET: "${CRON_SECRET:-}"
+    depends_on:
+      nginx:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "[audit-cron] scheduler started (daily at 03:00 UTC)"
+        while true; do
+          # Sleep until the next 03:00 UTC (today's if still ahead, else
+          # tomorrow's), then prune.
+          now=$$(date +%s)
+          target=$$(( (now / 86400) * 86400 + 3 * 3600 ))
+          if [ $$target -le $$now ]; then target=$$(( target + 86400 )); fi
+          sleep $$(( target - now ))
+          echo "[audit-cron] $$(date -u +%FT%TZ) calling /api/cron/prune-audit"
+          wget -q -O- --server-response \
+            --header="Authorization: Bearer $${CRON_SECRET}" \
+            http://nginx/api/cron/prune-audit 2>&1 | tail -n 4
+          echo "[audit-cron] $$(date -u +%FT%TZ) prune call finished"
+        done
 
 volumes:
   redis-data:

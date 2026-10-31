@@ -41,7 +41,7 @@ const EN = {
   // Loading
   "loading.workspace": "Loading workspace…",
   // Status labels (audit's L-P0-12 gated strings)
-  "auth.demoAccounts": "Demo accounts (all password: fernly123)",
+  "auth.demoAccounts": "Demo accounts",
 } as const;
 
 export type TranslationKey = keyof typeof EN;

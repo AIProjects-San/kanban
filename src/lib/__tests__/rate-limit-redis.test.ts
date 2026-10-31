@@ -215,3 +215,74 @@ describe("createLoginLimiter factory (L-P0-10)", () => {
     expect(a).toBe(b);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Launch-crosscheck additions (deep-dive F-12 closure): the factory must
+// auto-wire the shared ioredis client, and Redis outages must fail OPEN
+// (logins stay possible; throttling degrades) instead of 500-ing every
+// sign-in.
+// ---------------------------------------------------------------------------
+
+describe("fail-open behaviour when Redis errors (F-12 closure)", () => {
+  beforeEach(() => {
+    _resetLoginLimiterCacheForTests();
+    vi.clearAllMocks();
+  });
+
+  it("returns not-blocked instead of throwing when Redis commands reject", async () => {
+    const brokenRedis: RedisLike = {
+      zadd: async () => { throw new Error("ECONNREFUSED"); },
+      zremrangebyscore: async () => { throw new Error("ECONNREFUSED"); },
+      zcard: async () => { throw new Error("ECONNREFUSED"); },
+      zrangebyscore: async () => { throw new Error("ECONNREFUSED"); },
+      del: async () => { throw new Error("ECONNREFUSED"); },
+      expire: async () => { throw new Error("ECONNREFUSED"); },
+    };
+    const limiter = createLoginLimiter({
+      redisClient: brokenRedis,
+      redisUrl: "redis://broken:6379",
+    });
+    // Neither check nor hit may throw — a Redis outage must not 500 logins.
+    const checked = await limiter.check("some-email");
+    expect(checked.blocked).toBe(false);
+    const hit = await limiter.hit("some-email");
+    expect(hit.blocked).toBe(false);
+    await expect(limiter.reset("some-email")).resolves.toBeUndefined();
+  });
+
+  it("degrades with at most one warning per 30s (no log spam)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const brokenRedis: RedisLike = {
+      zadd: async () => { throw new Error("boom"); },
+      zremrangebyscore: async () => { throw new Error("boom"); },
+      zcard: async () => { throw new Error("boom"); },
+      zrangebyscore: async () => { throw new Error("boom"); },
+      del: async () => { throw new Error("boom"); },
+      expire: async () => { throw new Error("boom"); },
+    };
+    const limiter = createLoginLimiter({
+      redisClient: brokenRedis,
+      redisUrl: "redis://broken:6379",
+    });
+    for (let i = 0; i < 10; i++) await limiter.check("k");
+    expect(errSpy.mock.calls.filter((c) => String(c[0]).includes("UNTHROTTLED")).length).toBe(1);
+    errSpy.mockRestore();
+  });
+
+  it("falls back to the in-memory limiter when client construction fails", async () => {
+    const clientModule = await import("@/lib/redis-client");
+    const failing = vi
+      .spyOn(clientModule, "getSharedRedisClient")
+      .mockReturnValue(undefined);
+    try {
+      const limiter = createLoginLimiter({ redisUrl: "redis://unreachable:6379" });
+      // In-memory limiter still works (per-instance semantics).
+      await limiter.hit("k2");
+      await limiter.hit("k2");
+      const state = await limiter.check("k2");
+      expect(state.count).toBe(2);
+    } finally {
+      failing.mockRestore();
+    }
+  });
+});

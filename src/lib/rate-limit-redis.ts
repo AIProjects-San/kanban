@@ -10,11 +10,16 @@
 // each subsequent hit adds an exponential backoff window (2^excess seconds,
 // capped at 60s) on top of the existing block.
 //
-// `createLoginLimiter()` — factory that picks Redis when REDIS_URL + a
-// redisClient are provided, falls back to the in-memory limiter otherwise.
+// `createLoginLimiter()` — factory that picks Redis when `REDIS_URL` is set.
+// Deep-dive F-12 closure: when no client is injected, the factory now
+// constructs a real ioredis client itself (`getSharedRedisClient()`), so
+// multi-instance deployments actually share the window — previously the
+// Redis path existed but was unreachable because nothing ever built a
+// client. Falls back to the in-memory limiter when REDIS_URL is unset.
 // ---------------------------------------------------------------------------
 
 import { SlidingWindowLimiter, type RateLimitState } from "./rate-limit";
+import { getSharedRedisClient } from "./redis-client";
 
 // Minimal Redis client interface — satisfied by ioredis and node-redis
 // (with adapter wrappers).
@@ -145,19 +150,48 @@ class InMemoryLimiterAdapter implements LimiterLike {
   }
 }
 
-class RedisLimiterAdapter implements LimiterLike {
+/**
+ * Fail-open adapter (deep-dive F-12 follow-up): if Redis errors mid-flight
+ * (outage, restart, eviction storm) the limiter must not turn every login
+ * into a 500. Brute-force protection degrades to "not throttled" for the
+ * duration — bcrypt cost 12 still meters online attacks — and a loud
+ * warning fires at most once per 30s so log spam cannot hide the signal.
+ */
+class FailOpenRedisLimiterAdapter implements LimiterLike {
   private readonly inner: RedisSlidingWindowLimiter;
-  constructor(inner: RedisSlidingWindowLimiter) {
+  private readonly label: string;
+  private lastWarnedAt = 0;
+  constructor(inner: RedisSlidingWindowLimiter, label: string) {
     this.inner = inner;
+    this.label = label;
+  }
+  private async guard<T>(op: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      const now = Date.now();
+      if (now - this.lastWarnedAt > 30_000) {
+        this.lastWarnedAt = now;
+        console.error(
+          `[rate-limit] Redis unavailable — ${this.label} limiter running UNTHROTTLED (fail-open):`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+      return fallback;
+    }
   }
   check(key: string, now?: number): Promise<RateLimitState> {
-    return this.inner.check(key, now);
+    return this.guard(() => this.inner.check(key, now), { blocked: false, count: 0, retryAfterSec: 0 });
   }
   hit(key: string, now?: number): Promise<RateLimitState> {
-    return this.inner.hit(key, now);
+    return this.guard(() => this.inner.hit(key, now), { blocked: false, count: 0, retryAfterSec: 0 });
   }
-  reset(key: string): Promise<void> {
-    return this.inner.reset(key);
+  async reset(key: string): Promise<void> {
+    try {
+      await this.inner.reset(key);
+    } catch {
+      /* reset is best-effort */
+    }
   }
 }
 
@@ -180,7 +214,9 @@ export function createLoginLimiter(opts?: {
   const maxHits = opts?.maxHits ?? 5; // LOGIN_MAX_ATTEMPTS
   const windowMs = opts?.windowMs ?? 15 * 60 * 1000; // LOGIN_WINDOW_MS
   const redisUrl = opts?.redisUrl ?? process.env.REDIS_URL;
-  const redisClient = opts?.redisClient;
+  // Deep-dive F-12 — when no client is injected, build the shared ioredis
+  // client ourselves so the Redis path is actually reachable.
+  const redisClient = opts?.redisClient ?? (redisUrl ? getSharedRedisClient(redisUrl) : undefined);
 
   if (redisUrl && redisClient) {
     const limiter = new RedisSlidingWindowLimiter({
@@ -191,24 +227,14 @@ export function createLoginLimiter(opts?: {
       progressiveDelayThreshold: 3,
       progressiveDelayMaxMs: 60_000,
     });
-    cachedLoginLimiter = new RedisLimiterAdapter(limiter);
+    cachedLoginLimiter = new FailOpenRedisLimiterAdapter(limiter, "login");
     console.info("[rate-limit] login limiter backed by Redis (shared across instances, L-P0-10)");
   } else {
-    // Deep-dive review F-12 — be explicit when REDIS_URL is set but no client
-    // is wired: the Redis path is then unreachable and every instance runs
-    // its own in-memory window.
-    if (process.env.NODE_ENV === "production" && redisUrl && !redisClient) {
-      console.warn(
-        "[rate-limit] REDIS_URL is set but no Redis client is wired — " +
-        "running the login limiter in-memory. In a multi-instance deployment " +
-        "the per-instance budgets do NOT add up to a shared one. Pass a " +
-        "RedisLike client to createLoginLimiter() to close this (L-P0-10 / F-12).",
-      );
-    } else if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "production") {
       console.warn(
         "[rate-limit] REDIS_URL not set — falling back to in-memory login " +
         "limiter. In a multi-instance deployment this is a known gap (L-P0-10). " +
-        "Set REDIS_URL and provide a Redis client to close it.",
+        "Set REDIS_URL to close it.",
       );
     }
     const inner = new SlidingWindowLimiter(maxHits, windowMs);
@@ -238,7 +264,7 @@ export function createPasswordResetLimiter(opts?: {
   const maxHits = opts?.maxHits ?? 5;
   const windowMs = opts?.windowMs ?? 60 * 60 * 1000; // 1 hour
   const redisUrl = opts?.redisUrl ?? process.env.REDIS_URL;
-  const redisClient = opts?.redisClient;
+  const redisClient = opts?.redisClient ?? (redisUrl ? getSharedRedisClient(redisUrl) : undefined);
 
   if (redisUrl && redisClient) {
     const limiter = new RedisSlidingWindowLimiter({
@@ -248,7 +274,7 @@ export function createPasswordResetLimiter(opts?: {
       keyPrefix: "fernly:pwreset:",
       progressiveDelayThreshold: 0, // no progressive delay — plain window
     });
-    cachedPasswordResetLimiter = new RedisLimiterAdapter(limiter);
+    cachedPasswordResetLimiter = new FailOpenRedisLimiterAdapter(limiter, "password-reset");
   } else {
     const inner = new SlidingWindowLimiter(maxHits, windowMs);
     cachedPasswordResetLimiter = new InMemoryLimiterAdapter(inner);

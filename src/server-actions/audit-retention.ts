@@ -20,69 +20,29 @@
 //     how many rows the page shows silently changed how long logs live.
 //   • Batching is real: DELETE ... WHERE id IN (SELECT id ... LIMIT 10000).
 //
+// Launch gate 12 — the batched delete core moved to src/lib/audit-prune-core.ts
+// so the CRON_SECRET-protected /api/cron/prune-audit route can run it on a
+// schedule without a user session; this action remains the admin-invocable
+// path (Workspace Config) and keeps the role:manage gate.
+//
 // NOTE: "use server" file — only async functions can be exported. Constants
 // + types live in src/lib/audit-retention-config.ts.
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
 import { requirePermission } from "./auth-guard";
-import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
-import {
-  DEFAULT_AUDIT_RETENTION_DAYS,
-  MIN_AUDIT_RETENTION_DAYS,
-  type PruneResult,
-} from "@/lib/audit-retention-config";
-
-function clampRetentionDays(configured: number | undefined | null): number {
-  if (!configured || configured <= 0) return DEFAULT_AUDIT_RETENTION_DAYS;
-  return Math.max(configured, MIN_AUDIT_RETENTION_DAYS);
-}
+import type { PruneResult } from "@/lib/audit-retention-config";
+import { runAuditPrune, clampRetentionDays } from "@/lib/audit-prune-core";
 
 export async function pruneAuditLogs(): Promise<ActionResult<PruneResult>> {
   return toResult(async () => {
     // Deep-dive review F-09 — role:manage, not audit:view.
     const auth = await requirePermission("role:manage");
-
-    const workspace = await db.workspace.findUnique({
-      where: { id: "default" },
-      select: { auditRetentionDays: true },
-    });
-    const retentionDays = clampRetentionDays(workspace?.auditRetentionDays);
-    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-
-    // Real batching (F-09): deleteMany has no LIMIT, so a "batch loop" over
-    // deleteMany was one unbounded transaction. This raw statement caps each
-    // round at BATCH_SIZE rows; the loop runs until a round comes back short.
-    const BATCH_SIZE = 10_000;
-    let totalDeleted = 0;
-    let batchDeleted = BATCH_SIZE;
-    while (batchDeleted === BATCH_SIZE) {
-      batchDeleted = await db.$executeRaw`
-        DELETE FROM "AuditLog"
-        WHERE "id" IN (
-          SELECT "id" FROM "AuditLog" WHERE "createdAt" < ${cutoff} LIMIT ${BATCH_SIZE}
-        )
-      `;
-      totalDeleted += batchDeleted;
-      // Safety cap: if we've deleted more than 1M rows in one prune call,
-      // stop and let the next scheduled run continue.
-      if (totalDeleted > 1_000_000) break;
-    }
-
-    await logAudit({
-      actor: auth,
-      action: "audit.pruned",
-      entityType: "AUDIT",
-      detail: `Pruned ${totalDeleted} audit rows older than ${cutoff.toISOString()} (retention: ${retentionDays} days)`,
-    });
-
-    return {
-      cutoff: cutoff.toISOString(),
-      deletedCount: totalDeleted,
-      retentionDays,
-    };
+    // The session auth object carries { userId, name, role, email } — a
+    // structural superset of the actor shape runAuditPrune expects.
+    return runAuditPrune(auth);
   });
 }
 

@@ -3,6 +3,8 @@ import {
   ConsoleErrorReporter,
   NoopErrorReporter,
   FakeErrorReporter,
+  SentryReporter,
+  parseSentryDsn,
   createErrorReporter,
   _resetErrorReporterCacheForTests,
   structuredLog,
@@ -196,5 +198,106 @@ describe("L-P1-19 captureError / captureMessage", () => {
     captureError(new Error("no-ctx"));
     expect(fake.exceptions.length).toBe(1);
     expect(fake.exceptions[0].context).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Launch gate 10 — SentryReporter (fetch-based, no SDK dependency).
+// ---------------------------------------------------------------------------
+
+describe("SentryReporter (launch gate 10)", () => {
+  it("parses a valid DSN into the store endpoint + public key", () => {
+    const parsed = parseSentryDsn("https://abc123@o42.ingest.sentry.io/999888");
+    expect(parsed).toEqual({
+      endpoint: "https://o42.ingest.sentry.io/api/999888/store/",
+      publicKey: "abc123",
+      projectId: "999888",
+    });
+  });
+
+  it("rejects malformed DSNs (no project id / wrong scheme)", () => {
+    expect(parseSentryDsn("https://abc@host/notanumber")).toBeNull();
+    expect(parseSentryDsn("http://abc@host/123")).toBeNull();
+    expect(parseSentryDsn("garbage")).toBeNull();
+  });
+
+  it("POSTs exceptions to the store endpoint with type/value/stack", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fakeFetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body)),
+      });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const reporter = new SentryReporter("https://abc123@o42.ingest.sentry.io/999888", {
+      fetchImpl: fakeFetch,
+      environment: "test",
+    });
+    reporter.captureException(new Error("kaboom"), { route: "/x" });
+    // Fire-and-forget: let the microtask chain settle.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls.length).toBe(1);
+    expect(calls[0].url).toContain("https://o42.ingest.sentry.io/api/999888/store/");
+    expect(calls[0].url).toContain("sentry_key=abc123");
+    const values = (calls[0].body.exception as { values: Array<{ type: string; value: string }> }).values;
+    expect(values[0].type).toBe("Error");
+    expect(values[0].value).toBe("kaboom");
+    expect(calls[0].body.environment).toBe("test");
+    expect((calls[0].body.extra as { route: string }).route).toBe("/x");
+  });
+
+  it("POSTs messages with the message field", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fakeFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body)));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const reporter = new SentryReporter("https://abc123@o42.ingest.sentry.io/999888", {
+      fetchImpl: fakeFetch,
+    });
+    reporter.captureMessage("watch this");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toBe("watch this");
+  });
+
+  it("never throws when delivery fails — degrades to console.error", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fakeFetch = (async () => { throw new Error("network down"); }) as typeof fetch;
+    const reporter = new SentryReporter("https://abc123@o42.ingest.sentry.io/999888", {
+      fetchImpl: fakeFetch,
+    });
+    expect(() => reporter.captureMessage("m")).not.toThrow();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("is selected by createErrorReporter when SENTRY_DSN is set", () => {
+    _resetErrorReporterCacheForTests();
+    process.env.SENTRY_DSN = "https://abc123@o42.ingest.sentry.io/999888";
+    try {
+      const reporter = createErrorReporter();
+      expect(reporter).toBeInstanceOf(SentryReporter);
+    } finally {
+      delete process.env.SENTRY_DSN;
+      _resetErrorReporterCacheForTests();
+    }
+  });
+
+  it("falls back to ConsoleErrorReporter when SENTRY_DSN is invalid", () => {
+    _resetErrorReporterCacheForTests();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.SENTRY_DSN = "not-a-dsn";
+    try {
+      const reporter = createErrorReporter();
+      expect(reporter).toBeInstanceOf(ConsoleErrorReporter);
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      delete process.env.SENTRY_DSN;
+      errSpy.mockRestore();
+      _resetErrorReporterCacheForTests();
+    }
   });
 });

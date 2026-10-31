@@ -113,9 +113,13 @@ entity (transparency for collaborators).
 1. Name-based joins (`ownerName`, email-matched members) — two users with identical
    names can appear in each other's scope. Fix: stable-id columns (planned migration).
 2. Notifications are workspace-global (design decision for a single-team workspace).
-3. Rate limiting is in-process (single-instance assumption) — `REDIS_URL` is
-   honoured by the limiter factory but **no Redis client is wired in code yet**
-   (deep-dive F-12); move to a shared client before scaling out.
+3. Rate limiting shares a real Redis client when `REDIS_URL` is set (deep-dive
+   F-12 closed: `src/lib/redis-client.ts` lazily constructs the process-wide
+   ioredis client; docker-compose ships Redis and both limiters use it). If
+   Redis errors mid-flight the limiters **fail open** (logins stay possible,
+   throttling degrades, warning rate-limited to 1/30s) — bcrypt cost 12 still
+   meters online attacks. Without `REDIS_URL` the limiter is per-instance
+   in-memory: acceptable single-instance, a known multi-instance gap.
 4. Unexpected server-action errors surface generically in production (only
    Authorization/Validation errors carry a digest marker).
 5. `getUserByEmail` + the search member directory let any signed-in user resolve
@@ -136,3 +140,22 @@ entity (transparency for collaborators).
    consider a `forceSignOut` flag as future work.
 4. Report vulnerabilities privately to the workspace admin; do not open public issues
    for security defects.
+
+## 11. Backup & recovery (RPO/RTO)
+
+Launch gate 6 (audit §Go/No-Go) requires the recovery targets to be on
+record **here**, not only in the ops runbook. Full procedures, the timed
+restore drill and the quarterly schedule live in
+[BACKUP_RECOVERY.md](./BACKUP_RECOVERY.md); the commitments are:
+
+| Target | Commitment | Basis |
+|--------|------------|-------|
+| **RPO** (max acceptable data loss) | ≤ 5 minutes | Supabase PITR archives WAL segments every 5 min (Pro tier). Worst case: 5 min of writes lost. |
+| **RTO** (max acceptable downtime) | ≤ 1 hour | Restore + WAL replay < 30 min at current dataset size + verification + DNS cutover. |
+
+- The **restore drill must be executed and timed against staging before
+  launch** (gate 6 is not closed by this document — it is closed by the
+  drill's recorded timings in BACKUP_RECOVERY.md).
+- Schema-level rollback safety is separate from data recovery: Prisma
+  migrations are committed and reversible (`prisma migrate resolve` +
+  the documented down-path in BACKUP_RECOVERY.md §migration-rollback).

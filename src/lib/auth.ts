@@ -125,11 +125,14 @@ export const authOptions: NextAuthOptions = {
         if (!user) {
           // Timing-attack mitigation: burn the same bcrypt work factor when
           // the account doesn't exist so response times don't reveal whether
-          // an email is registered.
+          // an email is registered. Audit §1.2: the dummy hash is cost 12 to
+          // EXACTLY match production hashing (src/lib/password.ts) — the
+          // previous cost-10 dummy left a measurable unknown-email signal.
           await bcrypt.compare(
             credentials.password,
-            // Precomputed hash of a random throwaway string (cost 10).
-            "$2b$10$GYrvjahdLkU.Jqm7PcKefutEUdE3LqKraZPNJ8M7q/FCSKaJdgWte",
+            // Precomputed hash of a random throwaway string (cost 12). The
+            // plaintext was discarded after generation; every compare fails.
+            "$2b$12$llbxFwXYn3xp2mUpBZUk3ec17zATv43gw0rBZq1kItXp3H11.q5UO",
           );
           await loginLimiter.hit(emailKey);
           await loginLimiter.hit(ipKey);

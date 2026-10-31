@@ -77,7 +77,10 @@ export default function Error({
           <button
             type="button"
             onClick={() => {
-              window.location.href = "/";
+              // A full reload (not a soft navigation): after an uncaught
+              // render error the client state may be corrupted, and a hard
+              // reload of the single-route shell is the guaranteed recovery.
+              window.location.reload();
             }}
             className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors h-9 px-4 border border-border bg-background hover:bg-accent hover:text-accent-foreground"
           >

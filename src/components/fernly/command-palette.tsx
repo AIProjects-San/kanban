@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Search,
@@ -44,21 +44,29 @@ export function CommandPalette() {
   const canManageRoles = hasPermission(role, "role:manage");
   const canViewAudit = hasPermission(role, "audit:view");
 
+  // Every close path (Escape, ⌘K toggle, item action, backdrop click) goes
+  // through this helper so the search box always resets — no effect needed
+  // (the upgraded react-hooks plugin correctly flags setState-in-effect).
+  const closeCmdk = useCallback(() => {
+    setCmdkOpen(false);
+    setQuery("");
+  }, [setCmdkOpen]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setCmdkOpen(!cmdkOpen);
+        if (cmdkOpen) {
+          closeCmdk();
+        } else {
+          setCmdkOpen(true);
+        }
       }
-      if (e.key === "Escape" && cmdkOpen) setCmdkOpen(false);
+      if (e.key === "Escape" && cmdkOpen) closeCmdk();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [cmdkOpen, setCmdkOpen]);
-
-  useEffect(() => {
-    if (!cmdkOpen) setQuery("");
-  }, [cmdkOpen]);
+  }, [cmdkOpen, setCmdkOpen, closeCmdk]);
 
   const items: CmdItem[] = useMemo(() => {
     type NavEntry = { key: ViewKey; label: string; icon: React.ComponentType<{ size?: number }> };
@@ -89,7 +97,7 @@ export function CommandPalette() {
         id: `nav-${n.key}`,
         label: `Go to ${n.label}`,
         icon: n.icon,
-        action: () => { setView(n.key); setCmdkOpen(false); },
+        action: () => { setView(n.key); closeCmdk(); },
         group: "Navigation" as const,
       })),
       {
@@ -97,7 +105,7 @@ export function CommandPalette() {
         label: "Create new task",
         hint: "N",
         icon: Plus,
-        action: () => { openTaskModal(); setCmdkOpen(false); },
+        action: () => { openTaskModal(); closeCmdk(); },
         group: "Create",
       },
       {
@@ -105,7 +113,7 @@ export function CommandPalette() {
         label: "Create new project",
         hint: "P",
         icon: Plus,
-        action: () => { openProjectModal(); setCmdkOpen(false); },
+        action: () => { openProjectModal(); closeCmdk(); },
         group: "Create",
       },
       // The "Invite team member" entry used to live here and opened the
@@ -120,7 +128,7 @@ export function CommandPalette() {
             id: "new-user",
             label: "Create user",
             icon: UserPlus,
-            action: () => { openUserModal(); setCmdkOpen(false); },
+            action: () => { openUserModal(); closeCmdk(); },
             group: "Create" as const,
           }]
         : []),
@@ -128,7 +136,7 @@ export function CommandPalette() {
         id: "toggle-theme",
         label: dark ? "Switch to light mode" : "Switch to dark mode",
         icon: dark ? Sun : Moon,
-        action: () => { setDark(!dark); setCmdkOpen(false); },
+        action: () => { setDark(!dark); closeCmdk(); },
         group: "Theme",
       },
       ...ACCENTS.map((a) => {
@@ -137,12 +145,12 @@ export function CommandPalette() {
           id: `accent-${a.key}`,
           label: `Theme: ${a.label}`,
           icon: Icon,
-          action: () => { setAccent(a.key); setCmdkOpen(false); },
+          action: () => { setAccent(a.key); closeCmdk(); },
           group: "Theme" as const,
         };
       }),
     ];
-  }, [setView, setCmdkOpen, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, canViewAudit]);
+  }, [setView, closeCmdk, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, canViewAudit]);
 
   const filtered = items.filter((i) =>
     i.label.toLowerCase().includes(query.toLowerCase())
@@ -157,7 +165,7 @@ export function CommandPalette() {
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] px-4"
-      onClick={() => setCmdkOpen(false)}
+      onClick={() => closeCmdk()}
     >
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden />
       <div

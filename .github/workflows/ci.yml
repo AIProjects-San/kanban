@@ -43,6 +43,13 @@ jobs:
       - name: Unit & integration tests (coverage-gated)
         run: bun run test:coverage
 
+      # Launch gate 5 — dependency audit. Fails on high/critical advisories
+      # affecting a SHIPPING dependency (direct prod deps +, after the build
+      # job runs it again, the traced standalone runtime). Dev-toolchain-only
+      # findings are informational.
+      - name: Dependency audit (production dependencies)
+        run: bun run audit:check
+
   build:
     name: production build
     runs-on: ubuntu-latest
@@ -76,17 +83,63 @@ jobs:
       - name: Bundle budget check
         run: bun run bundle:check
 
+      # Launch gate 5 (strict pass) — re-run the audit now that the traced
+      # production runtime exists, so transitive runtime deps are covered.
+      - name: Dependency audit (incl. traced runtime)
+        run: bun run audit:check
+
+      # Launch gate 11 — demo credentials must be impossible in a production
+      # build. Grep the compiled client chunks + server output for the seed
+      # email/password; the build ran without NEXT_PUBLIC_DEMO_* (CI has no
+      # .env), so the literals cannot have been inlined.
+      # Also refuses a stray .env in the standalone output — Next copies it
+      # into the deployable artifact when it exists at build time (secrets
+      # must be injected at runtime, never baked into the image).
+      - name: Verify demo credentials + secrets are absent from the production build
+        run: |
+          set -e
+          if grep -rIl "fernly123\|demo@fernly.app" .next/static .next/standalone/.next/server 2>/dev/null; then
+            echo "::error::Demo credentials found in the production build (launch gate 11 / L-P0-12 regression)"
+            exit 1
+          fi
+          if compgen -G ".next/standalone/.env*" > /dev/null; then
+            echo "::error::.env file(s) copied into the standalone output — secrets must not ship in the artifact"
+            ls -la .next/standalone/.env*
+            exit 1
+          fi
+          echo "OK — no demo credentials or secrets in the production bundle"
+
+  # Launch gate 8 — E2E suite (login, board, messaging) green in CI.
+  # Runs against a real app + real Postgres via a service container; the
+  # only "secret" needed is a CI-only NEXTAUTH_SECRET (inline below).
   e2e:
     name: e2e (cucumber + selenium)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: verify
-    # E2E needs a database with seed data; skipped unless repository secrets
-    # provide one. Flip the `if` when a CI database is wired up.
-    if: ${{ false }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        # Wait for the DB to accept connections before the job starts.
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
-      NEXTAUTH_SECRET: ${{ secrets.CI_NEXTAUTH_SECRET }}
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      # CI-only value — signs session JWTs for the ephemeral test database.
+      NEXTAUTH_SECRET: ci-only-secret-0123456789abcdef
+      NEXT_PUBLIC_SEED_DEMO: "1"
+      SELENIUM_BROWSER: chrome
+      SELENIUM_HEADLESS: "1"
+      BASE_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v4
 
@@ -100,13 +153,29 @@ jobs:
       - name: Generate Prisma client
         run: bun run db:generate
 
-      - name: Push schema & seed
+      - name: Apply migrations + seed
         run: |
-          bun run db:push
+          bun run db:deploy
           bun run db:seed
 
       - name: Start dev server
         run: nohup bun run dev > dev.log 2>&1 &
 
+      - name: Wait for the app to be healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "app is healthy"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::app did not become healthy in 120s"; tail -n 50 dev.log; exit 1
+
+      # ubuntu-latest ships Google Chrome; selenium-webdriver 4.x fetches a
+      # matching chromedriver via Selenium Manager on first use.
       - name: Run E2E suite
         run: bun run test:e2e
+
+      - name: Dump dev server log on failure
+        if: failure()
+        run: tail -n 200 dev.log

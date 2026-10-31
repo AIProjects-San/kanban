@@ -153,25 +153,41 @@ export function SettingsView({ user }: SettingsViewProps) {
       {/* Security — change password */}
       <SecuritySection userId={user.id} email={user.email} />
 
-      {/* Notifications */}
+      {/* Notifications
+
+          Audit gate 9 ("no cosmetic controls shipped") + §1.11: a settings
+          toggle must either be honoured by the product or be visibly labelled
+          as not-yet-live. The Mentions toggle is honoured server-side by
+          notifyMentionedUsers (it skips recipients who opted out). The other
+          channels have no delivery mechanism yet (no push service; email
+          digests arrive with the mail/scheduler work) — they render disabled
+          with a "Coming soon" badge instead of pretending to work. */}
       <Section icon={Bell} title="Notifications" description="Choose what you want to be notified about">
         <div className="space-y-1">
           {[
-            { key: "email" as const, label: "Email notifications", desc: "Receive notifications via email" },
-            { key: "push" as const, label: "Push notifications", desc: "Receive push notifications in your browser" },
-            { key: "mentions" as const, label: "Mentions", desc: "When someone @mentions you" },
-            { key: "dueToday" as const, label: "Due today digest", desc: "Morning summary of tasks due today" },
-            { key: "weeklyDigest" as const, label: "Weekly digest", desc: "Monday morning summary of last week" },
-            { key: "productUpdates" as const, label: "Product updates", desc: "New features and improvements" },
+            { key: "mentions" as const, label: "Mentions", desc: "When someone @mentions you in a task or message" },
+            { key: "email" as const, label: "Email notifications", desc: "Receive notifications via email", comingSoon: true },
+            { key: "push" as const, label: "Push notifications", desc: "Receive push notifications in your browser", comingSoon: true },
+            { key: "dueToday" as const, label: "Due today digest", desc: "Morning summary of tasks due today", comingSoon: true },
+            { key: "weeklyDigest" as const, label: "Weekly digest", desc: "Monday morning summary of last week", comingSoon: true },
+            { key: "productUpdates" as const, label: "Product updates", desc: "New features and improvements", comingSoon: true },
           ].map((item) => (
             <div key={item.key} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
               <div>
-                <div className="text-sm font-medium text-foreground">{item.label}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">{item.label}</span>
+                  {item.comingSoon && (
+                    <span className="text-[10px] font-medium uppercase tracking-wide rounded-full bg-muted px-2 py-0.5 text-muted-foreground" title="This channel isn’t wired to a delivery mechanism yet — it will start working in a future update.">
+                      Coming soon
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-muted-foreground">{item.desc}</div>
               </div>
               <Toggle
                 checked={notif[item.key]}
                 onChange={(v) => toggleNotif(item.key, v)}
+                disabled={item.comingSoon}
               />
             </div>
           ))}

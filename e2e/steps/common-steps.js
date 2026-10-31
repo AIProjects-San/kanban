@@ -7,9 +7,9 @@ const { By, until } = require("selenium-webdriver");
 const assert = require("node:assert");
 
 const CREDENTIALS = {
-  "demo@fernly.dev": "fernly123",
-  "manager@fernly.dev": "fernly123",
-  "member@fernly.dev": "fernly123",
+  "demo@fernly.app": "fernly123",
+  "manager@fernly.app": "fernly123",
+  "member@fernly.app": "fernly123",
 };
 
 Given("the app is running", async function () {
@@ -75,7 +75,7 @@ Then("the dashboard project count should be lower than the admin count", async f
   await driver.wait(until.elementsLocated(By.css("[data-testid='project-card'], article")), 10_000);
   const memberCount = (await driver.findElements(By.css("[data-testid='project-card'], article"))).length;
   await this.logout();
-  await this.login("demo@fernly.dev", "fernly123");
+  await this.login("demo@fernly.app", "fernly123");
   const adminCount = (await driver.findElements(By.css("[data-testid='project-card'], article"))).length;
   assert.ok(
     memberCount < adminCount,

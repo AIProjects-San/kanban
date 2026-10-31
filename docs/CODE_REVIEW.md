@@ -475,3 +475,85 @@ F-24; severities reflect exploitability in the shipped configuration.
 2. **Set `RESEND_API_KEY` (+ `MAIL_FROM`)** in production (F-04) — without it,
    password-reset mail is dropped by design (never logged).
 3. Decide CSP nonce strategy + trim `connect-src`/allowedOrigins (F-13).
+
+## 11. Launch-Gate Crosscheck (2026-10-31, second pass)
+
+Full re-verification of every launch blocker in the uploaded audit document
+(P0 1–16, P1 17–26, P2 27–38) plus its 12-point Go/No-Go gate table, this
+time checking **runtime behaviour and the gates themselves**, not just the
+presence of the fixes.
+
+### 11.1 P0/P1/P2 item verification
+
+All 16 P0 and all 10 P1 items re-verified in code AND against the live
+database (63 indexes present incl. all 8 L-P0-5 indexes; `deletedAt`,
+`tokenVersion`, `auditRetentionDays` columns present; `migrate status` up to
+date with 4 migrations). P2: 8 of 12 remain ✅ (29–33, 35, 37, 38); 27/28/34/36
+documented OPEN by design.
+
+### 11.2 Gaps found by the gate crosscheck — all fixed
+
+| # | Gate | Finding | Fix |
+|---|------|---------|-----|
+| X-01 | 8 (E2E in CI) | **The E2E suite was a silent no-op**: the `.mjs` cucumber config made Cucumber v13 ignore `require`, so `bun run test:e2e` reported "0 scenarios" forever; feature files also used `@fernly.dev` while the seed creates `@fernly.app` accounts. | Config converted to CommonJS (`e2e/cucumber.cjs`), pretty-formatter (ESM-only) dropped for built-ins; emails fixed to `@fernly.app`; dry-run now matches **16 scenarios / 97 steps**. CI E2E job **enabled** with a service-container Postgres 16 + health-wait + inline CI-only `NEXTAUTH_SECRET`. |
+| X-02 | 5 (zero CVEs) | **41 Next.js advisories (incl. unauthenticated RCE criticals), 3 next-auth (incl. critical email-normalizer bypass), 1 zod HIGH** — all in production dependencies. | Upgraded `next` 16.1.1→16.4.3, `next-auth` 4.24.11→4.24.15, `zod` 4.0.2→4.6.7 + `bun update` (68 packages). New `scripts/check-audit.mjs` gate fails on high/critical advisories affecting **shipping** deps (direct prod + traced standalone runtime); wired into CI twice (pre- and post-build). Remaining 28 advisories are dev-toolchain-only. 680 tests still green after the upgrades. |
+| X-03 | 5 (lint) | Upgraded eslint-plugin-react-hooks turned 4 latent `set-state-in-effect` violations + 1 `no-location-assign` into hard errors. | Fixed properly (no suppressions): command-palette single `closeCmdk()` helper on every close path; users-view fetch-on-mount restructured to promise callbacks + derived `loadingAssignments`; use-mobile initial read via `queueMicrotask`; error.tsx uses `reload()` for guaranteed recovery. |
+| X-04 | 9 (no cosmetic controls) | Notification toggles (email/push/digests) rendered fully interactive but **nothing reads them** — the audit's "trust failure" class. | `notifMentions` now genuinely honoured by `notifyMentionedUsers` (recipient opt-out respected); the five undeliverable channels render **disabled with a "Coming soon" badge** (the audit-sanctioned treatment). |
+| X-05 | 11 (demo creds in bundle) | **FAIL before this pass**: gating the demo UI behind `NEXT_PUBLIC_SEED_DEMO` hid it, but the literals survived dead-code elimination and shipped in client chunks (`grep fernly123 .next/static` found them) — via `i18n.ts` and dead branches in login-screen. | login-screen now contains **zero credential literals** (demo data env-injected via `NEXT_PUBLIC_DEMO_ACCOUNTS`/`NEXT_PUBLIC_DEMO_PASSWORD`, set only in dev `.env`); i18n dictionary scrubbed; CI gate extended to grep the built bundle every push. Verified locally: production build greps clean. |
+| X-06 | 11 (secrets) | **Next.js copies `.env` into the standalone output** — the deployable artifact shipped the DB password + `NEXTAUTH_SECRET`; no `.dockerignore` existed, so `COPY . .` also pulled the local `.env` into the Docker build context. | Added `.dockerignore` (`.env*` excluded); Dockerfile runner stage now `rm -f ./.env*` after the standalone copy (defense in depth); CI gate also refuses a stray `.env` in standalone output. |
+| X-07 | 12 (retention job) | `pruneAuditLogs` existed but **nothing scheduled it** — "job running" was untrue. | New `CRON_SECRET`-protected `/api/cron/prune-audit` route (constant-time token check, 503 when unconfigured, 1h overlap guard, counters-only response, never leaks audit contents); prune core extracted to `src/lib/audit-prune-core.ts` (admin action keeps `role:manage`); docker-compose `audit-cron` service calls it daily at 03:00 UTC. 8 new route tests + 12 retention tests. |
+| X-08 | 10 (Sentry fed) | `createErrorReporter()`'s doc comment promised Sentry selection but the code **never selected anything** — ConsoleErrorReporter always. | New `SentryReporter`: plain-fetch store-endpoint client (no SDK dep, DSN-parsed, 5s abort, fire-and-forget, sampling via `SENTRY_SAMPLE_RATE`, request-id attached); factory selects it when `SENTRY_DSN` is set. 6 new tests (DSN parsing, payloads, delivery-failure fallback, factory selection). |
+| X-09 | 10/§1.15 (CSP reporting) | No `report-uri` — "CSP report clean for 24h" was unmeasurable. | `REPORT_URI` env now adds `report-uri`/`report-to` directives + `Report-To` header. |
+| X-10 | §1.15 (origins) | `serverActions.allowedOrigins` hardcoded preview domains for every build. | `SERVER_ACTIONS_ALLOWED_ORIGINS` env splits preview vs production lists (default unchanged). 3 new config tests. |
+| X-11 | §1.2 (timing) | Dummy bcrypt hash still cost 10 vs production cost 12 — unknown-email responses measurably faster. | Regenerated the dummy hash at **cost 12**. |
+| X-12 | §1.10/P1-18 (heatmap) | Activity heatmap hardcoded `oklch(… 152)` — forest-only, broke dark-mode contrast. | Scale now derived from `--primary`/`--background` via `color-mix` — follows accents and dark mode. |
+| X-13 | F-12 (Redis) | Redis limiter existed but **no client was ever constructed** — multi-instance deployments silently ran per-instance in-memory limiters. | New `src/lib/redis-client.ts` (ioredis singleton, offline-fail-fast, capped retry); both limiter factories auto-wire it when `REDIS_URL` is set; **fail-open adapter** keeps logins possible during a Redis outage (warning rate-limited to 1/30s). 3 new tests. |
+| X-14 | 4 (load dataset) | k6 asserted p95 budgets "at 100k-row scale" but **nothing could produce that dataset**. | New `scripts/seed-load.js`: deterministic 100k-row profile (1k users, 2k projects, 90k tasks, 40k time entries, assignments), idempotent (self-cleaning re-runs), guarded by `SEED_LOAD=1` + `--confirm` on non-localhost DBs; smoke-tested end-to-end + second-run idempotency verified. |
+| X-15 | 6 (RPO/RTO) | Recovery targets lived only in BACKUP_RECOVERY.md; the gate requires them **in SECURITY.md**. | §11 added to SECURITY.md (RPO ≤5min / RTO ≤1h + drill requirement). |
+
+### 11.3 Toolchain state after this pass
+
+- Tests: **704/704 passing** (was 680 — +24: cron route 8, security-headers 3,
+  rate-limit fail-open 3, Sentry 6, demo-gating rewrite + i18n/seed owners,
+  audit-retention re-run; 45 test files).
+- `typecheck` / `lint` clean; production build green; `bundle:check` OK
+  (lazy 381.6KB ≤ 250KB per chunk); `audit:check` PASS (0 high/critical in
+  shipping deps; 28 dev-chain advisories informational).
+- E2E: 16 scenarios / 97 steps matched on dry-run; CI job enabled with
+  service-container Postgres (first real browser run happens on the next
+  push to CI — cannot execute GitHub Actions from the sandbox).
+
+### 11.4 Remaining operator actions (unchanged + additions)
+
+1. Rotate the Supabase DB password and `NEXTAUTH_SECRET` (F-02).
+2. Set `RESEND_API_KEY` (+ `MAIL_FROM`) in production (F-04).
+3. Set `SENTRY_DSN` (+ `REPORT_URI`, `CRON_SECRET`, `REDIS_URL`,
+   `SERVER_ACTIONS_ALLOWED_ORIGINS`) in production — all now wired and
+   read by code; without them the corresponding gates degrade visibly
+   (503s, warnings) instead of silently.
+4. Execute + time the staging restore drill (gate 6) and the 100k-row k6
+   run (gate 4): `SEED_LOAD=1 … seed-load.js --confirm` then
+   `k6 run scripts/load-test.k6.js` against staging.
+5. Confirm the CI E2E job is green on the first push (Chrome/chromedriver
+   availability on ubuntu-latest is the one untested assumption).
+
+### 11.5 Incident note (honest record)
+
+During this pass the dev database was found **wiped** (all domain tables at
+0 rows; only Workspace + the config tables the config-loader self-heals on
+boot survived — the fingerprint of a seed run interrupted by the earlier
+sandbox recycle). Nothing in this session's commands or the test suite
+writes unfiltered deletes (verified: the only unfiltered `deleteMany` set
+lives in `scripts/seed.js` behind its boot-time guard, and all three
+test invocations of the seed refuse). Recovery: `bun run db:seed` re-ran
+cleanly (12 users / 24 projects / 40 tasks / 174 time entries / 18 events),
+demo sign-in re-verified end-to-end (200 + ADMIN session + dashboard render)
+on the upgraded next-auth 4.24.15. Production is unaffected — this was the
+disposable demo database.
+
+The live cron endpoint was also exercised end-to-end during this pass:
+401 without/with a wrong bearer token, a real prune run with a valid token
+(200, `deletedCount: 0` — retention window not yet reached), the overlap
+guard skipping an immediate second call, and an `audit.pruned` meta-row
+written by the synthetic `system (cron)` actor — gate 12's "demonstrated
+prune" now has on-record evidence in the audit trail itself.

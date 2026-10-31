@@ -1,0 +1,25 @@
+# Docker build context hygiene — keeps secrets and local artifacts out of
+# the image layers (launch-crosscheck finding: the builder stage's
+# `COPY . .` previously shipped the local .env — DB password +
+# NEXTAUTH_SECRET — into the build context, and Next.js's standalone output
+# then copied it into the runtime layer).
+.env
+.env.*
+!.env.example
+
+# Build outputs / caches (rebuilt inside the image)
+.next
+node_modules
+dev.log
+server.log
+coverage
+
+# Local tooling + docs not needed at build time
+.git
+.githooks
+.github
+scripts/*.log
+upload
+e2e
+*.md
+docs

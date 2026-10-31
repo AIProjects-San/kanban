@@ -284,10 +284,15 @@ export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }:
                       key={di}
                       className="w-3 h-3 rounded-sm"
                       style={{
+                        // §1.10 / L-P1-18 follow-up: the scale is derived from
+                        // the theme's --primary/--background tokens via
+                        // color-mix, so it follows the active accent AND dark
+                        // mode (the old hardcoded oklch(… 152) was forest-only
+                        // and broke contrast on dark backgrounds).
                         background:
                           day.hours === 0
                             ? "var(--muted)"
-                            : `oklch(${0.55 + intensity * 0.15} ${0.13 * intensity} 152)`,
+                            : `color-mix(in oklch, var(--primary) ${Math.round(30 + intensity * 70)}%, var(--background))`,
                         opacity: isWeekend && day.hours === 0 ? 0.4 : 1,
                       }}
                       title={`${day.date.toLocaleDateString("en-NZ")}: ${day.hours}h`}
@@ -303,7 +308,7 @@ export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }:
               <div
                 key={i}
                 className="w-3 h-3 rounded-sm"
-                style={{ background: i === 0 ? "var(--muted)" : `oklch(${0.55 + i * 0.15} ${0.13 * i} 152)` }}
+                style={{ background: i === 0 ? "var(--muted)" : `color-mix(in oklch, var(--primary) ${Math.round(30 + i * 70)}%, var(--background))` }}
               />
             ))}
             <span>More</span>

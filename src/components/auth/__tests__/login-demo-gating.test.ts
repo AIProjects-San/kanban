@@ -57,17 +57,41 @@ describe("L-P0-12 login screen demo gating (src/components/auth/login-screen.tsx
     expect(src).toMatch(/NEXT_PUBLIC_SEED_DEMO/);
   });
 
+  // Launch gate 11 — the ORIGINAL fix only gated the UI behind SEED_DEMO,
+  // but the credential literals survived dead-code elimination and shipped
+  // in the production client chunks (found by grepping the built bundle).
+  // The component must now carry ZERO literals; the data comes from
+  // NEXT_PUBLIC_DEMO_* env vars that are only set in dev/demo builds.
+  it("contains NO demo credential literals — data is env-injected (launch gate 11)", () => {
+    expect(src).not.toMatch(/fernly123/);
+    expect(src).not.toMatch(/demo@fernly\.app/);
+    expect(src).not.toMatch(/manager@fernly\.app/);
+    expect(src).not.toMatch(/member@fernly\.app/);
+    expect(src).toMatch(/NEXT_PUBLIC_DEMO_ACCOUNTS/);
+    expect(src).toMatch(/NEXT_PUBLIC_DEMO_PASSWORD/);
+  });
+
   it("gates the email/password prefill behind SEED_DEMO", () => {
-    expect(src).toMatch(/useState\(SEED_DEMO \? "demo@fernly\.app" : ""\)/);
-    expect(src).toMatch(/useState\(SEED_DEMO \? "fernly123" : ""\)/);
+    expect(src).toMatch(/useState\(SEED_DEMO && DEMO_ACCOUNTS\[0\] \? DEMO_ACCOUNTS\[0\]\.email : ""\)/);
+    expect(src).toMatch(/useState\(SEED_DEMO \? DEMO_PASSWORD : ""\)/);
   });
 
   it("gates the Demo accounts panel render behind SEED_DEMO", () => {
-    expect(src).toMatch(/\{SEED_DEMO && \(/);
+    expect(src).toMatch(/\{SEED_DEMO && DEMO_ACCOUNTS\.length > 0 && \(/);
   });
 
   it("does not leak demo credentials in the error toast when SEED_DEMO is off", () => {
     expect(src).toMatch(/Invalid email or password\./);
     expect(src).toMatch(/SEED_DEMO\s*\?\s*["`].*Try a demo account below/);
+  });
+
+  it("the i18n dictionary does not carry the demo password either", () => {
+    const i18n = readFileSync(resolve(__dirname, "../../../lib/i18n.ts"), "utf-8");
+    expect(i18n).not.toMatch(/fernly123/);
+  });
+
+  it("the seed script (server-side only, never bundled) is the single literal owner", () => {
+    const seed = readFileSync(resolve(__dirname, "../../../../scripts/seed.js"), "utf-8");
+    expect(seed).toMatch(/fernly123/); // the one sanctioned place the literal lives
   });
 });
