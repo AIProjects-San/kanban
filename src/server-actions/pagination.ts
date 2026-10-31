@@ -27,6 +27,24 @@ function clampLimit(limit: number | undefined): number {
   return Math.min(limit, MAX_PAGE_SIZE);
 }
 
+/**
+ * P2 (edge-case audit) — validate the cursor format before passing it to
+ * Prisma. A malformed or stale cursor (not a cuid, points to a hard-deleted
+ * row) previously caused Prisma's `cursor: { id }` to throw P2015 → 500 →
+ * broken UI. Now: return null (treated as "first page") so the caller gets
+ * a clean result instead of an error.
+ *
+ * CUIDs are 24-char lowercase base-36 (typically start with 'c'). We accept
+ * any 20-32 char alphanumeric string as a permissive sanity check.
+ */
+function safeCursor(cursor: string | undefined): string | null {
+  if (!cursor || typeof cursor !== "string") return null;
+  const trimmed = cursor.trim();
+  if (trimmed.length < 20 || trimmed.length > 32) return null;
+  if (!/^[a-z0-9]+$/i.test(trimmed)) return null;
+  return trimmed;
+}
+
 export interface PaginatedResult<T> {
   items: T[];
   nextCursor: string | null;
@@ -54,6 +72,7 @@ export async function getUsersPage(input?: {
   search?: string;
 }): Promise<ActionResult<PaginatedResult<UserListItem>>> {
   return toResult(async () => {
+    const cursor = safeCursor(input?.cursor);
     await requirePermission("role:manage");
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
@@ -74,7 +93,7 @@ export async function getUsersPage(input?: {
         manager: { select: { name: true } },
       },
       orderBy: { id: "asc" },
-      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       take: limit + 1,
     });
 
@@ -125,6 +144,7 @@ export async function getTasksPage(input?: {
   status?: string;
 }): Promise<ActionResult<PaginatedResult<TaskListItem>>> {
   return toResult(async () => {
+    const cursor = safeCursor(input?.cursor);
     const auth = await getSession();
     if (!auth) throw new AuthorizationError("You must be signed in.");
     const limit = clampLimit(input?.limit);
@@ -170,7 +190,7 @@ export async function getTasksPage(input?: {
         assignee: { select: { name: true } },
       },
       orderBy: { id: "asc" },
-      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       take: limit + 1,
     });
 
@@ -221,6 +241,7 @@ export async function getProjectsPage(input?: {
   status?: string;
 }): Promise<ActionResult<PaginatedResult<ProjectListItem>>> {
   return toResult(async () => {
+    const cursor = safeCursor(input?.cursor);
     const auth = await getSession();
     if (!auth) throw new AuthorizationError("You must be signed in.");
     const limit = clampLimit(input?.limit);
@@ -247,7 +268,7 @@ export async function getProjectsPage(input?: {
         progress: true, color: true, ownerName: true, createdAt: true,
       },
       orderBy: { id: "asc" },
-      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       take: limit + 1,
     });
 
@@ -297,6 +318,7 @@ export async function getTimeEntriesPage(input?: {
   memberId?: string;
 }): Promise<ActionResult<PaginatedResult<TimeEntryListItem>>> {
   return toResult(async () => {
+    const cursor = safeCursor(input?.cursor);
     const auth = await getSession();
     if (!auth) throw new AuthorizationError("You must be signed in.");
     const limit = clampLimit(input?.limit);
@@ -330,7 +352,7 @@ export async function getTimeEntriesPage(input?: {
         member: { select: { name: true } },
       },
       orderBy: { id: "asc" },
-      ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       take: limit + 1,
     });
 

@@ -40,6 +40,9 @@ export interface UserDataExport {
   reminders: unknown[];
   timeEntries: unknown[];
   auditTrail: unknown[];
+  /** P2 (edge-case audit) — true if any query hit its 10k-row cap. The user
+   *  should contact an admin for the full export (GDPR allows pagination). */
+  truncated: boolean;
 }
 
 /**
@@ -72,41 +75,50 @@ export async function exportMyData(): Promise<ActionResult<UserDataExport>> {
       db.project.findMany({
         where: { ownerUserId: auth.userId },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
       db.projectAssignment.findMany({
         where: { userId: auth.userId },
         include: { project: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
       db.task.findMany({
         where: { assignee: { userId: auth.userId } },
         include: { project: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
       db.message.findMany({
         where: { senderUserId: auth.userId },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
       db.message.findMany({
         where: { recipientUserId: auth.userId },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
       db.notification.findMany({
         where: { recipientUserId: auth.userId },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
       db.reminder.findMany({
         where: { ownerId: auth.userId },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
       db.timeEntry.findMany({
         where: { member: { userId: auth.userId } },
         include: { project: { select: { name: true } } },
         orderBy: { date: "desc" },
+        take: 10_000,
       }),
       db.auditLog.findMany({
         where: { actorId: auth.userId },
         orderBy: { createdAt: "desc" },
+        take: 10_000,
       }),
     ]);
 
@@ -132,6 +144,18 @@ export async function exportMyData(): Promise<ActionResult<UserDataExport>> {
       reminders,
       timeEntries,
       auditTrail,
+      // P2 (edge-case audit) — flag truncation so the user knows to contact
+      // an admin if any collection hit the 10k cap.
+      truncated:
+        ownedProjects.length >= 10_000 ||
+        projectAssignments.length >= 10_000 ||
+        assignedTasks.length >= 10_000 ||
+        sentMessages.length >= 10_000 ||
+        receivedMessages.length >= 10_000 ||
+        notifications.length >= 10_000 ||
+        reminders.length >= 10_000 ||
+        timeEntries.length >= 10_000 ||
+        auditTrail.length >= 10_000,
     };
   });
 }

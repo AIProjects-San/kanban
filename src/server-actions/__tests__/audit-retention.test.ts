@@ -53,11 +53,16 @@ describe("L-P1-20 pruneAuditLogs", () => {
     const cutoff = new Date(res.data.cutoff);
     expect(cutoff.getTime()).toBeLessThan(Date.now());
     expect(Date.now() - cutoff.getTime()).toBeGreaterThan(179 * 24 * 60 * 60 * 1000);
+    // P1 (edge-case audit) — the meta-row is now written BEFORE the deletes
+    // (forensic integrity: an admin can't suppress the prune record by
+    // engineering a DB-write failure after the deletes). The detail text
+    // changed from "Pruned N rows" to "Pruning rows older than ..." since
+    // the count isn't known yet at meta-row write time.
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({
         actor: ADMIN_AUTH,
         action: "audit.pruned",
-        detail: expect.stringMatching(/Pruned 42 audit rows/),
+        detail: expect.stringMatching(/Pruning audit rows older than/),
       }),
     );
   });

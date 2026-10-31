@@ -13,6 +13,9 @@ const { db, getServerSession } = vi.hoisted(() => {
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
     "taskTagConfig", "priorityConfig", "departmentConfig",
+    // P1 (edge-case audit) — changePassword now invalidates pending reset
+    // tokens via $transaction, so the test mock needs this model.
+    "passwordResetToken",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -1026,6 +1029,11 @@ describe("workspace config mutations", () => {
       await updateConfigItem("priorityConfig", "id-1", { label: "Urgent" });
       expect(db.priorityConfig.update).toHaveBeenCalledWith({ where: { id: "id-1" }, data: { label: "Urgent" } });
     } else {
+      // P2 (edge-case audit) — deleteConfigItem now fetches the config row's
+      // key + counts in-use references before deleting. Mock both so the
+      // delete proceeds.
+      db.departmentConfig.findUnique.mockResolvedValue({ key: "ENGINEERING" });
+      db.teamMember.count.mockResolvedValue(0); // no members use it → delete OK
       db.departmentConfig.delete.mockResolvedValue({});
       await deleteConfigItem("departmentConfig", "id-1");
       expect(db.departmentConfig.delete).toHaveBeenCalledWith({ where: { id: "id-1" } });

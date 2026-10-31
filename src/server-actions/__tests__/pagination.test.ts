@@ -81,11 +81,28 @@ describe("L-P0-9 getUsersPage (cursor pagination + search)", () => {
 
   it("passes the cursor through to Prisma's cursor+skip idiom", async () => {
     db.user.findMany.mockResolvedValue([]);
-    await getUsersPage({ cursor: "id-99", limit: 10 });
+    // P2 (edge-case audit) — safeCursor requires 20-32 char alphanumeric.
+    const validCursor = "c".repeat(24); // 24-char cuid-like string
+    await getUsersPage({ cursor: validCursor, limit: 10 });
     const call = db.user.findMany.mock.calls[0][0];
-    expect(call.cursor).toEqual({ id: "id-99" });
+    expect(call.cursor).toEqual({ id: validCursor });
     expect(call.skip).toBe(1);
     expect(call.take).toBe(11);
+  });
+
+  it("P2 edge-case: rejects a malformed cursor (too short) and returns the first page", async () => {
+    db.user.findMany.mockResolvedValue([]);
+    await getUsersPage({ cursor: "id-99", limit: 10 }); // too short → safeCursor returns null
+    const call = db.user.findMany.mock.calls[0][0];
+    expect(call.cursor).toBeUndefined(); // no cursor → first page
+    expect(call.skip).toBeUndefined();
+  });
+
+  it("P2 edge-case: rejects a non-alphanumeric cursor", async () => {
+    db.user.findMany.mockResolvedValue([]);
+    await getUsersPage({ cursor: "c".repeat(20) + "!@#", limit: 10 });
+    const call = db.user.findMany.mock.calls[0][0];
+    expect(call.cursor).toBeUndefined();
   });
 
   it("applies the soft-delete filter (deletedAt: null) — L-P0-14", async () => {

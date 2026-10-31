@@ -29,8 +29,9 @@ export async function createProject(input: {
     let ownerUserId: string | null = null;
     let ownerName = "";
     if (data.ownerMemberId) {
+      // P2 (edge-case audit) — filter deletedAt: null (same as updateProject).
       const owner = await db.teamMember.findUnique({
-        where: { id: data.ownerMemberId },
+        where: { id: data.ownerMemberId, deletedAt: null },
         select: { name: true, userId: true },
       });
       if (!owner) throw validationError("Selected owner is not a team member.");
@@ -90,8 +91,10 @@ export async function updateProject(id: string, raw: Partial<{
         ownerUserId = null;
         ownerName = "";
       } else {
+        // P2 (edge-case audit) — filter deletedAt: null. A soft-deleted
+        // TeamMember should not be assignable as a project owner.
         const owner = await db.teamMember.findUnique({
-          where: { id: input.ownerMemberId },
+          where: { id: input.ownerMemberId, deletedAt: null },
           select: { name: true, userId: true },
         });
         if (!owner) throw validationError("Selected owner is not a team member.");

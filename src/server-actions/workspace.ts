@@ -114,6 +114,36 @@ export async function deleteConfigItem(
 ): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
+    // P2 (edge-case audit) — guard against deleting in-use config keys.
+    // Without this, deleting a TaskStatus that 50 tasks still reference
+    // orphans those tasks (the board has no column for them). Mirror the
+    // deleteRole check (L262-266): count references in the dependent table
+    // and refuse if > 0.
+    //
+    // Map config table → (dependent table, column).
+    const usageMap: Record<string, { model: keyof typeof db; column: string; label: string }> = {
+      taskStatusConfig: { model: "task", column: "status", label: "tasks" },
+      priorityConfig: { model: "task", column: "priority", label: "tasks" },
+      taskTagConfig: { model: "task", column: "tag", label: "tasks" },
+      projectStatusConfig: { model: "project", column: "status", label: "projects" },
+      eventTypeConfig: { model: "calendarEvent", column: "type", label: "events" },
+      departmentConfig: { model: "teamMember", column: "department", label: "members" },
+    };
+    // Fetch the config row's `key` so we can count references by key.
+    // @ts-expect-error — dynamic table name
+    const configRow = await db[table].findUnique({ where: { id }, select: { key: true } });
+    if (!configRow) throw new AuthorizationError("Config item not found.");
+    const usage = usageMap[table];
+    if (usage) {
+      const count = await (db[usage.model] as unknown as { count: (args: { where: Record<string, string> }) => Promise<number> }).count({
+        where: { [usage.column]: configRow.key },
+      });
+      if (count > 0) {
+        throw new AuthorizationError(
+          `Cannot delete — ${count} ${usage.label} still use "${configRow.key}". Reassign them first.`,
+        );
+      }
+    }
     // @ts-expect-error — dynamic table name
     await db[table].delete({ where: { id } });
     bumpConfigCache();
@@ -122,7 +152,7 @@ export async function deleteConfigItem(
       action: "config.deleted",
       entityType: "CONFIG",
       entityLabel: table,
-      detail: `Deleted ${table} config item`,
+      detail: `Deleted ${table} config item (key: ${configRow.key})`,
     });
     revalidatePath("/");
   });

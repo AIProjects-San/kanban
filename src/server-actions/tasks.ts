@@ -6,9 +6,10 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission } from "./auth-guard";
+import { AuthorizationError } from "./auth-guard";
 import { TASK_STATUS_LABELS } from "@/lib/config";
 import { createTaskSchema, updateTaskSchema, moveTaskSchema, parseOrThrow } from "@/lib/validation";
-import { logAudit, assertTaskEditPermission, recalcMemberStats } from "./shared";
+import { logAudit, assertTaskEditPermission, recalcMemberStats, getScopedProjectIds } from "./shared";
 import { notifyMentionedUsers } from "./mentions";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -26,6 +27,18 @@ export async function createTask(input: {
   return toResult(async () => {
     const auth = await requirePermission("task:create");
     const data = parseOrThrow(createTaskSchema, input);
+    // P1 (edge-case audit) — scope the projectId against the caller's visible
+    // projects. Previously a MEMBER could create tasks in ANY project (the
+    // task:create permission is static), opening a data-injection + mention-
+    // phishing vector (clutter another project's board + @mention arbitrary
+    // users via the description). ADMIN is unscoped; MANAGER/MEMBER must own
+    // / be assigned to / be explicitly allocated to the project.
+    if (data.projectId) {
+      const scopedIds = await getScopedProjectIds(auth);
+      if (scopedIds && !scopedIds.has(data.projectId)) {
+        throw new AuthorizationError("You can only create tasks in projects you have access to.");
+      }
+    }
     const maxOrder = await db.task.aggregate({
       where: { status: data.status ?? "TODO" },
       _max: { order: true },
@@ -88,6 +101,16 @@ export async function updateTask(id: string, raw: Partial<{
     if (!existing) return;
     await assertTaskEditPermission(auth, existing);
     const input = parseOrThrow(updateTaskSchema, raw);
+    // P1 (edge-case audit) — if the caller is moving the task to a new
+    // project, scope the new projectId against the caller's visible projects
+    // (same rule as createTask). Prevents a MEMBER from moving their task
+    // into a project they can't see (data injection + mention phishing).
+    if (input.projectId !== undefined && input.projectId && input.projectId !== existing.projectId) {
+      const scopedIds = await getScopedProjectIds(auth);
+      if (scopedIds && !scopedIds.has(input.projectId)) {
+        throw new AuthorizationError("You can only move tasks to projects you have access to.");
+      }
+    }
     await db.task.update({
       where: { id },
       data: {

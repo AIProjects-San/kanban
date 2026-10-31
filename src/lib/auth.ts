@@ -103,12 +103,24 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials, req) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        const email = credentials.email.toLowerCase();
-        // Best-effort client IP + user agent (behind the reverse proxy).
+        // P2 (edge-case audit) — trim + lowercase. Previously only lowercased,
+        // so a user whose password manager pasted " ada@x.co " couldn't sign
+        // in (DB stores the trimmed address). requestPasswordReset already
+        // trims; this normalises both paths.
+        const email = credentials.email.trim().toLowerCase();
+        // P1 (edge-case audit) — IP extraction. Previously took the FIRST
+        // x-forwarded-for hop, which is the least-trusted (client-supplied).
+        // An attacker could spoof `X-Forwarded-For: 1.2.3.4` per request to
+        // bypass the per-IP rate-limit bucket. Now prefer `X-Real-IP` (set
+        // unconditionally by nginx/caddy) and fall back to the LAST XFF hop
+        // (the closest trusted proxy). If neither is present, "unknown".
         const headers = req?.headers ?? {};
+        const realIp =
+          (typeof headers["x-real-ip"] === "string" && headers["x-real-ip"].trim()) || "";
         const xff =
           (typeof headers["x-forwarded-for"] === "string" && headers["x-forwarded-for"]) || "";
-        const ip = xff.split(",")[0].trim() || "unknown";
+        const xffLast = xff ? xff.split(",").pop()?.trim() || "" : "";
+        const ip = realIp || xffLast || "unknown";
         // P1 (production-readiness re-audit) — capture the user agent for the
         // audit log so post-incident forensics can tie a sign-in to a browser.
         const userAgent =
@@ -136,24 +148,53 @@ export const authOptions: NextAuthOptions = {
         // still sign in with their original password. The L-P0-14 soft-delete
         // model relies on this filter; the prior comment "implicitly
         // invalidated" was wrong (findUnique returns soft-deleted rows).
-        const user = await db.user.findUnique({ where: { email, deletedAt: null } });
+        //
+        // P1 (edge-case audit) — wrap the DB lookup + bcrypt compare in
+        // try/catch. A DB outage or a corrupted passwordHash previously
+        // propagated out of authorize, surfacing as a CredentialsSignin
+        // error with a raw Prisma stack trace per attempt. Now: log a
+        // structured `metric=auth_infra_error`, return null (the user sees
+        // the same "Invalid credentials" UX as a wrong password).
+        let user;
+        try {
+          user = await db.user.findUnique({ where: { email, deletedAt: null } });
+        } catch (err) {
+          logError("[auth] DB unavailable during sign-in:", err);
+          return null;
+        }
         if (!user) {
           // Timing-attack mitigation: burn the same bcrypt work factor when
           // the account doesn't exist so response times don't reveal whether
           // an email is registered. Audit §1.2: the dummy hash is cost 12 to
           // EXACTLY match production hashing (src/lib/password.ts) — the
           // previous cost-10 dummy left a measurable unknown-email signal.
-          await bcrypt.compare(
-            credentials.password,
-            // Precomputed hash of a random throwaway string (cost 12). The
-            // plaintext was discarded after generation; every compare fails.
-            "$2b$12$llbxFwXYn3xp2mUpBZUk3ec17zATv43gw0rBZq1kItXp3H11.q5UO",
-          );
+          try {
+            await bcrypt.compare(
+              credentials.password,
+              // Precomputed hash of a random throwaway string (cost 12). The
+              // plaintext was discarded after generation; every compare fails.
+              "$2b$12$llbxFwXYn3xp2mUpBZUk3ec17zATv43gw0rBZq1kItXp3H11.q5UO",
+            );
+          } catch {
+            // bcrypt.compare on a valid hash string shouldn't throw — but if
+            // it does (corrupted dummy hash), swallow so we still throttle.
+          }
           await loginLimiter.hit(emailKey);
           await loginLimiter.hit(ipKey);
           return null;
         }
-        const ok = await bcrypt.compare(credentials.password, user.passwordHash);
+        let ok = false;
+        try {
+          ok = await bcrypt.compare(credentials.password, user.passwordHash);
+        } catch (err) {
+          // Corrupted hash in the DB (legacy data, manual edit, truncated
+          // migration). Log a structured signal so ops can find the row;
+          // treat as a failed sign-in (the user can still reset their password).
+          logError("[auth] bcrypt compare threw (corrupted passwordHash?):", err);
+          await loginLimiter.hit(emailKey);
+          await loginLimiter.hit(ipKey);
+          return null;
+        }
         if (!ok) {
           await loginLimiter.hit(emailKey);
           await loginLimiter.hit(ipKey);

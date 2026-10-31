@@ -69,9 +69,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   db.user.findUnique.mockResolvedValue(null);
   db.auditLog.create.mockResolvedValue({});
-  // Reset both throttle buckets between tests.
+  // Reset all throttle buckets used by any test (the limiter is a singleton
+  // shared across the describe block, so stale counts leak between tests).
   loginLimiter.reset("login:email:ada@fernly.dev");
+  loginLimiter.reset("login:email:ghost@fernly.dev");
+  loginLimiter.reset("login:email:a@b.co");
   loginLimiter.reset("login:ip:203.0.113.7");
+  loginLimiter.reset("login:ip:10.0.0.1");
+  loginLimiter.reset("login:ip:198.51.100.5");
+  loginLimiter.reset("login:ip:1.2.3.4");
   loginLimiter.reset("login:ip:unknown");
 });
 
@@ -149,9 +155,56 @@ describe("authorize()", () => {
       { email: "a@b.co", password: "x" },
       { headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" } },
     );
-    // The IP key uses the FIRST hop only.
-    expect(loginLimiter.check("login:ip:203.0.113.7").count).toBe(1);
+    // P1 (edge-case audit) — the IP key uses the LAST hop (the closest
+    // trusted proxy), not the first (client-supplied, spoofable). With
+    // nginx's $proxy_add_x_forwarded_for, the format is "spoofed, real-client"
+    // so the last entry is the real client IP.
+    expect(loginLimiter.check("login:ip:10.0.0.1").count).toBe(1);
+    expect(loginLimiter.check("login:ip:203.0.113.7").count).toBe(0);
+  });
+
+  it("P1 edge-case: prefers X-Real-IP over X-Forwarded-For (anti-spoof)", async () => {
+    db.user.findUnique.mockResolvedValue(null);
+    await getAuthorize()(
+      { email: "a@b.co", password: "x" },
+      { headers: { "x-real-ip": "198.51.100.5", "x-forwarded-for": "1.2.3.4, 10.0.0.1" } },
+    );
+    // X-Real-IP is set by the proxy (nginx/caddy) and is NOT client-supplied.
+    // It wins over X-Forwarded-For.
+    expect(loginLimiter.check("login:ip:198.51.100.5").count).toBe(1);
+    expect(loginLimiter.check("login:ip:1.2.3.4").count).toBe(0);
     expect(loginLimiter.check("login:ip:10.0.0.1").count).toBe(0);
+  });
+
+  it("P2 edge-case: trims + lowercases the email before lookup", async () => {
+    db.user.findUnique.mockResolvedValue(null);
+    await getAuthorize()({ email: "  Ada@Fernly.DEV  ", password: "x" }, REQ);
+    // The lookup uses the trimmed + lowercased email.
+    expect(db.user.findUnique).toHaveBeenCalledWith({
+      where: { email: "ada@fernly.dev", deletedAt: null },
+    });
+  });
+
+  it("P1 edge-case: returns null (not 500) when the DB throws during lookup", async () => {
+    db.user.findUnique.mockRejectedValue(new Error("connection refused"));
+    const result = await getAuthorize()(
+      { email: "ada@fernly.dev", password: "correct-horse-1" },
+      REQ,
+    );
+    expect(result).toBeNull();
+    // The limiter was NOT hit (the failure was infra, not a bad password).
+    expect(loginLimiter.check("login:email:ada@fernly.dev").count).toBe(0);
+  });
+
+  it("P1 edge-case: returns null (not 500) when bcrypt throws on a corrupted hash", async () => {
+    db.user.findUnique.mockResolvedValue({ ...USER, passwordHash: "not-a-bcrypt-hash" });
+    const result = await getAuthorize()(
+      { email: "ada@fernly.dev", password: "correct-horse-1" },
+      REQ,
+    );
+    expect(result).toBeNull();
+    // The failed attempt counts against the rate limit (treat as wrong password).
+    expect(loginLimiter.check("login:email:ada@fernly.dev").count).toBe(1);
   });
 });
 

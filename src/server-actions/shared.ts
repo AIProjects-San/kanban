@@ -78,13 +78,18 @@ export async function logAudit(entry: {
  * rows not yet linked. Returns null if the user has no team-member record.
  */
 export async function getMyTeamMemberId(auth: { userId: string; email: string }): Promise<string | null> {
+  // P2 (edge-case audit) — filter deletedAt: null on both lookups. A soft-
+  // deleted TeamMember row (set by deleteUser) should not authorise task
+  // edits via assertTaskEditPermission. The JWT refresh window (5 min) means
+  // a soft-deleted user's token is still valid briefly; this filter closes
+  // the gap so they can't edit "their" tasks during that window.
   const byUser = await db.teamMember.findUnique({
-    where: { userId: auth.userId },
+    where: { userId: auth.userId, deletedAt: null },
     select: { id: true },
   });
   if (byUser) return byUser.id;
   const member = await db.teamMember.findUnique({
-    where: { email: auth.email.toLowerCase() },
+    where: { email: auth.email.toLowerCase(), deletedAt: null },
     select: { id: true },
   });
   return member?.id ?? null;

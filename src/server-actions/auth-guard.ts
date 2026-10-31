@@ -118,8 +118,12 @@ export async function requirePermissionForTarget(
     return auth;
   }
   // Fetch the target's identity + managerId so we can apply canManageUser.
+  // P1 (edge-case audit) — filter deletedAt: null so a soft-deleted user
+  // can't be targeted for updateUser/deleteUser/role changes. The soft-
+  // delete's "hidden from read paths" guarantee must extend to admin write
+  // paths; otherwise latent changes (password, role) take effect on restore.
   const target = await db.user.findUnique({
-    where: { id: targetUserId },
+    where: { id: targetUserId, deletedAt: null },
     select: { id: true, role: true, managerId: true },
   });
   if (!target) {

@@ -22,6 +22,13 @@
 import { captureError, logError } from "@/lib/observability";
 
 /**
+ * Tracks whether the process is mid-shutdown. Set by SIGTERM/SIGINT handlers
+ * so `uncaughtException` during graceful drain doesn't force-exit (which
+ * would interrupt in-flight requests + trigger k8s crashloop backoff).
+ */
+let shuttingDown = false;
+
+/**
  * Next.js calls this once on server startup. We register the global error
  * handlers here (idempotent — if called twice, the second registration
  * replaces the first, which is safe).
@@ -48,25 +55,71 @@ export async function register(): Promise<void> {
     process.exit(1);
   }
 
-  // unhandledRejection — a Promise rejected with no .catch() anywhere in
-  // its chain. Almost always a bug; we want it in Sentry.
-  process.on("unhandledRejection", (reason: unknown) => {
-    const err = reason instanceof Error
-      ? reason
-      : new Error(`Unhandled rejection: ${JSON.stringify(reason)}`);
-    captureError(err, { source: "unhandledRejection" });
-  });
+  // P2 (edge-case audit) — validate the value, not just presence. A
+  // wildcard "*" or an entry without a dot (and not localhost) is either
+  // a misconfiguration (Server Actions break) or a security hole (CSRF
+  // wide open, depending on the Next.js version's interpretation of "*").
+  const origins = (process.env.SERVER_ACTIONS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const invalid = origins.filter(
+    (o) => o === "*" || (!o.includes(".") && o !== "localhost" && !o.startsWith("127.")),
+  );
+  if (process.env.NODE_ENV === "production" && invalid.length > 0) {
+    logError(
+      `[boot] FATAL: SERVER_ACTIONS_ALLOWED_ORIGINS contains a wildcard or ` +
+        `invalid entry: ${invalid.join(", ")}. Each entry must be a real ` +
+        `origin (e.g. https://your-domain.example) — wildcards are insecure.`,
+    );
+    process.exit(1);
+  }
 
-  // uncaughtException — a synchronous throw that escaped all try/catch.
-  // The Node.js docs recommend exiting the process after one of these
-  // (the app may be in an inconsistent state), so we capture + flush
-  // the error to Sentry, then exit non-zero. The container runtime
-  // (Docker/k8s) will restart us.
-  process.on("uncaughtException", (err: Error) => {
-    captureError(err, { source: "uncaughtException" });
-    // Give the Sentry fire-and-forget POST a moment to leave the process
-    // before we exit. The reporter uses keepalive + a 5s AbortSignal, so
-    // 1s is enough for the request to be dispatched.
-    setTimeout(() => process.exit(1), 1000).unref();
-  });
+  // P2 (edge-case audit) — track graceful-shutdown state so
+  // uncaughtException during drain doesn't force-exit.
+  const markShuttingDown = () => { shuttingDown = true; };
+  process.on("SIGTERM", markShuttingDown);
+  process.on("SIGINT", markShuttingDown);
+
+  // P1 (edge-case audit) — wrap handler registration in try/catch so a
+  // throw in one registration doesn't leave the process running with NO
+  // global error handlers (the prior code would skip the second handler
+  // if the first threw, leaving uncaughtException unregistered).
+  try {
+    // unhandledRejection — a Promise rejected with no .catch() anywhere in
+    // its chain. Almost always a bug; we want it in Sentry.
+    process.on("unhandledRejection", (reason: unknown) => {
+      const err = reason instanceof Error
+        ? reason
+        : new Error(`Unhandled rejection: ${JSON.stringify(reason)}`);
+      captureError(err, { source: "unhandledRejection" });
+    });
+
+    // uncaughtException — a synchronous throw that escaped all try/catch.
+    // The Node.js docs recommend exiting the process after one of these
+    // (the app may be in an inconsistent state), so we capture + flush
+    // the error to Sentry, then exit non-zero. The container runtime
+    // (Docker/k8s) will restart us.
+    //
+    // P2 (edge-case audit) — skip the forced exit during graceful shutdown
+    // (SIGTERM/SIGINT). The shutdown is already in progress; a forced exit
+    // would interrupt in-flight requests + may trigger k8s crashloop backoff.
+    process.on("uncaughtException", (err: Error) => {
+      captureError(err, { source: "uncaughtException" });
+      if (shuttingDown) {
+        // Already draining — log but don't force-exit.
+        logError("[boot] uncaughtException during graceful shutdown (suppressed exit):", err);
+        return;
+      }
+      // Give the Sentry fire-and-forget POST a moment to leave the process
+      // before we exit. The reporter uses keepalive + a 5s AbortSignal, so
+      // 1s is enough for the request to be dispatched.
+      setTimeout(() => process.exit(1), 1000).unref();
+    });
+  } catch (err) {
+    // If process.on itself throws (polyfill shadowing, etc.), log but
+    // don't crash — the app can still serve requests, just without global
+    // error capture.
+    logError("[boot] failed to register global error handlers:", err);
+  }
 }

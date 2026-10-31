@@ -186,6 +186,16 @@ describe("updateUser optional-field branches", () => {
 
   it("audits email changes", async () => {
     setup();
+    // P2 (edge-case audit) — updateUser now pre-checks email uniqueness via
+    // db.user.findUnique({ where: { email } }). The setup() mock returns
+    // `target` for ANY findUnique call, which would make the uniqueness check
+    // think the new email is taken. Override: return null when the where
+    // clause is keyed on email (the uniqueness check), keep returning target
+    // for the id-keyed lookup.
+    db.user.findUnique.mockImplementation((args: { where: { id?: string; email?: string } }) => {
+      if (args?.where?.email) return null; // email-uniqueness check: not taken
+      return target; // id-keyed lookup: the target user
+    });
     await updateUser("u-oli", { email: "new@fernly.dev" });
     expect(db.auditLog.create.mock.calls[0][0].data.detail).toContain("email");
   });

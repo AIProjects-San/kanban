@@ -145,17 +145,27 @@ export default async function proxy(req: NextRequest) {
 
     // Stale or corrupt session cookie. Strip it from the request we forward
     // and expire it in the browser so it never comes back.
+    // P2 (edge-case audit) — also clear the CSRF + callback-url cookies.
+    // After a NEXTAUTH_SECRET rotation, the stale CSRF cookie (signed with
+    // the old secret) mismatches the new form token → 403 on the next sign-in
+    // attempt → user is stuck. The signout wrapper clears these too, but
+    // the proxy is the first line of defence on every request.
     log.info("proxy: clearing stale session cookie", {
       path: req.nextUrl.pathname,
     });
     req.cookies.delete(SESSION_COOKIE);
+    req.cookies.delete("next-auth.csrf-token");
+    req.cookies.delete("next-auth.callback-url");
     const res = NextResponse.next({ request: { headers: req.headers } });
-    res.cookies.set(SESSION_COOKIE, "", {
+    const expiredCookie = {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: "lax" as const,
       path: "/",
       maxAge: 0,
-    });
+    };
+    res.cookies.set(SESSION_COOKIE, "", expiredCookie);
+    res.cookies.set("next-auth.csrf-token", "", expiredCookie);
+    res.cookies.set("next-auth.callback-url", "", expiredCookie);
     return stampHeaders(res);
   });
 }

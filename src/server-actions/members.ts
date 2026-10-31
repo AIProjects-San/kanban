@@ -25,8 +25,12 @@ export async function createMember(input: {
     // email, so scoped queries work for invited teammates immediately. The
     // unique constraint makes this safe even under a race (worst case the
     // insert fails and is retried without the link).
+    // P2 (edge-case audit) — filter deletedAt: null. A soft-deleted User
+    // with the same email should not be auto-linked to a new TeamMember
+    // (the link would point at a dead account; tasks assigned to this
+    // member become invisible via the assignee.userId path).
     const linkedUser = await db.user.findUnique({
-      where: { email: data.email.toLowerCase() },
+      where: { email: data.email.toLowerCase(), deletedAt: null },
       select: { id: true },
     });
     const member = await db.teamMember.create({

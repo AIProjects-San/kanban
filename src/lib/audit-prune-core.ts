@@ -41,6 +41,22 @@ export async function runAuditPrune(
   const retentionDays = clampRetentionDays(workspace?.auditRetentionDays);
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
+  // P1 (edge-case audit) — write the `audit.pruned` meta-row BEFORE the
+  // deletes. The prior order (deletes → logAudit) meant an admin pruning to
+  // cover their tracks could engineer a DB-write failure on AuditLog (or
+  // have DB console access to drop the meta-row) and erase the evidence that
+  // a prune happened. logAudit swallows errors (best-effort by design), so
+  // the meta-row write was silently lossy. Now: write it first; if the write
+  // fails, the prune still proceeds (the meta-row is best-effort) but at
+  // least a successful prune always has its meta-row persisted before any
+  // deletes run.
+  await logAudit({
+    actor,
+    action: "audit.pruned",
+    entityType: "AUDIT",
+    detail: `Pruning audit rows older than ${cutoff.toISOString()} (retention: ${retentionDays} days)`,
+  });
+
   // Real batching (F-09): deleteMany has no LIMIT, so a "batch loop" over
   // deleteMany was one unbounded transaction. This raw statement caps each
   // round at BATCH_SIZE rows; the loop runs until a round comes back short.
@@ -59,13 +75,6 @@ export async function runAuditPrune(
     // stop and let the next scheduled run continue.
     if (totalDeleted > 1_000_000) break;
   }
-
-  await logAudit({
-    actor,
-    action: "audit.pruned",
-    entityType: "AUDIT",
-    detail: `Pruned ${totalDeleted} audit rows older than ${cutoff.toISOString()} (retention: ${retentionDays} days)`,
-  });
 
   return {
     cutoff: cutoff.toISOString(),

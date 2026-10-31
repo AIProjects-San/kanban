@@ -198,6 +198,10 @@ export async function changePassword(input: {
     if (!input.newPassword || input.newPassword.length < minPasswordLength) {
       throw new AuthorizationError(`New password must be at least ${minPasswordLength} characters.`);
     }
+    // P2 (edge-case audit) — max password length (bcrypt 72-byte truncation + memory).
+    if (input.newPassword.length > 1024) {
+      throw new AuthorizationError("New password must be at most 1024 characters.");
+    }
     if (input.currentPassword === input.newPassword) {
       throw new AuthorizationError("New password must be different from your current password.");
     }
@@ -211,12 +215,24 @@ export async function changePassword(input: {
     }
 
     const newHash = await hashPassword(input.newPassword);
-    await db.user.update({
-      where: { id: input.userId },
-      // L-P0-8 — bump tokenVersion so any stolen cookie from before the
-      // password change is rejected by the jwt callback on its next refresh.
-      data: { passwordHash: newHash, tokenVersion: { increment: 1 } },
-    });
+    // P1 (edge-case audit) — invalidate all pending password-reset tokens
+    // when the password changes. Without this, an attacker who requested a
+    // reset (token T_A sent to the victim's email) could still use T_A to
+    // take over the account AFTER the victim changed their password via
+    // Settings. The reset flow's own `requestPasswordReset` invalidates
+    // prior tokens, but `changePassword` and `resetPassword` did not.
+    await db.$transaction([
+      db.user.update({
+        where: { id: input.userId },
+        // L-P0-8 — bump tokenVersion so any stolen cookie from before the
+        // password change is rejected by the jwt callback on its next refresh.
+        data: { passwordHash: newHash, tokenVersion: { increment: 1 } },
+      }),
+      db.passwordResetToken.updateMany({
+        where: { userId: input.userId, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    ]);
 
     await logAudit({
       actor: auth,
@@ -304,6 +320,20 @@ export async function createUser(input: {
     if (!isValidRole(input.role)) {
       throw new AuthorizationError("Invalid role. Must be ADMIN, MANAGER, or MEMBER.");
     }
+    // P1 (edge-case audit) — F-14 bypass closure. The P2-13 guard blocks
+    // non-admins from granting `role:manage` via updateRole/createRole, but
+    // createUser was missed. A MANAGER who was granted `role:manage` via the
+    // DB ceiling could mint fresh ADMIN accounts. Mirror the updateUser
+    // guard: only ADMIN may create ADMIN users.
+    if (input.role === "ADMIN" && auth.role !== "ADMIN") {
+      throw new AuthorizationError("Only an admin can grant the ADMIN role.");
+    }
+    // P2 (edge-case audit) — max password length. bcrypt silently truncates
+    // to 72 bytes; a 1MB password pins 1MB of memory per request. Cap at
+    // 1024 chars (generous; well above any reasonable password manager output).
+    if (input.password.length > 1024) {
+      throw new AuthorizationError("Password must be at most 1024 characters.");
+    }
 
     // Check email uniqueness
     const existingUser = await db.user.findUnique({ where: { email } });
@@ -317,7 +347,7 @@ export async function createUser(input: {
     // unknown-manager ids, which is what we want here.
     const managerId = input.managerId ?? null;
     if (managerId) {
-      const mgr = await db.user.findUnique({ where: { id: managerId }, select: { id: true } });
+      const mgr = await db.user.findUnique({ where: { id: managerId, deletedAt: null }, select: { id: true } });
       if (!mgr) throw new AuthorizationError("The selected manager does not exist.");
       // No cycle possible on create, but the helper still rejects
       // self-reference (defensive — the new user has no id yet anyway).
@@ -392,7 +422,11 @@ export async function updateUser(userId: string, input: {
     // target. Self-edits pass the hierarchy check; caller-side self-
     // protection rules below guard the dangerous self-mutations.
     const auth = await requirePermissionForTarget("role:manage", userId);
-    const target = await db.user.findUnique({ where: { id: userId } });
+    // P1 (edge-case audit) — filter deletedAt: null. requirePermissionForTarget
+    // already filters, but double-check here (defence in depth) so a soft-
+    // deleted user can't have their password/role/email changed while in
+    // the trash. Use restoreUser to bring them back first.
+    const target = await db.user.findUnique({ where: { id: userId, deletedAt: null } });
     if (!target) throw new AuthorizationError("User not found.");
 
     // Self-protection: cannot demote yourself
@@ -421,6 +455,15 @@ export async function updateUser(userId: string, input: {
       if (!parsedEmail.success) {
         throw new AuthorizationError("A valid email is required.");
       }
+      // P2 (edge-case audit) — pre-check email uniqueness. Previously a
+      // duplicate email surfaced as a Prisma P2002 → 500 → generic "something
+      // went wrong". Now: user-friendly error mirroring createUser.
+      if (email !== target.email) {
+        const existing = await db.user.findUnique({ where: { email } });
+        if (existing) {
+          throw new AuthorizationError("A user with that email already exists.");
+        }
+      }
       data.email = email;
     }
     if (input.role !== undefined) {
@@ -438,7 +481,7 @@ export async function updateUser(userId: string, input: {
     if (input.managerId !== undefined) {
       const newManagerId = input.managerId || null;
       if (newManagerId) {
-        const mgr = await db.user.findUnique({ where: { id: newManagerId }, select: { id: true } });
+        const mgr = await db.user.findUnique({ where: { id: newManagerId, deletedAt: null }, select: { id: true } });
         if (!mgr) throw new AuthorizationError("The selected manager does not exist.");
         await assertNoCycle(userId, newManagerId);
       }
@@ -509,7 +552,7 @@ export async function deleteUser(userId: string): Promise<ActionResult<void>> {
     if (userId === auth.userId) {
       throw new AuthorizationError("You cannot delete your own account. Ask another admin to do it.");
     }
-    const target = await db.user.findUnique({ where: { id: userId } });
+    const target = await db.user.findUnique({ where: { id: userId, deletedAt: null } });
     if (!target) throw new AuthorizationError("User not found.");
     // L-P0-14 — soft-delete instead of hard delete. Setting `deletedAt` on
     // both User and the linked TeamMember hides the row from read paths
@@ -606,10 +649,19 @@ export async function signOutAllDevices(): Promise<ActionResult<{ revokedAt: str
     const auth = await getSessionOrThrow();
     // Bump tokenVersion — the jwt callback's refresh path sees the mismatch
     // and clears the token id for every outstanding session.
-    await db.user.update({
-      where: { id: auth.userId },
-      data: { tokenVersion: { increment: 1 } },
-    });
+    // P1 (edge-case audit) — also invalidate pending password-reset tokens
+    // (defence in depth: a "sign out everywhere" should also kill any
+    // pending reset flow).
+    await db.$transaction([
+      db.user.update({
+        where: { id: auth.userId },
+        data: { tokenVersion: { increment: 1 } },
+      }),
+      db.passwordResetToken.updateMany({
+        where: { userId: auth.userId, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    ]);
     await logAudit({
       actor: auth,
       action: "user.updated",

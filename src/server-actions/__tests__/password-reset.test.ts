@@ -78,10 +78,13 @@ beforeEach(() => {
   db.user.findUnique.mockResolvedValue(null);
   db.passwordResetToken.findUnique.mockResolvedValue(null);
   db.passwordResetToken.create.mockResolvedValue({});
-  db.passwordResetToken.updateMany.mockResolvedValue({});
+  // P2 (edge-case audit) — updateMany now returns { count } for the
+  // conditional single-use enforcement. Mock it so resetPassword's
+  // `result[1].count === 0` check passes (count = 1 = token consumed).
+  db.passwordResetToken.updateMany.mockResolvedValue({ count: 1 });
   db.passwordResetToken.update.mockResolvedValue({});
   db.user.update.mockResolvedValue({});
-  db.$transaction.mockResolvedValue([]);
+  db.$transaction.mockResolvedValue([{}, { count: 1 }]);
   hashPasswordMock.mockResolvedValue("hashed-new-password");
 });
 
@@ -242,9 +245,11 @@ describe("L-P0-11 resetPassword", () => {
         }),
       }),
     );
-    expect(db.passwordResetToken.update).toHaveBeenCalledWith(
+    // P2 (edge-case audit) — resetPassword now uses updateMany (conditional
+    // on usedAt: null) for single-use atomicity, not update.
+    expect(db.passwordResetToken.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "t-1" },
+        where: { id: "t-1", usedAt: null },
         data: expect.objectContaining({ usedAt: expect.any(Date) }),
       }),
     );

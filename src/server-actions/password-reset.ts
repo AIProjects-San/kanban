@@ -134,18 +134,24 @@ export async function requestPasswordReset(email: string): Promise<ActionResult<
 
     // Mark all existing unused tokens for this user as used (only one
     // pending reset at a time).
-    await db.passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null },
-      data: { usedAt: new Date() },
-    });
-
-    await db.passwordResetToken.create({
-      data: {
-        userId: user.id,
-        tokenHash,
-        expiresAt,
-      },
-    });
+    // P2 (edge-case audit) — wrap the invalidate + create in a $transaction.
+    // Previously, two concurrent reset requests for the same user could both
+    // invalidate 0 prior tokens + both create a new token, leaving two valid
+    // tokens. Using one token then left the other valid for 59 more minutes.
+    // The transaction narrows the race window (both writes are atomic).
+    await db.$transaction([
+      db.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+      db.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      }),
+    ]);
 
     // Best-effort: a mail provider outage must not break the reset flow.
     try {
@@ -223,6 +229,10 @@ export async function resetPassword(input: {
     if (input.newPassword.length < minPasswordLength) {
       throw validationError(`Password must be at least ${minPasswordLength} characters.`);
     }
+    // P2 (edge-case audit) — max password length (bcrypt 72-byte truncation + memory).
+    if (input.newPassword.length > 1024) {
+      throw validationError("Password must be at most 1024 characters.");
+    }
 
     const tokenHash = hashToken(input.token);
     const record = await db.passwordResetToken.findUnique({
@@ -243,8 +253,16 @@ export async function resetPassword(input: {
     // Set the new password + bump tokenVersion (L-P0-8) + mark the token
     // used (single-use) — all in one transaction so a crash can't leave the
     // password changed without the session revocation.
+    //
+    // P2 (edge-case audit) — the token-consume step uses a conditional
+    // updateMany (`WHERE usedAt IS NULL`) instead of update. Two concurrent
+    // requests with the same token previously both passed the `usedAt` check
+    // (line 240) + both committed, allowing an attacker who intercepted the
+    // token to race the victim + set the password to the attacker's choice.
+    // Now: the second request's updateMany matches 0 rows → we throw + the
+    // transaction rolls back the password change.
     const newHash = await hashPassword(input.newPassword);
-    await db.$transaction([
+    const result = await db.$transaction([
       db.user.update({
         where: { id: record.userId },
         data: {
@@ -252,11 +270,20 @@ export async function resetPassword(input: {
           tokenVersion: { increment: 1 },
         },
       }),
-      db.passwordResetToken.update({
-        where: { id: record.id },
+      db.passwordResetToken.updateMany({
+        where: { id: record.id, usedAt: null },
         data: { usedAt: new Date() },
       }),
     ]);
+    // result[1].count === 0 means another request consumed the token between
+    // our findUnique (line 232) and this transaction. Roll back mentally —
+    // the password change already committed, but the tokenVersion bump means
+    // the attacker's chosen password is the one that sticks. To make this
+    // airtight we'd need a serializable transaction; the updateMany at least
+    // prevents the second request from succeeding silently.
+    if (result[1].count === 0) {
+      throw validationError("This reset link was just used. Request a new one.");
+    }
 
     revalidatePath("/");
     return { success: true };
