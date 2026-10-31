@@ -25,7 +25,55 @@ function asString(value: unknown, max = 2000): string | undefined {
   return value.length > max ? value.slice(0, max) : value;
 }
 
+/**
+ * P1 (production-readiness re-audit) — origin check. The endpoint is
+ * same-origin only: a malicious third-party site can't flood the operator's
+ * error tracker with garbage events. We accept requests whose `Origin`
+ * (or `Referer` fallback) matches `APP_URL`, and same-origin requests that
+ * carry no `Origin` header (browsers always set it on cross-origin POSTs;
+ * same-origin POSTs may omit it). When `APP_URL` is unset we fall back to
+ * `NEXTAUTH_URL` so dev environments work without extra config.
+ */
+function isSameOrigin(req: NextRequest): boolean {
+  const origin = req.headers.get("origin");
+  const referer = req.headers.get("referer");
+  const allowed = process.env.APP_URL || process.env.NEXTAUTH_URL;
+  if (!allowed) {
+    // No allowed origin configured — accept only requests with NO Origin
+    // header (same-origin browsers + curl-style probes from the host itself).
+    // This is conservative; production MUST set APP_URL.
+    return !origin;
+  }
+  let allowedHost: string;
+  try {
+    allowedHost = new URL(allowed).host;
+  } catch {
+    return !origin;
+  }
+  if (origin) {
+    try {
+      return new URL(origin).host === allowedHost;
+    } catch {
+      return false;
+    }
+  }
+  if (referer) {
+    try {
+      return new URL(referer).host === allowedHost;
+    } catch {
+      return false;
+    }
+  }
+  // No Origin, no Referer — same-origin browser POST (fetch() with
+  // `keepalive` and a relative URL omits Origin). Accept.
+  return true;
+}
+
 export async function POST(req: NextRequest) {
+  // Origin check first — reject cross-site POSTs before any parsing.
+  if (!isSameOrigin(req)) {
+    return new NextResponse(null, { status: 403, headers: { "Cache-Control": "no-store" } });
+  }
   const raw = await req.text().catch(() => "");
   if (!raw || raw.length > MAX_BODY_BYTES) {
     return new NextResponse(null, { status: 204, headers: { "Cache-Control": "no-store" } });

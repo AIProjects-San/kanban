@@ -151,6 +151,50 @@ export const logTimeSchema = z.object({
   description: z.string().max(2_000).optional(),
 });
 
+// ---------------------------------------------------------------------------
+// P1 (production-readiness re-audit) — workspace settings + config-item
+// schemas. The prior implementation accepted `Record<string, unknown>` and
+// passed it straight to Prisma, so a typo or a compromised admin session
+// could write arbitrary fields (including CSS injection via accentClass).
+// These schemas pin the allowed fields + their bounds.
+// ---------------------------------------------------------------------------
+
+export const workspaceSettingsSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  defaultTimezone: z.string().trim().max(64).optional(),
+  defaultUserRole: z.enum(["ADMIN", "MANAGER", "MEMBER"]).optional(),
+  defaultDepartment: z.string().trim().max(64).optional(),
+  defaultAvatarColor: z.string().trim().max(64).optional(),
+  defaultJobTitle: z.string().trim().max(120).optional(),
+  // minPasswordLength has a read-time floor of 8 (password.ts); enforce the
+  // same bound at write time so a typo can't set it to 1.
+  minPasswordLength: z.number().int().finite().min(8).max(128).optional(),
+  workloadFullCapacity: z.number().int().finite().min(1).max(100).optional(),
+  auditLogLimit: z.number().int().finite().min(1).max(10_000).optional(),
+  // auditRetentionDays has a read-time floor of 30; enforce here too.
+  auditRetentionDays: z.number().int().finite().min(30).max(3650).optional(),
+  entityHistoryLimit: z.number().int().finite().min(1).max(1000).optional(),
+  dashboardNotifLimit: z.number().int().finite().min(1).max(200).optional(),
+}).strict(); // reject unknown keys
+
+/**
+ * Schema for the config-item tables (taskStatusConfig, projectStatusConfig,
+ * eventTypeConfig, taskTagConfig, priorityConfig, departmentConfig). All
+ * share the same shape: a key, label, optional accent/badge classes, and a
+ * sort order. The accent/badge fields are CSS class strings used in the UI;
+ * we bound their length so they can't carry an arbitrary payload.
+ */
+export const configItemSchema = z.object({
+  key: z.string().trim().min(1).max(64).optional(),
+  label: z.string().trim().min(1).max(120).optional(),
+  accent: z.string().trim().max(120).optional(),
+  badgeClass: z.string().trim().max(120).optional(),
+  dot: z.string().trim().max(120).optional(),
+  bg: z.string().trim().max(120).optional(),
+  sortOrder: z.number().int().finite().min(0).max(10_000).optional(),
+  isSystem: z.boolean().optional(),
+}).strict(); // reject unknown keys
+
 /**
  * Parse `input` against `schema`, throwing an AuthorizationError-compatible
  * Error whose message is safe to show to the user.

@@ -1,9 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { withRequestId, generateRequestId, log } from "@/lib/observability";
+import { randomBytes } from "node:crypto";
 
 // ---------------------------------------------------------------------------
-// Self-healing session cookie guard
+// Self-healing session cookie guard + nonce-based CSP (P1 production-readiness
+// re-audit).
 // ---------------------------------------------------------------------------
 // When NEXTAUTH_SECRET changes (container rebuild, secret rotation, a cookie
 // left over from another environment) every request carrying the old cookie
@@ -20,10 +22,54 @@ import { withRequestId, generateRequestId, log } from "@/lib/observability";
 //
 // getToken() swallows decode errors and returns null, so verification adds
 // no log noise of its own.
+//
+// P1 re-audit — CSP is now nonce-based. A fresh nonce is generated per
+// request and stamped into the `Content-Security-Policy` header. Next.js
+// auto-detects the nonce and applies it to its inline bootstrap scripts,
+// so we can drop `'unsafe-inline'` from `script-src`. `'unsafe-eval'` is
+// kept ONLY in development (HMR / React Refresh needs it); production
+// ships without it.
 
 // Mirrors the cookie name pinned in src/lib/auth.ts (the app sets it
 // explicitly, so it is identical in dev and production — no __Secure- prefix).
 const SESSION_COOKIE = "next-auth.session-token";
+
+/**
+ * Generate a per-request nonce for CSP. 16 bytes (128 bits) base64-encoded
+ * — standard nonce size, sufficient entropy against guessing.
+ */
+function generateNonce(): string {
+  return randomBytes(16).toString("base64");
+}
+
+/**
+ * Build the Content-Security-Policy header value with the given nonce.
+ * In production: `script-src 'self' 'nonce-<value>'` (no unsafe-inline/eval).
+ * In development: adds `'unsafe-eval'` for HMR / React Refresh.
+ */
+function buildCsp(nonce: string): string {
+  const isDev = process.env.NODE_ENV !== "production";
+  const scriptSrc = isDev
+    ? `script-src 'self' 'nonce-${nonce}' 'unsafe-eval'`
+    : `script-src 'self' 'nonce-${nonce}'`;
+  const directives = [
+    "default-src 'self'",
+    scriptSrc,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' https: ws: wss:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ];
+  if (process.env.REPORT_URI) {
+    directives.push(`report-uri ${process.env.REPORT_URI}`);
+    directives.push("report-to csp-endpoint");
+  }
+  return directives.join("; ");
+}
 
 export const config = {
   // Run on app pages and Server Actions; never on NextAuth's own endpoints
@@ -41,12 +87,26 @@ export default async function proxy(req: NextRequest) {
   // them. The id is generated per-request (not from a header) so we don't
   // trust client-supplied ids.
   const requestId = generateRequestId();
+  // P1 re-audit — per-request nonce for CSP.
+  const nonce = generateNonce();
+  const csp = buildCsp(nonce);
+
   return withRequestId(requestId, async () => {
     const raw = req.cookies.get(SESSION_COOKIE)?.value;
     const secret = process.env.NEXTAUTH_SECRET;
 
-    // No cookie to check, or no explicit secret: pass through untouched.
-    if (!raw || !secret) return NextResponse.next();
+    // Helper: stamp CSP + request-id on any response we return.
+    function stampHeaders(res: NextResponse) {
+      res.headers.set("Content-Security-Policy", csp);
+      res.headers.set("X-Request-Id", requestId);
+      // Also pass the nonce as a request header so server components can
+      // read it via headers() and apply it to custom <script> tags.
+      res.headers.set("x-nonce", nonce);
+      return res;
+    }
+
+    // No cookie to check, or no explicit secret: pass through with CSP.
+    if (!raw || !secret) return stampHeaders(NextResponse.next());
 
     let valid = false;
     try {
@@ -62,7 +122,7 @@ export default async function proxy(req: NextRequest) {
       });
       valid = false;
     }
-    if (valid) return NextResponse.next();
+    if (valid) return stampHeaders(NextResponse.next());
 
     // Stale or corrupt session cookie. Strip it from the request we forward
     // and expire it in the browser so it never comes back.
@@ -71,15 +131,12 @@ export default async function proxy(req: NextRequest) {
     });
     req.cookies.delete(SESSION_COOKIE);
     const res = NextResponse.next({ request: { headers: req.headers } });
-    // Stamp the request id on the response so the client can reference it
-    // in support tickets.
-    res.headers.set("X-Request-Id", requestId);
     res.cookies.set(SESSION_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
       maxAge: 0,
     });
-    return res;
+    return stampHeaders(res);
   });
 }

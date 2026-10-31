@@ -15,6 +15,22 @@ import type { Prisma } from "@prisma/client";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
+/**
+ * Date helpers for the dashboard loader's `take` + date-window scoping
+ * (P1 — production-readiness re-audit). Centralised so the same definitions
+ * are used by every query and easy to tune.
+ */
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function ninetyDaysAgo(): Date {
+  const d = startOfToday();
+  d.setDate(d.getDate() - 90);
+  return d;
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard data loader — single round trip
 // ---------------------------------------------------------------------------
@@ -102,17 +118,23 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
 
   const [projects, tasks, members, reminders, notifs, timeEntries, events, messages] = await Promise.all([
-    db.project.findMany({ where: projectWhere, orderBy: { createdAt: "desc" } }),
+    // P1 (production-readiness re-audit) — every query has a `take` cap so a
+    // workspace with 10k tasks / time entries / messages can't OOM the
+    // dashboard loader. 200 is well above what any one screen can render
+    // meaningfully; pagination handles the rest.
+    db.project.findMany({ where: projectWhere, orderBy: { createdAt: "desc" }, take: 200 }),
     db.task.findMany({
       where: taskWhere,
       include: { project: true, assignee: true },
       orderBy: { order: "asc" },
+      take: 200,
     }),
-    db.teamMember.findMany({ where: memberWhere, orderBy: { name: "asc" } }),
+    db.teamMember.findMany({ where: memberWhere, orderBy: { name: "asc" }, take: 200 }),
     // Reminders: personal (ownerId = me) + workspace-wide (ownerId = null).
     db.reminder.findMany({
       where: { OR: [{ ownerId: currentUserId }, { ownerId: null }] },
       orderBy: { dueDate: "asc" },
+      take: 100,
     }),
     // Notifications: addressed to me + workspace-wide broadcasts.
     db.notification.findMany({
@@ -122,8 +144,20 @@ export async function getDashboardData(): Promise<DashboardData> {
       orderBy: { createdAt: "desc" },
       take: 20,
     }),
-    db.timeEntry.findMany({ orderBy: { date: "desc" } }),
-    db.calendarEvent.findMany({ orderBy: { date: "asc" } }),
+    // Time entries: scoped to the last 90 days so the loader stays fast even
+    // for workspaces with years of history. Older entries are accessible via
+    // the time-entry view's pagination.
+    db.timeEntry.findMany({
+      where: { date: { gte: ninetyDaysAgo() } },
+      orderBy: { date: "desc" },
+      take: 200,
+    }),
+    // Calendar events: upcoming 90 days (past events are paginated).
+    db.calendarEvent.findMany({
+      where: { date: { gte: startOfToday() } },
+      orderBy: { date: "asc" },
+      take: 200,
+    }),
     db.message.findMany({
       where: currentUserId
         ? {
@@ -135,6 +169,7 @@ export async function getDashboardData(): Promise<DashboardData> {
           }
         : { ...notDeleted },
       orderBy: { createdAt: "desc" },
+      take: 200,
       // L-P0-2: include the per-recipient read-state rows so the loader can
       // derive `read` per viewer without an N+1.
       include: { readBy: { where: { userId: currentUserId ?? "" } } },

@@ -27,13 +27,19 @@ const serverActionsAllowedOrigins = envOrigins
       "127.0.0.1:3000",
     ];
 
-// Optional CSP violation reporting (audit §1.15 / launch gate 5: "CSP report
-// clean for 24h on staging"). Set REPORT_URI to your collector endpoint
-// (Sentry, report-uri.com, a self-hosted sink) and violations will be
-// delivered there while the policy itself stays enforced.
-const cspDirectives = [
+// ---------------------------------------------------------------------------
+// Static security headers. These apply to ALL routes as a base layer.
+// CSP is included here as a fallback for routes the proxy middleware doesn't
+// cover (API routes, static assets). The proxy (src/proxy.ts) OVERRIDES the
+// CSP on app pages with a nonce-based policy that drops 'unsafe-inline'
+// from script-src — see P1 production-readiness re-audit.
+// ---------------------------------------------------------------------------
+
+// Fallback CSP — restrictive. API routes don't serve HTML so script-src is
+// irrelevant; this is just defense-in-depth for any route the proxy misses.
+const fallbackCspDirectives = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
@@ -44,10 +50,10 @@ const cspDirectives = [
   "object-src 'none'",
 ];
 if (process.env.REPORT_URI) {
-  cspDirectives.push(`report-uri ${process.env.REPORT_URI}`);
-  // report-to is the modern successor; harmless alongside report-uri.
-  cspDirectives.push("report-to csp-endpoint");
+  fallbackCspDirectives.push(`report-uri ${process.env.REPORT_URI}`);
+  fallbackCspDirectives.push("report-to csp-endpoint");
 }
+const fallbackCsp = fallbackCspDirectives.join("; ");
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -64,13 +70,10 @@ const nextConfig: NextConfig = {
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
       { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
       { key: "X-DNS-Prefetch-Control", value: "on" },
-      // NOTE: 'unsafe-inline'/'unsafe-eval' are required by Next.js's inline
-      // bootstrap and (in dev) HMR. A nonce- or hash-based CSP is the next
-      // hardening step — see docs/SECURITY.md.
-      {
-        key: "Content-Security-Policy",
-        value: cspDirectives.join("; "),
-      },
+      // Fallback CSP — overridden by the proxy on app pages with nonce-based
+      // policy. Kept here for API routes + static assets that the proxy
+      // doesn't cover.
+      { key: "Content-Security-Policy", value: fallbackCsp },
     ];
     // The Report-To group is only meaningful when a collector is configured.
     if (process.env.REPORT_URI) {

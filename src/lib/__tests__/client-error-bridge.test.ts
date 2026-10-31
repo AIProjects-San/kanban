@@ -151,4 +151,40 @@ describe("POST /api/client-errors (route)", () => {
     expect(res.status).toBe(204);
     expect(captureError).not.toHaveBeenCalled();
   });
+
+  it("P1 re-audit: rejects cross-origin POSTs when APP_URL is set", async () => {
+    const { captureError } = await import("@/lib/observability");
+    const { POST } = await import("@/app/api/client-errors/route");
+    process.env.APP_URL = "https://fernly.app";
+    try {
+      const req = new Request("https://fernly.app/api/client-errors", {
+        method: "POST",
+        headers: { origin: "https://evil.example" },
+        body: JSON.stringify({ message: "flood" }),
+      });
+      const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+      expect(res.status).toBe(403);
+      expect(captureError).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.APP_URL;
+    }
+  });
+
+  it("P1 re-audit: accepts same-origin POSTs when APP_URL is set", async () => {
+    const { captureError } = await import("@/lib/observability");
+    const { POST } = await import("@/app/api/client-errors/route");
+    process.env.APP_URL = "https://fernly.app";
+    try {
+      const req = new Request("https://fernly.app/api/client-errors", {
+        method: "POST",
+        headers: { origin: "https://fernly.app" },
+        body: JSON.stringify({ message: "boom" }),
+      });
+      const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+      expect(res.status).toBe(204);
+      expect(captureError).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.APP_URL;
+    }
+  });
 });

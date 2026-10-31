@@ -1,3 +1,4 @@
+import { logError,logWarn } from "@/lib/observability";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 
@@ -14,9 +15,16 @@ import { db } from "@/lib/db";
 //
 // The query is wrapped in Promise.race with a 2s timeout so a wedged DB
 // pool can't hang the probe indefinitely (LBs typically time out at 5s).
+//
+// Redis probe (P1 — production-readiness re-audit): when `REDIS_URL` is set,
+// we ALSO ping Redis and report `redis: "up"|"down"|"unconfigured"`. A down
+// Redis does NOT fail the healthcheck — the rate limiter fails open, so the
+// app still serves traffic — but operators need the signal that brute-force
+// protection is degraded. The on-call runbook alerts on `redis: "down"`.
 // ---------------------------------------------------------------------------
 
 const DB_PROBE_TIMEOUT_MS = 2_000;
+const REDIS_PROBE_TIMEOUT_MS = 1_000;
 
 async function probeDb(): Promise<boolean> {
   try {
@@ -28,8 +36,32 @@ async function probeDb(): Promise<boolean> {
     ]);
     return true;
   } catch (err) {
-    console.error("[health] DB probe failed:", err);
+    logError("[health] DB probe failed:", err);
     return false;
+  }
+}
+
+async function probeRedis(): Promise<"up" | "down" | "unconfigured"> {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) return "unconfigured";
+  try {
+    // Lazy-import so the health route never pulls ioredis into the bundle
+    // when REDIS_URL is unset (e.g. dev environments, single-instance deploys).
+    const { getSharedRedisClient } = await import("@/lib/redis-client");
+    const client = getSharedRedisClient(redisUrl);
+    if (!client) return "down";
+    // ioredis exposes .ping(); the RedisLike minimal interface doesn't, so
+    // cast — the shared client is always a real ioredis instance here.
+    const result = await Promise.race([
+      (client as unknown as { ping: () => Promise<string> }).ping(),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error("redis probe timeout")), REDIS_PROBE_TIMEOUT_MS),
+      ),
+    ]);
+    return result === "PONG" ? "up" : "down";
+  } catch (err) {
+    logWarn("[health] Redis probe failed (rate limiter is fail-open):", err);
+    return "down";
   }
 }
 
@@ -37,12 +69,15 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const readiness = url.searchParams.get("ready") === "1";
 
-  const dbUp = await probeDb();
+  const [dbUp, redisStatus] = await Promise.all([probeDb(), probeRedis()]);
+  // The app is "down" only when the DB is unreachable. Redis being down
+  // degrades rate limiting (fail-open) but the app still serves traffic.
   const ok = dbUp;
 
   const body = {
     status: ok ? "ok" : "down",
     db: dbUp ? "up" : "down",
+    redis: redisStatus,
     readiness,
     timestamp: new Date().toISOString(),
   };

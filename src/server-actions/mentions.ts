@@ -4,6 +4,7 @@
 // L-P2-29 — parse @Name mentions from a text body and emit MENTION
 // notifications to the referenced users.
 
+import { logError } from "@/lib/observability";
 import { db } from "@/lib/db";
 import { extractMentionedNames, normaliseNameForMention } from "@/lib/mentions";
 
@@ -113,7 +114,7 @@ export async function notifyMentionedUsers(ctx: MentionContext): Promise<string[
     return notified;
   } catch (err) {
     // Mention notification must never break the underlying mutation.
-    console.error("[mentions] failed to notify:", err);
+    logError("[mentions] failed to notify:", err);
     return [];
   }
 }

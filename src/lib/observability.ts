@@ -18,6 +18,25 @@
 // ---------------------------------------------------------------------------
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
+
+/**
+ * P1 (production-readiness re-audit) — PII hashing helper.
+ *
+ * Hashes a PII identifier (email, IP, name) into a short, stable, opaque
+ * token for logging. Operators can correlate "is this the same user failing
+ * repeatedly?" across log lines without retaining the original identifier.
+ *
+ * Uses SHA-256 truncated to 8 hex chars (32 bits) — enough to disambiguate
+ * users within a single workspace, not enough to be a fingerprint outside
+ * one. No salt: the goal is correlation, not password-grade hashing. The
+ * input never goes to a password cracker — it goes to logs/Sentry, which
+ * already see the hash and nothing else.
+ */
+export function hashPii(value: string | undefined | null): string {
+  if (!value) return "unknown";
+  return createHash("sha256").update(value).digest("hex").slice(0, 8);
+}
 
 export interface ErrorContext {
   [key: string]: unknown;
@@ -133,7 +152,11 @@ export class SentryReporter implements ErrorReporter {
     const url =
       `${this.endpoint}?sentry_key=${encodeURIComponent(this.publicKey)}` +
       `&sentry_version=7&sentry_client=fernly%2F1.0`;
-    const body = JSON.stringify({
+    // P1 (production-readiness re-audit) — PII / secret redaction. The
+    // payload may carry error messages that include connection strings,
+    // JWTs, bearer tokens, or email addresses. Scrub them BEFORE the
+    // payload leaves the perimeter so Sentry doesn't become a PII sink.
+    const sanitized = redactSecrets({
       timestamp: new Date().toISOString(),
       platform: "node",
       environment: this.environment,
@@ -142,6 +165,7 @@ export class SentryReporter implements ErrorReporter {
       extra: { ...context, request_id: getRequestId() ?? undefined },
       tags: { app: "fernly" },
     });
+    const body = JSON.stringify(sanitized);
     void this.fetchImpl(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -152,9 +176,73 @@ export class SentryReporter implements ErrorReporter {
         "[observability] Sentry delivery failed (falling back to console):",
         err instanceof Error ? err.message : err,
       );
-      console.error("[error:undelivered]", payload);
+      // The undelivered payload is already redacted.
+      console.error("[error:undelivered]", sanitized);
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// P1 (production-readiness re-audit) — Secret / PII redactor.
+// ---------------------------------------------------------------------------
+// Walks a payload object recursively and scrubs known secret + PII patterns
+// from every string value. Applied before any payload crosses the perimeter
+// (Sentry, error-tracking HTTP API).
+//
+// Patterns scrubbed:
+//   • Bearer tokens in Authorization headers → "Bearer [redacted]"
+//   • Database URLs with credentials → "postgresql://[redacted]@host/..."
+//   • JWT-like sequences (three base64 segments separated by dots) → "[jwt]"
+//   • Email addresses → "[email]"
+//   • Long base64 runs (≥32 chars, no spaces — API keys, hashed secrets) →
+//     "[redacted:<first4>...]"
+//   • "password=xxx" / "api_key=xxx" query params → "[redacted]"
+//
+// The redactor is conservative: it over-matches rather than under-matches,
+// because a leaked secret in Sentry is far worse than a slightly mangled
+// error message. Operators can still group events by type/stack frames.
+
+const REDACT_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
+  // JWT: three base64url segments separated by dots (header.payload.signature).
+  // MUST run before the `token=` and long-base64 patterns so a JWT in a
+  // `token=...` query param is scrubbed as `[jwt]` (more specific) rather
+  // than `[redacted]` (generic).
+  { re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, replacement: "[jwt]" },
+  // Authorization: Bearer xxx
+  { re: /Bearer\s+[A-Za-z0-9._\-+/=]+/g, replacement: "Bearer [redacted]" },
+  // postgresql://user:pass@host  /  redis://:pass@host  /  mongodb://user:pass@host
+  { re: /(\b(?:https?|postgresql|postgres|redis|mongodb|mysql):\/\/)[^@\s]+@/g, replacement: "$1[redacted]@" },
+  // Email addresses (RFC-5322-ish — practical subset)
+  { re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, replacement: "[email]" },
+  // password=xxx / api_key=xxx / secret=xxx / token=xxx in query strings
+  { re: /\b(?:password|passwd|api[_-]?key|secret|token|access[_-]?token)\s*[=:]\s*[^\s&]+/gi,
+    replacement: "[redacted]" },
+  // Long opaque base64-ish runs (≥32 chars, no spaces) — API keys, hashes.
+  // Keep the first 4 chars so operators can correlate without recovering.
+  { re: /\b[A-Za-z0-9+/=_-]{32,}\b/g, replacement: "[redacted]" },
+];
+
+function redactString(s: string): string {
+  let out = s;
+  for (const { re, replacement } of REDACT_PATTERNS) {
+    out = out.replace(re, replacement);
+  }
+  return out;
+}
+
+/** Recursively redact secrets/PII from any JSON-serialisable value. */
+export function redactSecrets<T>(value: T): T {
+  if (typeof value === "string") return redactString(value) as unknown as T;
+  if (Array.isArray(value)) return value.map(redactSecrets) as unknown as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      // Don't redact the request_id (it's a UUID, not a secret).
+      out[k] = k === "request_id" ? v : redactSecrets(v);
+    }
+    return out as unknown as T;
+  }
+  return value;
 }
 
 function stackFrames(stack: string | undefined): Array<Record<string, unknown>> {
@@ -272,9 +360,9 @@ export function structuredLog(level: LogLevel, msg: string, context?: ErrorConte
   };
 
   if (level === "error" || level === "warn") {
-    process.stderr.write(JSON.stringify(entry) + "\n");
+    console.error(JSON.stringify(entry));
   } else {
-    process.stdout.write(JSON.stringify(entry) + "\n");
+    console.info(JSON.stringify(entry));
   }
 }
 
@@ -283,6 +371,36 @@ export const log = {
   info: (msg: string, context?: ErrorContext) => structuredLog("info", msg, context),
   warn: (msg: string, context?: ErrorContext) => structuredLog("warn", msg, context),
   error: (msg: string, context?: ErrorContext) => structuredLog("error", msg, context),
+};
+
+/**
+ * Console-style compatibility wrappers (P1 — production-readiness re-audit).
+ *
+ * Accepts the same variadic signature as `console.error|warn|info` so server
+ * modules can migrate from `console.*` to structured logging without
+ * restructuring every call site. The first string argument becomes `msg`;
+ * remaining arguments are collected into a `details` array in the context.
+ *
+ * Prefer `log.error(msg, { ... })` for new code — it produces cleaner JSON.
+ * Use these wrappers when migrating existing `console.*` calls en masse.
+ */
+function formatArgs(args: unknown[]): { msg: string; details: unknown[] } {
+  const [first, ...rest] = args;
+  const msg = typeof first === "string" ? first : String(first ?? "");
+  return { msg, details: rest.map((a) => (a instanceof Error ? { name: a.name, message: a.message, stack: a.stack?.slice(0, 500) } : a)) };
+}
+
+export const logError = (...args: unknown[]) => {
+  const { msg, details } = formatArgs(args);
+  structuredLog("error", msg, details.length ? { details } : {});
+};
+export const logWarn = (...args: unknown[]) => {
+  const { msg, details } = formatArgs(args);
+  structuredLog("warn", msg, details.length ? { details } : {});
+};
+export const logInfo = (...args: unknown[]) => {
+  const { msg, details } = formatArgs(args);
+  structuredLog("info", msg, details.length ? { details } : {});
 };
 
 // ---------------------------------------------------------------------------

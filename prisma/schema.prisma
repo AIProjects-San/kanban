@@ -324,6 +324,13 @@ model AuditLog {
   entityId    String   @default("")
   entityLabel String   @default("") // human-readable label of the affected record
   detail      String   @default("") // full human-readable sentence for the timeline
+  // P1 (production-readiness re-audit) — source IP + user agent for
+  // post-incident forensics. Both nullable so existing rows + the
+  // `auth.signed_in` event path (which doesn't always have a UA) still
+  // work. The IP is stored as-is (the proxy already extracted it from
+  // x-forwarded-for); hash it at read time if you need to export logs.
+  ipAddress   String?  @default("")
+  userAgent   String?  @default("")
   createdAt   DateTime @default(now())
 
   @@index([createdAt])

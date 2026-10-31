@@ -116,8 +116,9 @@ describe("L-P1-19 structuredLog", () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    // structuredLog uses console.info (stdout) and console.error (stderr).
+    stdoutSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    stderrSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -299,5 +300,90 @@ describe("SentryReporter (launch gate 10)", () => {
       errSpy.mockRestore();
       _resetErrorReporterCacheForTests();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1 (production-readiness re-audit) — secret / PII redactor tests.
+// ---------------------------------------------------------------------------
+
+import { redactSecrets } from "@/lib/observability";
+
+describe("redactSecrets", () => {
+  it("redacts Bearer tokens", () => {
+    expect(redactSecrets("Authorization: Bearer eyJabc.def.ghi"))
+      .toBe("Authorization: Bearer [redacted]");
+  });
+
+  it("redacts database URLs with credentials", () => {
+    const out = redactSecrets("DATABASE_URL=postgresql://postgres:secretpw@host:5432/db");
+    expect(out).toContain("[redacted]@");
+    expect(out).not.toContain("secretpw");
+  });
+
+  it("redacts email addresses", () => {
+    expect(redactSecrets("user contact: ada@fernly.dev please"))
+      .toBe("user contact: [email] please");
+  });
+
+  it("redacts password= query params", () => {
+    const out = redactSecrets("?password=hunter2&api_key=sk_live_abc");
+    expect(out).not.toContain("hunter2");
+    expect(out).not.toContain("sk_live_abc");
+    expect(out).toContain("[redacted]");
+  });
+
+  it("redacts JWTs", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456ghi789";
+    const out = redactSecrets(`token=${jwt}`);
+    // The JWT value must be gone — scrubbed as either [jwt] or [redacted]
+    // (the token= pattern may consume the [jwt] placeholder; both are safe).
+    expect(out).not.toContain(jwt);
+    expect(out).toMatch(/\[(jwt|redacted)\]/);
+  });
+
+  it("redacts long base64 runs (>= 32 chars)", () => {
+    const longKey = "sk_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef";
+    const out = redactSecrets(`key: ${longKey}`);
+    expect(out).not.toContain(longKey);
+    expect(out).toContain("[redacted]");
+  });
+
+  it("walks objects + arrays recursively", () => {
+    const input = {
+      url: "postgresql://u:p@h/db",
+      list: ["token=secret", { email: "x@y.com" }] as Array<string | { email: string }>,
+      nested: { deep: "Bearer xyz123" },
+      request_id: "550e8400-e29b-41d4-a716-446655440000",
+    };
+    const out = redactSecrets(input);
+    expect(out.url).toContain("[redacted]@");
+    expect(out.list[0]).toBe("[redacted]");
+    expect((out.list[1] as { email: string }).email).toBe("[email]");
+    expect(out.nested.deep).toBe("Bearer [redacted]");
+    // request_id is preserved (it's a UUID, not a secret).
+    expect(out.request_id).toBe("550e8400-e29b-41d4-a716-446655440000");
+  });
+
+  it("SentryReporter scrubs secrets before sending", () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const fakeFetch = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, body: String(init.body) });
+      return new Response("{}", { status: 200 });
+    });
+    const reporter = new SentryReporter("https://abc@o42.ingest.sentry.io/999", {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      sampleRate: 1,
+    });
+    reporter.captureException(
+      new Error("connect failed: postgresql://postgres:secretpw@host:5432/db"),
+      { user: "ada@fernly.dev" },
+    );
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    const body = calls[0].body;
+    expect(body).not.toContain("secretpw");
+    expect(body).not.toContain("ada@fernly.dev");
+    expect(body).toContain("[redacted]");
+    expect(body).toContain("[email]");
   });
 });

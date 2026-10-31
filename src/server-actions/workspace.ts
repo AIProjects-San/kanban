@@ -11,6 +11,7 @@ import { bumpConfigCache, getWorkspaceConfig, type WorkspaceConfig } from "@/lib
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+import { workspaceSettingsSchema, configItemSchema, parseOrThrow } from "@/lib/validation";
 
 /**
  * Client-facing config loader. `getWorkspaceConfig` itself lives in
@@ -37,17 +38,12 @@ export async function updateWorkspaceSettings(input: Partial<{
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
-    // Deep-dive review F-09 — auditRetentionDays is the prune window (days);
-    // clamp it so a typo can't set retention to 1 day (min 30). The other
-    // numeric fields are display/UX limits with read-time guards.
-    const data = { ...input };
-    if (data.auditRetentionDays !== undefined) {
-      if (!Number.isFinite(data.auditRetentionDays) || data.auditRetentionDays < 30 || data.auditRetentionDays > 3650) {
-        throw new AuthorizationError("Audit retention must be between 30 and 3650 days.");
-      }
-      data.auditRetentionDays = Math.round(data.auditRetentionDays);
-    }
-    if (data.name !== undefined) data.name = String(data.name).slice(0, 120);
+    // P1 (production-readiness re-audit) — validate the full input shape +
+    // bounds before touching the DB. The prior implementation only validated
+    // auditRetentionDays + name; the other 10 fields were written unvalidated.
+    // A typo (e.g. minPasswordLength=1) was caught at read time but is now
+    // caught at write time too. Strict mode rejects unknown keys.
+    const data = parseOrThrow(workspaceSettingsSchema, input);
     await db.workspace.upsert({
       where: { id: "default" },
       create: { id: "default", ...data },
@@ -72,8 +68,12 @@ export async function updateConfigItem(
 ): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
+    // P1 (production-readiness re-audit) — validate before the DB write so a
+    // compromised admin session can't write arbitrary fields (CSS injection
+    // via accentClass, sortOrder=NaN, etc.).
+    const validated = parseOrThrow(configItemSchema, data);
     // @ts-expect-error — dynamic table name
-    await db[table].update({ where: { id }, data });
+    await db[table].update({ where: { id }, data: validated });
     bumpConfigCache();
     await logAudit({
       actor: auth,
@@ -92,8 +92,10 @@ export async function createConfigItem(
 ): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
+    // P1 re-audit — validate before the DB write.
+    const validated = parseOrThrow(configItemSchema, data);
     // @ts-expect-error — dynamic table name
-    await db[table].create({ data });
+    await db[table].create({ data: validated });
     bumpConfigCache();
     await logAudit({
       actor: auth,

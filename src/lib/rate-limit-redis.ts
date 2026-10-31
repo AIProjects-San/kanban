@@ -18,6 +18,7 @@
 // client. Falls back to the in-memory limiter when REDIS_URL is unset.
 // ---------------------------------------------------------------------------
 
+import { logError,logInfo,logWarn } from "@/lib/observability";
 import { SlidingWindowLimiter, type RateLimitState } from "./rate-limit";
 import { getSharedRedisClient } from "./redis-client";
 
@@ -188,7 +189,7 @@ class FailOpenRedisLimiterAdapter implements LimiterLike {
       const now = Date.now();
       if (now - this.lastWarnedAt > 30_000) {
         this.lastWarnedAt = now;
-        console.error(
+        logError(
           `[rate-limit] Redis unavailable — ${this.label} limiter running UNTHROTTLED (fail-open):`,
           err instanceof Error ? err.message : err,
         );
@@ -244,10 +245,10 @@ export function createLoginLimiter(opts?: {
       progressiveDelayMaxMs: 60_000,
     });
     cachedLoginLimiter = new FailOpenRedisLimiterAdapter(limiter, "login");
-    console.info("[rate-limit] login limiter backed by Redis (shared across instances, L-P0-10)");
+    logInfo("[rate-limit] login limiter backed by Redis (shared across instances, L-P0-10)");
   } else {
     if (process.env.NODE_ENV === "production") {
-      console.warn(
+      logWarn(
         "[rate-limit] REDIS_URL not set — falling back to in-memory login " +
         "limiter. In a multi-instance deployment this is a known gap (L-P0-10). " +
         "Set REDIS_URL to close it.",

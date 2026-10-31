@@ -26,6 +26,7 @@
 //     unescaped they could inject markup into mail clients).
 // ---------------------------------------------------------------------------
 
+import { logError,logWarn } from "@/lib/observability";
 import { db } from "@/lib/db";
 import { hashPassword, getMinPasswordLength } from "@/lib/password";
 import { createMailer } from "@/lib/mailer";
@@ -107,7 +108,7 @@ export async function requestPasswordReset(email: string): Promise<ActionResult<
     const emailState = await resetLimiter.check(emailKey);
     const ipState = await resetIpLimiter.check(ipKey);
     if (emailState.blocked || ipState.blocked) {
-      console.warn(
+      logWarn(
         `[password-reset] request throttled (email budget: ${emailState.count}/${RESET_MAX_PER_EMAIL}, ` +
         `ip budget: ${ipState.count}/${RESET_MAX_PER_IP})`,
       );
@@ -149,6 +150,20 @@ export async function requestPasswordReset(email: string): Promise<ActionResult<
     // Best-effort: a mail provider outage must not break the reset flow.
     try {
       const mailer = createMailer();
+      // P1 (production-readiness re-audit) — surface degraded mode loudly.
+      // The NoopMailer swallows the call in production when RESEND_API_KEY
+      // is unset; the user gets {sent: true} (anti-enumeration) but no email
+      // ever arrives, leaving them locked out with no feedback. Operators
+      // need a structured warning at the password-reset level so they can
+      // alert on `mail:noop` lines and wire a provider before users notice.
+      const isNoop = mailer.constructor.name === "NoopMailer";
+      if (isNoop && process.env.NODE_ENV === "production") {
+        logError(
+          "[password-reset] DEGRADED — NoopMailer is active (RESEND_API_KEY unset). " +
+          "Reset token was written to the DB but NO EMAIL WAS SENT. " +
+          "User will be locked out with no path forward. Set RESEND_API_KEY to enable delivery.",
+        );
+      }
       const resetUrl = buildResetUrl(rawToken);
       // F-07 — the display name is user-editable, so escape it before it
       // lands in the HTML part of the email.
@@ -166,7 +181,7 @@ export async function requestPasswordReset(email: string): Promise<ActionResult<
         text: `Hi ${user.name},\n\nWe received a request to reset your ${APP.name} password. Open this link to choose a new one:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you didn't request a reset, you can safely ignore this email — your password is still unchanged.\n\nThe ${APP.name} team`,
       });
     } catch (err) {
-      console.error("[password-reset] mail send failed:", err);
+      logError("[password-reset] mail send failed:", err);
     }
 
     return { sent: true };

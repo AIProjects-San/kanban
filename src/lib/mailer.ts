@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
 import { DEFAULT_MAIL_FROM } from "@/config/app";
+import { hashPii, logError, logInfo } from "@/lib/observability";
 // L-P0-11 — Pluggable transactional mail service.
 //
 // `Mailer` interface satisfied by any provider (Resend, SES, Postmark,
@@ -34,7 +35,7 @@ export interface Mailer {
 
 export class ConsoleMailer implements Mailer {
   async sendMail(input: SendMailInput): Promise<void> {
-    console.info(
+    logInfo(
       `[mail:console] To: ${input.to}\n` +
       `Subject: ${input.subject}\n` +
       `---\n${input.text}\n---`,
@@ -47,8 +48,10 @@ export class ConsoleMailer implements Mailer {
  * logs (deep-dive review F-04). */
 export class NoopMailer implements Mailer {
   async sendMail(input: SendMailInput): Promise<void> {
-    console.error(
-      `[mail:noop] DROPPED mail to ${input.to} (subject: ${input.subject}) — ` +
+    // P1 (production-readiness re-audit) — PII scrub: hash the recipient
+    // so the warning log doesn't retain the user's email.
+    logError(
+      `[mail:noop] DROPPED mail (recipient hash ${hashPii(input.to)}, subject: ${input.subject}) — ` +
       `no mail provider configured. Set RESEND_API_KEY to enable delivery. ` +
       `Body intentionally NOT logged (may contain single-use tokens).`,
     );
@@ -83,9 +86,15 @@ export class ResendMailer implements Mailer {
     if (!res.ok) {
       // Read the body for the provider's error detail, but never log the
       // message body itself (may contain single-use reset tokens).
+      // P1 (production-readiness re-audit) — PII scrub: hash the recipient
+      // address so the error message (which gets logged + sent to Sentry)
+      // doesn't leak the user's email. The hash is short (8 chars) — enough
+      // for ops to correlate "is this the same user failing repeatedly?"
+      // without retaining the address.
       const detail = await res.text().catch(() => "");
+      const recipientHash = hashPii(input.to);
       throw new Error(
-        `Resend API error ${res.status} for mail to ${input.to}: ${detail.slice(0, 300)}`,
+        `Resend API error ${res.status} for mail (recipient hash ${recipientHash}): ${detail.slice(0, 300)}`,
       );
     }
   }
@@ -126,7 +135,7 @@ export function createMailer(opts?: MailerFactoryOptions): Mailer {
   }
 
   if (process.env.NODE_ENV === "production") {
-    console.error(
+    logError(
       "[mail] No transactional mail provider configured (RESEND_API_KEY not " +
       "set). Falling back to NoopMailer — password reset emails are DROPPED " +
       "and reset tokens are never logged. Wire a provider before launch " +

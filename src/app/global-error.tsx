@@ -23,7 +23,32 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    // The window[ERROR_BRIDGE_KEY] bridge installed by providers.tsx is NOT
+    // available here — global-error fires when the root layout (which mounts
+    // Providers → installs the bridge) itself crashed. So we POST directly
+    // to /api/client-errors (the route doesn't depend on the bridge). This
+    // mirrors client-error-bridge.ts but inline so we don't depend on any
+    // module that the crashed layout might have failed to load.
     console.error("[app/global-error]", error);
+    try {
+      const payload = {
+        message: String(error?.message ?? error).slice(0, 4000),
+        digest: error?.digest,
+        source: "global-error",
+      };
+      // Fire-and-forget with keepalive so the POST survives page navigation
+      // / teardown. The 8KB cap on the server side is well above this payload.
+      fetch("/api/client-errors", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {
+        // Swallow — there's nothing useful to do with a failed error report.
+      });
+    } catch {
+      // Swallow — never let the error-reporter itself throw.
+    }
   }, [error]);
 
   return (

@@ -17,6 +17,7 @@
 //
 // Never import this from a client component (it pulls in `net`/`tls`).
 
+import { logError } from "@/lib/observability";
 import Redis from "ioredis";
 import type { RedisLike } from "./rate-limit-redis";
 
@@ -45,12 +46,12 @@ export function getSharedRedisClient(redisUrl: string): RedisLike | undefined {
     sharedClient.on("error", (err: Error) => {
       // Logged but not thrown: the fail-open adapters surface degradation
       // through their own (rate-limited) warnings.
-      console.error("[redis] client error:", err.message);
+      logError("[redis] client error:", err.message);
     });
     return sharedClient;
   } catch (err) {
     constructionFailed = true;
-    console.error(
+    logError(
       "[redis] failed to construct the shared client — rate limiting falls " +
       "back to in-memory (single-instance semantics):",
       err instanceof Error ? err.message : err,

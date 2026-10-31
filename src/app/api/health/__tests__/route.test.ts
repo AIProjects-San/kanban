@@ -50,4 +50,40 @@ describe("/api/health (L-P0-4)", () => {
     const body = await res.json();
     expect(body.readiness).toBe(true);
   });
+
+  it("reports redis: 'unconfigured' when REDIS_URL is unset", async () => {
+    delete process.env.REDIS_URL;
+    (db.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([{ "?column?": 1 }]);
+    const res = await GET(mockRequest());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.redis).toBe("unconfigured");
+    // App is still "ok" — Redis being unset doesn't take us down (fail-open).
+    expect(body.status).toBe("ok");
+  });
+
+  it("reports redis: 'down' when REDIS_URL is set but the client can't ping", async () => {
+    const previous = process.env.REDIS_URL;
+    process.env.REDIS_URL = "redis://localhost:6379";
+    try {
+      (db.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([{ "?column?": 1 }]);
+      // getSharedRedisClient returns undefined when construction fails —
+      // simulate by mocking the dynamic import.
+      vi.doMock("@/lib/redis-client", () => ({
+        getSharedRedisClient: () => undefined,
+      }));
+      // Re-import the route so it picks up the doMock.
+      vi.resetModules();
+      const { GET: freshGet } = await import("../route");
+      const res = await freshGet(mockRequest());
+      expect(res.status).toBe(200); // DB up → app still ok
+      const body = await res.json();
+      expect(body.redis).toBe("down");
+      expect(body.status).toBe("ok");
+    } finally {
+      process.env.REDIS_URL = previous;
+      vi.doUnmock("@/lib/redis-client");
+      vi.resetModules();
+    }
+  });
 });

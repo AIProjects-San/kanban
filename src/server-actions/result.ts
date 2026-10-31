@@ -3,6 +3,7 @@
 // NOTE: This file intentionally does NOT have "use server" — it exports a
 // non-async value and is imported by the action modules, not by clients.
 
+import { logError } from "@/lib/observability";
 import { AuthorizationError } from "./auth-guard";
 import { ok, err, type ActionResult } from "@/lib/action-result";
 
@@ -27,7 +28,7 @@ export async function toResult<T>(body: () => Promise<T>): Promise<ActionResult<
       return err("VALIDATION", e.message);
     }
     // Unexpected failure — log it server-side, keep the client message generic.
-    console.error("[action] unexpected failure:", e);
+    logError("[action] unexpected failure:", e);
     return err("INTERNAL", "Something went wrong. Please try again.");
   }
 }

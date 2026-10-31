@@ -1,0 +1,48 @@
+# Dependabot configuration — weekly checks across the ecosystems this repo uses.
+# Renovate is a fine alternative; this is the GitHub-native option.
+
+version: 2
+
+updates:
+  # npm dependencies (runtime + dev) — checked weekly, grouped into one PR
+  # per ecosystem so a transitive bump doesn't open 20 PRs.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Pacific/Auckland"
+    open-pull-requests-limit: 5
+    groups:
+      # Patch + minor bumps ship together; majors get their own PR so they
+      # can be reviewed individually.
+      patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    # Security updates are always opened immediately by GitHub regardless of
+    # this schedule; this only governs the routine version-bump PRs.
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "automated"
+
+  # GitHub Actions used in workflows — pin to SHA in the workflow files
+  # (see .github/workflows/ci.yml); Dependabot keeps the SHAs current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Pacific/Auckland"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "automated"

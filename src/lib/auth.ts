@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { createLoginLimiter } from "@/lib/rate-limit-redis";
+import { hashPii, logError, logWarn } from "@/lib/observability";
 
 // L-P0-10 — pick the Redis-backed limiter when REDIS_URL + a Redis client
 // are configured, fall back to the in-memory limiter otherwise.
@@ -32,7 +33,7 @@ function resolveSecret(): string {
   }
   if (isWeak) {
     // Dev only: ephemeral random secret so we never sign with a public constant.
-    console.warn(
+    logWarn(
       "[auth] NEXTAUTH_SECRET not set (or is the dev default) — using an " +
       "ephemeral secret. Sessions will reset on server restart.",
     );
@@ -103,11 +104,15 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.email || !credentials?.password) return null;
 
         const email = credentials.email.toLowerCase();
-        // Best-effort client IP (behind the reverse proxy).
+        // Best-effort client IP + user agent (behind the reverse proxy).
         const headers = req?.headers ?? {};
         const xff =
           (typeof headers["x-forwarded-for"] === "string" && headers["x-forwarded-for"]) || "";
         const ip = xff.split(",")[0].trim() || "unknown";
+        // P1 (production-readiness re-audit) — capture the user agent for the
+        // audit log so post-incident forensics can tie a sign-in to a browser.
+        const userAgent =
+          (typeof headers["user-agent"] === "string" && headers["user-agent"]) || "unknown";
         const emailKey = `login:email:${email}`;
         const ipKey = `login:ip:${ip}`;
 
@@ -117,7 +122,12 @@ export const authOptions: NextAuthOptions = {
         const emailState = await loginLimiter.check(emailKey);
         const ipState = await loginLimiter.check(ipKey);
         if (emailState.blocked || ipState.blocked) {
-          console.warn(`[auth] login throttled for ${email} (ip ${ip})`);
+          // P1 (production-readiness re-audit) — PII scrub. Login emails and
+          // source IPs are personal data under NZ Privacy Act 2020 / GDPR;
+          // logging them in cleartext creates a retention burden and a leak
+          // surface. Log a hashed identifier instead so operators can still
+          // correlate events for the same user without storing the address.
+          logWarn(`[auth] login throttled (email budget exhausted, ip hash ${hashPii(ip)})`);
           return null;
         }
 
@@ -152,7 +162,8 @@ export const authOptions: NextAuthOptions = {
         // Successful sign-in clears the per-email budget (a legit user who
         // mistyped their password a few times shouldn't stay blocked).
         await loginLimiter.reset(emailKey);
-        // Audit trail: record successful sign-ins
+        // Audit trail: record successful sign-ins (with source IP + UA —
+        // P1 production-readiness re-audit for post-incident forensics).
         try {
           await db.auditLog.create({
             data: {
@@ -163,10 +174,12 @@ export const authOptions: NextAuthOptions = {
               entityType: "AUTH",
               entityLabel: user.email,
               detail: `${user.name} signed in to the workspace`,
+              ipAddress: ip,
+              userAgent: userAgent.slice(0, 500),
             },
           });
         } catch (err) {
-          console.error("[audit] failed to log sign-in:", err);
+          logError("[audit] failed to log sign-in:", err);
         }
         return {
           id: user.id,
@@ -215,7 +228,7 @@ export const authOptions: NextAuthOptions = {
           const dbVersion = typeof fresh.tokenVersion === "number" ? fresh.tokenVersion : 0;
           const tokenVersion = typeof token.tokenVersion === "number" ? token.tokenVersion : 0;
           if (dbVersion !== tokenVersion) {
-            console.warn(
+            logWarn(
               `[auth] token version mismatch for user ${token.id} — ` +
               `token has ${tokenVersion}, DB has ${dbVersion}. ` +
               `Session invalidated (password or role changed).`,
@@ -276,7 +289,7 @@ export const authOptions: NextAuthOptions = {
           },
         });
       } catch (err) {
-        console.error("[audit] failed to log sign-out:", err);
+        logError("[audit] failed to log sign-out:", err);
       }
     },
   },

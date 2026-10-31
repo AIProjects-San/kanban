@@ -3,6 +3,7 @@
 // non-function values (the AuthorizationError class). It's imported by server
 // actions and server components, which is fine — it runs on the server only.
 
+import { logError } from "@/lib/observability";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { hasPermission, isValidRole, type Permission, type Role } from "@/lib/rbac";
@@ -57,7 +58,7 @@ async function hasPermissionEnforced(
   try {
     return await hasPermissionDb(role, permission);
   } catch (err) {
-    console.error("[auth-guard] DB permission check failed; falling back to static only:", err);
+    logError("[auth-guard] DB permission check failed; falling back to static only:", err);
     return false;
   }
 }

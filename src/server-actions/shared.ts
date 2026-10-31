@@ -4,12 +4,33 @@
 // non-async values and is imported by the domain action modules below,
 // never by client components.
 
+import { logError } from "@/lib/observability";
 import { db } from "@/lib/db";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { AuthorizationError } from "./auth-guard";
 import type { AuditAction } from "@/lib/audit-meta";
+import { headers as nextHeaders } from "next/headers";
 
 export { AuthorizationError };
+
+/**
+ * P1 (production-readiness re-audit) — extract the client IP + user agent
+ * from the request context for audit logging. Best-effort: behind a reverse
+ * proxy we read `x-forwarded-for` (first hop); without a proxy we fall back
+ * to "unknown". Returns an object so callers can destructure both fields
+ * from one call site.
+ */
+export async function getClientInfo(): Promise<{ ip: string; userAgent: string }> {
+  try {
+    const h = await nextHeaders();
+    const xff = h.get("x-forwarded-for") ?? "";
+    const ip = xff.split(",")[0].trim() || "unknown";
+    const userAgent = (h.get("user-agent") ?? "").slice(0, 500) || "unknown";
+    return { ip, userAgent };
+  } catch {
+    return { ip: "unknown", userAgent: "unknown" };
+  }
+}
 
 export function fmtDay(d: Date) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
@@ -22,6 +43,11 @@ export async function logAudit(entry: {
   entityId?: string;
   entityLabel?: string;
   detail: string;
+  /** P1 (production-readiness re-audit) — source IP + user agent for
+   *  post-incident forensics. Optional; callers that have a request context
+   *  (server actions, the auth flow) pass them through. */
+  ipAddress?: string;
+  userAgent?: string;
 }) {
   try {
     await db.auditLog.create({
@@ -34,11 +60,15 @@ export async function logAudit(entry: {
         entityId: entry.entityId ?? "",
         entityLabel: entry.entityLabel ?? "",
         detail: entry.detail,
+        // P1 re-audit — capture the source IP + UA when available. Both
+        // columns are NOT NULL DEFAULT '' so omitting them is safe.
+        ...(entry.ipAddress !== undefined ? { ipAddress: entry.ipAddress } : {}),
+        ...(entry.userAgent !== undefined ? { userAgent: entry.userAgent } : {}),
       },
     });
   } catch (err) {
     // Audit logging must never break the underlying operation
-    console.error("[audit] failed to write log entry:", err);
+    logError("[audit] failed to write log entry:", err);
   }
 }
 
