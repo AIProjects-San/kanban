@@ -121,7 +121,12 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        const user = await db.user.findUnique({ where: { email } });
+        // P0 (production-readiness re-audit) — filter soft-deleted users at
+        // the lookup. Without this, a user soft-deleted via deleteUser() could
+        // still sign in with their original password. The L-P0-14 soft-delete
+        // model relies on this filter; the prior comment "implicitly
+        // invalidated" was wrong (findUnique returns soft-deleted rows).
+        const user = await db.user.findUnique({ where: { email, deletedAt: null } });
         if (!user) {
           // Timing-attack mitigation: burn the same bcrypt work factor when
           // the account doesn't exist so response times don't reveal whether
@@ -191,11 +196,15 @@ export const authOptions: NextAuthOptions = {
         // Periodically re-read the role AND tokenVersion from the database
         // so promotions, demotions, and revocations take effect without
         // waiting for the JWT to expire.
+        // P0 (production-readiness re-audit) — filter soft-deleted users.
+        // A user soft-deleted mid-session must have their token cleared just
+        // like a hard-deleted user. Select deletedAt and treat non-null as
+        // invalidation.
         const fresh = await db.user.findUnique({
-          where: { id: token.id as string },
-          select: { role: true, tokenVersion: true },
+          where: { id: token.id as string, deletedAt: null },
+          select: { role: true, tokenVersion: true, deletedAt: true },
         });
-        if (fresh) {
+        if (fresh && fresh.deletedAt === null) {
           // L-P0-8 — reject tokens whose tokenVersion is stale. The user
           // (or an admin) bumped tokenVersion after this token was issued,
           // which means the password or role changed. Invalidate the
@@ -219,8 +228,11 @@ export const authOptions: NextAuthOptions = {
             token.tokenVersion = dbVersion;
           }
         } else {
-          // Account deleted mid-session — invalidate the identity claim; the
-          // app treats an empty id as "not signed in".
+          // Account deleted OR soft-deleted mid-session — invalidate the
+          // identity claim; the app treats an empty id as "not signed in".
+          // (The `deletedAt: null` filter above means soft-deleted users
+          // return null here, so their tokens are cleared within the
+          // ROLE_REFRESH_MS window.)
           token.id = "";
           token.role = "MEMBER";
         }

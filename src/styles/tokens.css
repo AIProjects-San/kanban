@@ -40,7 +40,7 @@
 /* ---------------------------------------------------------------------------
    §2 Accent engine
    The active accent is applied to <html data-accent="…"> (see
-   src/components/fernly/sidebar & settings-view). Every accent-dependent
+   src/components/ui/sidebar & settings-view). Every accent-dependent
    token derives from this triplet, so a new accent theme is four numbers.
    --------------------------------------------------------------------------- */
 :root {

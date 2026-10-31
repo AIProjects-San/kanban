@@ -76,20 +76,39 @@ export async function bulkUpdateTasks(
       return t.assignee?.userId === auth.userId;
     });
 
-    let updated = 0;
-    const affectedAssignees = new Set<string>();
+    // P0 (production-readiness re-audit) — the prior implementation ran a
+    // separate `db.task.update` per task in a loop with no $transaction, so
+    // a DB blip mid-loop left the workspace partially updated (some tasks
+    // moved, others not) with no rollback. Since every task receives the
+    // SAME patch, we now do one atomic updateMany inside a $transaction.
+    const data: Record<string, unknown> = {};
+    if (patch.status !== undefined) data.status = patch.status;
+    if (patch.assigneeId !== undefined) data.assigneeId = patch.assigneeId || null;
 
+    // Track affected assignees BEFORE the bulk update so workload counters
+    // get recalculated for both the old and new assignee of every task.
+    const affectedAssignees = new Set<string>();
     for (const task of permitted) {
-      const data: Record<string, unknown> = {};
-      if (patch.status !== undefined) data.status = patch.status;
-      if (patch.assigneeId !== undefined) data.assigneeId = patch.assigneeId || null;
-      await db.task.update({ where: { id: task.id }, data });
-      updated++;
       if (task.assigneeId) affectedAssignees.add(task.assigneeId);
       if (patch.assigneeId) affectedAssignees.add(patch.assigneeId);
     }
 
-    // Recalculate workload counters for every affected assignee.
+    // One atomic UPDATE — either all permitted tasks move or none do.
+    // Skip the transaction entirely when nothing is permitted (calling
+    // $transaction([]) is a TypeScript error and a no-op anyway).
+    let updated = 0;
+    if (permitted.length > 0) {
+      const result = await db.$transaction([
+        db.task.updateMany({
+          where: { id: { in: permitted.map((t) => t.id) } },
+          data,
+        }),
+      ]);
+      updated = result[0]?.count ?? 0;
+    }
+
+    // Recalculate workload counters for every affected assignee (outside the
+    // tx — recalcMemberStats does its own reads + writes).
     for (const memberId of affectedAssignees) {
       await recalcMemberStats(memberId);
     }

@@ -60,6 +60,7 @@ const USER = {
   role: "ADMIN",
   passwordHash: bcrypt.hashSync("correct-horse-1", 4),
   tokenVersion: 0, // L-P0-8
+  deletedAt: null, // P0 re-audit: soft-delete filter expects this
 };
 
 const REQ = { headers: { "x-forwarded-for": "203.0.113.7" } };
@@ -102,7 +103,7 @@ describe("authorize()", () => {
     const start = Date.now();
     const result = await getAuthorize()({ email: "ghost@fernly.dev", password: "whatever-1" }, REQ);
     expect(result).toBeNull();
-    expect(db.user.findUnique).toHaveBeenCalledWith({ where: { email: "ghost@fernly.dev" } });
+    expect(db.user.findUnique).toHaveBeenCalledWith({ where: { email: "ghost@fernly.dev", deletedAt: null } });
     // Timing mitigation: the call took real bcrypt work, not an instant return.
     expect(Date.now() - start).toBeGreaterThanOrEqual(0);
   });
@@ -120,7 +121,7 @@ describe("authorize()", () => {
 
     expect(result).toMatchObject({ id: "u-1", email: "ada@fernly.dev", name: "Ada", role: "ADMIN" });
     // Email is normalised to lowercase before lookup.
-    expect(db.user.findUnique).toHaveBeenCalledWith({ where: { email: "ada@fernly.dev" } });
+    expect(db.user.findUnique).toHaveBeenCalledWith({ where: { email: "ada@fernly.dev", deletedAt: null } });
     expect(db.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ action: "auth.signed_in", actorId: "u-1" }),
@@ -180,12 +181,15 @@ describe("jwt callback", () => {
     const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
     // 6 minutes later (> ROLE_REFRESH_MS).
     vi.advanceTimersByTime(6 * 60 * 1000);
-    db.user.findUnique.mockResolvedValue({ role: "MEMBER", tokenVersion: 0 }); // demoted, no revocation
+    db.user.findUnique.mockResolvedValue({ role: "MEMBER", tokenVersion: 0, deletedAt: null }); // demoted, no revocation
 
     const refreshed = await jwt({ token, user: undefined } as never);
     expect(refreshed.role).toBe("MEMBER");
     expect(db.user.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "u-1" }, select: { role: true, tokenVersion: true } }),
+      expect.objectContaining({
+        where: { id: "u-1", deletedAt: null },
+        select: { role: true, tokenVersion: true, deletedAt: true },
+      }),
     );
     vi.useRealTimers();
   });
@@ -202,6 +206,50 @@ describe("jwt callback", () => {
     vi.useRealTimers();
   });
 
+  // P0 (production-readiness re-audit) — soft-deleted users must NOT be able
+  // to sign in. The authorize lookup filters `deletedAt: null`, so a
+  // soft-deleted user is treated the same as a non-existent email (timing
+  // mitigation kicks in, no session is created). This test pins the contract.
+  it("P0 re-audit: refuses to sign in a soft-deleted user (deletedAt set)", async () => {
+    // The user row exists in the DB but is soft-deleted. The findUnique
+    // filter on `deletedAt: null` returns null → authorize returns null.
+    db.user.findUnique.mockResolvedValue(null); // simulates the filtered lookup
+    const result = await getAuthorize()(
+      { email: "ghost@fernly.dev", password: "correct-horse-1" },
+      REQ,
+    );
+    expect(result).toBeNull();
+    // The lookup explicitly filtered on deletedAt: null.
+    expect(db.user.findUnique).toHaveBeenCalledWith({
+      where: { email: "ghost@fernly.dev", deletedAt: null },
+    });
+  });
+
+  // P0 (production-readiness re-audit) — a soft-deleted user's existing
+  // session must be invalidated at the next JWT refresh. The lookup filters
+  // `deletedAt: null` so it returns null for soft-deleted users; the jwt
+  // callback then clears the token id (same path as hard-deleted users).
+  it("P0 re-audit: invalidates the session when the account was soft-deleted mid-session", async () => {
+    vi.useFakeTimers();
+    const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
+    vi.advanceTimersByTime(6 * 60 * 1000);
+    // Simulate the user being soft-deleted: the `deletedAt: null` filter on
+    // the refresh lookup returns null even though the row still exists.
+    db.user.findUnique.mockResolvedValue(null);
+
+    const refreshed = await jwt({ token, user: undefined } as never);
+    expect(refreshed.id).toBe("");
+    expect(refreshed.role).toBe("MEMBER");
+    // And the lookup explicitly filtered on deletedAt: null.
+    expect(db.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "u-1", deletedAt: null },
+        select: { role: true, tokenVersion: true, deletedAt: true },
+      }),
+    );
+    vi.useRealTimers();
+  });
+
   // -------------------------------------------------------------------------
   // L-P0-8 — tokenVersion session revocation.
   // -------------------------------------------------------------------------
@@ -214,7 +262,7 @@ describe("jwt callback", () => {
 
     // 6 minutes later — the user changed their password, bumping tokenVersion to 1
     vi.advanceTimersByTime(6 * 60 * 1000);
-    db.user.findUnique.mockResolvedValue({ role: "ADMIN", tokenVersion: 1 });
+    db.user.findUnique.mockResolvedValue({ role: "ADMIN", tokenVersion: 1, deletedAt: null });
 
     const refreshed = await jwt({ token, user: undefined } as never);
     expect(refreshed.id).toBe("");
@@ -227,7 +275,7 @@ describe("jwt callback", () => {
     vi.useFakeTimers();
     const token = await jwt({ token: {}, user: { id: "u-1", role: "MEMBER", tokenVersion: 0 } } as never);
     vi.advanceTimersByTime(6 * 60 * 1000);
-    db.user.findUnique.mockResolvedValue({ role: "MANAGER", tokenVersion: 1 });
+    db.user.findUnique.mockResolvedValue({ role: "MANAGER", tokenVersion: 1, deletedAt: null });
 
     const refreshed = await jwt({ token, user: undefined } as never);
     expect(refreshed.id).toBe("");
@@ -239,7 +287,7 @@ describe("jwt callback", () => {
     vi.useFakeTimers();
     const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
     vi.advanceTimersByTime(6 * 60 * 1000);
-    db.user.findUnique.mockResolvedValue({ role: "ADMIN", tokenVersion: 0 });
+    db.user.findUnique.mockResolvedValue({ role: "ADMIN", tokenVersion: 0, deletedAt: null });
 
     const refreshed = await jwt({ token, user: undefined } as never);
     expect(refreshed.id).toBe("u-1");
@@ -251,7 +299,7 @@ describe("jwt callback", () => {
     vi.useFakeTimers();
     const token = await jwt({ token: {}, user: { id: "u-1", role: "ADMIN", tokenVersion: 0 } } as never);
     vi.advanceTimersByTime(6 * 60 * 1000);
-    db.user.findUnique.mockResolvedValue({ role: "ADMIN" }); // no tokenVersion field
+    db.user.findUnique.mockResolvedValue({ role: "ADMIN", deletedAt: null }); // no tokenVersion field
 
     const refreshed = await jwt({ token, user: undefined } as never);
     expect(refreshed.id).toBe("u-1");

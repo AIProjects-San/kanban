@@ -17,6 +17,10 @@ const db = vi.hoisted(() => {
 
 vi.mock("@/lib/db", () => ({ db }));
 
+// $transaction mock — takes an array of PrismaPromises, awaits them all,
+// returns their results in order (matches Prisma's batch-transaction API).
+db.$transaction = vi.fn((arr: unknown[]) => Promise.all(arr as Promise<unknown>[])) as never;
+
 const getSessionMock = vi.fn();
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -49,7 +53,9 @@ beforeEach(() => {
   getSessionMock.mockResolvedValue(MEMBER_AUTH);
   requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
   db.task.findMany.mockResolvedValue([]);
-  db.task.update.mockResolvedValue({});
+  // updateMany returns a BatchPayload `{ count }` — the test fixtures
+  // override this per-test to return the count of permitted tasks.
+  db.task.updateMany.mockResolvedValue({ count: 0 });
   db.calendarEvent.findMany.mockResolvedValue([]);
   logAuditMock.mockResolvedValue(undefined);
   recalcMemberStatsMock.mockResolvedValue(undefined);
@@ -66,12 +72,18 @@ describe("L-P2-31 bulkUpdateTasks", () => {
       { id: "t-1", assigneeId: "m-1", assignee: { userId: "u-1" } },
       { id: "t-2", assigneeId: null, assignee: null },
     ]);
+    // updateMany returns a BatchPayload — count = number of rows touched.
+    db.task.updateMany.mockResolvedValue({ count: 2 });
     const res = await bulkUpdateTasks(["t-1", "t-2"], { status: "DONE" });
     if (!res.ok) throw new Error("expected ok");
     expect(res.data).toEqual({ requested: 2, updated: 2, skipped: 0 });
-    expect(db.task.update).toHaveBeenCalledTimes(2);
-    expect(db.task.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "t-1" }, data: { status: "DONE" } }),
+    // One atomic updateMany call covering both permitted tasks.
+    expect(db.task.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.task.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ["t-1", "t-2"] } },
+        data: { status: "DONE" },
+      }),
     );
   });
 
@@ -81,12 +93,14 @@ describe("L-P2-31 bulkUpdateTasks", () => {
       { id: "t-1", assigneeId: "m-mia", assignee: { userId: "u-mia" } },
       { id: "t-2", assigneeId: "m-other", assignee: { userId: "u-other" } },
     ]);
+    db.task.updateMany.mockResolvedValue({ count: 1 });
     const res = await bulkUpdateTasks(["t-1", "t-2"], { status: "DONE" });
     if (!res.ok) throw new Error("expected ok");
     expect(res.data).toEqual({ requested: 2, updated: 1, skipped: 1 });
-    expect(db.task.update).toHaveBeenCalledTimes(1);
-    expect(db.task.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "t-1" } }),
+    // Single atomic updateMany covering only the permitted task.
+    expect(db.task.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.task.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["t-1"] } } }),
     );
   });
 
@@ -107,6 +121,7 @@ describe("L-P2-31 bulkUpdateTasks", () => {
     db.task.findMany.mockResolvedValue([
       { id: "t-1", assigneeId: "m-1", assignee: { userId: "u-1" } },
     ]);
+    db.task.updateMany.mockResolvedValue({ count: 1 });
     await bulkUpdateTasks(["t-1"], { assigneeId: "m-2" });
     // Both the old assignee (m-1) and the new assignee (m-2) are recalculated.
     expect(recalcMemberStatsMock).toHaveBeenCalledWith("m-1");
@@ -118,6 +133,7 @@ describe("L-P2-31 bulkUpdateTasks", () => {
     db.task.findMany.mockResolvedValue([
       { id: "t-1", assigneeId: null, assignee: null },
     ]);
+    db.task.updateMany.mockResolvedValue({ count: 1 });
     await bulkUpdateTasks(["t-1"], { status: "DONE" });
     expect(logAuditMock).toHaveBeenCalledTimes(1);
     expect(logAuditMock).toHaveBeenCalledWith(

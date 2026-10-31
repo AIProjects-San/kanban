@@ -65,3 +65,7 @@ server.log
 tool-results/
 dev.log
 server.log
+
+# agent workspace directories (deliverables + uploads — never commit)
+/upload/
+/download/

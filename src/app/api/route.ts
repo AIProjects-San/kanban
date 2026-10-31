@@ -8,6 +8,5 @@ export async function GET() {
   return NextResponse.json({
     name: `${APP.name} API`,
     health: "/api/health",
-    docs: "/docs",
   });
 }

@@ -515,20 +515,33 @@ export async function deleteUser(userId: string): Promise<ActionResult<void>> {
     // both User and the linked TeamMember hides the row from read paths
     // (which filter `deletedAt: null`) WITHOUT cascading deletes that would
     // orphan messages (dangling senderUserId/recipientUserId) and team-member
-    // references. The user's auth is also implicitly invalidated: the jwt
-    // callback's role refresh sees `fresh = null` and clears the token id.
-    // ProjectAssignments still cascade (onDelete: Cascade); managerId on
-    // direct reports still SetNulls (those reports become roots — deleting
-    // a manager never deletes their team).
+    // references. The user's auth is invalidated: the jwt callback's role
+    // refresh filters `deletedAt: null`, so it sees `fresh = null` and
+    // clears the token id within the ROLE_REFRESH_MS window. ProjectAssignments
+    // still cascade (onDelete: Cascade); managerId on direct reports still
+    // SetNulls (those reports become roots — deleting a manager never deletes
+    // their team).
+    // P0 (production-readiness re-audit) — the two writes are wrapped in a
+    // $transaction so a partial failure can't leave the user hidden from auth
+    // while their roster row stays visible (still assignable, still
+    // messageable, but locked out).
     const now = new Date();
-    await db.user.update({ where: { id: userId }, data: { deletedAt: now } });
-    // Soft-delete the matching TeamMember row (if any) in the same operation.
-    if (target.email) {
-      await db.teamMember.updateMany({
-        where: { email: target.email.toLowerCase(), deletedAt: null },
-        data: { deletedAt: now },
-      });
-    }
+    // Wrap both writes in a $transaction so the soft-delete is atomic — a
+    // partial failure can't leave the user hidden from auth while their
+    // roster row stays visible (still assignable, still messageable, but
+    // locked out).
+    await db.$transaction([
+      db.user.update({ where: { id: userId }, data: { deletedAt: now } }),
+      // Soft-delete the matching TeamMember row (if any) in the same tx.
+      ...(target.email
+        ? [
+            db.teamMember.updateMany({
+              where: { email: target.email.toLowerCase(), deletedAt: null },
+              data: { deletedAt: now },
+            }),
+          ]
+        : []),
+    ]);
     await logAudit({
       actor: auth,
       action: "user.deleted",

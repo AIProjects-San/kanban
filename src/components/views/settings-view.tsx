@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Bell, User, Palette, Clock, Lock, Loader2 } from "lucide-react";
+import { Check, Bell, User, Palette, Clock, Lock, Loader2, Download, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApp, type AccentTheme } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
 import { Avatar } from "../ui/avatar";
 import { toast } from "sonner";
 import { updateProfile, changePassword, updateUserSettings } from "@/server-actions/data";
+import { exportMyData } from "@/server-actions/data-export";
 import { actionErrorMessage } from "@/lib/action-errors";
 import { Section } from "../ui/section";
 import { Field } from "../ui/field";
@@ -250,7 +251,85 @@ export function SettingsView({ user }: SettingsViewProps) {
           </Field>
         </div>
       </Section>
+
+      <PrivacySection userId={user.id} />
     </div>
+  );
+}
+
+/**
+ * Privacy section — GDPR / NZ Privacy Act 2020 principle 6 (access to
+ * personal information). Lets the signed-in user download every row the app
+ * stores about them as a JSON file. Self-service: the server action scopes
+ * every query to the caller's own userId, so no permission gate beyond a
+ * signed-in session is needed.
+ */
+function PrivacySection({ userId }: { userId: string }) {
+  const [exporting, setExporting] = useState(false);
+
+  const download = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await exportMyData();
+      if (!res.ok) {
+        toast.error(actionErrorMessage(res.error));
+        return;
+      }
+      // Serialize + trigger a browser download. Filename includes the userId
+      // prefix and ISO date so multiple exports don't collide.
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${APP.slug}-data-export-${userId.slice(0, 8)}-${new Date()
+        .toISOString()
+        .slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Data export ready", {
+        description:
+          "Your personal data has been downloaded as a JSON file.",
+      });
+    } catch {
+      toast.error("Failed to export data");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <Section
+      icon={Shield}
+      title="Privacy"
+      description={`Access the personal data ${APP.name} stores about you`}
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          You can request a copy of all the personal data {APP.name} holds
+          about you — your profile, projects, tasks, messages, notifications,
+          reminders, time entries, and audit trail. The export is generated
+          on demand and downloaded to your device.
+        </p>
+        <button
+          type="button"
+          onClick={download}
+          disabled={exporting}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {exporting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Download className="h-4 w-4" />
+          )}
+          {exporting ? "Preparing export…" : "Download my data"}
+        </button>
+      </div>
+    </Section>
   );
 }
 
