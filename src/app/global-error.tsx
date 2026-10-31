@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect } from "react";
+import { t } from "@/lib/i18n";
 import "./globals.css";
 
 export default function GlobalError({
@@ -43,11 +44,10 @@ export default function GlobalError({
               ⚠️
             </div>
             <h1 className="text-2xl font-semibold">
-              Application error
+              {t("errors.applicationError")}
             </h1>
             <p className="text-sm text-muted-foreground">
-              A critical error occurred while loading the application. Please
-              try again.
+              {t("errors.applicationErrorBody")}
             </p>
             {error.digest && (
               <p className="text-xs text-muted-foreground/70 font-mono break-all">

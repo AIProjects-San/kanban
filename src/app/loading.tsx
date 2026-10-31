@@ -7,6 +7,8 @@
 // Server component (no "use client") so it renders before any client JS.
 // ---------------------------------------------------------------------------
 
+import { t } from "@/lib/i18n";
+
 export default function Loading() {
   return (
     <div
@@ -22,7 +24,7 @@ export default function Loading() {
           />
         </div>
         <p className="text-sm text-muted-foreground">
-          Loading workspace&hellip;
+          {t("loading.workspace")}
         </p>
         <span className="sr-only">Loading the Fernly workspace, please wait.</span>
       </div>

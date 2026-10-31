@@ -102,6 +102,17 @@ export {
   exportMyData,
   type UserDataExport,
 } from "./data-export";
+// L-P2-31 — bulk task operations.
+export {
+  bulkUpdateTasks,
+  type BulkTaskPatch,
+  type BulkUpdateResult,
+} from "./bulk";
+// L-P2-38 — ICS calendar export.
+export {
+  exportCalendarIcs,
+  type IcsExport,
+} from "./ics-export";
 export {
   assignUserToProject,
   unassignUserFromProject,

@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import Link from "next/link";
+import { t } from "@/lib/i18n";
 
 export default function NotFound() {
   return (
@@ -19,11 +20,10 @@ export default function NotFound() {
           404
         </div>
         <h1 className="text-2xl font-semibold text-foreground">
-          Page not found
+          {t("errors.notFound")}
         </h1>
         <p className="text-sm text-muted-foreground">
-          The page you&rsquo;re looking for doesn&rsquo;t exist or has been
-          moved.
+          {t("errors.notFoundBody")}
         </p>
         <div className="pt-2">
           <Link

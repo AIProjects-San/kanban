@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect } from "react";
+import { t } from "@/lib/i18n";
 
 type CaptureFn = (e: unknown, c?: Record<string, unknown>) => void;
 
@@ -50,11 +51,10 @@ export default function Error({
           ⚠️
         </div>
         <h1 className="text-2xl font-semibold text-foreground">
-          Something went wrong
+          {t("errors.generic")}
         </h1>
         <p className="text-sm text-muted-foreground">
-          The page hit an unexpected error while loading. Your data is safe —
-          you can try again, or reload the workspace.
+          {t("errors.genericBody")}
         </p>
         {error.digest && (
           <p className="text-xs text-muted-foreground/70 font-mono break-all">
