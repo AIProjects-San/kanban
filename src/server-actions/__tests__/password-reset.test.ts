@@ -1,0 +1,241 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// L-P0-11 — password reset flow tests.
+
+const db = vi.hoisted(() => {
+  const obj = {
+    user: {} as Record<string, ReturnType<typeof vi.fn>>,
+    passwordResetToken: {} as Record<string, ReturnType<typeof vi.fn>>,
+    $transaction: vi.fn(),
+  };
+  for (const meth of ["findUnique", "findFirst", "findMany", "create", "update", "updateMany", "delete", "deleteMany", "count"]) {
+    obj.user[meth] = vi.fn();
+    obj.passwordResetToken[meth] = vi.fn();
+  }
+  return obj;
+});
+
+vi.mock("@/lib/db", () => ({ db }));
+
+const hashPasswordMock = vi.fn();
+vi.mock("@/lib/password", () => ({
+  hashPassword: (...a: unknown[]) => hashPasswordMock(...a),
+}));
+
+const { FakeMailer, _resetMailerCacheForTests } = await import("@/lib/mailer");
+const fakeMailer = new FakeMailer();
+const createMailerMock = vi.fn(() => fakeMailer);
+vi.mock("@/lib/mailer", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/mailer")>("@/lib/mailer");
+  return {
+    ...actual,
+    createMailer: (...a: unknown[]) => createMailerMock(...(a as [])),
+  };
+});
+
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+}));
+
+import { requestPasswordReset, validateResetToken, resetPassword } from "../password-reset";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  fakeMailer.clear();
+  _resetMailerCacheForTests();
+  db.user.findUnique.mockResolvedValue(null);
+  db.passwordResetToken.findUnique.mockResolvedValue(null);
+  db.passwordResetToken.create.mockResolvedValue({});
+  db.passwordResetToken.updateMany.mockResolvedValue({});
+  db.passwordResetToken.update.mockResolvedValue({});
+  db.user.update.mockResolvedValue({});
+  db.$transaction.mockResolvedValue([]);
+  hashPasswordMock.mockResolvedValue("hashed-new-password");
+});
+
+const USER = { id: "u-1", name: "Ada", email: "ada@fernly.app", deletedAt: null };
+
+describe("L-P0-11 requestPasswordReset", () => {
+  it("sends a reset email when the user exists", async () => {
+    db.user.findUnique.mockResolvedValue(USER);
+    const res = await requestPasswordReset("ada@fernly.app");
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.sent).toBe(true);
+    expect(fakeMailer.sent.length).toBe(1);
+    expect(fakeMailer.sent[0].to).toBe("ada@fernly.app");
+    expect(fakeMailer.sent[0].subject).toMatch(/reset your password/i);
+    expect(fakeMailer.sent[0].text).toMatch(/reset-password\?token=/);
+  });
+
+  it("returns sent:true even when the user does NOT exist (anti-enumeration)", async () => {
+    db.user.findUnique.mockResolvedValue(null);
+    const res = await requestPasswordReset("nobody@fernly.app");
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.sent).toBe(true);
+    expect(fakeMailer.sent.length).toBe(0);
+  });
+
+  it("returns sent:true when the user is soft-deleted (L-P0-14) — no email sent", async () => {
+    db.user.findUnique.mockResolvedValue({ ...USER, deletedAt: new Date() });
+    const res = await requestPasswordReset("ada@fernly.app");
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.sent).toBe(true);
+    expect(fakeMailer.sent.length).toBe(0);
+  });
+
+  it("invalidates existing unused tokens before creating a new one", async () => {
+    db.user.findUnique.mockResolvedValue(USER);
+    await requestPasswordReset("ada@fernly.app");
+    expect(db.passwordResetToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: USER.id, usedAt: null },
+        data: { usedAt: expect.any(Date) },
+      }),
+    );
+    expect(db.passwordResetToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: USER.id,
+          tokenHash: expect.any(String),
+          expiresAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it("stores the SHA-256 hash, never the raw token (DB-leak safety)", async () => {
+    db.user.findUnique.mockResolvedValue(USER);
+    await requestPasswordReset("ada@fernly.app");
+    const createCall = db.passwordResetToken.create.mock.calls[0][0];
+    expect(createCall.data.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(fakeMailer.sent[0].text).toMatch(/token=[A-Za-z0-9_-]{43}/);
+  });
+
+  it("continues gracefully if the mail send fails (best-effort)", async () => {
+    db.user.findUnique.mockResolvedValue(USER);
+    const errorMailer = { sendMail: vi.fn().mockRejectedValue(new Error("SMTP down")) };
+    createMailerMock.mockReturnValueOnce(errorMailer as never);
+    const res = await requestPasswordReset("ada@fernly.app");
+    expect(res.ok).toBe(true);
+  });
+});
+
+describe("L-P0-11 validateResetToken", () => {
+  it("returns valid:true for a fresh, unused, unexpired token", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+      usedAt: null,
+    });
+    const res = await validateResetToken("some-token");
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data).toEqual({ valid: true, expired: false, used: false });
+  });
+
+  it("returns expired:true when expiresAt is in the past", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() - 60_000),
+      usedAt: null,
+    });
+    const res = await validateResetToken("some-token");
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.expired).toBe(true);
+    expect(res.data.valid).toBe(false);
+  });
+
+  it("returns used:true when the token was already consumed", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+      usedAt: new Date(),
+    });
+    const res = await validateResetToken("some-token");
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.used).toBe(true);
+  });
+
+  it("returns all-false when the token doesn't exist", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue(null);
+    const res = await validateResetToken("bogus");
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data).toEqual({ valid: false, expired: false, used: false });
+  });
+});
+
+describe("L-P0-11 resetPassword", () => {
+  const VALID_TOKEN_RECORD = {
+    id: "t-1",
+    userId: "u-1",
+    expiresAt: new Date(Date.now() + 60_000),
+    usedAt: null,
+  };
+
+  it("sets the new password + bumps tokenVersion + marks the token as used", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue(VALID_TOKEN_RECORD);
+    const res = await resetPassword({ token: "good-token", newPassword: "brand-new-pass" });
+    expect(res.ok).toBe(true);
+    expect(hashPasswordMock).toHaveBeenCalledWith("brand-new-pass");
+    expect(db.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "u-1" },
+        data: expect.objectContaining({
+          passwordHash: "hashed-new-password",
+          tokenVersion: { increment: 1 },
+        }),
+      }),
+    );
+    expect(db.passwordResetToken.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "t-1" },
+        data: expect.objectContaining({ usedAt: expect.any(Date) }),
+      }),
+    );
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Array));
+  });
+
+  it("rejects when the token doesn't exist", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue(null);
+    const res = await resetPassword({ token: "bogus", newPassword: "brand-new-pass" });
+    expect(res.ok).toBe(false);
+  });
+
+  it("rejects when the token was already used (single-use enforcement)", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue({
+      ...VALID_TOKEN_RECORD,
+      usedAt: new Date(),
+    });
+    const res = await resetPassword({ token: "reused", newPassword: "brand-new-pass" });
+    expect(res.ok).toBe(false);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the token has expired", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue({
+      ...VALID_TOKEN_RECORD,
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+    const res = await resetPassword({ token: "expired", newPassword: "brand-new-pass" });
+    expect(res.ok).toBe(false);
+  });
+
+  it("rejects when the new password is too short", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue(VALID_TOKEN_RECORD);
+    const res = await resetPassword({ token: "good-token", newPassword: "short" });
+    expect(res.ok).toBe(false);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("L-P1-11 mailer factory", () => {
+  it("FakeMailer captures sent emails", async () => {
+    const m = new FakeMailer();
+    await m.sendMail({ to: "a@b.co", subject: "S", html: "<p>h</p>", text: "t" });
+    expect(m.sent.length).toBe(1);
+  });
+
+  it("ConsoleMailer does not throw", async () => {
+    const { ConsoleMailer } = await import("@/lib/mailer");
+    const m = new ConsoleMailer();
+    await expect(m.sendMail({ to: "a@b.co", subject: "S", html: "<p>h</p>", text: "t" })).resolves.toBeUndefined();
+  });
+});

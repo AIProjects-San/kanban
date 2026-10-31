@@ -22,6 +22,14 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+// L-P0-7 — requirePermission now consults hasPermissionDb on top of the
+// static matrix. Mock the config-loader so the DB-driven check is
+// deterministic per test. Default: DB returns false.
+const hasPermissionDbMock = vi.fn();
+vi.mock("@/lib/config-loader", () => ({
+  hasPermissionDb: (...args: unknown[]) => hasPermissionDbMock(...args),
+}));
+
 import {
   getSession,
   requirePermission,
@@ -74,7 +82,11 @@ describe("getSession", () => {
 });
 
 describe("requirePermission", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // L-P0-7 — default: DB returns false, so only the static floor grants.
+    hasPermissionDbMock.mockResolvedValue(false);
+  });
 
   it("throws AuthorizationError when not signed in", async () => {
     getServerSession.mockResolvedValue(null);
@@ -90,6 +102,48 @@ describe("requirePermission", () => {
 
   it("returns the auth context when the permission is granted", async () => {
     getServerSession.mockResolvedValue(MEMBER_SESSION);
+    const auth = await requirePermission("task:edit:own");
+    expect(auth.userId).toBe("u-member");
+  });
+
+  // -------------------------------------------------------------------------
+  // L-P0-7 — DB-driven RBAC enforcement.
+  // -------------------------------------------------------------------------
+
+  it("L-P0-7: floor holds — static permission is granted even if DB revokes it", async () => {
+    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    hasPermissionDbMock.mockResolvedValue(false);
+    const auth = await requirePermission("task:edit:own");
+    expect(auth.userId).toBe("u-member");
+    // The DB check is NOT consulted for floor perms — the static matrix
+    // short-circuits to true.
+    expect(hasPermissionDbMock).not.toHaveBeenCalled();
+  });
+
+  it("L-P0-7: DB grants extra — a permission the static matrix denies is granted via DB", async () => {
+    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    hasPermissionDbMock.mockResolvedValue(true);
+    const auth = await requirePermission("audit:view");
+    expect(auth.userId).toBe("u-member");
+    expect(hasPermissionDbMock).toHaveBeenCalledWith("MEMBER", "audit:view");
+  });
+
+  it("L-P0-7: DB revocation no-op for floor perms — ADMIN keeps role:manage regardless of DB", async () => {
+    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    hasPermissionDbMock.mockResolvedValue(false);
+    const auth = await requirePermission("role:manage");
+    expect(auth.userId).toBe("u-admin");
+  });
+
+  it("L-P0-7: DB failure falls back to static-only (deny-by-default)", async () => {
+    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    hasPermissionDbMock.mockRejectedValue(new Error("DB connection lost"));
+    await expect(requirePermission("audit:view")).rejects.toThrow(AuthorizationError);
+  });
+
+  it("L-P0-7: DB failure does NOT revoke floor perms (static floor still holds)", async () => {
+    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    hasPermissionDbMock.mockRejectedValue(new Error("DB connection lost"));
     const auth = await requirePermission("task:edit:own");
     expect(auth.userId).toBe("u-member");
   });

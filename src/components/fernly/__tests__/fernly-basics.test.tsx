@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { Toggle } from "@/components/fernly/toggle";
 import { EmptyState } from "@/components/fernly/empty-state";
 import { RoleBadge } from "@/components/fernly/role-badge";
+import { Modal } from "@/components/fernly/modal";
 
 describe("Toggle", () => {
   it("renders as an accessible switch with the current state", () => {
@@ -68,5 +69,80 @@ describe("RoleBadge", () => {
   it("hides the shield icon by default", () => {
     const { container } = render(<RoleBadge role="ADMIN" />);
     expect(container.querySelector("svg")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L-P1-18 — Modal accessibility (focus trap, aria-labelledby, aria-modal).
+// ---------------------------------------------------------------------------
+
+describe("Modal a11y (L-P1-18)", () => {
+  it("does not render when open is false", () => {
+    const { container } = render(
+      <Modal open={false} onClose={() => {}} title="Test">
+        <p>body</p>
+      </Modal>,
+    );
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("renders with role=dialog, aria-modal=true, and aria-labelledby pointing at the title", () => {
+    render(
+      <Modal open={true} onClose={() => {}} title="Confirm delete">
+        <p>body</p>
+      </Modal>,
+    );
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    const labelledBy = dialog?.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    const titleEl = document.getElementById(labelledBy!);
+    expect(titleEl?.textContent).toBe("Confirm delete");
+  });
+
+  it("sets aria-describedby when a description is provided", () => {
+    render(
+      <Modal open={true} onClose={() => {}} title="T" description="A description">
+        <p>body</p>
+      </Modal>,
+    );
+    const dialog = document.querySelector('[role="dialog"]');
+    const describedBy = dialog?.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const descEl = document.getElementById(describedBy!);
+    expect(descEl?.textContent).toBe("A description");
+  });
+
+  it("omits aria-describedby when no description is provided", () => {
+    render(
+      <Modal open={true} onClose={() => {}} title="T">
+        <p>body</p>
+      </Modal>,
+    );
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("the close button has an accessible label", () => {
+    render(
+      <Modal open={true} onClose={() => {}} title="T">
+        <p>body</p>
+      </Modal>,
+    );
+    const closeBtn = document.querySelector('button[aria-label]');
+    expect(closeBtn?.getAttribute("aria-label")).toMatch(/close/i);
+  });
+
+  it("calls onClose when Escape is pressed", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <Modal open={true} onClose={onClose} title="T">
+        <p>body</p>
+      </Modal>,
+    );
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
   });
 });

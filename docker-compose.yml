@@ -1,0 +1,66 @@
+# L-P1-21 — docker-compose for multi-instance deployment.
+# 2 Fernly replicas behind nginx (probing /api/health) + shared Redis
+# (for the L-P0-10 rate limiter).
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  fernly-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # L-P0-12 — production builds must NOT ship demo credentials.
+        NEXT_PUBLIC_SEED_DEMO: "0"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      SEED_DEMO: ""
+      NODE_ENV: "production"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      fernly-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  redis-data:
