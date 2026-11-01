@@ -532,6 +532,16 @@ async function main() {
       },
     });
     tasks.push(task);
+    // Project association rule — task assignees must be users associated
+    // with the task's project. Staff the assignee explicitly so every seeded
+    // task satisfies the invariant (and the assignee dropdown is never empty).
+    if (assignee.userId) {
+      await db.projectAssignment.upsert({
+        where: { projectId_userId: { projectId: project.id, userId: assignee.userId } },
+        create: { projectId: project.id, userId: assignee.userId, role: "MEMBER" },
+        update: {},
+      });
+    }
   }
   console.log(`  ✓ ${tasks.length} tasks`);
 
@@ -865,7 +875,26 @@ async function main() {
   const bugReporter = memberUser.id; // MEMBER (QA role in this demo)
   const bugAssignee1 = allUsers.find((u) => u.name === "Mira Hale") ?? allUsers[0];
   const bugAssignee2 = allUsers.find((u) => u.name === "Sam Chen") ?? allUsers[1];
-  const bugProject = await db.project.findFirst({ select: { id: true, name: true } });
+  const bugProject = await db.project.findFirst({ select: { id: true, name: true, ownerUserId: true } });
+
+  // Project association rule — every bug belongs to a project, and its
+  // assignee must be a user associated with that project. Staff the reporter
+  // + both demo assignees on the bug project explicitly so the seeded bugs
+  // satisfy the invariant.
+  if (bugProject) {
+    for (const u of [bugReporter, bugAssignee1?.id, bugAssignee2?.id]) {
+      if (!u) continue;
+      await db.projectAssignment.upsert({
+        where: { projectId_userId: { projectId: bugProject.id, userId: u } },
+        create: {
+          projectId: bugProject.id,
+          userId: u,
+          role: u === bugProject.ownerUserId ? "OWNER" : "MEMBER",
+        },
+        update: {},
+      });
+    }
+  }
 
   const bugNow = new Date();
   function daysAgoDate(d) {
@@ -886,7 +915,7 @@ async function main() {
       status: "IN_PROGRESS",
       reporterUserId: bugReporter,
       assigneeUserId: bugAssignee1.id,
-      projectId: bugProject?.id ?? null,
+      projectId: bugProject?.id ?? "",
       environment: "Production / Safari 17 / macOS 14",
       createdAt: daysAgoDate(3),
       triagedAt: daysAgoDate(2),
@@ -908,7 +937,7 @@ async function main() {
       resolution: "FIXED",
       reporterUserId: bugReporter,
       assigneeUserId: bugAssignee2.id,
-      projectId: bugProject?.id ?? null,
+      projectId: bugProject?.id ?? "",
       environment: "Production / Chrome 120 / iPhone SE 375px",
       createdAt: daysAgoDate(5),
       triagedAt: daysAgoDate(4),
@@ -929,7 +958,7 @@ async function main() {
       status: "TRIAGED",
       reporterUserId: bugReporter,
       assigneeUserId: null,
-      projectId: null,
+      projectId: bugProject?.id ?? "",
       environment: "Staging / Chrome 120 / macOS",
       createdAt: daysAgoDate(2),
       triagedAt: daysAgoDate(1),
@@ -948,7 +977,7 @@ async function main() {
       status: "NEW",
       reporterUserId: bugReporter,
       assigneeUserId: null,
-      projectId: null,
+      projectId: bugProject?.id ?? "",
       environment: "Production / Chrome 120 / macOS",
       createdAt: daysAgoDate(1),
       comments: [],
@@ -965,7 +994,7 @@ async function main() {
       resolution: "WORKS_AS_INTENDED",
       reporterUserId: bugReporter,
       assigneeUserId: bugAssignee1.id,
-      projectId: null,
+      projectId: bugProject?.id ?? "",
       environment: "Production / Chrome 120 / macOS",
       createdAt: daysAgoDate(10),
       triagedAt: daysAgoDate(9),
@@ -987,7 +1016,7 @@ async function main() {
       status: "REOPENED",
       reporterUserId: bugReporter,
       assigneeUserId: bugAssignee2.id,
-      projectId: bugProject?.id ?? null,
+      projectId: bugProject?.id ?? "",
       environment: "Production / Chrome 120 / macOS",
       createdAt: daysAgoDate(7),
       triagedAt: daysAgoDate(6),
@@ -1008,7 +1037,7 @@ async function main() {
       status: "NEW",
       reporterUserId: bugReporter,
       assigneeUserId: null,
-      projectId: null,
+      projectId: bugProject?.id ?? "",
       environment: "Production / Outlook desktop / Windows 11",
       createdAt: daysAgoDate(0),
       comments: [],

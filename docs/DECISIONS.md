@@ -168,3 +168,48 @@ publishing the demo password.
 `grep -r <password> .`). Rotating the demo password is a one-line `.env` edit.
 Operational cost: contributors must copy `.env.example` first — already required for
 `DATABASE_URL`.
+
+---
+
+## ADR-007 — Project association rule: work is assigned per project team
+
+**Date:** 2026-11-02 · **Status:** ACCEPTED · **Type:** product/data-integrity
+
+**Context.** Bugs could be raised without a project, and both bugs and tasks could be
+assigned to ANY user in the workspace, regardless of which project the work belongs to.
+The assignee dropdowns offered the full roster, so "assign the Safari-login bug to the
+marketing lead" was a perfectly legal action.
+
+**Analysis.** The workspace already had the explicit staffing relation
+(`ProjectAssignment` — the admin "assign user to project" UI), plus ownership
+(`Project.ownerUserId`). Two candidate definitions of "associated with a project":
+
+| Criterion | Explicit assignment ∪ owner | Assignment ∪ owner ∪ has-tasks-in-project |
+|---|---|---|
+| Circular? | No | Yes — "you can be assigned because you were assigned" bootstraps itself |
+| Admin intent | Matches the staffing UI exactly | Lets stale task history mint new permissions |
+| First assignment possible | Yes — staff the user first, one admin action | Yes, but by accident |
+
+**Decision.**
+
+1. A user is **associated with a project** iff they have a `ProjectAssignment` row for
+   it or they own it. One canonical definition in
+   `server-actions/shared.ts` (`getProjectAssociatedUserIds` + the two `assert*`
+   helpers); every writer funnels through it.
+2. **Bugs must belong to a project** (`createBug` rejects project-less bugs; the raise
+   form requires the field). `assignBug` only accepts users associated with the bug's
+   project. Linked tasks must be in the same project (`createBug`, `linkBugToTask`).
+3. **Tasks must belong to a project** (`createTask` rejects project-less tasks; tasks
+   can no longer be moved OFF a project, only between projects). Task assignees
+   (`TeamMember`) must resolve to an associated user. `bulkUpdateTasks` skips tasks
+   whose project the new assignee is not staffed on.
+4. Enforcement is at **write time** in server actions (the security boundary — the
+   dropdowns are convenience only). Legacy rows are not retro-migrated: a project-less
+   legacy bug simply cannot be assigned until it is given a project.
+5. The seed staffs every demo task/bug assignee on the work's project so the demo data
+   satisfies the invariant.
+
+**Consequences.** The task-modal assignee list can be empty for a fresh project until
+someone is staffed on it — that is the intended signal (the UI says exactly that). Roster
+entries without a linked `User` account can no longer be assigned work. Unassigning a
+user from a project does not cascade to existing assignments (write-time rule only).

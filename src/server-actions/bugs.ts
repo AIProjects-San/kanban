@@ -35,7 +35,7 @@ import {
   linkBugTaskSchema,
   parseOrThrow,
 } from "@/lib/validation";
-import { logAudit, getScopedProjectIds } from "./shared";
+import { logAudit, getScopedProjectIds, assertUserAssociatedWithProject, getProjectAssociatedUserIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -78,6 +78,29 @@ export async function createBug(input: {
     const auth = await requirePermission("bug:create");
     const data = parseOrThrow(createBugSchema, input);
 
+    // Project association rule — every bug belongs to a project, and its
+    // assignee (set later via assignBug) must be a user associated with
+    // that project. The project must exist and not be soft-deleted.
+    if (!data.projectId) {
+      throw new AuthorizationError("Bug must be assigned to a project.");
+    }
+    if ((await getProjectAssociatedUserIds(data.projectId)) === null) {
+      throw new AuthorizationError("Project not found.");
+    }
+    // A linked task must belong to the SAME project — otherwise the
+    // traceability link crosses project boundaries and the assignee rule
+    // becomes ambiguous.
+    if (data.taskId) {
+      const task = await db.task.findUnique({
+        where: { id: data.taskId },
+        select: { projectId: true },
+      });
+      if (!task) throw new AuthorizationError("Task not found.");
+      if (task.projectId !== data.projectId) {
+        throw new AuthorizationError("The linked task belongs to a different project.");
+      }
+    }
+
     const bug = await db.bug.create({
       data: {
         title: data.title,
@@ -89,7 +112,7 @@ export async function createBug(input: {
         priority: data.priority ?? "P2",
         status: "NEW",
         reporterUserId: auth.userId,
-        projectId: data.projectId ?? null,
+        projectId: data.projectId,
         taskId: data.taskId ?? null,
         environment: data.environment ?? "",
       },
@@ -330,6 +353,7 @@ export async function updateBug(id: string, raw: Partial<{
   severity: string;
   priority: string;
   environment: string;
+  projectId: string | null;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("bug:edit:own");
@@ -338,6 +362,33 @@ export async function updateBug(id: string, raw: Partial<{
     await assertBugEditPermission(auth, existing);
 
     const input = parseOrThrow(updateBugSchema, raw);
+    // Project association rule — a bug can never be moved OFF its project,
+    // a new project must exist, and the current assignee (if any) must be
+    // associated with the project the bug ends up in.
+    if (input.projectId === null) {
+      throw new AuthorizationError("Bugs must belong to a project — pick another project instead of removing it.");
+    }
+    const projectChanged =
+      input.projectId !== undefined && input.projectId !== existing.projectId;
+    if (projectChanged && input.projectId) {
+      if ((await getProjectAssociatedUserIds(input.projectId)) === null) {
+        throw new AuthorizationError("Project not found.");
+      }
+      if (existing.assigneeUserId) {
+        await assertUserAssociatedWithProject(existing.assigneeUserId, input.projectId);
+      }
+      if (existing.taskId) {
+        const task = await db.task.findUnique({
+          where: { id: existing.taskId },
+          select: { projectId: true },
+        });
+        if (task && task.projectId !== input.projectId) {
+          throw new AuthorizationError(
+            "The bug's linked task belongs to a different project. Unlink it first.",
+          );
+        }
+      }
+    }
     const data: Record<string, unknown> = {};
     if (input.title !== undefined) data.title = input.title;
     if (input.description !== undefined) data.description = input.description;
@@ -347,6 +398,7 @@ export async function updateBug(id: string, raw: Partial<{
     if (input.severity !== undefined) data.severity = input.severity;
     if (input.priority !== undefined) data.priority = input.priority;
     if (input.environment !== undefined) data.environment = input.environment;
+    if (projectChanged) data.projectId = input.projectId;
 
     await db.bug.update({ where: { id }, data });
 
@@ -355,6 +407,7 @@ export async function updateBug(id: string, raw: Partial<{
     if (input.severity !== undefined && input.severity !== existing.severity) changes.push("severity");
     if (input.priority !== undefined && input.priority !== existing.priority) changes.push("priority");
     if (input.description !== undefined && input.description !== existing.description) changes.push("description");
+    if (projectChanged) changes.push("project");
 
     await logAudit({
       actor: auth,
@@ -387,6 +440,15 @@ export async function assignBug(id: string, assigneeUserId: string | null): Prom
       });
       if (!user) throw new AuthorizationError("Assignee not found.");
       assigneeName = user.name;
+      // Project association rule — the assignee must be associated with the
+      // bug's project (explicit ProjectAssignment or ownership). Legacy
+      // bugs without a project must be given one before assignment.
+      if (!existing.projectId) {
+        throw new AuthorizationError(
+          "Assign this bug to a project first — assignees must be associated with the bug's project.",
+        );
+      }
+      await assertUserAssociatedWithProject(assigneeUserId, existing.projectId);
     }
 
     await db.bug.update({
@@ -674,6 +736,17 @@ export async function linkBugToTask(
         include: { assignee: { select: { userId: true } } },
       });
       if (!task) throw new AuthorizationError("Task not found.");
+      // Project association rule — the linked task must belong to the SAME
+      // project as the bug, so the traceability link stays inside one
+      // project's boundary.
+      if (!bug.projectId) {
+        throw new AuthorizationError(
+          "Assign the bug to a project before linking a task.",
+        );
+      }
+      if (task.projectId !== bug.projectId) {
+        throw new AuthorizationError("The task belongs to a different project.");
+      }
       const scopedIds = await getScopedProjectIds(auth);
       if (
         scopedIds &&
@@ -830,11 +903,23 @@ export async function getLinkableBugs(taskId: string, search?: string): Promise<
     const auth = await getSession();
     if (!auth) throw new AuthorizationError("You must be signed in.");
 
+    // Project association rule — a bug can only be linked to a task in the
+    // SAME project (linkBugToTask enforces this server-side too). Resolve
+    // the task's project and scope the candidates so the picker never
+    // offers a link the server would reject. Tasks without a project
+    // (legacy rows) cannot link bugs at all.
+    const task = await db.task.findUnique({
+      where: { id: taskId },
+      select: { projectId: true },
+    });
+    if (!task || !task.projectId) return [];
+
     // NOT-linked: either taskId is null, or it points at a different task.
     // (Prisma's `not` excludes NULLs — SQL three-valued logic — so the OR
     // below is what actually includes the unlinked rows.)
     const q = (search ?? "").trim();
     const where: Record<string, unknown> = {
+      projectId: task.projectId,
       OR: [{ taskId: null }, { taskId: { not: taskId } }],
     };
     if (q) {

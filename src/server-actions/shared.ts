@@ -135,6 +135,85 @@ export async function getScopedProjectIds(
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// Project association — the canonical "user is associated with a project"
+// rule used by every assignee validation.
+//
+// A user is associated with a project when they are EXPLICITLY staffed on it
+// (a ProjectAssignment row — the admin "assign user to project" relation) or
+// when they own the project (Project.ownerUserId). Task-assignee history is
+// deliberately NOT part of the rule: "you can be assigned because you were
+// assigned" is circular and would let stale assignments bootstrap themselves.
+//
+// Enforced at write time by:
+//   • createTask / updateTask / bulkUpdateTasks (Task.assigneeId)
+//   • createBug / updateBug / assignBug (Bug.assigneeUserId)
+// Read paths (dashboards, boards) do not re-validate legacy rows.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the set of user ids associated with a project (explicit
+ * ProjectAssignment rows + the project owner). Returns null when the project
+ * does not exist or is soft-deleted, so callers can distinguish "unknown
+ * project" from "known project with zero associated users".
+ */
+export async function getProjectAssociatedUserIds(
+  projectId: string,
+): Promise<Set<string> | null> {
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { ownerUserId: true, deletedAt: true },
+  });
+  if (!project || project.deletedAt) return null;
+  const assignments = await db.projectAssignment.findMany({
+    where: { projectId },
+    select: { userId: true },
+  });
+  const ids = new Set(assignments.map((a) => a.userId));
+  if (project.ownerUserId) ids.add(project.ownerUserId);
+  return ids;
+}
+
+/**
+ * Assert that a USER may be assigned work in a project: they must be
+ * explicitly staffed on it (ProjectAssignment) or own it.
+ */
+export async function assertUserAssociatedWithProject(
+  userId: string,
+  projectId: string,
+): Promise<void> {
+  const ids = await getProjectAssociatedUserIds(projectId);
+  if (ids === null) throw new AuthorizationError("Project not found.");
+  if (!ids.has(userId)) {
+    throw new AuthorizationError(
+      "This user is not assigned to that project. Assign the user to the project first (Team → project assignments).",
+    );
+  }
+}
+
+/**
+ * Assert that a TEAM MEMBER (task assignees are TeamMember ids) may be
+ * assigned work in a project. Resolves the member's linked User account —
+ * roster entries without a login can never satisfy the project-association
+ * rule, so they are rejected with a clear message.
+ */
+export async function assertTeamMemberAssociatedWithProject(
+  memberId: string,
+  projectId: string,
+): Promise<void> {
+  const member = await db.teamMember.findUnique({
+    where: { id: memberId },
+    select: { userId: true, deletedAt: true },
+  });
+  if (!member || member.deletedAt) throw new AuthorizationError("Assignee not found.");
+  if (!member.userId) {
+    throw new AuthorizationError(
+      "This team member has no linked user account and cannot be assigned to project work.",
+    );
+  }
+  await assertUserAssociatedWithProject(member.userId, projectId);
+}
+
 /**
  * Enforce task edit rights for the signed-in user.
  * `task:edit:any` — may edit anything. `task:edit:own` (without :any) — may

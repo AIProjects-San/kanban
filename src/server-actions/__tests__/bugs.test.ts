@@ -38,9 +38,13 @@ vi.mock("@/server-actions/auth-guard", () => ({
 
 const logAuditMock = vi.fn();
 const getScopedProjectIdsMock = vi.fn();
+const assertUserAssociatedWithProjectMock = vi.fn();
+const getProjectAssociatedUserIdsMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
   getScopedProjectIds: (...a: unknown[]) => getScopedProjectIdsMock(...a),
+  assertUserAssociatedWithProject: (...a: unknown[]) => assertUserAssociatedWithProjectMock(...a),
+  getProjectAssociatedUserIds: (...a: unknown[]) => getProjectAssociatedUserIdsMock(...a),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -59,6 +63,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   getSessionMock.mockResolvedValue(MEMBER_AUTH);
   requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+  // Project association rule — default to a known project whose associated
+  // users include everyone in these fixtures. Individual tests override.
+  getProjectAssociatedUserIdsMock.mockResolvedValue(new Set(["u-admin", "u-mia", "u-qa", "u-dev"]));
+  assertUserAssociatedWithProjectMock.mockResolvedValue(undefined);
   db.bug.findUnique.mockResolvedValue(null);
   db.bug.findMany.mockResolvedValue([]);
   db.bug.create.mockResolvedValue({ id: "b-1", title: "Test bug", severity: "MAJOR", priority: "P2" });
@@ -81,7 +89,7 @@ beforeEach(() => {
 describe("createBug", () => {
   it("creates a bug with defaults (NEW status, MAJOR severity, P2 priority)", async () => {
     requirePermissionMock.mockResolvedValue(QA_AUTH);
-    const res = await createBug({ title: "Login broken" });
+    const res = await createBug({ title: "Login broken", projectId: "p-1" });
     expect(res.ok).toBe(true);
     expect(db.bug.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -91,6 +99,7 @@ describe("createBug", () => {
           severity: "MAJOR",
           priority: "P2",
           reporterUserId: "u-qa",
+          projectId: "p-1",
         }),
       }),
     );
@@ -104,12 +113,41 @@ describe("createBug", () => {
   });
 
   it("accepts custom severity + priority", async () => {
-    const res = await createBug({ title: "Crash", severity: "CRITICAL", priority: "P0" });
+    const res = await createBug({ title: "Crash", severity: "CRITICAL", priority: "P0", projectId: "p-1" });
     expect(res.ok).toBe(true);
     expect(db.bug.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ severity: "CRITICAL", priority: "P0" }),
       }),
+    );
+  });
+
+  it("requires a project (project association rule)", async () => {
+    const res = await createBug({ title: "Orphan bug" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown project", async () => {
+    getProjectAssociatedUserIdsMock.mockResolvedValue(null);
+    const res = await createBug({ title: "Ghost project", projectId: "p-ghost" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a linked task from a different project", async () => {
+    db.task.findUnique.mockResolvedValue({ projectId: "p-other" });
+    const res = await createBug({ title: "Cross-project", projectId: "p-1", taskId: "t-1" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts a linked task from the same project", async () => {
+    db.task.findUnique.mockResolvedValue({ projectId: "p-1" });
+    const res = await createBug({ title: "Same project", projectId: "p-1", taskId: "t-1" });
+    expect(res.ok).toBe(true);
+    expect(db.bug.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ taskId: "t-1", projectId: "p-1" }) }),
     );
   });
 
@@ -136,7 +174,7 @@ describe("createBug", () => {
 
   it("sets reporterUserId from the session (not client)", async () => {
     requirePermissionMock.mockResolvedValue(QA_AUTH);
-    await createBug({ title: "Test" });
+    await createBug({ title: "Test", projectId: "p-1" });
     expect(db.bug.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ reporterUserId: "u-qa" }),
@@ -321,10 +359,51 @@ describe("updateBug", () => {
   it("ADMIN (bug:edit:any) can edit any bug", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
     db.bug.findUnique.mockResolvedValue({
-      id: "b-1", title: "Old", reporterUserId: "u-qa", assigneeUserId: "u-dev",
+      id: "b-1", title: "Old", reporterUserId: "u-qa", assigneeUserId: "u-dev", projectId: "p-1",
     });
     const res = await updateBug("b-1", { title: "Admin edit" });
     expect(res.ok).toBe(true);
+  });
+
+  it("moves the bug to another project when the assignee is associated with it", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Old", reporterUserId: "u-mia", assigneeUserId: "u-dev", projectId: "p-1",
+    });
+    const res = await updateBug("b-1", { projectId: "p-2" });
+    expect(res.ok).toBe(true);
+    expect(assertUserAssociatedWithProjectMock).toHaveBeenCalledWith("u-dev", "p-2");
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { projectId: "p-2" } }),
+    );
+  });
+
+  it("rejects moving the bug off its project (projectId: null)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Old", reporterUserId: "u-mia", assigneeUserId: null, projectId: "p-1",
+    });
+    const res = await updateBug("b-1", { projectId: null });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a project move when the current assignee is not associated with the new project", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Old", reporterUserId: "u-mia", assigneeUserId: "u-dev", projectId: "p-1",
+    });
+    assertUserAssociatedWithProjectMock.mockRejectedValue(new Error("not associated"));
+    const res = await updateBug("b-1", { projectId: "p-2" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a project move when the linked task belongs to a different project", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Old", reporterUserId: "u-mia", assigneeUserId: null, projectId: "p-1", taskId: "t-1",
+    });
+    db.task.findUnique.mockResolvedValue({ projectId: "p-other" });
+    const res = await updateBug("b-1", { projectId: "p-2" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
   });
 
   it("throws for non-existent bug", async () => {
@@ -339,12 +418,13 @@ describe("updateBug", () => {
 // ---------------------------------------------------------------------------
 
 describe("assignBug", () => {
-  it("assigns to a valid user", async () => {
+  it("assigns to a valid user associated with the bug's project", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
-    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test" });
+    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test", projectId: "p-1" });
     db.user.findUnique.mockResolvedValue({ name: "Deva" });
     const res = await assignBug("b-1", "u-dev");
     expect(res.ok).toBe(true);
+    expect(assertUserAssociatedWithProjectMock).toHaveBeenCalledWith("u-dev", "p-1");
     expect(db.bug.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "b-1" }, data: { assigneeUserId: "u-dev" } }),
     );
@@ -353,19 +433,39 @@ describe("assignBug", () => {
     );
   });
 
-  it("unassigns (null assignee)", async () => {
+  it("unassigns (null assignee) — no association check needed", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
-    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test" });
+    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test", projectId: "p-1" });
     const res = await assignBug("b-1", null);
     expect(res.ok).toBe(true);
+    expect(assertUserAssociatedWithProjectMock).not.toHaveBeenCalled();
     expect(db.bug.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { assigneeUserId: null } }),
     );
   });
 
+  it("rejects a user who is not associated with the bug's project", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test", projectId: "p-1" });
+    db.user.findUnique.mockResolvedValue({ name: "Outsider" });
+    assertUserAssociatedWithProjectMock.mockRejectedValue(new Error("not associated"));
+    const res = await assignBug("b-1", "u-outsider");
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects assignment on a legacy bug without a project", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test", projectId: null });
+    db.user.findUnique.mockResolvedValue({ name: "Deva" });
+    const res = await assignBug("b-1", "u-dev");
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
   it("rejects non-existent assignee", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
-    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test" });
+    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test", projectId: "p-1" });
     db.user.findUnique.mockResolvedValue(null);
     const res = await assignBug("b-1", "u-ghost");
     expect(res.ok).toBe(false);
@@ -373,7 +473,7 @@ describe("assignBug", () => {
 
   it("rejects soft-deleted assignee", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
-    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test" });
+    db.bug.findUnique.mockResolvedValue({ id: "b-1", title: "Test", projectId: "p-1" });
     db.user.findUnique.mockResolvedValue(null); // deletedAt:null filter excludes
     const res = await assignBug("b-1", "u-deleted");
     expect(res.ok).toBe(false);
@@ -679,10 +779,10 @@ describe("moveBug (board drag)", () => {
 // ---------------------------------------------------------------------------
 
 describe("linkBugToTask", () => {
-  it("links a bug to a visible task (ADMIN is unscoped)", async () => {
+  it("links a bug to a task in the SAME project (ADMIN is unscoped)", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
     db.bug.findUnique.mockResolvedValue({
-      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-qa", assigneeUserId: null, taskId: null,
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-qa", assigneeUserId: null, taskId: null, projectId: "p-1",
     });
     db.task.findUnique.mockResolvedValue({
       id: "t-1", title: "Target task", projectId: "p-1", assignee: { userId: "u-dev" },
@@ -699,7 +799,7 @@ describe("linkBugToTask", () => {
 
   it("unlinks a bug (null taskId) and logs bug.unlinked", async () => {
     db.bug.findUnique.mockResolvedValue({
-      id: "b-1", title: "Linked bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: "t-1",
+      id: "b-1", title: "Linked bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: "t-1", projectId: "p-1",
     });
     const res = await linkBugToTask("b-1", { taskId: null });
     expect(res.ok).toBe(true);
@@ -711,9 +811,46 @@ describe("linkBugToTask", () => {
     );
   });
 
+  it("rejects a task from a different project (project association rule)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null, projectId: "p-1",
+    });
+    db.task.findUnique.mockResolvedValue({
+      id: "t-1", title: "Other project task", projectId: "p-2", assignee: { userId: "u-dev" },
+    });
+    const res = await linkBugToTask("b-1", { taskId: "t-1" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects linking on a legacy bug without a project", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Legacy bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null, projectId: null,
+    });
+    db.task.findUnique.mockResolvedValue({
+      id: "t-1", title: "Any task", projectId: "p-1", assignee: { userId: "u-dev" },
+    });
+    const res = await linkBugToTask("b-1", { taskId: "t-1" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a same-project task the caller cannot see (scope still applies)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null, projectId: "p-hidden",
+    });
+    db.task.findUnique.mockResolvedValue({
+      id: "t-1", title: "Hidden task", projectId: "p-hidden", assignee: { userId: "u-dev" },
+    });
+    getScopedProjectIdsMock.mockResolvedValue(new Set(["p-visible"]));
+    const res = await linkBugToTask("b-1", { taskId: "t-1" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
   it("MEMBER cannot link to a task outside their scope", async () => {
     db.bug.findUnique.mockResolvedValue({
-      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null,
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null, projectId: "p-visible",
     });
     db.task.findUnique.mockResolvedValue({
       id: "t-1", title: "Hidden task", projectId: "p-hidden", assignee: { userId: "u-dev" },
@@ -726,7 +863,7 @@ describe("linkBugToTask", () => {
 
   it("MEMBER can link to a task in their scope", async () => {
     db.bug.findUnique.mockResolvedValue({
-      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null,
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null, projectId: "p-visible",
     });
     db.task.findUnique.mockResolvedValue({
       id: "t-1", title: "Visible task", projectId: "p-visible", assignee: { userId: "u-dev" },
@@ -741,7 +878,7 @@ describe("linkBugToTask", () => {
 
   it("rejects a non-existent task", async () => {
     db.bug.findUnique.mockResolvedValue({
-      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-qa", assigneeUserId: null, taskId: null,
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-qa", assigneeUserId: null, taskId: null, projectId: "p-1",
     });
     db.task.findUnique.mockResolvedValue(null);
     const res = await linkBugToTask("b-1", { taskId: "t-missing" });
@@ -751,7 +888,7 @@ describe("linkBugToTask", () => {
 
   it("non-editor cannot change the link", async () => {
     db.bug.findUnique.mockResolvedValue({
-      id: "b-1", title: "Someone else's bug", status: "NEW", reporterUserId: "u-someone-else", assigneeUserId: null, taskId: null,
+      id: "b-1", title: "Someone else's bug", status: "NEW", reporterUserId: "u-someone-else", assigneeUserId: null, taskId: null, projectId: "p-1",
     });
     const res = await linkBugToTask("b-1", { taskId: "t-1" });
     expect(res.ok).toBe(false);
@@ -810,11 +947,31 @@ describe("getTaskLinkedBugs / getLinkableBugs", () => {
     );
   });
 
-  it("getLinkableBugs excludes bugs already linked to THIS task (nulls included)", async () => {
+  it("getLinkableBugs scopes candidates to the task's project and excludes bugs already linked to THIS task", async () => {
+    db.task.findUnique.mockResolvedValue({ projectId: "p-1" });
     db.bug.findMany.mockResolvedValue([]);
     const res = await getLinkableBugs("t-1", "");
     expect(res.ok).toBe(true);
     const where = db.bug.findMany.mock.calls[0][0].where;
+    expect(where.projectId).toBe("p-1");
     expect(where.OR).toEqual([{ taskId: null }, { taskId: { not: "t-1" } }]);
+  });
+
+  it("getLinkableBugs applies the search filter on top of the project scope", async () => {
+    db.task.findUnique.mockResolvedValue({ projectId: "p-1" });
+    db.bug.findMany.mockResolvedValue([]);
+    const res = await getLinkableBugs("t-1", "crash");
+    expect(res.ok).toBe(true);
+    const where = db.bug.findMany.mock.calls[0][0].where;
+    expect(where.projectId).toBe("p-1");
+    expect(where.title).toEqual({ contains: "crash", mode: "insensitive" });
+  });
+
+  it("getLinkableBugs returns [] for a task without a project (legacy rows)", async () => {
+    db.task.findUnique.mockResolvedValue({ projectId: null });
+    const res = await getLinkableBugs("t-1", "");
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data).toEqual([]);
+    expect(db.bug.findMany).not.toHaveBeenCalled();
   });
 });

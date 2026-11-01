@@ -124,3 +124,73 @@ export async function getProjectAssignments(projectId: string): Promise<ActionRe
     }));
   });
 }
+
+// ---------------------------------------------------------------------------
+// Project association rule — users assignable to work in a project.
+//
+// Returns the users the server will accept as ASSIGNEES for bugs in this
+// project (assertUserAssociatedWithProject applies the same rule at write
+// time): explicitly staffed users (ProjectAssignment) plus the project
+// owner. Used by the bug detail drawer's assign panel so it can only offer
+// people the server would accept. Soft-deleted users are excluded.
+// ---------------------------------------------------------------------------
+
+export async function getProjectAssignableUsers(projectId: string): Promise<ActionResult<
+  Array<{
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    avatarColor: string;
+    isOwner: boolean;
+  }>
+>> {
+  return toResult(async () => {
+    const auth = await getSession();
+    if (!auth) throw new AuthorizationError("You must be signed in.");
+
+    const project = await db.project.findUnique({
+      where: { id: projectId },
+      select: { ownerUserId: true, deletedAt: true },
+    });
+    if (!project || project.deletedAt) return [];
+
+    const assignments = await db.projectAssignment.findMany({
+      where: { projectId, user: { deletedAt: null } },
+      include: { user: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const merged = new Map<
+      string,
+      { id: string; name: string; email: string; role: string; avatarColor: string; isOwner: boolean }
+    >();
+    for (const a of assignments) {
+      merged.set(a.user.id, {
+        id: a.user.id,
+        name: a.user.name,
+        email: a.user.email,
+        role: a.user.role,
+        avatarColor: a.user.avatarColor,
+        isOwner: a.user.id === project.ownerUserId,
+      });
+    }
+    // The owner is associated even without an explicit assignment row.
+    if (project.ownerUserId && !merged.has(project.ownerUserId)) {
+      const owner = await db.user.findUnique({
+        where: { id: project.ownerUserId, deletedAt: null },
+      });
+      if (owner) {
+        merged.set(owner.id, {
+          id: owner.id,
+          name: owner.name,
+          email: owner.email,
+          role: owner.role,
+          avatarColor: owner.avatarColor,
+          isOwner: true,
+        });
+      }
+    }
+    return Array.from(merged.values());
+  });
+}

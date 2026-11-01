@@ -231,7 +231,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
 
       <CommandPalette />
       <InboxDrawer messages={data.messages} members={data.members} currentUser={userProfile} />
-      <TaskModal tasks={data.tasks} projects={data.projects} members={data.members} />
+      <TaskModal tasks={data.tasks} projects={data.projects} />
       <ProjectModal members={data.members} projects={data.projects} />
       <MemberModal />
       <UserModal />

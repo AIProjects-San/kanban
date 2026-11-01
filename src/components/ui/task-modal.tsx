@@ -24,12 +24,11 @@ import { FormActions } from "./form-actions";
 import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
 import { TASK_STATUSES, BUG_SEVERITY_BADGE, BUG_SEVERITY_LABELS, BUG_STATUS_BADGE, BUG_STATUS_LABELS } from "@/lib/config";
 import { cn } from "@/lib/utils";
-import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, TeamMemberT, BugSeverity, BugStatus } from "@/lib/types";
+import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, BugSeverity, BugStatus } from "@/lib/types";
 
 interface TaskModalProps {
   tasks: TaskT[];
   projects: ProjectT[];
-  members: TeamMemberT[];
 }
 
 /** Narrow shape used by the project selector — from getMyProjects() */
@@ -55,7 +54,7 @@ interface ProjectMember {
   isOwner: boolean;
 }
 
-export function TaskModal({ tasks, projects, members }: TaskModalProps) {
+export function TaskModal({ tasks, projects }: TaskModalProps) {
   const { taskModalOpen, taskModalEditId, taskModalDefaultStatus, closeTaskModal } = useApp();
   const editing = taskModalEditId ? tasks.find((t) => t.id === taskModalEditId) ?? null : null;
 
@@ -74,7 +73,6 @@ export function TaskModal({ tasks, projects, members }: TaskModalProps) {
           editing={editing}
           defaultStatus={taskModalDefaultStatus as TaskStatus}
           allProjects={projects}
-          allMembers={members}
           onClose={closeTaskModal}
         />
       )}
@@ -86,13 +84,11 @@ function TaskModalBody({
   editing,
   defaultStatus,
   allProjects,
-  allMembers,
   onClose,
 }: {
   editing: TaskT | null;
   defaultStatus: TaskStatus;
   allProjects: ProjectT[];
-  allMembers: TeamMemberT[];
   onClose: () => void;
 }) {
   // Projects the current user is associated with (owner or task assignee).
@@ -134,7 +130,6 @@ function TaskModalBody({
       defaultStatus={defaultStatus}
       projects={allowedProjects ?? []}
       projectsLoading={allowedProjects === null}
-      allMembers={allMembers}
       onClose={onClose}
     />
   );
@@ -145,14 +140,12 @@ function TaskForm({
   defaultStatus,
   projects,
   projectsLoading,
-  allMembers,
   onClose,
 }: {
   editing: TaskT | null;
   defaultStatus: TaskStatus;
   projects: ProjectOption[];
   projectsLoading: boolean;
-  allMembers: TeamMemberT[];
   onClose: () => void;
 }) {
   const refresh = useRefresh();
@@ -175,6 +168,16 @@ function TaskForm({
   const submit = async () => {
     if (!title.trim()) {
       toast.error("Title is required");
+      return;
+    }
+    // Project association rule — every task belongs to a project (enforced
+    // server-side too; this is the friendly client-side gate).
+    if (!projectId) {
+      toast.error(
+        projects.length === 0
+          ? "Task must be assigned to a project — you're not associated with any project yet"
+          : "Task must be assigned to a project — pick one first",
+      );
       return;
     }
     const estimateMinutes = estimateHours.trim() === "" ? 0 : Math.round(parseFloat(estimateHours) * 60);
@@ -301,18 +304,22 @@ function TaskForm({
         </Field>
       </FormRow>
       <FormRow>
-        <Field label="Project">
+        <Field label="Project *">
           <select
             className="f-input"
             value={projectId}
             onChange={(e) => handleProjectChange(e.target.value)}
             disabled={projectsLoading}
+            aria-label="Project"
           >
             {projectsLoading ? (
               <option value="">Loading projects…</option>
             ) : (
               <>
-                <option value="">— None —</option>
+                {/* Disabled placeholder — a task must belong to a project.
+                    Shown pre-selected only for legacy project-less tasks,
+                    which must be given a project before they can be saved. */}
+                <option value="" disabled>— Select a project —</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </>
             )}
@@ -322,7 +329,7 @@ function TaskForm({
               <Link2 size={9} />
               {projects.length === 0
                 ? "You're not associated with any project yet"
-                : `Only projects you own or have tasks in (${projects.length})`}
+                : `Projects you own or are assigned to (${projects.length}) — assignees come from the project team`}
             </p>
           )}
         </Field>
@@ -331,7 +338,6 @@ function TaskForm({
         <AssigneeField
           key={projectId || "none"}
           projectId={projectId}
-          allMembers={allMembers}
           currentAssigneeId={assigneeId}
           editingAssignee={editing?.assignee ?? null}
           onAssigneeChange={setAssigneeId}
@@ -367,22 +373,22 @@ function TaskForm({
 }
 
 /**
- * Assignee dropdown that only lists people allocated to the selected project.
- * Mounts fresh (via `key`) each time the project changes, so the fetch + the
- * loading state are always consistent with the current project.
+ * Assignee dropdown that only lists people associated with the selected
+ * project (explicit ProjectAssignment or ownership — the same rule the
+ * server enforces on createTask/updateTask). Mounts fresh (via `key`) each
+ * time the project changes, so the fetch + the loading state are always
+ * consistent with the current project.
  *
- * When `projectId` is empty (no project picked) we fall back to the full team
- * list — admin can still create an unassigned placeholder task.
+ * When `projectId` is empty (legacy project-less task being edited) the list
+ * is empty — pick a project first, then choose one of its team members.
  */
 function AssigneeField({
   projectId,
-  allMembers,
   currentAssigneeId,
   editingAssignee,
   onAssigneeChange,
 }: {
   projectId: string;
-  allMembers: TeamMemberT[];
   currentAssigneeId: string;
   editingAssignee: { id: string; name: string; avatarColor: string } | null;
   onAssigneeChange: (id: string) => void;
@@ -410,23 +416,19 @@ function AssigneeField({
   }, [projectId]);
 
   const options = useMemo<{ id: string; name: string; extra?: string }[]>(() => {
-    if (!projectId) {
-      // No project → full team (admin can still pick anyone for an unassigned task)
-      return allMembers.map((m) => ({ id: m.id, name: m.name }));
-    }
-    if (projectMembers === null) return []; // loading
+    if (!projectId || projectMembers === null) return [];
     const opts: { id: string; name: string; extra?: string }[] = projectMembers.map((m) => ({
       id: m.id,
       name: m.name,
       extra: m.isOwner ? "owner" : undefined,
     }));
     // Preserve the currently-edited assignee if they're not in the project's set
-    // (so we don't silently drop the value).
+    // (so we don't silently drop the value on legacy rows).
     if (editingAssignee && !opts.some((o) => o.id === editingAssignee.id)) {
       opts.push({ id: editingAssignee.id, name: editingAssignee.name, extra: "current" });
     }
     return opts;
-  }, [projectId, projectMembers, allMembers, editingAssignee]);
+  }, [projectId, projectMembers, editingAssignee]);
 
   const loading = !!projectId && projectMembers === null;
 
@@ -436,7 +438,8 @@ function AssigneeField({
         className="f-input"
         value={currentAssigneeId}
         onChange={(e) => onAssigneeChange(e.target.value)}
-        disabled={loading}
+        disabled={loading || !projectId}
+        aria-label="Assignee"
       >
         <option value="">
           {loading
@@ -455,14 +458,14 @@ function AssigneeField({
         <p className="flex items-center gap-1 text-[0.625rem] text-muted-foreground mt-1">
           <Users size={9} />
           {options.length === 0
-            ? "No one is allocated to this project yet"
-            : `${options.length} member${options.length === 1 ? "" : "s"} allocated to this project`}
+            ? "No team members are assigned to this project yet"
+            : `Only users assigned to this project (${options.length})`}
         </p>
       )}
       {projectId && !loading && options.length === 0 && (
         <p className="flex items-start gap-1 text-[0.625rem] text-warning mt-1">
           <Info size={9} className="mt-0.5 shrink-0" />
-          Assign a task to someone first to add them to this project, or change the project.
+          Assign users to this project first (Team → project assignments), then pick an assignee.
         </p>
       )}
     </Field>

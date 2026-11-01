@@ -35,6 +35,7 @@ import {
   createBug, getBug, changeBugStatus, moveBug, linkBugToTask,
   assignBug, addBugComment, deleteBug, getBugBoard,
 } from "@/server-actions/bugs";
+import { getProjectAssignableUsers } from "@/server-actions/assignments";
 
 interface BugsViewProps {
   currentUser: { id: string; name: string; email: string; role: string };
@@ -513,12 +514,16 @@ function CreateBugModal({
   const [actualBehavior, setActualBehavior] = useState("");
   const [severity, setSeverity] = useState<BugSeverity>("MAJOR");
   const [priority, setPriority] = useState<BugPriority>("P2");
-  const [projectId, setProjectId] = useState("");
+  // Project association rule — every bug belongs to a project. Default to
+  // the first visible project so the one-field happy path just works.
+  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [taskId, setTaskId] = useState("");
   const [environment, setEnvironment] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const canSubmit = title.trim().length > 0 && !saving;
+  const canSubmit = title.trim().length > 0 && !!projectId && !saving;
+  // A linked task must belong to the SAME project (enforced server-side).
+  const projectTasks = projectId ? tasks.filter((t) => t.projectId === projectId) : [];
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -532,7 +537,7 @@ function CreateBugModal({
         actualBehavior,
         severity,
         priority,
-        projectId: projectId || null,
+        projectId,
         taskId: taskId || null,
         environment: environment.trim(),
       });
@@ -624,34 +629,44 @@ function CreateBugModal({
         </FormRow>
 
         <FormRow>
-          <Field label="Linked Project (optional)">
+          <Field label="Project *">
             <select
               value={projectId}
               onChange={(e) => { setProjectId(e.target.value); setTaskId(""); }}
               className="f-input"
+              aria-label="Project"
             >
-              <option value="">— None —</option>
+              {/* Disabled placeholder — every bug must belong to a project
+                  (enforced server-side too). */}
+              <option value="" disabled>— Select a project —</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+            <p className="flex items-center gap-1 text-[0.625rem] text-muted-foreground mt-1">
+              <FolderKanban size={9} />
+              {projects.length === 0
+                ? "No projects visible to you yet"
+                : `Assignees must be users assigned to this project`}
+            </p>
           </Field>
           <Field label="Linked Task (optional)">
             <select
               value={taskId}
               onChange={(e) => setTaskId(e.target.value)}
               className="f-input"
+              disabled={!projectId}
             >
               <option value="">— None —</option>
-              {(projectId ? tasks.filter((t) => t.projectId === projectId) : tasks).map((t) => (
+              {projectTasks.map((t) => (
                 <option key={t.id} value={t.id}>{t.title}</option>
               ))}
             </select>
             <p className="flex items-center gap-1 text-[0.625rem] text-muted-foreground mt-1">
-              <FolderKanban size={9} />
+              <Link2 size={9} />
               {projectId
-                ? `Tasks in the selected project (${tasks.filter((t) => t.projectId === projectId).length})`
-                : `All visible tasks (${tasks.length})`}
+                ? `Tasks in the selected project (${projectTasks.length})`
+                : "Pick a project to see its tasks"}
             </p>
           </Field>
         </FormRow>
@@ -880,7 +895,7 @@ function BugDetailDrawer({
         {showTaskLink && canEdit && (
           <div className="border border-border rounded-md p-3 space-y-2">
             <div className="text-xs text-muted-foreground">
-              Link this bug to a task for traceability — the task's board card shows its linked bugs.
+              Link this bug to a task in the same project for traceability — the task's board card shows its linked bugs.
             </div>
             {bug.taskTitle && (
               <button
@@ -897,11 +912,15 @@ function BugDetailDrawer({
               aria-label="Link to a task"
             >
               <option value="">— Choose a task to link… —</option>
-              {tasks.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.title}{t.project ? ` (${t.project.name})` : ""}
-                </option>
-              ))}
+              {/* Project association rule — only tasks in the bug's project
+                  are linkable (the server rejects cross-project links). */}
+              {tasks
+                .filter((t) => bug.projectId && t.projectId === bug.projectId)
+                .map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}{t.project ? ` (${t.project.name})` : ""}
+                  </option>
+                ))}
             </select>
           </div>
         )}
@@ -910,6 +929,7 @@ function BugDetailDrawer({
         {showAssign && canAssign && (
           <AssignPanel
             bugId={bug.id}
+            projectId={bug.projectId}
             currentAssigneeId={bug.assigneeUserId}
             onAssigned={() => { setShowAssign(false); void loadBug(); onChanged(); }}
             search={assigneeSearch}
@@ -1047,45 +1067,53 @@ function BugDetailDrawer({
 }
 
 // ---------------------------------------------------------------------------
-// Assign Panel — search users + assign
+// Assign Panel — users associated with the bug's project only.
+//
+// Project association rule: a bug can only be assigned to users staffed on
+// its project (ProjectAssignment) or owning it — the same rule assignBug
+// enforces server-side. The list is fetched once per project and filtered
+// locally as you type.
 // ---------------------------------------------------------------------------
 
 function AssignPanel({
-  bugId, currentAssigneeId, onAssigned, search, setSearch,
+  bugId, projectId, currentAssigneeId, onAssigned, search, setSearch,
 }: {
   bugId: string;
+  projectId: string | null;
   currentAssigneeId: string | null;
   onAssigned: () => void;
   search: string;
   setSearch: (s: string) => void;
 }) {
-  const [results, setResults] = useState<Array<{ id: string; name: string; email: string }>>([]);
-  const [searching, setSearching] = useState(false);
+  const [users, setUsers] = useState<Array<{ id: string; name: string; email: string; isOwner: boolean }>>([]);
+  const [loading, setLoading] = useState(!!projectId);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (search.trim().length < 2) {
-      setResults([]);
-      return;
-    }
-    setSearching(true);
-    // Debounced user search via the existing pagination endpoint.
-    const timer = setTimeout(async () => {
-      try {
-        const { getUsersPage } = await import("@/server-actions/pagination");
-        const res = await getUsersPage({ search: search.trim(), limit: 10 });
-        if (res.ok) {
-          setResults(res.data.items.map((u) => ({ id: u.id, name: u.name, email: u.email })));
-        }
-      } catch {
-        // swallow — the panel just shows no results
-      } finally {
-        setSearching(false);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+    if (!projectId) return; // legacy project-less bug — nothing to fetch
+    let cancelled = false;
+    setLoading(true);
+    getProjectAssignableUsers(projectId)
+      .then((result) => {
+        if (cancelled) return;
+        setUsers(result.ok ? result.data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setUsers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  const q = search.trim().toLowerCase();
+  const results = q
+    ? users.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+    : users;
 
   const assign = async (userId: string | null) => {
     try {
@@ -1101,12 +1129,24 @@ function AssignPanel({
     }
   };
 
+  if (!projectId) {
+    return (
+      <div className="border border-border rounded-md p-3 space-y-2">
+        <p className="text-xs text-warning flex items-start gap-1">
+          <UserPlus size={12} className="mt-0.5 shrink-0" />
+          This bug has no project yet. Bugs must belong to a project before they can be assigned —
+          assignees come from the project team.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="border border-border rounded-md p-3 space-y-2">
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search developers by name…"
+        placeholder="Search the project team by name or email…"
         className="f-input"
         autoFocus
       />
@@ -1118,12 +1158,19 @@ function AssignPanel({
           <UserPlus size={12} /> Unassign
         </button>
       )}
-      {searching && (
+      {loading && (
         <div className="text-xs text-muted-foreground flex items-center gap-1">
-          <Loader2 size={12} className="animate-spin" /> Searching…
+          <Loader2 size={12} className="animate-spin" /> Loading project team…
         </div>
       )}
-      {results.length > 0 && (
+      {!loading && results.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          {users.length === 0
+            ? "No users are assigned to this project yet — assign users to the project first (Team → project assignments)."
+            : "No one on the project team matches that search."}
+        </p>
+      )}
+      {!loading && results.length > 0 && (
         <div className="space-y-1 max-h-[200px] overflow-y-auto">
           {results.map((u) => (
             <button
@@ -1133,12 +1180,19 @@ function AssignPanel({
             >
               <Avatar name={u.name} size={24} />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{u.name}</div>
+                <div className="text-sm font-medium truncate">
+                  {u.name}{u.isOwner ? <span className="text-muted-foreground font-normal"> (owner)</span> : null}
+                </div>
                 <div className="text-xs text-muted-foreground truncate">{u.email}</div>
               </div>
             </button>
           ))}
         </div>
+      )}
+      {!loading && (
+        <p className="text-[0.625rem] text-muted-foreground">
+          Only users assigned to this project can be bug assignees.
+        </p>
       )}
     </div>
   );

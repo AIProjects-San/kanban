@@ -358,14 +358,16 @@ export async function getMyProjects(): Promise<ActionResult<
 // ---------------------------------------------------------------------------
 // Members allocated to a specific project.
 //
-// "Allocated" means the member is either:
-//   • the project's owner (Project.ownerUserId === member.userId), OR
-//   • the assignee of at least one task in that project.
+// Project association rule (docs/DECISIONS.md): "associated with a project"
+// means EXPLICITLY staffed on it (a ProjectAssignment row — the admin
+// "assign user to project" relation) or owning it. Task-assignee history is
+// deliberately NOT part of the rule ("you can be assigned because you were
+// assigned" is circular).
 //
-// Used by the task modal to restrict the assignee dropdown to only people who
-// are actually working on the selected project. Admins still get the full team
-// list when no project is selected, but once a project is picked the same
-// restriction applies — you can't assign a task to someone outside the project.
+// Used by the task modal to restrict the assignee dropdown to exactly the
+// people the server will accept as task assignees for that project
+// (assertTeamMemberAssociatedWithProject applies the same rule at write
+// time). Scoped roles may only enumerate rosters they can already see.
 // ---------------------------------------------------------------------------
 
 export async function getProjectMembers(projectId: string): Promise<ActionResult<
@@ -399,54 +401,34 @@ export async function getProjectMembers(projectId: string): Promise<ActionResult
     const scopedIds = await getScopedProjectIds(auth);
     if (scopedIds && !scopedIds.has(projectId)) return [];
 
-    // Members who already have at least one task in this project.
-    const assignedMembers = await db.teamMember.findMany({
-      where: { tasks: { some: { projectId } } },
+    // Explicitly staffed users (ProjectAssignment) + the project owner.
+    const assignments = await db.projectAssignment.findMany({
+      where: { projectId },
+      select: { userId: true },
+    });
+    const associatedUserIds = new Set(assignments.map((a) => a.userId));
+    if (project.ownerUserId) associatedUserIds.add(project.ownerUserId);
+    if (associatedUserIds.size === 0) return [];
+
+    // Task assignees are TeamMember rows — resolve the roster entries whose
+    // linked user is associated with the project (and not soft-deleted).
+    const members = await db.teamMember.findMany({
+      where: { userId: { in: Array.from(associatedUserIds) }, deletedAt: null },
       orderBy: { name: "asc" },
     });
 
-    // Always include the project owner (if they're a team member) — resolved
-    // via the stable user id, never by name.
-    const ownerMember = project.ownerUserId
-      ? await db.teamMember.findUnique({ where: { userId: project.ownerUserId } })
-      : null;
-
-    const seen = new Set<string>();
-    const merged: Array<{
-      id: string;
-      name: string;
-      email: string;
-      role: string;
-      department: string;
-      avatarColor: string;
-      online: boolean;
-      openTasks: number;
-      completedTasks: number;
-      workload: number;
-      isOwner: boolean;
-    }> = [];
-
-    const push = (m: typeof assignedMembers[number], isOwner: boolean) => {
-      if (seen.has(m.id)) return;
-      seen.add(m.id);
-      merged.push({
-        id: m.id,
-        name: m.name,
-        email: m.email,
-        role: m.role,
-        department: m.department,
-        avatarColor: m.avatarColor,
-        online: m.online,
-        openTasks: m.openTasks,
-        completedTasks: m.completedTasks,
-        workload: m.workload,
-        isOwner,
-      });
-    };
-
-    if (ownerMember) push(ownerMember, true);
-    for (const m of assignedMembers) push(m, !!project.ownerUserId && m.userId === project.ownerUserId);
-
-    return merged;
+    return members.map((m) => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      role: m.role,
+      department: m.department,
+      avatarColor: m.avatarColor,
+      online: m.online,
+      openTasks: m.openTasks,
+      completedTasks: m.completedTasks,
+      workload: m.workload,
+      isOwner: !!project.ownerUserId && m.userId === project.ownerUserId,
+    }));
   });
 }

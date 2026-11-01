@@ -5,7 +5,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["task", "calendarEvent"];
+  // "teamMember", "project", "projectAssignment" are needed by the
+  // project-association rule in bulkUpdateTasks (new-assignee resolution).
+  const models = ["task", "calendarEvent", "teamMember", "project", "projectAssignment"];
   const methods = ["findUnique", "findFirst", "findMany", "create", "update", "updateMany", "delete", "deleteMany", "count"];
   const obj: Record<string, Record<string, ReturnType<typeof vi.fn>>> = {};
   for (const m of models) {
@@ -34,9 +36,11 @@ vi.mock("@/server-actions/auth-guard", () => ({
 
 const logAuditMock = vi.fn();
 const recalcMemberStatsMock = vi.fn();
+const getProjectAssociatedUserIdsMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
   recalcMemberStats: (...a: unknown[]) => recalcMemberStatsMock(...a),
+  getProjectAssociatedUserIds: (...a: unknown[]) => getProjectAssociatedUserIdsMock(...a),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -59,6 +63,10 @@ beforeEach(() => {
   db.calendarEvent.findMany.mockResolvedValue([]);
   logAuditMock.mockResolvedValue(undefined);
   recalcMemberStatsMock.mockResolvedValue(undefined);
+  // Project association rule — by default the new assignee's user is
+  // associated with every task's project. Individual tests override.
+  db.teamMember.findUnique.mockResolvedValue({ userId: "u-2", deletedAt: null });
+  getProjectAssociatedUserIdsMock.mockResolvedValue(new Set(["u-1", "u-2"]));
 });
 
 // ---------------------------------------------------------------------------
@@ -119,13 +127,56 @@ describe("L-P2-31 bulkUpdateTasks", () => {
   it("recalculates workload for every affected assignee", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
     db.task.findMany.mockResolvedValue([
-      { id: "t-1", assigneeId: "m-1", assignee: { userId: "u-1" } },
+      { id: "t-1", projectId: "p-1", assigneeId: "m-1", assignee: { userId: "u-1" } },
     ]);
     db.task.updateMany.mockResolvedValue({ count: 1 });
     await bulkUpdateTasks(["t-1"], { assigneeId: "m-2" });
     // Both the old assignee (m-1) and the new assignee (m-2) are recalculated.
     expect(recalcMemberStatsMock).toHaveBeenCalledWith("m-1");
     expect(recalcMemberStatsMock).toHaveBeenCalledWith("m-2");
+  });
+
+  it("skips tasks whose project the new assignee is NOT associated with (project association rule)", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.task.findMany.mockResolvedValue([
+      { id: "t-1", projectId: "p-1", assigneeId: null, assignee: null },
+      { id: "t-2", projectId: "p-2", assigneeId: null, assignee: null },
+    ]);
+    // u-2 is staffed on p-1 only — the task in p-2 must be skipped.
+    getProjectAssociatedUserIdsMock.mockImplementation((projectId: string) =>
+      Promise.resolve(projectId === "p-1" ? new Set(["u-2"]) : new Set(["u-9"])),
+    );
+    db.task.updateMany.mockResolvedValue({ count: 1 });
+    const res = await bulkUpdateTasks(["t-1", "t-2"], { assigneeId: "m-2" });
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data).toEqual({ requested: 2, updated: 1, skipped: 1 });
+    // Only the conforming task is in the atomic update.
+    expect(db.task.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["t-1"] } } }),
+    );
+  });
+
+  it("skips tasks without a project when bulk-assigning (legacy rows)", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.task.findMany.mockResolvedValue([
+      { id: "t-1", projectId: null, assigneeId: null, assignee: null },
+    ]);
+    db.task.updateMany.mockResolvedValue({ count: 0 });
+    const res = await bulkUpdateTasks(["t-1"], { assigneeId: "m-2" });
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data).toEqual({ requested: 1, updated: 0, skipped: 1 });
+    expect(db.task.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bulk assignee with no linked user account", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.task.findMany.mockResolvedValue([
+      { id: "t-1", projectId: "p-1", assigneeId: null, assignee: null },
+    ]);
+    db.teamMember.findUnique.mockResolvedValue({ userId: null, deletedAt: null });
+    const res = await bulkUpdateTasks(["t-1"], { assigneeId: "m-ghost" });
+    expect(res.ok).toBe(false);
+    expect(db.task.updateMany).not.toHaveBeenCalled();
   });
 
   it("writes a single bulk audit entry", async () => {

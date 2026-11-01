@@ -9,7 +9,7 @@ import { requirePermission } from "./auth-guard";
 import { AuthorizationError } from "./auth-guard";
 import { TASK_STATUS_LABELS } from "@/lib/config";
 import { createTaskSchema, updateTaskSchema, moveTaskSchema, parseOrThrow } from "@/lib/validation";
-import { logAudit, assertTaskEditPermission, recalcMemberStats, getScopedProjectIds } from "./shared";
+import { logAudit, assertTaskEditPermission, recalcMemberStats, getScopedProjectIds, getProjectAssociatedUserIds, assertTeamMemberAssociatedWithProject } from "./shared";
 import { notifyMentionedUsers } from "./mentions";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -28,17 +28,32 @@ export async function createTask(input: {
   return toResult(async () => {
     const auth = await requirePermission("task:create");
     const data = parseOrThrow(createTaskSchema, input);
+    // Project association rule — tasks must belong to a project, and the
+    // assignee must be a user associated with that project (explicit
+    // ProjectAssignment or ownership). Legacy rows are untouched; this
+    // guards every NEW task.
+    if (!data.projectId) {
+      throw new AuthorizationError("Task must be assigned to a project.");
+    }
     // P1 (edge-case audit) — scope the projectId against the caller's visible
     // projects. Previously a MEMBER could create tasks in ANY project (the
     // task:create permission is static), opening a data-injection + mention-
     // phishing vector (clutter another project's board + @mention arbitrary
     // users via the description). ADMIN is unscoped; MANAGER/MEMBER must own
     // / be assigned to / be explicitly allocated to the project.
-    if (data.projectId) {
-      const scopedIds = await getScopedProjectIds(auth);
-      if (scopedIds && !scopedIds.has(data.projectId)) {
-        throw new AuthorizationError("You can only create tasks in projects you have access to.");
-      }
+    const scopedIds = await getScopedProjectIds(auth);
+    if (scopedIds && !scopedIds.has(data.projectId)) {
+      throw new AuthorizationError("You can only create tasks in projects you have access to.");
+    }
+    // The project must exist (and not be soft-deleted) — otherwise ADMIN
+    // (unscoped) could create tasks pointing at a ghost project.
+    const associatedUserIds = await getProjectAssociatedUserIds(data.projectId);
+    if (associatedUserIds === null) {
+      throw new AuthorizationError("Project not found.");
+    }
+    // Assignee (optional at creation) must be associated with the project.
+    if (data.assigneeId) {
+      await assertTeamMemberAssociatedWithProject(data.assigneeId, data.projectId);
     }
     const maxOrder = await db.task.aggregate({
       where: { status: data.status ?? "TODO" },
@@ -52,7 +67,7 @@ export async function createTask(input: {
         priority: data.priority ?? "MEDIUM",
         tag: data.tag ?? "FRONTEND",
         dueDate: data.dueDate ? new Date(data.dueDate) : null,
-        projectId: data.projectId || null,
+        projectId: data.projectId,
         assigneeId: data.assigneeId || null,
         estimateMinutes: data.estimateMinutes ?? 0,
         order: (maxOrder._max.order ?? -1) + 1,
@@ -104,15 +119,43 @@ export async function updateTask(id: string, raw: Partial<{
     if (!existing) return;
     await assertTaskEditPermission(auth, existing);
     const input = parseOrThrow(updateTaskSchema, raw);
-    // P1 (edge-case audit) — if the caller is moving the task to a new
-    // project, scope the new projectId against the caller's visible projects
-    // (same rule as createTask). Prevents a MEMBER from moving their task
-    // into a project they can't see (data injection + mention phishing).
-    if (input.projectId !== undefined && input.projectId && input.projectId !== existing.projectId) {
+    // ---------------------------------------------------------------------
+    // Project association rule (updates):
+    //   • a task can never be moved OFF its project (projectId null rejected)
+    //   • a new project must exist + be in the caller's scope
+    //   • the FINAL assignee must be associated with the FINAL project
+    //     (only re-validated when the assignee or the project actually
+    //     changes, so legacy rows keep saving until they are touched)
+    // ---------------------------------------------------------------------
+    if (input.projectId === null) {
+      throw new AuthorizationError("Tasks must belong to a project — pick another project instead of removing it.");
+    }
+    const projectChanged =
+      input.projectId !== undefined && input.projectId !== existing.projectId;
+    if (projectChanged && input.projectId) {
+      // P1 (edge-case audit) — if the caller is moving the task to a new
+      // project, scope the new projectId against the caller's visible projects
+      // (same rule as createTask). Prevents a MEMBER from moving their task
+      // into a project they can't see (data injection + mention phishing).
       const scopedIds = await getScopedProjectIds(auth);
       if (scopedIds && !scopedIds.has(input.projectId)) {
         throw new AuthorizationError("You can only move tasks to projects you have access to.");
       }
+      if ((await getProjectAssociatedUserIds(input.projectId)) === null) {
+        throw new AuthorizationError("Project not found.");
+      }
+    }
+    const finalProjectId = projectChanged ? input.projectId! : existing.projectId;
+    const finalAssigneeId = input.assigneeId !== undefined ? input.assigneeId : existing.assigneeId;
+    const assigneeChanged =
+      input.assigneeId !== undefined && input.assigneeId !== existing.assigneeId;
+    if (finalAssigneeId && (assigneeChanged || projectChanged)) {
+      if (!finalProjectId) {
+        throw new AuthorizationError(
+          "Assign this task to a project before assigning a user to it.",
+        );
+      }
+      await assertTeamMemberAssociatedWithProject(finalAssigneeId, finalProjectId);
     }
     await db.task.update({
       where: { id },

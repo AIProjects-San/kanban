@@ -98,16 +98,26 @@ When("I create a task titled {string}", async function (title) {
   );
   await newTaskButton.click();
   // Wait for the project picker to finish loading before submitting —
-  // submitting while it still shows "Loading projects…" silently creates a
-  // projectId:null task. (The dashboard now renders those — see the
-  // projectVisibilityFilter fix in server-actions/dashboard.ts — but the
-  // assignee list depends on the picked project, so wait for real options.)
+  // tasks must belong to a project (project association rule), so the modal
+  // blocks submission until a project is picked. The picker defaults to the
+  // user's first associated project; select it explicitly so the step
+  // doesn't depend on the default.
   await driver.wait(
     async () =>
       (await driver.findElements(By.css("[role='dialog'] select[disabled]"))).length === 0,
     15_000,
     "the modal's project picker never finished loading",
   );
+  const projectSelect = await driver.findElement(
+    By.css("[role='dialog'] select[aria-label='Project']"),
+  );
+  const projectOptions = await projectSelect.findElements(
+    By.css("option[value]:not([value=''])"),
+  );
+  if (projectOptions.length === 0) {
+    throw new Error("no project is available for the demo user to create tasks in");
+  }
+  await projectOptions[0].click();
   const titleInput = await driver.wait(
     until.elementLocated(By.css('input[placeholder*="itle" i], form input[type="text"]')),
     10_000,

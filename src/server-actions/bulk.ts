@@ -14,7 +14,7 @@
 
 import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { logAudit, recalcMemberStats } from "./shared";
+import { logAudit, recalcMemberStats, getProjectAssociatedUserIds } from "./shared";
 import { bulkTaskPatchSchema, parseOrThrow } from "@/lib/validation";
 import { hasPermission } from "@/lib/rbac";
 import { toResult } from "./result";
@@ -76,6 +76,40 @@ export async function bulkUpdateTasks(
       return t.assignee?.userId === auth.userId;
     });
 
+    // Project association rule — when the patch sets an assignee, the new
+    // assignee must be a user associated with EVERY affected task's project
+    // (explicit ProjectAssignment or ownership). Tasks that fail the rule
+    // (or have no project at all) are SKIPPED, not failed — the bulk
+    // contract is "update the permitted subset, report the rest".
+    let assignable = permitted;
+    let skippedForAssociation = 0;
+    if (patch.assigneeId) {
+      const member = await db.teamMember.findUnique({
+        where: { id: patch.assigneeId },
+        select: { userId: true, deletedAt: true },
+      });
+      if (!member || member.deletedAt || !member.userId) {
+        throw new AuthorizationError(
+          "Assignee not found — the selected team member has no linked user account on a project.",
+        );
+      }
+      // One association lookup per distinct project (cached across tasks).
+      const associationCache = new Map<string, Set<string> | null>();
+      const associatedWith = async (projectId: string | null): Promise<boolean> => {
+        if (!projectId) return false;
+        if (!associationCache.has(projectId)) {
+          associationCache.set(projectId, await getProjectAssociatedUserIds(projectId));
+        }
+        const ids = associationCache.get(projectId) ?? null;
+        return ids !== null && ids.has(member.userId as string);
+      };
+      const checked = await Promise.all(
+        permitted.map(async (t) => ({ t, ok: await associatedWith(t.projectId) })),
+      );
+      assignable = checked.filter((c) => c.ok).map((c) => c.t);
+      skippedForAssociation = checked.length - assignable.length;
+    }
+
     // P0 (production-readiness re-audit) — the prior implementation ran a
     // separate `db.task.update` per task in a loop with no $transaction, so
     // a DB blip mid-loop left the workspace partially updated (some tasks
@@ -88,7 +122,7 @@ export async function bulkUpdateTasks(
     // Track affected assignees BEFORE the bulk update so workload counters
     // get recalculated for both the old and new assignee of every task.
     const affectedAssignees = new Set<string>();
-    for (const task of permitted) {
+    for (const task of assignable) {
       if (task.assigneeId) affectedAssignees.add(task.assigneeId);
       if (patch.assigneeId) affectedAssignees.add(patch.assigneeId);
     }
@@ -97,10 +131,10 @@ export async function bulkUpdateTasks(
     // Skip the transaction entirely when nothing is permitted (calling
     // $transaction([]) is a TypeScript error and a no-op anyway).
     let updated = 0;
-    if (permitted.length > 0) {
+    if (assignable.length > 0) {
       const result = await db.$transaction([
         db.task.updateMany({
-          where: { id: { in: permitted.map((t) => t.id) } },
+          where: { id: { in: assignable.map((t) => t.id) } },
           data,
         }),
       ]);
@@ -119,7 +153,9 @@ export async function bulkUpdateTasks(
       entityType: "TASK",
       detail: `Bulk update: ${updated} task(s) ${patch.status ? `→ ${patch.status}` : ""}${
         patch.assigneeId !== undefined ? (patch.status ? ", " : "") + "assignee changed" : ""
-      } (${permitted.length - updated} permitted-but-failed, ${taskIds.length - permitted.length} skipped for permissions)`,
+      } (${permitted.length - updated - skippedForAssociation} permitted-but-failed, ${
+        taskIds.length - permitted.length + skippedForAssociation
+      } skipped for permissions or assignee-not-in-project)`,
     });
 
     revalidatePath("/");

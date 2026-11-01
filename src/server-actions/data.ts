@@ -121,6 +121,7 @@ export {
   unassignUserFromProject,
   getUserProjectAssignments,
   getProjectAssignments,
+  getProjectAssignableUsers,
 } from "./assignments";
 export {
   loadWorkspaceConfig,

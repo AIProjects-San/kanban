@@ -94,6 +94,21 @@ describe("updateTask change-detection matrix", () => {
     db.task.update.mockResolvedValue(existing);
     db.task.findMany.mockResolvedValue([]); // recalcMemberStats
     db.teamMember.update.mockResolvedValue({});
+    // Project association rule — the project exists, both demo members'
+    // linked users are staffed on it, and member→user resolution works for
+    // assignee validation (m-mia → u-mia, m-oli → u-oli).
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-mia" }, { userId: "u-oli" }]);
+    db.teamMember.findUnique.mockImplementation(
+      ({ where }: { where: { id?: string } }) =>
+        Promise.resolve(
+          where?.id === "m-oli"
+            ? { userId: "u-oli", deletedAt: null }
+            : where?.id === "m-mia"
+              ? { userId: "u-mia", deletedAt: null }
+              : null,
+        ),
+    );
   }
 
   it("detects every scalar field change", async () => {
@@ -131,6 +146,25 @@ describe("updateTask change-detection matrix", () => {
     setup();
     await updateTask("t-1", { projectId: "p-2" });
     expect(db.auditLog.create.mock.calls[0][0].data.detail).toContain("project");
+  });
+
+  it("rejects moving a task off its project (projectId: null)", async () => {
+    setup();
+    const res = await updateTask("t-1", { projectId: null });
+    expect(res.ok).toBe(false);
+    expect(db.task.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects changing the assignee to someone outside the project", async () => {
+    setup();
+    // m-ghost has a linked user, but that user has no ProjectAssignment row.
+    db.teamMember.findUnique.mockImplementation(
+      ({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === "m-ghost" ? { userId: "u-ghost", deletedAt: null } : null),
+    );
+    const res = await updateTask("t-1", { assigneeId: "m-ghost" });
+    expect(res.ok).toBe(false);
+    expect(db.task.update).not.toHaveBeenCalled();
   });
 
   it("reports a plain save when nothing changed", async () => {

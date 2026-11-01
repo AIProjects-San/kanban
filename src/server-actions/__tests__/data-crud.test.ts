@@ -71,6 +71,7 @@ import {
   getAuditLogsForEntity,
   getMyProjects,
   getProjectMembers,
+  getProjectAssignableUsers,
   changePassword,
   updateWorkspaceSettings,
   createConfigItem,
@@ -324,16 +325,65 @@ describe("task lifecycle", () => {
   it("createTask assigns order = max+1 and recalculates member stats", async () => {
     db.task.create.mockResolvedValue({ ...existing, project: { name: "Apollo" } });
     db.teamMember.update.mockResolvedValue({});
-    await createTask({ title: "New", assigneeId: "m-mia", status: "TODO" });
+    // Project association rule — the project must exist and the assignee
+    // must be a user associated with it (explicit assignment or ownership).
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-mia" }]);
+    db.teamMember.findUnique.mockResolvedValue({ userId: "u-mia", deletedAt: null });
+    await createTask({ title: "New", projectId: "p-1", assigneeId: "m-mia", status: "TODO" });
     expect(db.task.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ order: 4, status: "TODO", priority: "MEDIUM", tag: "FRONTEND" }),
+        data: expect.objectContaining({ order: 4, status: "TODO", priority: "MEDIUM", tag: "FRONTEND", projectId: "p-1" }),
       }),
     );
     // recalcMemberStats ran for the assignee
     expect(db.teamMember.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "m-mia" } }),
     );
+  });
+
+  it("createTask without a project is rejected (project association rule)", async () => {
+    const res = await createTask({ title: "No project" });
+    expectErr(res, /assigned to a project/i);
+    expect(db.task.create).not.toHaveBeenCalled();
+  });
+
+  it("createTask rejects an assignee who is not associated with the project", async () => {
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-ada" }]); // mia NOT staffed
+    db.teamMember.findUnique.mockResolvedValue({ userId: "u-mia", deletedAt: null });
+    const res = await createTask({ title: "Bad assignee", projectId: "p-1", assigneeId: "m-mia" });
+    expectErr(res, /not assigned to that project/i);
+    expect(db.task.create).not.toHaveBeenCalled();
+  });
+
+  it("createTask rejects a ghost assignee (no team member record)", async () => {
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-mia" }]);
+    db.teamMember.findUnique.mockResolvedValue(null); // ghost member id
+    const res = await createTask({ title: "Ghost assignee", projectId: "p-1", assigneeId: "m-ghost" });
+    expectErr(res, /assignee not found/i);
+    expect(db.task.create).not.toHaveBeenCalled();
+  });
+
+  it("createTask rejects a roster-only assignee with no linked user account", async () => {
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-mia" }]);
+    db.teamMember.findUnique.mockResolvedValue({ userId: null, deletedAt: null });
+    const res = await createTask({ title: "No login", projectId: "p-1", assigneeId: "m-roster" });
+    expectErr(res, /no linked user account/i);
+    expect(db.task.create).not.toHaveBeenCalled();
+  });
+
+  it("createTask covers the description @mention path without crashing", async () => {
+    db.task.create.mockResolvedValue({ ...existing, project: { name: "Apollo" } });
+    db.teamMember.update.mockResolvedValue({});
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-mia" }]);
+    db.teamMember.findUnique.mockResolvedValue({ userId: "u-mia", deletedAt: null });
+    // No @Mira mention → no notification writes, but the code path runs.
+    expectOk(await createTask({ title: "Plain description", description: "no mentions here", projectId: "p-1", assigneeId: "m-mia" }));
+    expect(db.task.create).toHaveBeenCalled();
   });
 
   it("recalcMemberStats computes open/completed/workload (cap 6 open = 100%)", async () => {
@@ -385,6 +435,50 @@ describe("task lifecycle", () => {
     expect(audit.data.action).toBe("task.updated");
     expect(audit.data.detail).toMatch(/title/);
     expect(audit.data.detail).toMatch(/status/);
+  });
+
+  it("updateTask rejects moving a task to a nonexistent project", async () => {
+    db.task.findUnique.mockResolvedValue(existing);
+    db.project.findUnique.mockResolvedValue(null); // p-2 does not exist
+    const res = await updateTask("t-1", { projectId: "p-2" });
+    expectErr(res, /project not found/i);
+    expect(db.task.update).not.toHaveBeenCalled();
+  });
+
+  it("updateTask rejects assigning a user to a legacy project-less task", async () => {
+    db.task.findUnique.mockResolvedValue({ ...existing, projectId: null });
+    const res = await updateTask("t-1", { assigneeId: "m-oli" });
+    expectErr(res, /assign this task to a project/i);
+    expect(db.task.update).not.toHaveBeenCalled();
+  });
+
+  it("updateTask: MEMBER cannot move a task to a project outside their scope", async () => {
+    signIn(MEMBER);
+    // Mia edits her own task (assignee m-mia) but p-2 is outside her scope.
+    db.task.findUnique.mockResolvedValue(existing);
+    db.teamMember.findUnique.mockImplementation(
+      ({ where }: { where: { userId?: string; email?: string } }) =>
+        where?.userId === MEMBER.userId
+          ? Promise.resolve({ id: "m-mia" })
+          : Promise.resolve(null),
+    );
+    db.project.findMany.mockResolvedValue([]); // owns nothing
+    db.task.findMany.mockResolvedValue([]); // assigned nowhere new
+    db.projectAssignment.findMany.mockResolvedValue([]); // not staffed on p-2
+    const res = await updateTask("t-1", { projectId: "p-2" });
+    expectErr(res, /projects you have access to/i);
+    expect(db.task.update).not.toHaveBeenCalled();
+  });
+
+  it("updateTask validates the final assignee against the final project", async () => {
+    // Moving to p-2 while keeping assignee m-mia — mia must be staffed on p-2.
+    db.task.findUnique.mockResolvedValue(existing);
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-ada" }]); // only ada
+    db.teamMember.findUnique.mockResolvedValue({ userId: "u-mia", deletedAt: null });
+    const res = await updateTask("t-1", { projectId: "p-2" });
+    expectErr(res, /not assigned to that project/i);
+    expect(db.task.update).not.toHaveBeenCalled();
   });
 
   it("moveTask logs a task.moved audit entry when the status changes", async () => {
@@ -920,19 +1014,21 @@ describe("read helpers", () => {
     expect(db.project.findMany).not.toHaveBeenCalled();
   });
 
-  it("getProjectMembers merges owner + assigned members without duplicates", async () => {
-    db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Apollo", ownerUserId: "u-ada" });
+  it("getProjectMembers returns explicitly assigned members + the owner (project association rule)", async () => {
+    db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Apollo", ownerUserId: "u-ada", deletedAt: null });
     const member = (id: string, name: string, userId: string | null = null) => ({
       id, name, userId, email: `${name.toLowerCase()}@fernly.dev`, role: "Dev", department: "ENGINEERING",
       avatarColor: "forest", online: false, openTasks: 0, completedTasks: 0, workload: 0,
     });
-    db.teamMember.findMany.mockResolvedValue([member("m-mia", "Mia"), member("m-ada", "Ada", "u-ada")]);
-    // The owner is resolved via the stable user-id link, not by name.
-    db.teamMember.findUnique.mockResolvedValue(member("m-ada", "Ada", "u-ada"));
+    // Explicit staffing: u-mia has a ProjectAssignment row; u-ada does not
+    // but is the OWNER (resolved via the stable user-id link).
+    db.projectAssignment.findMany.mockResolvedValue([{ userId: "u-mia" }]);
+    db.teamMember.findMany.mockResolvedValue([member("m-mia", "Mia", "u-mia"), member("m-ada", "Ada", "u-ada")]);
 
     const merged = expectOk(await getProjectMembers("p-1"));
-    expect(db.teamMember.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: "u-ada" } }),
+    // The roster query filters by the associated user ids (owner + assigned).
+    expect(db.teamMember.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: { in: ["u-mia", "u-ada"] }, deletedAt: null } }),
     );
     expect(merged).toHaveLength(2);
     const ada = merged.find((m) => m.name === "Ada")!;
@@ -944,6 +1040,59 @@ describe("read helpers", () => {
   it("getProjectMembers returns [] for unknown projects", async () => {
     db.project.findUnique.mockResolvedValue(null);
     expect(await getProjectMembers("ghost")).toEqual({ ok: true, data: [] });
+  });
+
+  it("getProjectMembers returns [] when nobody is associated (no assignments, no owner)", async () => {
+    db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Apollo", ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([]);
+    expect(await getProjectMembers("p-1")).toEqual({ ok: true, data: [] });
+    expect(db.teamMember.findMany).not.toHaveBeenCalled();
+  });
+
+  it("getProjectAssignableUsers returns staffed users + the owner (bug assignee rule)", async () => {
+    db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Apollo", ownerUserId: "u-ada", deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([
+      {
+        user: { id: "u-mia", name: "Mia", email: "mia@fernly.dev", role: "MEMBER", avatarColor: "plum", deletedAt: null },
+      },
+      {
+        // The owner also has an assignment row — must not be duplicated.
+        user: { id: "u-ada", name: "Ada", email: "ada@fernly.dev", role: "ADMIN", avatarColor: "forest", deletedAt: null },
+      },
+    ]);
+    const users = expectOk(await getProjectAssignableUsers("p-1"));
+    expect(users).toHaveLength(2);
+    expect(users.find((u) => u.name === "Ada")?.isOwner).toBe(true);
+    expect(users.find((u) => u.name === "Mia")?.isOwner).toBe(false);
+    expect(db.user.findUnique).not.toHaveBeenCalled(); // owner already in assignments
+  });
+
+  it("getProjectAssignableUsers fetches the owner separately when they have no assignment row", async () => {
+    db.project.findUnique.mockResolvedValue({ id: "p-1", name: "Apollo", ownerUserId: "u-ada", deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([
+      {
+        user: { id: "u-mia", name: "Mia", email: "mia@fernly.dev", role: "MEMBER", avatarColor: "plum", deletedAt: null },
+      },
+    ]);
+    db.user.findUnique.mockResolvedValue({ id: "u-ada", name: "Ada", email: "ada@fernly.dev", role: "ADMIN", avatarColor: "forest", deletedAt: null });
+    const users = expectOk(await getProjectAssignableUsers("p-1"));
+    expect(users.map((u) => u.name).sort()).toEqual(["Ada", "Mia"]);
+    expect(users.find((u) => u.name === "Ada")?.isOwner).toBe(true);
+  });
+
+  it("getProjectAssignableUsers returns [] for unknown or soft-deleted projects", async () => {
+    db.project.findUnique.mockResolvedValue(null);
+    expect(await getProjectAssignableUsers("ghost")).toEqual({ ok: true, data: [] });
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: new Date() });
+    expect(await getProjectAssignableUsers("p-deleted")).toEqual({ ok: true, data: [] });
+  });
+
+  it("getProjectAssignableUsers requires a signed-in session", async () => {
+    signIn(null);
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    db.projectAssignment.findMany.mockResolvedValue([]);
+    const res = await getProjectAssignableUsers("p-1");
+    expectErr(res, "AUTH");
   });
 });
 

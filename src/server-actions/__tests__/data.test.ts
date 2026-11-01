@@ -656,7 +656,38 @@ describe("permission gating", () => {
     signIn(MEMBER);
     db.task.create.mockResolvedValue(freshTask({ project: null }));
     db.teamMember.update.mockResolvedValue({});
-    expectOk(await createTask({ title: "New" }));
+    // Project association rule — MEMBER must have the project in their
+    // scope (explicit assignment below) and the project must exist.
+    db.project.findMany.mockResolvedValue([]); // owned: none
+    db.projectAssignment.findMany.mockImplementation(
+      ({ select }: { select?: { projectId?: boolean; userId?: boolean } }) => {
+        // getScopedProjectIds asks for projectId; the association helper
+        // asks for userId. Mia is staffed on p-1 either way.
+        if (select?.projectId) return Promise.resolve([{ projectId: "p-1" }]);
+        if (select?.userId) return Promise.resolve([{ userId: MEMBER.userId }]);
+        return Promise.resolve([]);
+      },
+    );
+    db.project.findUnique.mockResolvedValue({ ownerUserId: null, deletedAt: null });
+    expectOk(await createTask({ title: "New", projectId: "p-1" }));
+  });
+
+  it("createTask rejects a project outside the caller's scope (MEMBER)", async () => {
+    signIn(MEMBER);
+    db.project.findMany.mockResolvedValue([]);
+    db.task.findMany.mockResolvedValue([]);
+    db.projectAssignment.findMany.mockResolvedValue([]); // no associations
+    const res = await createTask({ title: "New", projectId: "p-hidden" });
+    expect(res.ok).toBe(false);
+    expect(db.task.create).not.toHaveBeenCalled();
+  });
+
+  it("createTask rejects a project that does not exist (ADMIN is unscoped)", async () => {
+    signIn(ADMIN);
+    db.project.findUnique.mockResolvedValue(null);
+    const res = await createTask({ title: "Ghost", projectId: "p-ghost" });
+    expect(res.ok).toBe(false);
+    expect(db.task.create).not.toHaveBeenCalled();
   });
 
   it("createProject is denied for MEMBER", async () => {
