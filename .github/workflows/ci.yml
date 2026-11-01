@@ -150,6 +150,12 @@ jobs:
       # CI-only value — signs session JWTs for the ephemeral test database.
       NEXTAUTH_SECRET: ci-only-secret-0123456789abcdef
       NEXT_PUBLIC_SEED_DEMO: "1"
+      # CI-only demo password for the ephemeral e2e database — hashed into
+      # the demo accounts by scripts/seed.js and read back by the cucumber
+      # login steps (e2e/steps/common-steps.js). Deliberately not a valid
+      # credential anywhere else; the production-build job greps its output
+      # for leaked demo creds and this value never reaches that job.
+      NEXT_PUBLIC_DEMO_PASSWORD: ci-only-demo-password
       SELENIUM_BROWSER: chrome
       SELENIUM_HEADLESS: "1"
       BASE_URL: http://localhost:3000
