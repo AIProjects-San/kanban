@@ -1,12 +1,18 @@
--- Down migration for 20261030020000_password_reset_tokens
--- Reverses: CREATE TABLE PasswordResetToken + indexes + FK
+-- NO-OP rollback — do not drop this table here.
 --
--- ⚠️ DATA LOSS: drops the entire PasswordResetToken table. All pending
--- (unused, non-expired) password reset tokens are destroyed — users mid-
--- reset will need to request a new token. Already-used tokens are also
--- gone (audit trail for `password.reset` events lives in AuditLog, not
--- here, so audit history is unaffected).
+-- PasswordResetToken is owned by the 20261030000000_baseline snapshot on
+-- any database created after the re-baseline (commit 26e713a), so dropping
+-- it from this migration's rollback would corrupt such databases. Removing
+-- password-reset tokens requires rolling back the baseline instead.
 --
--- Apply with: psql "$DATABASE_URL" -f down.sql
-
-DROP TABLE IF EXISTS "PasswordResetToken";
+-- On the legacy production database (where the original migration body
+-- genuinely created this table), dropping it is a manual, deliberate step
+-- if you truly need it:
+--
+--   DROP TABLE IF EXISTS "PasswordResetToken";
+--
+-- ⚠️ DATA LOSS: destroys all pending (unused, non-expired) password reset
+-- tokens — users mid-reset must request a new one. Audit history for
+-- password.reset events lives in AuditLog and is unaffected.
+--
+-- Prisma doesn't run down.sql automatically; this is a manual rollback aid.

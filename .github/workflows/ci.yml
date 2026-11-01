@@ -191,4 +191,4 @@ jobs:
 
       - name: Dump dev server log on failure
         if: failure()
-        run: tail -n 200 dev.log
+        run: tail -n 200 dev.log || echo "dev.log not found — failure occurred before the dev server started"

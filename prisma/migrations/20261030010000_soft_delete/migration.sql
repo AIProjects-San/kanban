@@ -1,11 +1,18 @@
--- AlterTable
-ALTER TABLE "Message" ADD COLUMN     "deletedAt" TIMESTAMP(3);
-
--- AlterTable
-ALTER TABLE "Project" ADD COLUMN     "deletedAt" TIMESTAMP(3);
-
--- AlterTable
-ALTER TABLE "TeamMember" ADD COLUMN     "deletedAt" TIMESTAMP(3);
-
--- AlterTable
-ALTER TABLE "User" ADD COLUMN     "deletedAt" TIMESTAMP(3);
+-- NO-OP — do not re-add these columns here.
+--
+-- The 20261030000000_baseline snapshot was regenerated (commit 26e713a,
+-- "restore: recover P0+P1 fixes after sandbox recycle") from a database
+-- that already had this migration applied, so the baseline CREATE TABLE
+-- statements already include the columns this migration used to add:
+--
+--   "Message"."deletedAt", "Project"."deletedAt",
+--   "TeamMember"."deletedAt", "User"."deletedAt"
+--
+-- On a fresh database (CI e2e service container) re-adding them failed
+-- with SQLSTATE 42701 "column \"deletedAt\" of relation \"Message\"
+-- already exists" (Prisma P3018), so the migration body is now empty.
+--
+-- The migration folder/name is kept because the production database has
+-- it recorded in _prisma_migrations; `prisma migrate deploy` never
+-- re-runs an already-applied migration there, and fresh databases get
+-- these columns from the baseline instead.

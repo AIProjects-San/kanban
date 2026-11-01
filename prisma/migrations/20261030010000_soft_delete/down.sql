@@ -1,15 +1,20 @@
--- Down migration for 20261030010000_soft_delete
--- Reverses: ADD COLUMN deletedAt on Message, Project, TeamMember, User
+-- NO-OP rollback — do not drop these columns here.
 --
--- ⚠️ DATA LOSS: dropping `deletedAt` permanently destroys the soft-delete
--- marker. Any soft-deleted rows become "live" again (they'll show up in
--- read paths that filter `deletedAt: null`). Run this ONLY if you're sure
--- no soft-deleted rows exist, or if you're tearing down the workspace.
+-- The deletedAt columns are owned by the 20261030000000_baseline snapshot
+-- on any database created after the re-baseline (commit 26e713a), so
+-- dropping them from this migration's rollback would corrupt such
+-- databases. Removing soft-delete requires rolling back the baseline
+-- instead.
+--
+-- On the legacy production database (where the original migration body
+-- genuinely created these columns), dropping them is a manual, deliberate
+-- step if you truly need it:
+--
+--   ALTER TABLE "Message"     DROP COLUMN IF EXISTS "deletedAt";
+--   ALTER TABLE "Project"     DROP COLUMN IF EXISTS "deletedAt";
+--   ALTER TABLE "TeamMember"  DROP COLUMN IF EXISTS "deletedAt";
+--   ALTER TABLE "User"        DROP COLUMN IF EXISTS "deletedAt";
+--
+-- ⚠️ DATA LOSS: dropping deletedAt revives every soft-deleted row.
 --
 -- Prisma doesn't run down.sql automatically; this is a manual rollback aid.
--- Apply with: psql "$DATABASE_URL" -f down.sql
-
-ALTER TABLE "Message" DROP COLUMN IF EXISTS "deletedAt";
-ALTER TABLE "Project" DROP COLUMN IF EXISTS "deletedAt";
-ALTER TABLE "TeamMember" DROP COLUMN IF EXISTS "deletedAt";
-ALTER TABLE "User" DROP COLUMN IF EXISTS "deletedAt";

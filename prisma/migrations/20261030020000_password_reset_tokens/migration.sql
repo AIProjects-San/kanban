@@ -1,20 +1,20 @@
--- CreateTable
-CREATE TABLE "PasswordResetToken" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "tokenHash" TEXT NOT NULL,
-    "expiresAt" TIMESTAMP(3) NOT NULL,
-    "usedAt" TIMESTAMP(3),
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "PasswordResetToken_pkey" PRIMARY KEY ("id")
-);
-
--- CreateIndex
-CREATE UNIQUE INDEX "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash");
-
--- CreateIndex
-CREATE INDEX "PasswordResetToken_userId_idx" ON "PasswordResetToken"("userId");
-
--- AddForeignKey
-ALTER TABLE "PasswordResetToken" ADD CONSTRAINT "PasswordResetToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- NO-OP — do not re-create this table here.
+--
+-- The 20261030000000_baseline snapshot was regenerated (commit 26e713a,
+-- "restore: recover P0+P1 fixes after sandbox recycle") from a database
+-- that already had this migration applied, so the baseline already
+-- contains everything this migration used to create:
+--
+--   * CREATE TABLE "PasswordResetToken"
+--   * CREATE UNIQUE INDEX "PasswordResetToken_tokenHash_key"
+--   * CREATE INDEX "PasswordResetToken_userId_idx"
+--   * ALTER TABLE ... "PasswordResetToken_userId_fkey"
+--
+-- On a fresh database (CI e2e service container) re-creating the table
+-- failed with SQLSTATE 42P07 "relation \"PasswordResetToken\" already
+-- exists" (Prisma P3018), so the migration body is now empty.
+--
+-- The migration folder/name is kept because the production database has
+-- it recorded in _prisma_migrations; `prisma migrate deploy` never
+-- re-runs an already-applied migration there, and fresh databases get
+-- this table from the baseline instead.
