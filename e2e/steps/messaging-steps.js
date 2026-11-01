@@ -58,10 +58,17 @@ When("I send a message with subject {string} to {string}", async function (subje
 
 Then("I should see a confirmation that the message was sent", async function () {
   const driver = await this.getDriver();
-  const toast = await driver.findElements(
-    By.xpath("//*[contains(., 'sent') or contains(., 'Sent')]"),
+  // Scoped to the toast system — a document-wide text xpath also matches
+  // the invisible Next.js Flight-payload <script> chunks (which serialise
+  // the seeded messages), so "sent" could be found somewhere in the DOM
+  // even when no confirmation was shown.
+  const toasts = await driver.findElements(By.css("[data-sonner-toast], [role='alert']"));
+  const texts = [];
+  for (const t of toasts) texts.push(await t.getText());
+  assert.ok(
+    texts.some((t) => /sent/i.test(t)),
+    `no sent confirmation was shown (toasts: ${JSON.stringify(texts)})`,
   );
-  assert.ok(toast.length > 0, "no sent confirmation was shown");
 });
 
 When("I open my inbox", async function () {
@@ -78,12 +85,21 @@ When("I open my inbox", async function () {
 
 Then("my inbox should contain a message with subject {string}", async function (subject) {
   const driver = await this.getDriver();
-  const found = await driver.findElements(By.xpath(`//*[contains(text(), "${subject}")]`));
+  // Scoped to the inbox drawer — a document-wide xpath also matches the
+  // invisible Flight-payload <script> chunks, which serialise the viewer's
+  // messages. That made this check pass even when the drawer failed to
+  // render the message (a vacuous pass).
+  const found = await driver.findElements(
+    By.xpath(`//aside[@aria-label='Inbox']//*[contains(text(), "${subject}")]`),
+  );
   assert.ok(found.length > 0, `inbox does not contain "${subject}"`);
 });
 
 Then("my inbox should not contain a message with subject {string}", async function (subject) {
   const driver = await this.getDriver();
-  const found = await driver.findElements(By.xpath(`//*[contains(text(), "${subject}")]`));
+  // Same scoping as the positive check — see its comment.
+  const found = await driver.findElements(
+    By.xpath(`//aside[@aria-label='Inbox']//*[contains(text(), "${subject}")]`),
+  );
   assert.strictEqual(found.length, 0, `inbox unexpectedly contains "${subject}"`);
 });

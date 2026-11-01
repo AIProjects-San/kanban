@@ -25,10 +25,20 @@ class CustomWorld {
     if (!this.driver) {
       const browser = process.env.SELENIUM_BROWSER || "chrome";
       const builder = new Builder().forBrowser(browser);
+      if (process.env.SELENIUM_REMOTE_URL) {
+        // Local/sandbox runs: point at a standalone chromedriver (e.g.
+        // Chrome-for-Testing) when the machine has no system Chrome for
+        // Selenium Manager to auto-resolve. CI's ubuntu runners and normal
+        // dev setups are unaffected — Selenium Manager resolves both
+        // binaries there. Mirrors the CHROME_BIN convention used by the
+        // scripts/browser-*.mjs debug tools.
+        builder.usingServer(process.env.SELENIUM_REMOTE_URL);
+      }
       if (browser === "chrome") {
         const options = new chrome.Options();
         if (HEADLESS) options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
         options.addArguments("--window-size=1440,900");
+        if (process.env.CHROME_BIN) options.setBinaryPath(process.env.CHROME_BIN);
         // Capture the browser console (SEVERE errors, hydration warnings) so a
         // failed scenario can attach it — without this, client-side crashes
         // are invisible in CI logs.
