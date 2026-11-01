@@ -81,17 +81,30 @@ export async function getDashboardData(): Promise<DashboardData> {
     ? { id: { in: Array.from(scopedProjectIds) }, ...notDeleted }
     : notDeleted;
 
+  // Bug-fix (caught by the e2e suite): tasks with projectId = null (created
+  // before the project picker finished loading, or whose project row was
+  // hard-deleted — onDelete: SetNull nulls the reference) were silently
+  // excluded by the previous `{ project: { deletedAt: null } }` filter. They
+  // existed in the DB but never appeared on ANY board — an invisible-data
+  // bug. Soft-deleted projects keep their task references (a soft delete
+  // never fires SetNull), so those tasks stay hidden as intended.
+  const projectVisibilityFilter = {
+    OR: [{ project: { deletedAt: null } }, { projectId: null }],
+  };
+
   const taskWhere = isScoped && scopedProjectIds
     ? {
-        OR: [
-          { projectId: { in: Array.from(scopedProjectIds) } },
-          { assignee: { userId: currentUserId } },
+        AND: [
+          {
+            OR: [
+              { projectId: { in: Array.from(scopedProjectIds) } },
+              { assignee: { userId: currentUserId } },
+            ],
+          },
+          projectVisibilityFilter,
         ],
-        // Hide tasks whose project was soft-deleted (the task itself has no
-        // deletedAt column — its lifecycle is tied to the project).
-        project: { deletedAt: null },
       }
-    : { project: { deletedAt: null } };
+    : projectVisibilityFilter;
 
   // For scoped users, only show team members who have tasks in the user's
   // projects or who are explicitly assigned to those projects. Admins see all.

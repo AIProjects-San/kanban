@@ -80,6 +80,17 @@ When("I create a task titled {string}", async function (title) {
     10_000,
   );
   await newTaskButton.click();
+  // Wait for the project picker to finish loading before submitting —
+  // submitting while it still shows "Loading projects…" silently creates a
+  // projectId:null task. (The dashboard now renders those — see the
+  // projectVisibilityFilter fix in server-actions/dashboard.ts — but the
+  // assignee list depends on the picked project, so wait for real options.)
+  await driver.wait(
+    async () =>
+      (await driver.findElements(By.css("[role='dialog'] select[disabled]"))).length === 0,
+    15_000,
+    "the modal's project picker never finished loading",
+  );
   const titleInput = await driver.wait(
     until.elementLocated(By.css('input[placeholder*="itle" i], form input[type="text"]')),
     10_000,
@@ -147,22 +158,39 @@ Then("the task {string} should be in the {string} column", async function (title
 
 When("I delete the task {string}", async function (title) {
   const driver = await this.getDriver();
-  const card = await driver.findElement(By.xpath(`//*[contains(text(), "${title}")]`));
+  // Wait for the card (the board may still be mounting after the view swap)
+  // instead of assuming it is already in the DOM.
+  const card = await driver.wait(
+    until.elementLocated(By.xpath(`//*[contains(text(), "${title}")]`)),
+    10_000,
+    `task "${title}" not found on the board`,
+  );
   await card.click(); // opens the edit modal
   const deleteBtn = await driver.wait(
     until.elementLocated(By.xpath("//button[contains(., 'Delete')]")),
     10_000,
   );
   await deleteBtn.click();
-  // Wait for the deletion to actually re-render the board (the modal closes
-  // and the card disappears) instead of a blind sleep — dev-server server
-  // actions can be slow on first call.
-  await driver.wait(
-    async () =>
-      (await driver.findElements(By.xpath(`//*[contains(text(), "${title}")]`))).length === 0,
-    15_000,
-    `task "${title}" was not deleted`,
-  );
+  // Deletion = modal closes AND the card leaves the board. The first
+  // server-action call can be slow in a dev server, and a Delete click can
+  // be swallowed by the modal's entrance animation — poll generously and
+  // re-click if the modal is still up. (A second click on an already-
+  // deleted task just toasts "not found" — harmless.)
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const remaining = await driver.findElements(By.xpath(`//*[contains(text(), "${title}")]`));
+    if (remaining.length === 0) return;
+    const retry = await driver.findElements(By.xpath("//button[contains(., 'Delete')]"));
+    if (retry.length > 0 && (await retry[0].isDisplayed())) {
+      try {
+        await retry[0].click();
+      } catch {
+        /* modal mid-transition — the next poll retries */
+      }
+    }
+    await driver.sleep(1000);
+  }
+  throw new Error(`task "${title}" was not deleted within 30s`);
 });
 
 Then("no task named {string} should remain on the board", async function (title) {

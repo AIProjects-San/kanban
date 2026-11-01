@@ -301,6 +301,62 @@ describe("getDashboardData (P0-1 regression)", () => {
       }),
     );
   });
+
+  // Regression (caught by the e2e suite): tasks with projectId = null —
+  // created before the task modal's project picker finished loading, or whose
+  // project row was hard-deleted (onDelete: SetNull) — were silently excluded
+  // by the old `{ project: { deletedAt: null } }` filter. They persisted but
+  // never rendered on ANY board. The visibility filter must accept them.
+  it("keeps projectId:null tasks visible on the ADMIN board (orphan-task regression)", async () => {
+    signIn(ADMIN);
+    db.project.findMany.mockResolvedValue([]);
+    db.task.findMany.mockResolvedValue([]);
+    db.teamMember.findMany.mockResolvedValue([]);
+    db.reminder.findMany.mockResolvedValue([]);
+    db.notification.findMany.mockResolvedValue([]);
+    db.timeEntry.findMany.mockResolvedValue([]);
+    db.calendarEvent.findMany.mockResolvedValue([]);
+    db.message.findMany.mockResolvedValue([]);
+
+    await getDashboardData();
+
+    const taskCall = db.task.findMany.mock.calls.at(-1)![0];
+    expect(taskCall.where.OR).toEqual(
+      expect.arrayContaining([
+        { project: { deletedAt: null } },
+        { projectId: null },
+      ]),
+    );
+  });
+
+  it("keeps projectId:null tasks visible for a MEMBER whose scope OR matches them", async () => {
+    signIn(MEMBER);
+    db.project.findMany.mockResolvedValue([]);
+    db.task.findMany.mockResolvedValue([]);
+    db.teamMember.findMany.mockResolvedValue([]);
+    db.reminder.findMany.mockResolvedValue([]);
+    db.notification.findMany.mockResolvedValue([]);
+    db.timeEntry.findMany.mockResolvedValue([]);
+    db.calendarEvent.findMany.mockResolvedValue([]);
+    db.message.findMany.mockResolvedValue([]);
+    db.projectAssignment.findMany.mockResolvedValue([]);
+
+    await getDashboardData();
+
+    const taskCall = db.task.findMany.mock.calls.at(-1)![0];
+    // Scoped shape: AND [ scope OR, visibility OR ] — the visibility clause
+    // must still accept projectId:null rows.
+    expect(taskCall.where.AND).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          OR: expect.arrayContaining([
+            { projectId: null },
+            { project: { deletedAt: null } },
+          ]),
+        }),
+      ]),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

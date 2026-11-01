@@ -66,23 +66,32 @@ try {
   );
   log("create button text:", JSON.stringify(await createBtn.getText()));
   await createBtn.click();
-  await driver.sleep(4000);
+  await driver.sleep(1500);
 
-  const toasts = await driver.findElements(By.css("[data-sonner-toast], [role='alert'], [role='status']"));
-  for (const t of toasts) {
-    try { log("toast:", (await t.getText()).slice(0, 300)); } catch {}
+  const readCount = async () => {
+    try {
+      const el = await driver.findElement(By.css("main"));
+      const txt = await el.getText();
+      const m = txt.match(/(\d+)\s*of\s*(\d+)\s*tasks/);
+      return m ? m[1] + "/" + m[2] : "?";
+    } catch { return "err"; }
+  };
+  const findTask = async () =>
+    (await driver.findElements(By.xpath('//*[contains(text(), "E2E debug task")]'))).length;
+
+  for (let i = 1; i <= 6; i++) {
+    await driver.sleep(2000);
+    log(`t+${i * 2}s count=${await readCount()} card=${await findTask()}`);
   }
-  const modalGone = (await driver.findElements(By.css("[role='dialog']"))).length === 0;
-  log("modal closed after create:", modalGone);
-  const card = await driver.findElements(By.xpath('//*[contains(text(), "E2E debug task")]'));
-  log("task card found:", card.length);
-  if (!card.length) {
-    const main = await driver.findElement(By.css("main"));
-    const txt = await main.getText();
-    console.log("[dbg][main-text]", txt.slice(0, 1200).replace(/\s+/g, " | "));
-  }
+
+  log("doing full reload…");
+  await driver.get(BASE);
+  await driver.wait(until.elementLocated(By.css("main")), 30000, "no main after reload");
+  await driver.sleep(2500);
+  log(`after-reload count=${await readCount()} card=${await findTask()}`);
+
   const logs = await driver.manage().logs().get("browser");
-  for (const l of logs) console.log("[dbg][console:" + l.level.name + "]", l.message.slice(0, 300));
+  for (const l of logs) if (l.level.name === "SEVERE") console.log("[dbg][console:SEVERE]", l.message.slice(0, 300));
 } finally {
   await driver.quit();
 }

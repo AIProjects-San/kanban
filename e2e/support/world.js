@@ -117,6 +117,9 @@ After(async function ({ result, pickle }) {
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, "-")
           .slice(0, 60);
+        // Timestamp suffix: cucumber retries re-run the scenario and would
+        // otherwise overwrite the earlier attempt's evidence.
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(11, 19);
         const url = await this.driver.getCurrentUrl();
         const headings = await this.driver.findElements(By.css("main h1"));
         const h1 = headings.length ? await headings[0].getText() : "(no main h1)";
@@ -126,11 +129,11 @@ After(async function ({ result, pickle }) {
         const toastTexts = [];
         for (const t of toasts) toastTexts.push(await t.getText());
         fs.writeFileSync(
-          path.join(dir, `${slug}.png`),
+          path.join(dir, `${slug}-${stamp}.png`),
           Buffer.from(image, "base64"),
         );
         fs.writeFileSync(
-          path.join(dir, `${slug}.state.txt`),
+          path.join(dir, `${slug}-${stamp}.state.txt`),
           `url: ${url}\nh1: ${h1}\ntoasts: ${JSON.stringify(toastTexts)}\n`,
         );
       } catch (e) {

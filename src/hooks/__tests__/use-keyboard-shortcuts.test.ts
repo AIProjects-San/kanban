@@ -105,4 +105,37 @@ describe("useKeyboardShortcuts (L-P0-15 shortcut permission gating)", () => {
     gPress("l");
     expect(mockSetView).not.toHaveBeenCalled();
   });
+
+  // Regression (caught by the e2e suite): the single-key bindings used to run
+  // BEFORE the G-prefix map, so the second key of a G-sequence was consumed
+  // by the single-key handler — G P opened the project MODAL and G B opened
+  // the notification panel, making two documented sidebar bindings
+  // unreachable. The single-key handlers must defer while a G is pending.
+  it("G P switches to the projects view instead of opening the project modal", () => {
+    renderHook(() => useKeyboardShortcuts());
+    gPress("p");
+    expect(mockSetView).toHaveBeenCalledWith("projects");
+    expect(mockOpenProjectModal).not.toHaveBeenCalled();
+  });
+
+  it("G B switches to the bugs view instead of opening notifications", () => {
+    renderHook(() => useKeyboardShortcuts());
+    gPress("b");
+    expect(mockSetView).toHaveBeenCalledWith("bugs");
+    expect(mockSetNotifOpen).not.toHaveBeenCalled();
+  });
+
+  it("a lone p (no pending G) still opens the project modal", () => {
+    renderHook(() => useKeyboardShortcuts());
+    pressKey("p");
+    expect(mockOpenProjectModal).toHaveBeenCalledTimes(1);
+    expect(mockSetView).not.toHaveBeenCalled();
+  });
+
+  it("a lone b (no pending G) still opens the notification panel", () => {
+    renderHook(() => useKeyboardShortcuts());
+    pressKey("b");
+    expect(mockSetNotifOpen).toHaveBeenCalledTimes(1);
+    expect(mockSetView).not.toHaveBeenCalled();
+  });
 });
