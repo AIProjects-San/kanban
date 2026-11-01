@@ -6,7 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  // SQLite for local sandbox preview — no Postgres available here.
+  // Schema uses only basic types (String/Int/Boolean/DateTime) with
+  // @default(now()), so it is fully SQLite-compatible. Switch back to
+  // "postgresql" + a real DATABASE_URL when running against Supabase/etc.
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
