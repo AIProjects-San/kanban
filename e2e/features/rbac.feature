@@ -27,4 +27,4 @@ Feature: Role-based access control
 
   Scenario: Member only sees their scoped workspace
     When I sign in as "member@fernly.app" with the demo password
-    Then the dashboard project count should be lower than the admin count
+    Then the project count should be lower than the admin count

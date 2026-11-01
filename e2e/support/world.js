@@ -8,6 +8,7 @@
 const { setWorldConstructor, Before, After } = require("@cucumber/cucumber");
 const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
+const logging = require("selenium-webdriver/lib/logging");
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 const HEADLESS = process.env.SELENIUM_HEADLESS !== "0";
@@ -28,6 +29,12 @@ class CustomWorld {
         const options = new chrome.Options();
         if (HEADLESS) options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
         options.addArguments("--window-size=1440,900");
+        // Capture the browser console (SEVERE errors, hydration warnings) so a
+        // failed scenario can attach it — without this, client-side crashes
+        // are invisible in CI logs.
+        const prefs = new logging.Preferences();
+        prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
+        options.setLoggingPrefs(prefs);
         builder.setChromeOptions(options);
       }
       this.driver = await builder.build();

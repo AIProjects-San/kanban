@@ -118,16 +118,44 @@ Then("the sidebar should not contain {string}", async function (label) {
   assert.strictEqual(items.length, 0, `sidebar unexpectedly contains "${label}"`);
 });
 
-Then("the dashboard project count should be lower than the admin count", async function () {
+Then("the project count should be lower than the admin count", async function () {
   // Admin sees every project; the member's count must be strictly smaller.
+  // Counted in the Projects view — the dashboard caps its "Current
+  // Projects" list at 5 for everyone, which makes dashboard counts useless
+  // for scoping assertions. The seed allocates each user 2-5 of the 24
+  // projects, so a member can never equal the admin's 24.
   const driver = await this.getDriver();
-  await driver.wait(until.elementsLocated(By.css("[data-testid='project-card'], article")), 10_000);
-  const memberCount = (await driver.findElements(By.css("[data-testid='project-card'], article"))).length;
+  const openProjectsView = async () => {
+    const body = await driver.findElement(By.css("body"));
+    await body.sendKeys("g", "p");
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      if (await headingPresent(driver, "Projects")) break;
+      await driver.sleep(1000);
+      await body.sendKeys("g", "p");
+    }
+    await driver.wait(
+      until.elementsLocated(By.css("[data-testid='project-card']")),
+      10_000,
+      "no project cards rendered",
+    );
+  };
+  await openProjectsView();
+  const memberCount = (await driver.findElements(By.css("[data-testid='project-card']"))).length;
   await this.logout();
   await this.login("demo@fernly.app", DEMO_PASSWORD);
-  const adminCount = (await driver.findElements(By.css("[data-testid='project-card'], article"))).length;
+  await openProjectsView();
+  const adminCount = (await driver.findElements(By.css("[data-testid='project-card']"))).length;
   assert.ok(
     memberCount < adminCount,
     `member saw ${memberCount} projects, admin saw ${adminCount} — scoping may be broken`,
   );
 });
+
+// Shared with the project-count step above.
+async function headingPresent(driver, expected) {
+  const headings = await driver.findElements(By.css("main h1"));
+  if (headings.length === 0) return false;
+  const text = await headings[0].getText();
+  return text.includes(expected);
+}

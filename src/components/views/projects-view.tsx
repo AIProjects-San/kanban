@@ -134,6 +134,7 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
             return (
               <div
                 key={p.id}
+                data-testid="project-card"
                 className="f-card f-card-hover p-5 flex flex-col cursor-pointer"
                 onClick={() => canEdit && openProjectModal(p.id)}
               >
