@@ -48,7 +48,13 @@ class CustomWorld {
     );
     await emailInput.clear();
     await emailInput.sendKeys(email);
-    await driver.findElement(By.css('input[type="password"]')).sendKeys(password);
+    // Clear the password field too — in SEED_DEMO mode the login form is
+    // PRE-FILLED with the demo password, and sendKeys APPENDS. Without the
+    // clear, every e2e sign-in submitted password+password and got a 401
+    // ("Invalid credentials") that looked like an auth bug.
+    const passwordInput = await driver.findElement(By.css('input[type="password"]'));
+    await passwordInput.clear();
+    await passwordInput.sendKeys(password);
     await driver.findElement(By.css('button[type="submit"]')).click();
     // Empty credentials never leave the page (native `required` validation
     // blocks the submit) — short-circuit; the caller's "still on the login
