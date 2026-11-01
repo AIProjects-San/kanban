@@ -10,7 +10,7 @@
 import {
   Plus, Pencil, Trash2, ArrowRightLeft, FolderPlus, UserPlus, UserMinus,
   UserCog, CalendarPlus, CalendarX, Send, ShieldCheck, Settings, BellPlus,
-  CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare,
+  CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -66,7 +66,12 @@ export type AuditAction =
   | "bug.reopened"
   | "bug.closed"
   | "bug.commented"
-  | "bug.deleted";
+  | "bug.deleted"
+  // Board enhancements — Task ↔ Bug links, bug board moves, time-log deletes
+  | "bug.linked"
+  | "bug.unlinked"
+  | "bug.moved"
+  | "time.deleted";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -135,6 +140,11 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "bug.closed": { icon: CheckCircle2, cls: "text-muted-foreground bg-muted" },
   "bug.commented": { icon: MessageSquare, cls: "text-blue-500 bg-blue-500/10" },
   "bug.deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+
+  "bug.linked": { icon: Link2, cls: "text-indigo-500 bg-indigo-500/10" },
+  "bug.unlinked": { icon: Link2, cls: "text-muted-foreground bg-muted" },
+  "bug.moved": { icon: ArrowRightLeft, cls: "text-amber-500 bg-amber-500/10" },
+  "time.deleted": { icon: Clock, cls: "text-destructive bg-destructive/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

@@ -21,7 +21,7 @@ const { db, getServerSession } = vi.hoisted(() => {
   const getServerSession = vi.fn();
   const models = [
     "auditLog", "project", "task", "teamMember", "reminder", "notification",
-    "timeEntry", "calendarEvent", "message", "messageRead", "user", "userSettings",
+    "timeEntry", "calendarEvent", "message", "messageRead", "bug", "user", "userSettings",
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
     "taskTagConfig", "priorityConfig", "departmentConfig",
@@ -173,7 +173,8 @@ describe("L-P0-2: per-recipient message direction & read state", () => {
           { userId: RECIPIENT.userId, messageId: "m-1" },
           { userId: RECIPIENT.userId, messageId: "m-2" },
         ],
-        skipDuplicates: true,
+        // NOTE: skipDuplicates was removed (unsupported on SQLite); the
+        // readBy-none pre-filter already guarantees the rows are new.
       }),
     );
 

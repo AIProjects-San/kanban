@@ -59,6 +59,7 @@ const baseTask: TaskT = {
   tag: "FRONTEND",
   dueDate: null,
   order: 0,
+  estimateMinutes: 0,
   projectId: "p-0",
   assigneeId: "m-1",
   createdAt: new Date().toISOString(),
@@ -69,8 +70,8 @@ function makeEntries(): TimeEntryT[] {
   // projects prop — both will render as "Unknown" in the breakdown.
   const today = new Date().toISOString();
   return [
-    { id: "te-1", projectId: "ghost-1", memberId: "m-1", date: today, hours: 2, description: "" },
-    { id: "te-2", projectId: "ghost-2", memberId: "m-1", date: today, hours: 3, description: "" },
+    { id: "te-1", projectId: "ghost-1", memberId: "m-1", taskId: null, date: today, hours: 2, description: "" },
+    { id: "te-2", projectId: "ghost-2", memberId: "m-1", taskId: null, date: today, hours: 3, description: "" },
   ];
 }
 

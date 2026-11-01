@@ -11,7 +11,7 @@ const { db, getServerSession } = vi.hoisted(() => {
   // A generic auto-mock factory: db.<model>.<method> is a vi.fn().
   const models = [
     "auditLog", "project", "task", "teamMember", "reminder", "notification",
-    "timeEntry", "calendarEvent", "message", "messageRead", "user", "userSettings",
+    "timeEntry", "calendarEvent", "message", "messageRead", "bug", "user", "userSettings",
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
     "taskTagConfig", "priorityConfig", "departmentConfig",
@@ -517,7 +517,8 @@ describe("notification & message mutations require auth (P0-3 regression)", () =
           { userId: MEMBER.userId, messageId: "m-1" },
           { userId: MEMBER.userId, messageId: "m-2" },
         ],
-        skipDuplicates: true,
+        // NOTE: skipDuplicates was removed (unsupported on SQLite); the
+        // readBy-none pre-filter already guarantees the rows are new.
       }),
     );
   });

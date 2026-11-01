@@ -130,7 +130,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     memberWhere = notDeleted;
   }
 
-  const [projects, tasks, members, reminders, notifs, timeEntries, events, messages] = await Promise.all([
+  const [projects, tasks, members, reminders, notifs, timeEntries, events, messages, bugTaskLinks] = await Promise.all([
     // P1 (production-readiness re-audit) — every query has a `take` cap so a
     // workspace with 10k tasks / time entries / messages can't OOM the
     // dashboard loader. 200 is well above what any one screen can render
@@ -138,7 +138,14 @@ export async function getDashboardData(): Promise<DashboardData> {
     db.project.findMany({ where: projectWhere, orderBy: { createdAt: "desc" }, take: 200 }),
     db.task.findMany({
       where: taskWhere,
-      include: { project: true, assignee: true },
+      include: {
+        project: true,
+        assignee: true,
+        // Board enhancement — per-task spent-time aggregate (required vs
+        // spent). Only the hours are selected; the relation is stripped from
+        // the client payload below.
+        timeEntries: { select: { hours: true } },
+      },
       orderBy: { order: "asc" },
       take: 200,
     }),
@@ -187,7 +194,21 @@ export async function getDashboardData(): Promise<DashboardData> {
       // derive `read` per viewer without an N+1.
       include: { readBy: { where: { userId: currentUserId ?? "" } } },
     }),
+    // Board enhancement — Task ↔ Bug link counts (bugs per task), computed
+    // in one query and counted in JS so the shape stays mock-friendly.
+    db.bug.findMany({
+      where: { taskId: { not: null } },
+      select: { taskId: true },
+      take: 500,
+    }),
   ]);
+
+  // Per-task bug counts from the flat link list above. Defensive `?? []` —
+  // mocked test environments may not stub the bug query.
+  const bugCountByTask = new Map<string, number>();
+  for (const link of bugTaskLinks ?? []) {
+    if (link.taskId) bugCountByTask.set(link.taskId, (bugCountByTask.get(link.taskId) ?? 0) + 1);
+  }
 
   // Scoped users only receive time entries for members they can already see
   // (the member list is scoped above) — same data-minimization rule. Admins
@@ -225,21 +246,32 @@ export async function getDashboardData(): Promise<DashboardData> {
       dueDate: p.dueDate?.toISOString() ?? null,
       createdAt: p.createdAt.toISOString(),
     })),
-    tasks: tasks.map(t => ({
-      ...t,
-      dueDate: t.dueDate?.toISOString() ?? null,
-      createdAt: t.createdAt.toISOString(),
-      project: t.project ? {
-        ...t.project,
-        dueDate: t.project.dueDate?.toISOString() ?? null,
-        createdAt: t.project.createdAt.toISOString(),
-      } : null,
-      assignee: t.assignee ? {
-        ...t.assignee,
-        createdAt: t.assignee.createdAt.toISOString(),
-        updatedAt: t.assignee.updatedAt.toISOString(),
-      } : null,
-    })),
+    tasks: tasks.map(t => {
+      // Strip the raw timeEntries relation (implementation detail) and
+      // surface the aggregate the UI actually needs. Defensive `?? []` keeps
+      // mocked test environments (no relation on the fixture) happy.
+      const { timeEntries: taskTimeEntries, ...taskRest } = t as typeof t & { timeEntries?: Array<{ hours: number }> };
+      const spentHours = Math.round(
+        (taskTimeEntries ?? []).reduce((sum, e) => sum + e.hours, 0) * 10,
+      ) / 10;
+      return {
+        ...taskRest,
+        dueDate: t.dueDate?.toISOString() ?? null,
+        createdAt: t.createdAt.toISOString(),
+        spentHours,
+        bugCount: bugCountByTask.get(t.id) ?? 0,
+        project: t.project ? {
+          ...t.project,
+          dueDate: t.project.dueDate?.toISOString() ?? null,
+          createdAt: t.project.createdAt.toISOString(),
+        } : null,
+        assignee: t.assignee ? {
+          ...t.assignee,
+          createdAt: t.assignee.createdAt.toISOString(),
+          updatedAt: t.assignee.updatedAt.toISOString(),
+        } : null,
+      };
+    }),
     members: members.map(m => ({
       ...m,
       createdAt: m.createdAt.toISOString(),

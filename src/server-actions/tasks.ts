@@ -23,6 +23,7 @@ export async function createTask(input: {
   dueDate?: string | null;
   projectId?: string | null;
   assigneeId?: string | null;
+  estimateMinutes?: number;
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("task:create");
@@ -53,6 +54,7 @@ export async function createTask(input: {
         dueDate: data.dueDate ? new Date(data.dueDate) : null,
         projectId: data.projectId || null,
         assigneeId: data.assigneeId || null,
+        estimateMinutes: data.estimateMinutes ?? 0,
         order: (maxOrder._max.order ?? -1) + 1,
       },
       include: { project: true },
@@ -92,6 +94,7 @@ export async function updateTask(id: string, raw: Partial<{
   dueDate: string | null;
   projectId: string | null;
   assigneeId: string | null;
+  estimateMinutes: number;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     // task:edit:any allows editing any task; otherwise the task must be
@@ -122,6 +125,7 @@ export async function updateTask(id: string, raw: Partial<{
         dueDate: input.dueDate !== undefined ? (input.dueDate ? new Date(input.dueDate) : null) : undefined,
         projectId: input.projectId,
         assigneeId: input.assigneeId,
+        estimateMinutes: input.estimateMinutes,
       },
     });
     await recalcMemberStats(existing.assigneeId);
@@ -153,6 +157,7 @@ export async function updateTask(id: string, raw: Partial<{
     }
     if (input.projectId !== undefined && input.projectId !== existing.projectId) changes.push("project");
     if (input.assigneeId !== undefined && input.assigneeId !== existing.assigneeId) changes.push("assignee");
+    if (input.estimateMinutes !== undefined && input.estimateMinutes !== existing.estimateMinutes) changes.push("estimate");
     await logAudit({
       actor: auth,
       action: "task.updated",

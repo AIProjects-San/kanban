@@ -19,25 +19,25 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String    @id @default(cuid())
+  email        String    @unique
   name         String
   passwordHash String
-  role         String   @default("MEMBER") // ADMIN | MANAGER | MEMBER — see lib/rbac.ts. Defaulting to MEMBER (was "Project Lead") closes L-P0-13.
+  role         String    @default("MEMBER") // ADMIN | MANAGER | MEMBER — see lib/rbac.ts. Defaulting to MEMBER (was "Project Lead") closes L-P0-13.
   // L-P0-8 — session revocation. Incremented on password change and role
   // change. The JWT callback rejects tokens whose tokenVersion is stale,
   // so a stolen cookie is invalidated the moment the user rotates their
   // password or an admin rotates their role.
-  tokenVersion Int      @default(0)
-  timezone     String   @default("Pacific/Auckland")
-  bio          String   @default("")
-  avatarColor  String   @default("forest")
+  tokenVersion Int       @default(0)
+  timezone     String    @default("Pacific/Auckland")
+  bio          String    @default("")
+  avatarColor  String    @default("forest")
   // L-P0-14 — soft delete. Set by deleteUser instead of a hard delete, so
   // messages and team-member references don't dangle. Read paths filter
   // `where: { deletedAt: null }`.
   deletedAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // ---------------------------------------------------------------------
   // Reporting hierarchy (docs/CODE_REVIEW.md §6 — user hierarchy).
@@ -132,20 +132,29 @@ model Project {
 // ---------------------------------------------------------------------------
 
 model Task {
-  id          String      @id @default(cuid())
-  title       String
-  description String      @default("")
-  status      String      @default("TODO") // TODO | IN_PROGRESS | IN_REVIEW | DONE
-  priority    String      @default("MEDIUM") // HIGH | MEDIUM | LOW
-  tag         String      @default("FRONTEND") // FRONTEND | BACKEND | DESIGN | QA | MARKETING
-  dueDate     DateTime?
-  order       Int         @default(0)
-  projectId   String?
-  assigneeId  String?
-  project     Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  assignee    TeamMember? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id              String      @id @default(cuid())
+  title           String
+  description     String      @default("")
+  status          String      @default("TODO") // TODO | IN_PROGRESS | IN_REVIEW | DONE
+  priority        String      @default("MEDIUM") // HIGH | MEDIUM | LOW
+  tag             String      @default("FRONTEND") // FRONTEND | BACKEND | DESIGN | QA | MARKETING
+  dueDate         DateTime?
+  order           Int         @default(0)
+  // Board enhancement — required (estimated) time for this task, in minutes.
+  // 0 = no estimate. Actual time spent lives in TimeEntry rows linked via
+  // TimeEntry.taskId (aggregated at read time as spentHours).
+  estimateMinutes Int         @default(0)
+  projectId       String?
+  assigneeId      String?
+  project         Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assignee        TeamMember? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  // Task ↔ Bug traceability: bugs may reference the task they belong to
+  // (Bug.taskId). The relation is owned by Bug — a task can have many bugs,
+  // a bug belongs to at most one task.
+  timeEntries     TimeEntry[]
+  bugs            Bug[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   // L-P0-5 — secondary indexes on the columns every scoped query filters on.
   @@index([projectId])
@@ -158,25 +167,25 @@ model Task {
 // ---------------------------------------------------------------------------
 
 model TeamMember {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   name           String
   role           String
-  department     String   @default("ENGINEERING") // ENGINEERING | DESIGN | MARKETING | MANAGEMENT
-  email          String   @unique
-  avatarColor    String   @default("forest")
-  online         Boolean  @default(false)
-  openTasks      Int      @default(0)
-  completedTasks Int      @default(0)
-  workload       Int      @default(0) // 0..100 percent
+  department     String    @default("ENGINEERING") // ENGINEERING | DESIGN | MARKETING | MANAGEMENT
+  email          String    @unique
+  avatarColor    String    @default("forest")
+  online         Boolean   @default(false)
+  openTasks      Int       @default(0)
+  completedTasks Int       @default(0)
+  workload       Int       @default(0) // 0..100 percent
   // Link to the User account this member record represents (nullable:
   // roster entries may exist without a login). Unique: one account maps to
   // at most one roster entry.
-  userId         String?  @unique
-  user           User?    @relation("MemberProfile", fields: [userId], references: [id], onDelete: SetNull)
+  userId         String?   @unique
+  user           User?     @relation("MemberProfile", fields: [userId], references: [id], onDelete: SetNull)
   // L-P0-14 — soft delete. Set by deleteUser alongside the User soft-delete.
   deletedAt      DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   tasks       Task[]
   timeEntries TimeEntry[]
@@ -229,17 +238,23 @@ model TimeEntry {
   id          String      @id @default(cuid())
   projectId   String?
   memberId    String?
+  // Board enhancement — optional link to the Task this time was spent on.
+  // Task-level time logs are written by logTaskTime; the member is always
+  // derived from the session (never client-supplied).
+  taskId      String?
   date        DateTime
   hours       Float       @default(0)
   description String      @default("")
   project     Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
   member      TeamMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  task        Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
   createdAt   DateTime    @default(now())
 
   // L-P0-5 — secondary indexes on the columns every scoped query filters on.
   @@index([memberId])
   @@index([projectId])
   @@index([date])
+  @@index([taskId])
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +277,7 @@ model Reminder {
 // ---------------------------------------------------------------------------
 
 model Message {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   // direction is now DERIVED per-viewer (recipientUserId === me ? "IN" : "OUT")
   // — see L-P0-2 fix. The column is retained for backward-compat with seed
   // data and remains set to "OUT" by sendMessage (the sender's POV at write
@@ -270,26 +285,26 @@ model Message {
   direction         String // "IN" (to current user) | "OUT" (from current user)
   threadId          String // groups messages in the same conversation
   memberId          String? // the TeamMember this conversation is with
-  senderUserId      String   @default("") // User.id of the sender
-  recipientUserId   String   @default("") // User.id of the recipient
+  senderUserId      String    @default("") // User.id of the sender
+  recipientUserId   String    @default("") // User.id of the recipient
   senderName        String // display name of sender
-  senderAvatarColor String   @default("forest")
-  senderRole        String   @default("")
+  senderAvatarColor String    @default("forest")
+  senderRole        String    @default("")
   recipientName     String // display name of recipient
   subject           String
   body              String
   // Legacy single-row read flag. Retained for backward-compat with seed rows
   // but new messages do NOT use it for read tracking — see MessageRead.
-  read              Boolean  @default(false)
+  read              Boolean   @default(false)
   // L-P0-14 — soft delete. Set by deleteMessage instead of a hard delete.
   deletedAt         DateTime?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   // Per-recipient read state (L-P0-2 fix). A row here means the recipient
   // has marked this message as read. The sender's own copy is implicitly
   // read (you wrote it). The legacy `read` column above is kept only for
   // seed-data compat.
-  readBy            MessageRead[]
+  readBy MessageRead[]
 
   @@index([threadId])
   @@index([direction])
@@ -517,16 +532,16 @@ model RolePermission {
 // ---------------------------------------------------------------------------
 
 model PasswordResetToken {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   // SHA-256 hash of the raw token. The raw token is NEVER stored — only sent
   // via email. Lookup is by hash, so an attacker who reads the DB cannot
   // reconstruct a usable token.
-  tokenHash String   @unique
+  tokenHash String    @unique
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId])
 }
@@ -541,36 +556,43 @@ model PasswordResetToken {
 // ---------------------------------------------------------------------------
 
 model Bug {
-  id              String   @id @default(cuid())
-  title           String
-  description     String   @default("")
+  id               String    @id @default(cuid())
+  title            String
+  description      String    @default("")
   // Structured reproduction steps (QA fills these in).
-  stepsToReproduce String  @default("")
-  expectedBehavior String  @default("")
-  actualBehavior   String  @default("")
+  stepsToReproduce String    @default("")
+  expectedBehavior String    @default("")
+  actualBehavior   String    @default("")
   // Severity = impact on the system; Priority = order to fix.
-  severity        String   @default("MAJOR") // CRITICAL | MAJOR | MINOR | TRIVIAL
-  priority        String   @default("P2")    // P0 | P1 | P2 | P3
+  severity         String    @default("MAJOR") // CRITICAL | MAJOR | MINOR | TRIVIAL
+  priority         String    @default("P2") // P0 | P1 | P2 | P3
   // Lifecycle: NEW → TRIAGED → IN_PROGRESS → IN_REVIEW → RESOLVED → CLOSED
   //            (RESOLVED/CLOSED can go back to REOPENED → IN_PROGRESS)
-  status          String   @default("NEW")
-  resolution      String?  // FIXED | WONT_FIX | DUPLICATE | CANNOT_REPRODUCE | WORKS_AS_INTENDED
+  status           String    @default("NEW")
+  resolution       String? // FIXED | WONT_FIX | DUPLICATE | CANNOT_REPRODUCE | WORKS_AS_INTENDED
   // People: reporter (QA) raised it; assignee (developer) works it.
-  reporterUserId  String   @default("")
-  assigneeUserId  String?
-  // Optional links for traceability.
-  projectId       String?
-  taskId          String?
+  reporterUserId   String    @default("")
+  assigneeUserId   String?
+  // Optional links for traceability. `task` is the Task this bug belongs to
+  // (Task ↔ Bug traceability — one bug links to at most one task; a task can
+  // have many bugs). Deleting the task clears the link (SetNull). projectId
+  // stays a plain column (resolved via bulk lookups, as before).
+  projectId        String?
+  taskId           String?
+  task             Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  // Board enhancement — position of the card within its status column on
+  // the bug board (same ordering mechanism as Task.order).
+  boardOrder       Int       @default(0)
   // Environment where the bug was observed.
-  environment     String   @default("") // e.g. "Production / Chrome 120 / macOS"
+  environment      String    @default("") // e.g. "Production / Chrome 120 / macOS"
   // Timestamps for lifecycle metrics.
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  triagedAt       DateTime?
-  resolvedAt      DateTime?
-  closedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  triagedAt        DateTime?
+  resolvedAt       DateTime?
+  closedAt         DateTime?
 
-  comments        BugComment[]
+  comments BugComment[]
 
   @@index([status])
   @@index([severity])
@@ -578,17 +600,18 @@ model Bug {
   @@index([reporterUserId])
   @@index([assigneeUserId])
   @@index([projectId])
+  @@index([taskId])
   @@index([createdAt])
 }
 
 model BugComment {
-  id        String   @id @default(cuid())
-  bugId     String
-  bug       Bug      @relation(fields: [bugId], references: [id], onDelete: Cascade)
-  authorId  String   @default("")
-  authorName String  @default("")
-  body      String
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  bugId      String
+  bug        Bug      @relation(fields: [bugId], references: [id], onDelete: Cascade)
+  authorId   String   @default("")
+  authorName String   @default("")
+  body       String
+  createdAt  DateTime @default(now())
 
   @@index([bugId])
   @@index([authorId])

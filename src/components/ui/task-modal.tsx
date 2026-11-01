@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
-import { Link2, Users, Info } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { Link2, Users, Info, Clock, Bug as BugIcon, Trash2, X, Loader2, Plus } from "lucide-react";
 import { Modal } from "./modal";
 import { useApp } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
@@ -10,14 +10,21 @@ import {
   deleteTask,
   getMyProjects,
   getProjectMembers,
+  logTaskTime,
+  getTaskTimeLog,
+  deleteTimeEntry,
+  getTaskLinkedBugs,
+  getLinkableBugs,
 } from "@/server-actions/data";
+import { linkBugToTask } from "@/server-actions/bugs";
 import { toast } from "sonner";
 import { EntityHistorySection } from "./entity-history-section";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
 import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
-import { TASK_STATUSES } from "@/lib/config";
-import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, TeamMemberT } from "@/lib/types";
+import { TASK_STATUSES, BUG_SEVERITY_BADGE, BUG_SEVERITY_LABELS, BUG_STATUS_BADGE, BUG_STATUS_LABELS } from "@/lib/config";
+import { cn } from "@/lib/utils";
+import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, TeamMemberT, BugSeverity, BugStatus } from "@/lib/types";
 
 interface TaskModalProps {
   tasks: TaskT[];
@@ -155,6 +162,10 @@ function TaskForm({
   const [priority, setPriority] = useState<Priority>(editing?.priority ?? "MEDIUM");
   const [tag, setTag] = useState<TaskTag>(editing?.tag ?? "FRONTEND");
   const [dueDate, setDueDate] = useState(editing?.dueDate ? editing.dueDate.slice(0, 10) : "");
+  // Estimate (required time), entered in hours for humans, stored in minutes.
+  const [estimateHours, setEstimateHours] = useState(
+    editing?.estimateMinutes ? String(Math.round((editing.estimateMinutes / 60) * 10) / 10) : "",
+  );
   // null = untouched (derive default); string = user picked explicitly ("" = None)
   const [pickedProjectId, setPickedProjectId] = useState<string | null>(null);
   const [assigneeId, setAssigneeId] = useState(editing?.assigneeId ?? "");
@@ -166,6 +177,11 @@ function TaskForm({
       toast.error("Title is required");
       return;
     }
+    const estimateMinutes = estimateHours.trim() === "" ? 0 : Math.round(parseFloat(estimateHours) * 60);
+    if (Number.isNaN(estimateMinutes) || estimateMinutes < 0) {
+      toast.error("Estimate must be a positive number of hours");
+      return;
+    }
     const payload = {
       title: title.trim(),
       description,
@@ -175,6 +191,7 @@ function TaskForm({
       dueDate: dueDate || null,
       projectId: projectId || null,
       assigneeId: assigneeId || null,
+      estimateMinutes,
     };
     if (editing) {
       const res = await updateTask(editing.id, payload);
@@ -266,6 +283,24 @@ function TaskForm({
         </Field>
       </FormRow>
       <FormRow>
+        <Field label="Estimate (hours)">
+          <input
+            type="number"
+            min={0}
+            max={168}
+            step={0.5}
+            className="f-input"
+            value={estimateHours}
+            onChange={(e) => setEstimateHours(e.target.value)}
+            placeholder="e.g. 4 — required time for this task"
+          />
+          <p className="flex items-center gap-1 text-[0.625rem] text-muted-foreground mt-1">
+            <Clock size={9} />
+            Required time — time spent is logged below while you work
+          </p>
+        </Field>
+      </FormRow>
+      <FormRow>
         <Field label="Project">
           <select
             className="f-input"
@@ -310,6 +345,13 @@ function TaskForm({
         onSubmit={submit}
         onDelete={remove}
       />
+
+      {/* Board enhancement — time log (required vs spent). Only when editing
+          an existing task; new tasks get logged once they exist. */}
+      {editing && <TimeLogSection taskId={editing.id} onLogAdded={() => refresh()} />}
+
+      {/* Board enhancement — bugs linked to this task (Task ↔ Bug). */}
+      {editing && <LinkedBugsSection taskId={editing.id} onLinkChanged={() => refresh()} />}
 
       {/* Expandable audit history — only when editing an existing task.
           New tasks have no history yet, so we hide the section entirely. */}
@@ -424,5 +466,335 @@ function AssigneeField({
         </p>
       )}
     </Field>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Board enhancement — TimeLogSection (required vs spent)
+//
+// Shows the task's estimate, the spent aggregate, a progress bar, the
+// individual entries, and a small form to log more time. Deleting an entry
+// is enforced server-side (own entries, or task:edit:any).
+// ---------------------------------------------------------------------------
+
+interface TimeLogData {
+  taskId: string;
+  estimateMinutes: number;
+  spentHours: number;
+  entries: Array<{
+    id: string;
+    date: string;
+    hours: number;
+    description: string;
+    memberId: string | null;
+    memberName: string | null;
+    createdAt: string;
+  }>;
+}
+
+function TimeLogSection({ taskId, onLogAdded }: { taskId: string; onLogAdded: () => void }) {
+  const [log, setLog] = useState<TimeLogData | null>(null);
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [hours, setHours] = useState("");
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await getTaskTimeLog(taskId);
+      if (res.ok) setLog(res.data);
+    } catch {
+      // Swallow — the section just renders the empty state.
+    }
+  }, [taskId]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  const submit = async () => {
+    const h = parseFloat(hours);
+    if (!Number.isFinite(h) || h <= 0 || h > 24) {
+      toast.error("Hours must be greater than 0 and at most 24");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await logTaskTime({ taskId, date, hours: h, description: description.trim() || undefined });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Logged ${h}h on this task`);
+      setHours("");
+      setDescription("");
+      await load();
+      onLogAdded();
+    } catch {
+      toast.error("Failed to log time");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeEntry = async (id: string) => {
+    try {
+      const res = await deleteTimeEntry(id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Time entry deleted");
+      await load();
+      onLogAdded();
+    } catch {
+      toast.error("Failed to delete time entry");
+    }
+  };
+
+  const estimateHours = log ? log.estimateMinutes / 60 : 0;
+  const spent = log?.spentHours ?? 0;
+  // Progress caps at 100% visually; over-estimate is flagged in red.
+  const pct = estimateHours > 0 ? Math.min(100, Math.round((spent / estimateHours) * 100)) : 0;
+  const over = estimateHours > 0 && spent > estimateHours;
+
+  return (
+    <div className="border-t border-border pt-4">
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2">
+          <Clock size={14} className="text-muted-foreground" />
+          <h3 className="text-sm font-semibold">Time log</h3>
+        </div>
+        {log && (
+          <span className={cn("text-xs font-medium tabular-nums", over ? "text-destructive" : "text-muted-foreground")}>
+            Spent {spent}h{estimateHours > 0 ? ` / Required ${Math.round(estimateHours * 10) / 10}h` : ""}
+          </span>
+        )}
+      </div>
+
+      {log === null ? (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground py-2">
+          <Loader2 size={12} className="animate-spin" /> Loading time log…
+        </div>
+      ) : (
+        <>
+          {estimateHours > 0 && (
+            <div className="h-1.5 rounded-full bg-muted overflow-hidden mb-3" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+              <div
+                className={cn("h-full rounded-full transition-all", over ? "bg-destructive" : pct >= 100 ? "bg-success" : "bg-primary")}
+                style={{ width: `${Math.min(100, pct)}%` }}
+              />
+            </div>
+          )}
+
+          {/* Entries */}
+          {log.entries.length === 0 ? (
+            <p className="text-xs text-muted-foreground mb-3">No time logged yet. Log the first entry below.</p>
+          ) : (
+            <div className="space-y-1.5 mb-3 max-h-[180px] overflow-y-auto f-scroll">
+              {log.entries.map((e) => (
+                <div key={e.id} className="flex items-center gap-2 text-xs py-1 px-2 rounded-md bg-muted/40">
+                  <span className="tabular-nums font-medium w-[86px] shrink-0 text-foreground">{new Date(e.date).toLocaleDateString("en-NZ", { day: "numeric", month: "short" })}</span>
+                  <span className="tabular-nums font-semibold w-[44px] shrink-0">{e.hours}h</span>
+                  <span className="text-muted-foreground truncate flex-1">
+                    {e.memberName ? `${e.memberName}${e.description ? " · " : ""}` : ""}
+                    {e.description}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void removeEntry(e.id)}
+                    className="opacity-60 hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                    aria-label="Delete time entry"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add entry */}
+          <div className="flex gap-2 items-start">
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="f-input w-auto text-xs"
+              aria-label="Date"
+            />
+            <input
+              type="number"
+              min={0.25}
+              max={24}
+              step={0.25}
+              value={hours}
+              onChange={(e) => setHours(e.target.value)}
+              placeholder="h"
+              className="f-input w-[70px] text-xs"
+              aria-label="Hours"
+            />
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What did you work on?"
+              maxLength={2000}
+              className="f-input flex-1 text-xs"
+              aria-label="Description"
+            />
+            <button type="button" onClick={() => void submit()} disabled={saving} className="f-btn f-btn-primary f-btn-sm shrink-0">
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Log
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Board enhancement — LinkedBugsSection (Task ↔ Bug)
+//
+// Lists the bugs linked to this task with severity/status badges, lets the
+// user unlink them, and offers a picker of other bugs to link. Permission to
+// change a link is enforced server-side (reporter / assignee / bug:edit:any).
+// ---------------------------------------------------------------------------
+
+interface LinkedBug {
+  id: string;
+  title: string;
+  severity: string;
+  status: string;
+  priority?: string;
+  resolution?: string | null;
+}
+
+function LinkedBugsSection({ taskId, onLinkChanged }: { taskId: string; onLinkChanged: () => void }) {
+  const [linked, setLinked] = useState<LinkedBug[] | null>(null);
+  const [linkable, setLinkable] = useState<LinkedBug[] | null>(null);
+  const [pickedBugId, setPickedBugId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [a, b] = await Promise.all([getTaskLinkedBugs(taskId), getLinkableBugs(taskId)]);
+      if (a.ok) setLinked(a.data);
+      if (b.ok) setLinkable(b.data);
+    } catch {
+      // Swallow — the section renders the empty state.
+    }
+  }, [taskId]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  const link = async (bugId: string) => {
+    setBusy(true);
+    try {
+      const res = await linkBugToTask(bugId, { taskId });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Bug linked to this task");
+      setPickedBugId("");
+      await load();
+      onLinkChanged();
+    } catch {
+      toast.error("Failed to link bug");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unlink = async (bugId: string) => {
+    setBusy(true);
+    try {
+      const res = await linkBugToTask(bugId, { taskId: null });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Bug unlinked");
+      await load();
+      onLinkChanged();
+    } catch {
+      toast.error("Failed to unlink bug");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-border pt-4">
+      <div className="flex items-center gap-2 mb-2">
+        <BugIcon size={14} className="text-muted-foreground" />
+        <h3 className="text-sm font-semibold">Linked bugs</h3>
+        {linked !== null && (
+          <span className="text-xs text-muted-foreground tabular-nums">{linked.length}</span>
+        )}
+      </div>
+
+      {linked === null ? (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground py-2">
+          <Loader2 size={12} className="animate-spin" /> Loading linked bugs…
+        </div>
+      ) : (
+        <>
+          {linked.length === 0 ? (
+            <p className="text-xs text-muted-foreground mb-2">No bugs linked. Link one below to track defects found in this task.</p>
+          ) : (
+            <div className="space-y-1.5 mb-2">
+              {linked.map((b) => (
+                <div key={b.id} className="flex items-center gap-2 text-xs py-1.5 px-2 rounded-md bg-muted/40">
+                  <span className={cn("px-1.5 py-0.5 rounded-full font-medium shrink-0", BUG_SEVERITY_BADGE[b.severity as BugSeverity] ?? "bg-muted text-muted-foreground")}>
+                    {BUG_SEVERITY_LABELS[b.severity as BugSeverity] ?? b.severity}
+                  </span>
+                  <span className={cn("px-1.5 py-0.5 rounded-full shrink-0", BUG_STATUS_BADGE[b.status as BugStatus] ?? "bg-muted text-muted-foreground")}>
+                    {BUG_STATUS_LABELS[b.status as BugStatus] ?? b.status}
+                  </span>
+                  <span className="font-medium text-foreground truncate flex-1">{b.title}</span>
+                  <button
+                    type="button"
+                    onClick={() => void unlink(b.id)}
+                    disabled={busy}
+                    className="opacity-60 hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                    aria-label={`Unlink bug ${b.title}`}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Link picker */}
+          {linkable !== null && linkable.length > 0 && (
+            <div className="flex items-center gap-2">
+              <select
+                value={pickedBugId}
+                onChange={(e) => setPickedBugId(e.target.value)}
+                className="f-input flex-1 text-xs"
+                aria-label="Link an existing bug"
+              >
+                <option value="">— Link an existing bug… —</option>
+                {linkable.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    [{BUG_SEVERITY_LABELS[b.severity as BugSeverity] ?? b.severity}] {b.title}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => pickedBugId && void link(pickedBugId)}
+                disabled={!pickedBugId || busy}
+                className="f-btn f-btn-sm shrink-0"
+              >
+                <Link2 size={13} /> Link
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }

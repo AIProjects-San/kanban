@@ -51,6 +51,7 @@ const baseTask: TaskT = {
   tag: "FRONTEND",
   dueDate: null,
   order: 0,
+  estimateMinutes: 0,
   projectId: "p-1",
   assigneeId: null,
   assignee: null,

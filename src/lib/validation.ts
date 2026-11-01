@@ -28,6 +28,9 @@ export const createTaskSchema = z.object({
   dueDate: isoDate.nullable().optional(),
   projectId: cuidish.nullable().optional(),
   assigneeId: cuidish.nullable().optional(),
+  // Board enhancement — required (estimated) time in minutes. Bounded to a
+  // full working week + change so a typo can't write nonsense.
+  estimateMinutes: z.number().int().finite().min(0).max(10_080).optional(),
 });
 
 export const updateTaskSchema = createTaskSchema.partial();
@@ -151,6 +154,18 @@ export const logTimeSchema = z.object({
   description: z.string().max(2_000).optional(),
 });
 
+// Board enhancement — task-level time log (required vs spent). The member
+// is ALWAYS derived from the session server-side (never client-supplied).
+export const logTaskTimeSchema = z.object({
+  taskId: cuidish,
+  date: isoDate,
+  hours: z.number().finite("Hours must be a number.").refine(
+    (h) => h > 0 && h <= 24,
+    "Hours must be greater than 0 and at most 24.",
+  ),
+  description: z.string().max(2_000).optional(),
+}).strict();
+
 // ---------------------------------------------------------------------------
 // P1 (production-readiness re-audit) — workspace settings + config-item
 // schemas. The prior implementation accepted `Record<string, unknown>` and
@@ -224,6 +239,19 @@ export const changeBugStatusSchema = z.object({
 
 export const assignBugSchema = z.object({
   assigneeUserId: cuidish.nullable(),
+}).strict();
+
+// Board enhancement — drag-and-drop bug move on the bug board. Mirrors
+// moveTaskSchema: strict shape, enum-bounded status, sane integer order.
+export const moveBugSchema = z.object({
+  status: z.enum(["NEW", "TRIAGED", "IN_PROGRESS", "IN_REVIEW", "RESOLVED", "CLOSED", "REOPENED"]),
+  order: z.number().int("Order must be an integer.").min(0).max(1_000_000_000),
+  resolution: z.enum(["FIXED", "WONT_FIX", "DUPLICATE", "CANNOT_REPRODUCE", "WORKS_AS_INTENDED"]).optional(),
+}).strict();
+
+// Board enhancement — link (or unlink, with null) a bug to a task.
+export const linkBugTaskSchema = z.object({
+  taskId: cuidish.nullable(),
 }).strict();
 
 export const createBugCommentSchema = z.object({

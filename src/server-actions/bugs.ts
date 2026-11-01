@@ -31,9 +31,11 @@ import {
   updateBugSchema,
   changeBugStatusSchema,
   createBugCommentSchema,
+  moveBugSchema,
+  linkBugTaskSchema,
   parseOrThrow,
 } from "@/lib/validation";
-import { logAudit } from "./shared";
+import { logAudit, getScopedProjectIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -107,7 +109,7 @@ export async function createBug(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Read — single bug (with comments)
+// Read — single bug (with comments + linked task)
 // ---------------------------------------------------------------------------
 
 export async function getBug(id: string): Promise<ActionResult<{
@@ -128,6 +130,7 @@ export async function getBug(id: string): Promise<ActionResult<{
   projectId: string | null;
   projectName: string | null;
   taskId: string | null;
+  taskTitle: string | null;
   environment: string;
   createdAt: string;
   updatedAt: string;
@@ -150,6 +153,7 @@ export async function getBug(id: string): Promise<ActionResult<{
       where: { id },
       include: {
         comments: { orderBy: { createdAt: "asc" } },
+        task: { select: { id: true, title: true } },
       },
     });
     if (!bug) throw new AuthorizationError("Bug not found.");
@@ -182,6 +186,7 @@ export async function getBug(id: string): Promise<ActionResult<{
       projectId: bug.projectId,
       projectName: project?.name ?? null,
       taskId: bug.taskId,
+      taskTitle: bug.task?.title ?? null,
       environment: bug.environment,
       createdAt: bug.createdAt.toISOString(),
       updatedAt: bug.updatedAt.toISOString(),
@@ -547,5 +552,301 @@ export async function deleteBug(id: string): Promise<ActionResult<void>> {
       detail: `Deleted bug “${existing.title}”`,
     });
     revalidatePath("/");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Board enhancement — drag-and-drop move on the bug board.
+//
+// Same lifecycle guard as changeBugStatus (BUG_STATUS_TRANSITIONS), plus the
+// boardOrder write so the card keeps its dropped position inside the column.
+// A drag that keeps the status but changes the order is a pure reorder and is
+// always allowed.
+// ---------------------------------------------------------------------------
+
+export async function moveBug(
+  id: string,
+  raw: { status: string; order: number; resolution?: string },
+): Promise<ActionResult<void>> {
+  return toResult(async () => {
+    const auth = await requirePermission("bug:edit:own");
+    const existing = await db.bug.findUnique({ where: { id } });
+    if (!existing) throw new AuthorizationError("Bug not found.");
+    await assertBugEditPermission(auth, existing);
+
+    const data = parseOrThrow(moveBugSchema, raw);
+    const newStatus = data.status as BugStatus;
+    const currentStatus = existing.status as BugStatus;
+
+    // Enforce the lifecycle transition map — same rule as changeBugStatus, so
+    // dragging can't bypass the state machine. Reorders within the same
+    // column (status unchanged) skip the check.
+    if (newStatus !== currentStatus) {
+      const allowed = BUG_STATUS_TRANSITIONS[currentStatus] ?? [];
+      if (!allowed.includes(newStatus)) {
+        throw new AuthorizationError(
+          `Cannot drag from ${BUG_STATUS_LABELS[currentStatus] ?? currentStatus} to ${BUG_STATUS_LABELS[newStatus] ?? newStatus}. Allowed: ${allowed.map((s) => BUG_STATUS_LABELS[s] ?? s).join(", ")}.`,
+        );
+      }
+    }
+
+    // Resolution is required when moving to RESOLVED; cleared otherwise.
+    const resolution = newStatus === "RESOLVED" ? (data.resolution ?? existing.resolution ?? "FIXED") : null;
+
+    // Timestamps: triagedAt on first TRIAGED, resolvedAt on RESOLVED,
+    // closedAt on CLOSED; REOPENED clears them (the bug is active again).
+    const now = new Date();
+    const patch: Record<string, unknown> = {
+      status: newStatus,
+      boardOrder: data.order,
+      resolution,
+    };
+    if (newStatus === "TRIAGED" && !existing.triagedAt) patch.triagedAt = now;
+    if (newStatus === "RESOLVED") patch.resolvedAt = now;
+    if (newStatus === "CLOSED" && !existing.closedAt) patch.closedAt = now;
+    if (newStatus === "REOPENED") {
+      patch.resolvedAt = null;
+      patch.closedAt = null;
+    }
+
+    await db.bug.update({ where: { id }, data: patch });
+
+    // Audit: pure reorder → bug.moved; status change → the same specific
+    // actions changeBugStatus emits, so the bug's timeline stays uniform.
+    if (newStatus === currentStatus) {
+      await logAudit({
+        actor: auth,
+        action: "bug.moved",
+        entityType: "BUG",
+        entityId: id,
+        entityLabel: existing.title,
+        detail: `Reordered “${existing.title}” within ${BUG_STATUS_LABELS[currentStatus] ?? currentStatus}`,
+      });
+    } else {
+      const action =
+        newStatus === "RESOLVED" ? "bug.resolved" :
+        newStatus === "CLOSED" ? "bug.closed" :
+        newStatus === "REOPENED" ? "bug.reopened" :
+        "bug.status_changed";
+      const detail =
+        newStatus === "RESOLVED"
+          ? `Resolved as ${BUG_RESOLUTION_LABELS[resolution as never] ?? resolution} (board move)`
+          : `Dragged from ${BUG_STATUS_LABELS[currentStatus] ?? currentStatus} to ${BUG_STATUS_LABELS[newStatus] ?? newStatus}`;
+      await logAudit({
+        actor: auth,
+        action,
+        entityType: "BUG",
+        entityId: id,
+        entityLabel: existing.title,
+        detail,
+      });
+    }
+    revalidatePath("/");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Board enhancement — Task ↔ Bug linking.
+//
+// The link lives on Bug.taskId. Only users who can edit the bug may change
+// the link (reporter / assignee / bug:edit:any). The target task must exist
+// and be visible to the linker (scoped roles can only link tasks they can
+// see — same visibility rule as the dashboard task loader).
+// ---------------------------------------------------------------------------
+
+export async function linkBugToTask(
+  bugId: string,
+  raw: { taskId: string | null },
+): Promise<ActionResult<void>> {
+  return toResult(async () => {
+    const auth = await requirePermission("bug:edit:own");
+    const bug = await db.bug.findUnique({ where: { id: bugId } });
+    if (!bug) throw new AuthorizationError("Bug not found.");
+    await assertBugEditPermission(auth, bug);
+
+    const data = parseOrThrow(linkBugTaskSchema, raw);
+
+    // Resolve + scope-check the target task (null = unlink).
+    let taskTitle: string | null = null;
+    if (data.taskId) {
+      const task = await db.task.findUnique({
+        where: { id: data.taskId },
+        include: { assignee: { select: { userId: true } } },
+      });
+      if (!task) throw new AuthorizationError("Task not found.");
+      const scopedIds = await getScopedProjectIds(auth);
+      if (
+        scopedIds &&
+        !(task.projectId && scopedIds.has(task.projectId)) &&
+        task.assignee?.userId !== auth.userId
+      ) {
+        throw new AuthorizationError("You can only link bugs to tasks you have access to.");
+      }
+      taskTitle = task.title;
+    }
+
+    await db.bug.update({ where: { id: bugId }, data: { taskId: data.taskId } });
+
+    await logAudit({
+      actor: auth,
+      action: data.taskId ? "bug.linked" : "bug.unlinked",
+      entityType: "BUG",
+      entityId: bugId,
+      entityLabel: bug.title,
+      detail: data.taskId
+        ? `Linked bug “${bug.title}” to task “${taskTitle}”`
+        : `Unlinked bug “${bug.title}” from its task`,
+    });
+    revalidatePath("/");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Board enhancement — bug board data (one round trip, names resolved in
+// bulk). Same visibility rule as getBugsPage: every signed-in user sees the
+// board (bug lists are workspace-wide by design).
+// ---------------------------------------------------------------------------
+
+export async function getBugBoard(): Promise<ActionResult<{
+  items: Array<{
+    id: string;
+    title: string;
+    severity: string;
+    priority: string;
+    status: string;
+    order: number;
+    resolution: string | null;
+    reporterUserId: string;
+    reporterName: string | null;
+    assigneeUserId: string | null;
+    assigneeName: string | null;
+    projectId: string | null;
+    projectName: string | null;
+    taskId: string | null;
+    taskTitle: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}>> {
+  return toResult(async () => {
+    const auth = await getSession();
+    if (!auth) throw new AuthorizationError("You must be signed in.");
+
+    const rows = await db.bug.findMany({
+      orderBy: [{ boardOrder: "asc" }, { createdAt: "desc" }],
+      take: 500,
+      select: {
+        id: true, title: true, severity: true, priority: true, status: true,
+        boardOrder: true, resolution: true,
+        reporterUserId: true, assigneeUserId: true,
+        projectId: true, taskId: true,
+        createdAt: true, updatedAt: true,
+      },
+    });
+
+    // Bulk-resolve reporter + assignee names, project names, task titles.
+    const userIds = new Set<string>();
+    const projectIds = new Set<string>();
+    const taskIds = new Set<string>();
+    for (const r of rows) {
+      if (r.reporterUserId) userIds.add(r.reporterUserId);
+      if (r.assigneeUserId) userIds.add(r.assigneeUserId);
+      if (r.projectId) projectIds.add(r.projectId);
+      if (r.taskId) taskIds.add(r.taskId);
+    }
+    const [users, projects, tasks] = await Promise.all([
+      userIds.size > 0
+        ? db.user.findMany({ where: { id: { in: Array.from(userIds) } }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+      projectIds.size > 0
+        ? db.project.findMany({ where: { id: { in: Array.from(projectIds) } }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+      taskIds.size > 0
+        ? db.task.findMany({ where: { id: { in: Array.from(taskIds) } }, select: { id: true, title: true } })
+        : Promise.resolve([]),
+    ]);
+    const userMap = new Map(users.map((u) => [u.id, u.name]));
+    const projectMap = new Map(projects.map((p) => [p.id, p.name]));
+    const taskMap = new Map(tasks.map((t) => [t.id, t.title]));
+
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        severity: r.severity,
+        priority: r.priority,
+        status: r.status,
+        order: r.boardOrder,
+        resolution: r.resolution,
+        reporterUserId: r.reporterUserId,
+        reporterName: r.reporterUserId ? userMap.get(r.reporterUserId) ?? null : null,
+        assigneeUserId: r.assigneeUserId,
+        assigneeName: r.assigneeUserId ? userMap.get(r.assigneeUserId) ?? null : null,
+        projectId: r.projectId,
+        projectName: r.projectId ? projectMap.get(r.projectId) ?? null : null,
+        taskId: r.taskId,
+        taskTitle: r.taskId ? taskMap.get(r.taskId) ?? null : null,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Board enhancement — bugs linked to a task (for the task modal) and bugs
+// available for linking (for the link picker).
+// ---------------------------------------------------------------------------
+
+export async function getTaskLinkedBugs(taskId: string): Promise<ActionResult<
+  Array<{
+    id: string;
+    title: string;
+    severity: string;
+    priority: string;
+    status: string;
+    resolution: string | null;
+  }>
+>> {
+  return toResult(async () => {
+    const auth = await getSession();
+    if (!auth) throw new AuthorizationError("You must be signed in.");
+
+    const bugs = await db.bug.findMany({
+      where: { taskId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, title: true, severity: true, priority: true, status: true, resolution: true,
+      },
+    });
+    return bugs;
+  });
+}
+
+export async function getLinkableBugs(taskId: string, search?: string): Promise<ActionResult<
+  Array<{ id: string; title: string; severity: string; status: string }>
+>> {
+  return toResult(async () => {
+    const auth = await getSession();
+    if (!auth) throw new AuthorizationError("You must be signed in.");
+
+    // NOT-linked: either taskId is null, or it points at a different task.
+    // (Prisma's `not` excludes NULLs — SQL three-valued logic — so the OR
+    // below is what actually includes the unlinked rows.)
+    const q = (search ?? "").trim();
+    const where: Record<string, unknown> = {
+      OR: [{ taskId: null }, { taskId: { not: taskId } }],
+    };
+    if (q) {
+      where.title = { contains: q, mode: "insensitive" };
+    }
+
+    const bugs = await db.bug.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      take: 100,
+      select: { id: true, title: true, severity: true, status: true },
+    });
+    return bugs;
   });
 }

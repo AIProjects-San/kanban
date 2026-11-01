@@ -168,7 +168,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
           <div
             key={`${view}-${refreshTick}`}
             className={`f-view-enter p-4 lg:p-6 ${
-              ["settings", "users", "audit", "workspace-settings", "help"].includes(view)
+              ["settings", "users", "audit", "workspace-settings", "help", "bugs"].includes(view)
                 ? "w-full"
                 : "max-w-7xl mx-auto"
             }`}
@@ -223,7 +223,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
               <WorkspaceSettingsView currentUser={user} />
             )}
             {view === "bugs" && (
-              <BugsView currentUser={user} projects={data.projects} />
+              <BugsView currentUser={user} projects={data.projects} tasks={data.tasks} />
             )}
           </div>
         </main>

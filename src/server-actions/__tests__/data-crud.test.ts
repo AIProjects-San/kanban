@@ -9,7 +9,7 @@ const { db, getServerSession } = vi.hoisted(() => {
   const getServerSession = vi.fn();
   const models = [
     "auditLog", "project", "task", "teamMember", "reminder", "notification",
-    "timeEntry", "calendarEvent", "message", "user", "userSettings",
+    "timeEntry", "calendarEvent", "message", "bug", "user", "userSettings",
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
     "taskTagConfig", "priorityConfig", "departmentConfig",

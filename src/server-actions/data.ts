@@ -52,7 +52,10 @@ export {
   deleteUser,
   getUserByEmail,
 } from "./users";
-export { logTime } from "./time-entries";
+// Board enhancement — task-level time log (required vs spent) + Task ↔ Bug
+// link reads used by the task modal.
+export { logTime, logTaskTime, getTaskTimeLog, deleteTimeEntry } from "./time-entries";
+export { getTaskLinkedBugs, getLinkableBugs } from "./bugs";
 export {
   sendMessage,
   markMessageRead,

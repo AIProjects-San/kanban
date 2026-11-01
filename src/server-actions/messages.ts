@@ -137,10 +137,13 @@ export async function markThreadRead(threadId: string): Promise<ActionResult<voi
       select: { id: true },
     });
     if (unreadMsgs.length === 0) return;
-    // Bulk-insert MessageRead rows (skip duplicates via the compound unique).
+    // Bulk-insert MessageRead rows. `skipDuplicates` is deliberately NOT set:
+    // it is unsupported on SQLite (typed as `never` and rejected at runtime),
+    // and the `readBy: { none }` pre-filter above already guarantees the rows
+    // are new for this user, so the compound unique can only be violated by a
+    // concurrent duplicate call, which would simply fail that call cleanly.
     await db.messageRead.createMany({
       data: unreadMsgs.map((m) => ({ userId: auth.userId, messageId: m.id })),
-      skipDuplicates: true,
     });
     revalidatePath("/");
   });

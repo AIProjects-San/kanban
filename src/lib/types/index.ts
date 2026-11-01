@@ -50,6 +50,12 @@ export interface TaskT {
   tag: TaskTag;
   dueDate: string | null;
   order: number;
+  /** Required (estimated) time in minutes — 0 = no estimate. */
+  estimateMinutes: number;
+  /** Spent hours aggregated from TimeEntry rows linked to this task. */
+  spentHours?: number;
+  /** Number of bugs linked to this task (Task ↔ Bug traceability). */
+  bugCount?: number;
   projectId: string | null;
   assigneeId: string | null;
   project?: ProjectT | null;
@@ -99,6 +105,8 @@ export interface TimeEntryT {
   id: string;
   projectId: string | null;
   memberId: string | null;
+  /** Task this time was spent on (null = project-level entry). */
+  taskId: string | null;
   date: string;
   hours: number;
   description: string;

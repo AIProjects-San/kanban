@@ -13,7 +13,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { useRefresh } from "@/hooks/use-refresh";
-import { Plus, MoreHorizontal, Calendar as CalIcon, FolderKanban } from "lucide-react";
+import { Plus, MoreHorizontal, Calendar as CalIcon, FolderKanban, Clock, Bug as BugIcon } from "lucide-react";
 import { useApp } from "@/store/app-store";
 import { Avatar } from "../ui/avatar";
 import { FilterBar } from "../ui/filter-bar";
@@ -312,6 +312,12 @@ function TaskCard({ task, onEdit, dragging }: { task: TaskT; onEdit: () => void;
 
   const due = task.dueDate ? new Date(task.dueDate) : null;
   const overdue = due && due < new Date(new Date().toDateString()) && task.status !== "DONE";
+  // Board enhancement — required (estimate) vs spent time on the card.
+  const estimateHours = task.estimateMinutes ? task.estimateMinutes / 60 : 0;
+  const spentHours = task.spentHours ?? 0;
+  const showTime = estimateHours > 0 || spentHours > 0;
+  const overTime = estimateHours > 0 && spentHours > estimateHours;
+  const bugCount = task.bugCount ?? 0;
 
   return (
     <div
@@ -351,6 +357,27 @@ function TaskCard({ task, onEdit, dragging }: { task: TaskT; onEdit: () => void;
         <div className="flex items-center gap-1.5">
           {task.assignee && (
             <Avatar name={task.assignee.name} color={task.assignee.avatarColor} size={20} />
+          )}
+          {showTime && (
+            <span
+              className={cn(
+                "flex items-center gap-1 text-[0.625rem] tabular-nums",
+                overTime ? "text-destructive font-medium" : "text-muted-foreground",
+              )}
+              title={overTime ? "Spent exceeds the required estimate" : "Spent / required time"}
+            >
+              <Clock size={11} />
+              {Math.round(spentHours * 10) / 10}h{estimateHours > 0 ? ` / ${Math.round(estimateHours * 10) / 10}h` : ""}
+            </span>
+          )}
+          {bugCount > 0 && (
+            <span
+              className="flex items-center gap-0.5 text-[0.625rem] tabular-nums text-muted-foreground"
+              title={`${bugCount} linked bug${bugCount === 1 ? "" : "s"}`}
+            >
+              <BugIcon size={11} className="text-red-500/80" />
+              {bugCount}
+            </span>
           )}
           {due && (
             <span className={cn(

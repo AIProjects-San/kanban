@@ -37,8 +37,10 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
+const getScopedProjectIdsMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
+  getScopedProjectIds: (...a: unknown[]) => getScopedProjectIdsMock(...a),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -46,6 +48,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import {
   createBug, getBug, getBugsPage, updateBug, assignBug,
   changeBugStatus, addBugComment, deleteBug,
+  moveBug, linkBugToTask, getBugBoard, getTaskLinkedBugs, getLinkableBugs,
 } from "../bugs";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Ada", email: "ada@x.co" };
@@ -66,6 +69,9 @@ beforeEach(() => {
   db.user.findMany.mockResolvedValue([]);
   db.project.findUnique.mockResolvedValue(null);
   db.project.findMany.mockResolvedValue([]);
+  db.task.findUnique.mockResolvedValue(null);
+  db.task.findMany.mockResolvedValue([]);
+  getScopedProjectIdsMock.mockResolvedValue(null); // unscoped (ADMIN) by default
 });
 
 // ---------------------------------------------------------------------------
@@ -579,5 +585,236 @@ describe("deleteBug", () => {
     db.bug.findUnique.mockResolvedValue(null);
     const res = await deleteBug("b-missing");
     expect(res.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Board enhancement — moveBug (drag-and-drop board moves)
+// ---------------------------------------------------------------------------
+
+describe("moveBug (board drag)", () => {
+  it("NEW → TRIAGED drag updates status + boardOrder + sets triagedAt", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null,
+      triagedAt: null, resolvedAt: null, closedAt: null,
+    });
+    const res = await moveBug("b-1", { status: "TRIAGED", order: 3 });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "TRIAGED", boardOrder: 3, triagedAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it("same-status drag is a pure reorder (allowed, logs bug.moved)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null,
+    });
+    const res = await moveBug("b-1", { status: "NEW", order: 5 });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "NEW", boardOrder: 5 }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "bug.moved" }),
+    );
+  });
+
+  it("illegal drag NEW → IN_REVIEW is rejected (lifecycle guard)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null,
+    });
+    const res = await moveBug("b-1", { status: "IN_REVIEW", order: 0 });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("drag to RESOLVED defaults the resolution to FIXED", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "IN_PROGRESS", reporterUserId: "u-mia", assigneeUserId: null,
+    });
+    const res = await moveBug("b-1", { status: "RESOLVED", order: 0 });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "RESOLVED", resolution: "FIXED", resolvedAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it("drag to REOPENED clears resolvedAt/closedAt", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "RESOLVED", reporterUserId: "u-mia", assigneeUserId: null,
+      resolvedAt: new Date(), closedAt: new Date(),
+    });
+    const res = await moveBug("b-1", { status: "REOPENED", order: 0 });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ resolvedAt: null, closedAt: null }) }),
+    );
+  });
+
+  it("rejects malformed order (NaN / negative)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null,
+    });
+    const res = await moveBug("b-1", { status: "TRIAGED", order: -1 });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("non-reporter non-assignee without bug:edit:any cannot drag", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "NEW", reporterUserId: "u-someone-else", assigneeUserId: null,
+    });
+    const res = await moveBug("b-1", { status: "TRIAGED", order: 0 });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Board enhancement — linkBugToTask (Task ↔ Bug traceability)
+// ---------------------------------------------------------------------------
+
+describe("linkBugToTask", () => {
+  it("links a bug to a visible task (ADMIN is unscoped)", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-qa", assigneeUserId: null, taskId: null,
+    });
+    db.task.findUnique.mockResolvedValue({
+      id: "t-1", title: "Target task", projectId: "p-1", assignee: { userId: "u-dev" },
+    });
+    const res = await linkBugToTask("b-1", { taskId: "t-1" });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { taskId: "t-1" } }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "bug.linked" }),
+    );
+  });
+
+  it("unlinks a bug (null taskId) and logs bug.unlinked", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linked bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: "t-1",
+    });
+    const res = await linkBugToTask("b-1", { taskId: null });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { taskId: null } }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "bug.unlinked" }),
+    );
+  });
+
+  it("MEMBER cannot link to a task outside their scope", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null,
+    });
+    db.task.findUnique.mockResolvedValue({
+      id: "t-1", title: "Hidden task", projectId: "p-hidden", assignee: { userId: "u-dev" },
+    });
+    getScopedProjectIdsMock.mockResolvedValue(new Set(["p-visible"]));
+    const res = await linkBugToTask("b-1", { taskId: "t-1" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("MEMBER can link to a task in their scope", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null, taskId: null,
+    });
+    db.task.findUnique.mockResolvedValue({
+      id: "t-1", title: "Visible task", projectId: "p-visible", assignee: { userId: "u-dev" },
+    });
+    getScopedProjectIdsMock.mockResolvedValue(new Set(["p-visible"]));
+    const res = await linkBugToTask("b-1", { taskId: "t-1" });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { taskId: "t-1" } }),
+    );
+  });
+
+  it("rejects a non-existent task", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-qa", assigneeUserId: null, taskId: null,
+    });
+    db.task.findUnique.mockResolvedValue(null);
+    const res = await linkBugToTask("b-1", { taskId: "t-missing" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  it("non-editor cannot change the link", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Someone else's bug", status: "NEW", reporterUserId: "u-someone-else", assigneeUserId: null, taskId: null,
+    });
+    const res = await linkBugToTask("b-1", { taskId: "t-1" });
+    expect(res.ok).toBe(false);
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Board enhancement — board data readers
+// ---------------------------------------------------------------------------
+
+describe("getBugBoard", () => {
+  it("returns board items with resolved names", async () => {
+    db.bug.findMany.mockResolvedValue([
+      {
+        id: "b-1", title: "Card bug", severity: "MAJOR", priority: "P2", status: "NEW",
+        boardOrder: 0, resolution: null,
+        reporterUserId: "u-qa", assigneeUserId: "u-dev", projectId: "p-1", taskId: "t-1",
+        createdAt: new Date(), updatedAt: new Date(),
+      },
+    ]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-qa", name: "Quinn" },
+      { id: "u-dev", name: "Dev" },
+    ]);
+    db.project.findMany.mockResolvedValue([{ id: "p-1", name: "Apollo" }]);
+    db.task.findMany.mockResolvedValue([{ id: "t-1", title: "Tasky" }]);
+
+    const res = await getBugBoard();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.items).toHaveLength(1);
+    expect(res.data.items[0]).toMatchObject({
+      reporterName: "Quinn", assigneeName: "Dev", projectName: "Apollo", taskTitle: "Tasky", order: 0,
+    });
+  });
+
+  it("requires a signed-in session", async () => {
+    getSessionMock.mockResolvedValue(null);
+    const res = await getBugBoard();
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("getTaskLinkedBugs / getLinkableBugs", () => {
+  it("getTaskLinkedBugs returns bugs for the task", async () => {
+    db.bug.findMany.mockResolvedValue([
+      { id: "b-1", title: "Linked", severity: "MAJOR", priority: "P1", status: "NEW", resolution: null },
+    ]);
+    const res = await getTaskLinkedBugs("t-1");
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data).toHaveLength(1);
+    expect(db.bug.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { taskId: "t-1" } }),
+    );
+  });
+
+  it("getLinkableBugs excludes bugs already linked to THIS task (nulls included)", async () => {
+    db.bug.findMany.mockResolvedValue([]);
+    const res = await getLinkableBugs("t-1", "");
+    expect(res.ok).toBe(true);
+    const where = db.bug.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual([{ taskId: null }, { taskId: { not: "t-1" } }]);
   });
 });
