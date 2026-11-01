@@ -69,3 +69,4 @@ server.log
 # agent workspace directories (deliverables + uploads — never commit)
 /upload/
 /download/
+e2e/artifacts/

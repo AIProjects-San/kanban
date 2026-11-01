@@ -99,11 +99,44 @@ Before(async function () {
   // Nothing global yet — drivers are created lazily per scenario.
 });
 
-After(async function ({ result }) {
+After(async function ({ result, pickle }) {
   if (this.driver) {
     if (result?.status === "FAILED") {
+      // Attach to the cucumber report …
       const image = await this.driver.takeScreenshot();
       this.attach(image, "image/png");
+      // … and write artifacts to disk so CI can upload them — a screenshot
+      // plus the URL/h1/toast state answers "what page was the browser
+      // actually on" without guessing from timeouts.
+      try {
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const dir = path.join(process.cwd(), "e2e", "artifacts");
+        fs.mkdirSync(dir, { recursive: true });
+        const slug = (pickle?.name || "scenario")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .slice(0, 60);
+        const url = await this.driver.getCurrentUrl();
+        const headings = await this.driver.findElements(By.css("main h1"));
+        const h1 = headings.length ? await headings[0].getText() : "(no main h1)";
+        const toasts = await this.driver.findElements(
+          By.css("[data-sonner-toast], [role='alert']"),
+        );
+        const toastTexts = [];
+        for (const t of toasts) toastTexts.push(await t.getText());
+        fs.writeFileSync(
+          path.join(dir, `${slug}.png`),
+          Buffer.from(image, "base64"),
+        );
+        fs.writeFileSync(
+          path.join(dir, `${slug}.state.txt`),
+          `url: ${url}\nh1: ${h1}\ntoasts: ${JSON.stringify(toastTexts)}\n`,
+        );
+      } catch (e) {
+        // Artifact capture must never mask the original failure.
+        console.error("[e2e] artifact capture failed:", e.message);
+      }
     }
     await this.driver.quit();
     this.driver = null;

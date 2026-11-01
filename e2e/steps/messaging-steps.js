@@ -15,31 +15,44 @@ When("I send a message with subject {string} to {string}", async function (subje
     10_000,
   );
   let sent = false;
+  const seen = [];
   for (const btn of messageButtons) {
     await btn.click();
-    const dialog = await driver.wait(
-      until.elementLocated(By.css('[role="dialog"]')),
+    // Wait for the recipient line — it only exists inside an open message
+    // modal, so this can't match a stale/wrong dialog.
+    const recipientEl = await driver.wait(
+      until.elementLocated(By.css("[data-testid='message-recipient']")),
       10_000,
     );
-    const recipient = await dialog
-      .findElement(By.css("[data-testid='message-recipient']"))
-      .getText();
-    if (recipient.trim() !== recipientEmail) {
-      await dialog.findElement(By.css("button[aria-label='Close']")).click();
-      await driver.sleep(300); // let the modal unmount before the next card
+    const recipient = (await recipientEl.getText()).trim();
+    seen.push(recipient);
+    if (recipient !== recipientEmail) {
+      // Close and WAIT for the modal to fully unmount — clicking the next
+      // card's button while the overlay is still tearing down swallows it.
+      await driver.findElement(By.css("[role='dialog'] button[aria-label='Close']")).click();
+      await driver.wait(
+        async () =>
+          (await driver.findElements(By.css("[data-testid='message-recipient']"))).length === 0,
+        5_000,
+      );
       continue;
     }
-    const subjectInput = await dialog.findElement(
+    const subjectInput = await driver.findElement(
       By.css('input[name="subject"], input[placeholder*="ubject" i]'),
     );
     await subjectInput.sendKeys(subject);
-    const bodyArea = await dialog.findElement(By.css("textarea"));
+    const bodyArea = await driver.findElement(By.css("[role='dialog'] textarea"));
     await bodyArea.sendKeys("Sent from the Selenium suite.");
-    await dialog.findElement(By.xpath(".//button[contains(., 'Send')]")).click();
+    await driver
+      .findElement(By.xpath("//div[@role='dialog']//button[contains(., 'Send')]"))
+      .click();
     sent = true;
     break;
   }
-  assert.ok(sent, `no member card matched recipient "${recipientEmail}"`);
+  assert.ok(
+    sent,
+    `no member card matched recipient "${recipientEmail}" — saw: ${seen.join(", ") || "(none)"}`,
+  );
   await driver.sleep(800);
 });
 

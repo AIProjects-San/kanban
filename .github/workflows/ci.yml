@@ -195,6 +195,17 @@ jobs:
       - name: Run E2E suite
         run: bun run test:e2e
 
+      # Failure forensics: screenshots + URL/h1/toast state for every failed
+      # scenario (written by the After hook in e2e/support/world.js).
+      - name: Upload e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-artifacts
+          path: e2e/artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Dump dev server log on failure
         if: failure()
         run: tail -n 200 dev.log || echo "dev.log not found — failure occurred before the dev server started"
