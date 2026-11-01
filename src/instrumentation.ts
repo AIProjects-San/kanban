@@ -26,7 +26,7 @@ let shuttingDown = false;
  */
 export async function register(): Promise<void> {
   if (!isNodeRuntime()) {
-    // Edge runtime — no-op. The proxy middleware handles its own errors.
+    // Edge runtime — no-op.
     return;
   }
 
@@ -38,25 +38,22 @@ export async function register(): Promise<void> {
     !process.env.SERVER_ACTIONS_ALLOWED_ORIGINS
   ) {
     console.error(
-      "[boot] FATAL: SERVER_ACTIONS_ALLOWED_ORIGINS is unset in production. " +
-        "Set it to your real origin(s) — e.g. https://your-domain.example — " +
-        "so Server Actions reject cross-origin CSRF.",
+      "[boot] FATAL: SERVER_ACTIONS_ALLOWED_ORIGINS is unset in production.",
     );
     process.exit(1);
   }
 
-  // P2 — validate origins value.
+  // P2 — validate origins value. Accept: real origins (http(s)://host[:port]),
+  // localhost, 127.0.0.1. Reject: bare "*".
   const origins = (process.env.SERVER_ACTIONS_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
   const invalid = origins.filter(
-    (o) => o === "*" || (!o.includes(".") && o !== "localhost" && !o.startsWith("127.")),
+    (o) => o === "*" || (!o.includes(".") && !o.includes("localhost") && !o.startsWith("127.") && !o.includes(":")),
   );
   if (process.env.NODE_ENV === "production" && invalid.length > 0) {
-    console.error(
-      `[boot] FATAL: SERVER_ACTIONS_ALLOWED_ORIGINS contains invalid entry: ${invalid.join(", ")}.`,
-    );
+    console.error(`[boot] FATAL: invalid SERVER_ACTIONS_ALLOWED_ORIGINS: ${invalid.join(", ")}.`);
     process.exit(1);
   }
 
@@ -65,18 +62,16 @@ export async function register(): Promise<void> {
   process.on("SIGTERM", markShuttingDown);
   process.on("SIGINT", markShuttingDown);
 
-  // P1 — global error handlers.
+  // P1 — global error handlers (lazy-import observability).
   try {
     process.on("unhandledRejection", (reason: unknown) => {
       const err = reason instanceof Error
         ? reason
         : new Error(`Unhandled rejection: ${JSON.stringify(reason)}`);
-      // Lazy-import observability to keep the Edge bundle clean.
       import("@/lib/observability").then(({ captureError }) => {
         captureError(err, { source: "unhandledRejection" });
       });
     });
-
     process.on("uncaughtException", (err: Error) => {
       import("@/lib/observability").then(({ captureError, logError }) => {
         captureError(err, { source: "uncaughtException" });
