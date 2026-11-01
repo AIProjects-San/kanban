@@ -6,22 +6,40 @@ const assert = require("node:assert");
 
 When("I send a message with subject {string} to {string}", async function (subject, recipientEmail) {
   const driver = await this.getDriver();
-  // Open the first team member row's message action.
-  const messageButton = await driver.wait(
-    until.elementLocated(
+  // Member cards don't render the email — open each card's message modal
+  // until its header shows the intended recipient, then fill and send.
+  const messageButtons = await driver.wait(
+    until.elementsLocated(
       By.xpath("//button[@aria-label[contains(.,'Message')]] | //button[contains(., 'Message')]"),
     ),
     10_000,
   );
-  await messageButton.click();
-  const subjectInput = await driver.wait(
-    until.elementLocated(By.css('input[placeholder*="ubject" i], input[name="subject"]')),
-    10_000,
-  );
-  await subjectInput.sendKeys(subject);
-  const bodyArea = await driver.findElement(By.css("textarea"));
-  await bodyArea.sendKeys("Sent from the Selenium suite.");
-  await driver.findElement(By.xpath("//button[contains(., 'Send')]")).click();
+  let sent = false;
+  for (const btn of messageButtons) {
+    await btn.click();
+    const dialog = await driver.wait(
+      until.elementLocated(By.css('[role="dialog"]')),
+      10_000,
+    );
+    const recipient = await dialog
+      .findElement(By.css("[data-testid='message-recipient']"))
+      .getText();
+    if (recipient.trim() !== recipientEmail) {
+      await dialog.findElement(By.css("button[aria-label='Close']")).click();
+      await driver.sleep(300); // let the modal unmount before the next card
+      continue;
+    }
+    const subjectInput = await dialog.findElement(
+      By.css('input[name="subject"], input[placeholder*="ubject" i]'),
+    );
+    await subjectInput.sendKeys(subject);
+    const bodyArea = await dialog.findElement(By.css("textarea"));
+    await bodyArea.sendKeys("Sent from the Selenium suite.");
+    await dialog.findElement(By.xpath(".//button[contains(., 'Send')]")).click();
+    sent = true;
+    break;
+  }
+  assert.ok(sent, `no member card matched recipient "${recipientEmail}"`);
   await driver.sleep(800);
 });
 

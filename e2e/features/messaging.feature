@@ -1,5 +1,5 @@
-Feature: Messaging
 @critical
+Feature: Messaging
   Users can message each other, and each inbox only shows its own threads.
 
   Background:

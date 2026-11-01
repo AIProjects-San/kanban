@@ -1,5 +1,5 @@
-Feature: Authentication
 @critical
+Feature: Authentication
   As a workspace member I want to sign in with my email and password,
   and the system must resist brute-force attacks.
 
@@ -25,7 +25,7 @@ Scenario: Successful sign-in with valid credentials
     When I sign in as "" with password ""
     Then I should still be on the login screen
 
-  Scenario: Brute-force lockout — 5 failures block the 6th attempt
-    When I fail to sign in as "member@fernly.app" 5 times
-    And I sign in as "member@fernly.app" with the correct password
-    Then I should still be on the login screen
+  # NOTE: the brute-force lockout scenario used to live here. It moved to
+  # zzz-login-lockout.feature so it runs LAST — it exhausts the per-IP login
+  # throttle budget, which would cascade-fail every later scenario (see the
+  # comment in that file).

@@ -61,6 +61,14 @@ When("I sign in as {string} with the correct password", async function (email) {
   await this.login(email, CREDENTIALS[email]);
 });
 
+// Explicit-password variant — used by the rejected-login scenarios (wrong
+// password, unknown email, empty credentials) where the credential must NOT
+// be the demo password.
+When("I sign in as {string} with password {string}", async function (email, password) {
+  this.lastEmail = email;
+  await this.login(email, password);
+});
+
 When("I fail to sign in as {string} {int} times", async function (email, times) {
   for (let i = 0; i < times; i++) {
     await this.login(email, "definitely-wrong");

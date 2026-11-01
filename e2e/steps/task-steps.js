@@ -9,8 +9,10 @@ const VIEW_BUTTON = (label) =>
 
 When("I open the {string} view", async function (label) {
   const driver = await this.getDriver();
-  // Prefer the keyboard shortcut route (G P / G T / …) — stable across UI restyles.
-  const shortcuts = { Dashboard: "d", Tasks: "t", Projects: "p", Team: "e", Analytics: "a", Calendar: "c" };
+  // Prefer the keyboard shortcut route (G D / G T / …) — stable across UI restyles.
+  // Keys must mirror the app's shortcut map (src/hooks/use-keyboard-shortcuts.ts
+  // + sidebar.tsx): d/t/p/c/a/m/b. Note Team is "m" (G M), not "e".
+  const shortcuts = { Dashboard: "d", Tasks: "t", Projects: "p", Team: "m", Analytics: "a", Calendar: "c", Bugs: "b" };
   if (shortcuts[label]) {
     const body = await driver.findElement(By.css("body"));
     await body.sendKeys("g", shortcuts[label]);

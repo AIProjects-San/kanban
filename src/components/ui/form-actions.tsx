@@ -46,6 +46,7 @@ export function FormActions({
     <div className={cn("flex items-center justify-between pt-2", className)}>
       {editing && showDelete ? (
         <button
+          type="button"
           onClick={onDelete}
           disabled={deleting}
           className="f-btn f-btn-ghost f-btn-sm text-destructive"
@@ -57,10 +58,15 @@ export function FormActions({
         <div />
       )}
       <div className="flex gap-2">
-        <button onClick={onCancel} className="f-btn f-btn-ghost f-btn-sm">
+        <button type="button" onClick={onCancel} className="f-btn f-btn-ghost f-btn-sm">
           Cancel
         </button>
+        {/* type="button" on purpose: the click path is onClick (works both
+            inside and outside a <form>); Enter-to-submit is handled by the
+            surrounding form's onSubmit when there is one. type="submit"
+            here would double-fire submit() inside a form. */}
         <button
+          type="button"
           onClick={onSubmit}
           disabled={saving}
           className="f-btn f-btn-primary f-btn-sm"

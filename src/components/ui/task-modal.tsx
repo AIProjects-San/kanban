@@ -215,7 +215,16 @@ function TaskForm({
   };
 
   return (
-    <div className="space-y-4">
+    // A real <form> (not a bare div): Enter submits the dialog, and screen
+    // readers announce the fields as a form. Buttons opt out of implicit
+    // submission explicitly — see FormActions.
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
       <Field label="Title">
         <input
           autoFocus
@@ -310,7 +319,7 @@ function TaskForm({
           entityLabel={editing.title}
         />
       )}
-    </div>
+    </form>
   );
 }
 

@@ -266,6 +266,8 @@ function Column({
   return (
     <div
       ref={setNodeRef}
+      data-testid="board-column"
+      data-status={column.key}
       className={cn(
         "flex flex-col rounded-xl border bg-card/50 transition-colors min-h-[200px]",
         isOver ? "border-primary bg-primary/5" : "border-border"

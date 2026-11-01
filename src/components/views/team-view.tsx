@@ -181,6 +181,7 @@ function MemberCard({
       <div className="flex gap-2">
         <button
           onClick={onMessage}
+          aria-label={`Message ${member.name}`}
           className="f-btn f-btn-secondary f-btn-sm flex-1"
         >
           <MessageSquare size={13} /> Message
@@ -552,7 +553,7 @@ function MessageModal({
             <Avatar name={member.name} color={member.avatarColor} size={36} online={member.online} />
             <div>
               <div className="text-sm font-semibold text-foreground">Message {member.name}</div>
-              <div className="text-[0.625rem] text-muted-foreground">{member.email}</div>
+              <div className="text-[0.625rem] text-muted-foreground" data-testid="message-recipient">{member.email}</div>
             </div>
           </div>
           <button onClick={onClose} className="f-btn f-btn-ghost f-btn-icon" aria-label="Close">
@@ -564,6 +565,7 @@ function MessageModal({
           <div>
             <label className="block text-xs font-medium text-foreground mb-1.5">Subject</label>
             <input
+              name="subject"
               className="f-input"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}

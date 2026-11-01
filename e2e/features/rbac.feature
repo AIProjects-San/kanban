@@ -1,5 +1,5 @@
-Feature: Role-based access control
 @critical
+Feature: Role-based access control
   The UI must only expose the controls a role is allowed to use.
 
   Background:
@@ -13,17 +13,17 @@ Feature: Role-based access control
   Scenario: Member does not see admin-only navigation
     When I sign in as "member@fernly.app" with the demo password
     Then the sidebar should not contain "Users"
-    And the sidebar should not contain "Workspace Settings"
+    And the sidebar should not contain "Workspace Config"
 
   Scenario: Member cannot create projects
     When I sign in as "member@fernly.app" with the demo password
     And I open the "Projects" view
-    Then the "Add Project" button should not be visible
+    Then the "New Project" button should not be visible
 
   Scenario: Manager can create projects but not delete them
     When I sign in as "manager@fernly.app" with the demo password
     And I open the "Projects" view
-    Then the "Add Project" button should be visible
+    Then the "New Project" button should be visible
 
   Scenario: Member only sees their scoped workspace
     When I sign in as "member@fernly.app" with the demo password

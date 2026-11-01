@@ -144,6 +144,7 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
               {runningProjects.map((p) => (
                 <div
                   key={p.id}
+                  data-testid="project-card"
                   onClick={() => openProjectModal(p.id)}
                   className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 transition-colors cursor-pointer"
                 >

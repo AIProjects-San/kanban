@@ -1,5 +1,5 @@
-Feature: Task board
 @critical
+Feature: Task board
   Tasks can be created and moved on the Kanban board according to RBAC rules.
 
   Background:

@@ -50,8 +50,26 @@ class CustomWorld {
     await emailInput.sendKeys(email);
     await driver.findElement(By.css('input[type="password"]')).sendKeys(password);
     await driver.findElement(By.css('button[type="submit"]')).click();
-    // The dashboard greeting appears once the SPA shell has booted.
-    await driver.wait(until.elementLocated(By.css("nav, [data-testid='sidebar']")), 15_000);
+    // Empty credentials never leave the page (native `required` validation
+    // blocks the submit) — short-circuit; the caller's "still on the login
+    // screen" assertion covers that outcome.
+    if (email === "" || password === "") {
+      await driver.sleep(500);
+      return;
+    }
+    // Accept EITHER outcome so negative-credential scenarios don't time out
+    // waiting for a nav that never appears: the SPA shell boots (successful
+    // sign-in) or the login screen reports the rejection (error toast).
+    await driver.wait(
+      async () => {
+        const shell = await driver.findElements(By.css("nav, [data-testid='sidebar']"));
+        if (shell.length > 0) return true;
+        const toast = await driver.findElements(By.css("[data-sonner-toast], [role='alert']"));
+        return toast.length > 0;
+      },
+      15_000,
+      "neither the app shell nor a login error appeared after sign-in",
+    );
   }
 
   /** Sign out by clearing cookies (session cookie is httpOnly). */
