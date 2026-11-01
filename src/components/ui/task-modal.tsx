@@ -228,6 +228,7 @@ function TaskForm({
       <Field label="Title">
         <input
           autoFocus
+          type="text"
           className="f-input"
           value={title}
           onChange={(e) => setTitle(e.target.value)}

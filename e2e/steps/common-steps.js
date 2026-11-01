@@ -44,9 +44,10 @@ Given("the app is running", async function () {
   const driver = await this.getDriver();
   await driver.get(this.baseUrl);
   // Either the login screen or the dashboard renders — the app booted.
+  // 30s: the first load in a dev server pays the on-demand compile cost.
   await driver.wait(
     until.elementLocated(By.css('input[type="email"], nav')),
-    20_000,
+    30_000,
     "app did not boot",
   );
 });
@@ -95,12 +96,24 @@ Then("I should not see the dashboard", async function () {
 
 Then("the sidebar should contain {string}", async function (label) {
   const driver = await this.getDriver();
-  const items = await driver.findElements(By.xpath(`//nav//*[contains(text(), "${label}")]`));
-  assert.ok(items.length > 0, `sidebar does not contain "${label}"`);
+  // Wait — the sidebar renders role-gated items only after the session
+  // hydrates, so an immediate check races the first paint.
+  await driver.wait(
+    until.elementsLocated(By.xpath(`//nav//*[contains(text(), "${label}")]`)),
+    10_000,
+    `sidebar does not contain "${label}"`,
+  );
 });
 
 Then("the sidebar should not contain {string}", async function (label) {
   const driver = await this.getDriver();
+  // Wait for the sidebar's always-present items first — checking for an
+  // absence while the nav is still mounting passes vacuously.
+  await driver.wait(
+    until.elementsLocated(By.xpath('//nav//*[contains(text(), "Dashboard")]')),
+    10_000,
+    "sidebar did not render its base navigation",
+  );
   const items = await driver.findElements(By.xpath(`//nav//*[contains(text(), "${label}")]`));
   assert.strictEqual(items.length, 0, `sidebar unexpectedly contains "${label}"`);
 });

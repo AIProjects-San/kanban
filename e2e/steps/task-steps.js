@@ -7,6 +7,17 @@ const assert = require("node:assert");
 const VIEW_BUTTON = (label) =>
   By.xpath(`//nav//button[contains(., "${label}")] | //nav//a[contains(., "${label}")]`);
 
+// View headings to anchor the "view has actually swapped" wait — the h1 of
+// each view (see src/components/views/*.tsx). Dashboard's h1 is a greeting,
+// so it only waits for any h1.
+const VIEW_HEADINGS = {
+  Tasks: "Tasks",
+  Projects: "Projects",
+  Team: "Team",
+  Analytics: "Analytics",
+  Calendar: "Calendar",
+};
+
 When("I open the {string} view", async function (label) {
   const driver = await this.getDriver();
   // Prefer the keyboard shortcut route (G D / G T / …) — stable across UI restyles.
@@ -19,7 +30,21 @@ When("I open the {string} view", async function (label) {
   } else {
     await driver.findElement(VIEW_BUTTON(label)).click();
   }
-  await driver.sleep(500); // let the SPA view swap settle
+  // Wait until the target view's heading is rendered — a blind sleep let
+  // assertions run against the PREVIOUS view during slow dev-compile loads.
+  const expected = VIEW_HEADINGS[label];
+  await driver.wait(
+    async () => {
+      const headings = await driver.findElements(By.css("main h1"));
+      if (headings.length === 0) return false;
+      if (!expected) return true; // Dashboard — greeting text varies
+      const text = await headings[0].getText();
+      return text.includes(expected);
+    },
+    15_000,
+    `view "${label}" did not render its heading`,
+  );
+  await driver.sleep(250); // let the SPA content below the heading settle
 });
 
 When("I create a task titled {string}", async function (title) {
