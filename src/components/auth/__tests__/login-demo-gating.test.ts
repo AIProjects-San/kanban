@@ -7,7 +7,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 describe("L-P0-12 seed safety guard (scripts/seed.js)", () => {
-  function runSeed(env: Record<string, string | undefined>, cwd = "/home/z/my-project"): {
+  // Repo root — resolved from this test file's location so it works in the
+  // sandbox (/home/z/my-project) AND CI (/home/runner/work/kanban/kanban).
+  const REPO_ROOT = resolve(__dirname, "../../../..");
+
+  function runSeed(env: Record<string, string | undefined>): {
     exitCode: number;
     stderr: string;
   } {
@@ -18,8 +22,8 @@ describe("L-P0-12 seed safety guard (scripts/seed.js)", () => {
       if (v !== undefined) envClean[k] = v;
     }
     try {
-      execFileSync("node", [resolve(__dirname, "../../../../scripts/seed.js")], {
-        cwd,
+      execFileSync("node", [resolve(REPO_ROOT, "scripts/seed.js")], {
+        cwd: REPO_ROOT,
         env: envClean as NodeJS.ProcessEnv,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
