@@ -115,3 +115,40 @@ describe("L-P0-14 delete actions use soft-delete (update, not delete)", () => {
     expect(messagesSrc.match(/db\.message\.delete\(/)).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ADR-008 — committed datasource provider stays postgresql; the SQLite
+// sandbox preview runs through a GENERATED, gitignored variant schema.
+// Commit 76e2e51 leaked the local provider="sqlite" override into the repo
+// and every CI run since failed the e2e job's `migrate deploy` step with
+// Prisma P1012 (provider/URL protocol mismatch). These guards fail fast in
+// the verify job instead of 10 minutes later in e2e.
+// ---------------------------------------------------------------------------
+
+function datasourceBlock(): string {
+  const match = schema.match(/datasource db \{([\s\S]*?)^\}/m);
+  if (!match) throw new Error("datasource db block not found in schema.prisma");
+  return match[1];
+}
+
+describe("ADR-008 canonical prisma provider is postgresql", () => {
+  it("datasource db declares provider postgresql (CI/compose/Supabase target)", () => {
+    expect(datasourceBlock()).toMatch(/provider\s*=\s*"postgresql"/);
+  });
+
+  it("datasource db reads the url from env(DATABASE_URL)", () => {
+    expect(datasourceBlock()).toMatch(/url\s*=\s*env\("DATABASE_URL"\)/);
+  });
+
+  it("run-with-env.sh swaps in a generated variant instead of editing the committed schema", () => {
+    const wrapper = readFileSync(resolve(repoRoot, "scripts", "run-with-env.sh"), "utf-8");
+    expect(wrapper).toMatch(/schema\.local\.prisma/);
+    // the committed schema must never be rewritten in place
+    expect(wrapper).not.toMatch(/\bsed\b[^#]*schema\.prisma/);
+  });
+
+  it("the generated variant schema is gitignored", () => {
+    const gitignore = readFileSync(resolve(repoRoot, ".gitignore"), "utf-8");
+    expect(gitignore).toMatch(/prisma\/schema\.local\.prisma/);
+  });
+});

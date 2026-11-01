@@ -47,7 +47,9 @@ echo "== 4. bun install =="
 bun install --frozen-lockfile 2>&1 | tail -4
 
 echo "== 5. prisma generate =="
-./node_modules/.bin/prisma generate 2>&1 | tail -2
+# Route through run-with-env.sh so the provider is resolved from the restored
+# .env (file: URL -> gitignored prisma/schema.local.prisma variant, ADR-008).
+bash scripts/run-with-env.sh ./node_modules/.bin/prisma generate 2>&1 | tail -3
 
 echo "== 6. next build (standalone) =="
 bun run build 2>&1 | tail -12

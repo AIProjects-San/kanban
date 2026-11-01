@@ -70,3 +70,6 @@ server.log
 /upload/
 /download/
 e2e/artifacts/
+
+# ADR-008 — generated local prisma variant (sandbox SQLite); never commit
+prisma/schema.local.prisma

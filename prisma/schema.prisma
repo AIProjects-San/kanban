@@ -6,11 +6,17 @@ generator client {
 }
 
 datasource db {
-  // SQLite for local sandbox preview — no Postgres available here.
-  // Schema uses only basic types (String/Int/Boolean/DateTime) with
-  // @default(now()), so it is fully SQLite-compatible. Switch back to
-  // "postgresql" + a real DATABASE_URL when running against Supabase/etc.
-  provider = "sqlite"
+  // Canonical provider is postgresql — CI's e2e job (prisma migrate deploy
+  // against a Postgres 16 service container), docker-compose and the Supabase
+  // production database all run the migration history on PostgreSQL.
+  //
+  // The sandbox preview runs the SAME models on SQLite (DATABASE_URL=file:./dev.db,
+  // applied with prisma db push): scripts/run-with-env.sh detects a file: URL,
+  // generates the gitignored prisma/schema.local.prisma variant and points the
+  // Prisma CLI at it — this committed provider must NEVER be flipped to
+  // "sqlite" (commit 76e2e51 leaked the local override and broke every CI run
+  // with Prisma P1012 until the ADR-008 fix). See docs/DECISIONS.md ADR-008.
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

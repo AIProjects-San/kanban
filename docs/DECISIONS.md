@@ -213,3 +213,51 @@ marketing lead" was a perfectly legal action.
 someone is staffed on it — that is the intended signal (the UI says exactly that). Roster
 entries without a linked `User` account can no longer be assigned work. Unassigning a
 user from a project does not cascade to existing assignments (write-time rule only).
+
+---
+
+## ADR-008 — Canonical Postgres schema; sandbox SQLite via generated local variant
+
+**Date:** 2026-11-02 · **Status:** ACCEPTED · **Type:** tooling/CI
+
+**Context.** The sandbox preview has no Postgres, so local development runs the schema on
+SQLite (`DATABASE_URL=file:./dev.db`, applied with `prisma db push`). CI's e2e job,
+docker-compose and the Supabase production database are PostgreSQL, and the migration
+history (`prisma/migrations/`) is the production history. Prisma allows exactly one
+`provider` per schema file. Commit 76e2e51 leaked the local override
+(`provider = "sqlite"`) into the committed `prisma/schema.prisma`; from that push every
+CI run failed at the e2e "Apply migrations + seed" step with Prisma **P1012** ("the URL
+must start with the protocol `file:`") because that job points the same schema at a
+Postgres 16 service container. The pre-ADR workflow — "remember to flip the provider
+back before committing" — is exactly what failed; the flip must be automatic.
+
+**Analysis.** Three candidate mechanisms:
+
+| Option | Verdict |
+|---|---|
+| Commit `sqlite` + sed-patch it in CI | Inverts the source of truth; production deploys (`migrate deploy` on Supabase) still break |
+| Wrapper rewrites `schema.prisma` in place when the URL says `file:` | Leaves the tree perpetually dirty — the same leak is one `git add -A` away |
+| Keep canonical schema postgres; on a `file:` URL generate a gitignored variant and point the Prisma CLI at it | Committed file never changes; zero leak surface; CI untouched |
+
+**Decision.**
+
+1. `prisma/schema.prisma` is committed with `provider = "postgresql"` — always. A
+   schema-contract test fails the verify job within minutes if that line regresses.
+2. `scripts/run-with-env.sh` (already the wrapper every `db:*` script, `dev`, `build`
+   and `start` exec through) resolves the provider from the effective `DATABASE_URL`
+   after sourcing `.env`: `file:` → sqlite, `postgres(ql)://` → postgresql. On mismatch
+   it regenerates the gitignored `prisma/schema.local.prisma` (models copied verbatim,
+   only the provider line swapped) and appends `--schema prisma/schema.local.prisma` to
+   the prisma CLI invocation. The committed schema is never modified.
+3. `prisma migrate dev/deploy/status/reset` remain Postgres-only operations — the
+   migration history is the production history. The sandbox applies schema changes with
+   `db push`, which ignores migrations by design.
+4. New migrations keep the repo convention: hand-checked, PostgreSQL-valid SQL plus a
+   `down.sql` rollback aid (the two 2026-11-02 migrations gained theirs with this ADR).
+
+**Consequences.** `git status` in the sandbox stays clean and the override cannot leak
+into a commit again. CI runs unchanged (no `.env` there → postgres URL → canonical
+schema → `migrate deploy` on the service container). Costs: one generated ~26 KB file
+per wrapper invocation (negligible), one indirection to know about when debugging
+Prisma locally, and `--schema` appended after the subcommand (Prisma 6 rejects it as a
+global flag). Dependabot PRs #1/#2 must rebase onto this fix to go green.
