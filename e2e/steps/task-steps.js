@@ -1,7 +1,7 @@
 // Steps for the task board feature.
 
 const { When, Then } = require("@cucumber/cucumber");
-const { By, until } = require("selenium-webdriver");
+const { By, until, Key } = require("selenium-webdriver");
 const assert = require("node:assert");
 
 const VIEW_BUTTON = (label) =>
@@ -104,14 +104,37 @@ Then("a task named {string} should appear on the board", async function (title) 
 
 When("I move the task {string} to the {string} column", async function (title, column) {
   const driver = await this.getDriver();
+  // A previous failed drag can leave the edit modal open (a press+release
+  // on a card that didn't register as a drag is a CLICK) — its overlay
+  // would swallow the pointer events. Dismiss anything open first.
+  const dialogs = await driver.findElements(By.css("[role='dialog']"));
+  if (dialogs.length > 0) {
+    await driver.actions({ async: true }).sendKeys(Key.ESCAPE).perform();
+    await driver.wait(
+      async () => (await driver.findElements(By.css("[role='dialog']"))).length === 0,
+      5_000,
+    );
+  }
   const card = await driver.wait(
     until.elementLocated(By.xpath(`//*[contains(text(), "${title}")]`)),
     10_000,
   );
   const target = await driver.findElement(columnLocator(column));
-  // selenium-webdriver 4.x: the action builder comes from driver.actions()
-  // — there is no exported Actions constructor anymore.
-  await driver.actions({ async: true }).dragAndDrop(card, target).perform();
+  // dnd-kit's PointerSensor activates on pointer movement WHILE pressed.
+  // Selenium's one-hop dragAndDrop (press → single move → release) doesn't
+  // register as a drag, and the stray press+release on the card registers
+  // as a CLICK that opens the edit modal. Move incrementally instead:
+  // small in-card move to start the drag, then travel, then drop.
+  await driver
+    .actions({ async: true })
+    .move({ origin: card })
+    .press()
+    .move({ origin: card, x: 15, y: 15, duration: 150 })
+    .pause(150)
+    .move({ origin: target, duration: 400 })
+    .pause(150)
+    .release()
+    .perform();
   await driver.sleep(700);
 });
 

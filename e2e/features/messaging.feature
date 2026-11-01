@@ -8,7 +8,7 @@ Feature: Messaging
   Scenario: Send a message to another member
     When I sign in as "demo@fernly.app" with the demo password
     And I open the "Team" view
-    And I send a message with subject "E2E hello" to "member@fernly.app"
+    And I send a message with subject "E2E hello" to "theo@fernly.app"
     Then I should see a confirmation that the message was sent
 
   Scenario: The recipient sees the message in their inbox

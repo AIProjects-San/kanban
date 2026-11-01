@@ -52,18 +52,25 @@ export function useKeyboardShortcuts() {
 
       if (typing) return;
 
+      // True while a G-prefix keystroke is pending — the single-key
+      // bindings below must NOT fire in that window, or they shadow the
+      // documented G-bindings: "p" was eating G P (projects view opened
+      // the project modal instead) and "b" was eating G B (bugs view
+      // opened the notification panel instead).
+      const gPending = lastG !== 0 && Date.now() - lastG < 800;
+
       // Single-key shortcuts
       if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         openTaskModal();
         return;
       }
-      if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey) {
+      if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey && !gPending) {
         e.preventDefault();
         openProjectModal();
         return;
       }
-      if (e.key.toLowerCase() === "b" && !e.metaKey && !e.ctrlKey) {
+      if (e.key.toLowerCase() === "b" && !e.metaKey && !e.ctrlKey && !gPending) {
         e.preventDefault();
         setNotifOpen(true);
         return;

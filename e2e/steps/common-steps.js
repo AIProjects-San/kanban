@@ -129,10 +129,14 @@ Then("the project count should be lower than the admin count", async function ()
     const body = await driver.findElement(By.css("body"));
     await body.sendKeys("g", "p");
     const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline) {
-      if (await headingPresent(driver, "Projects")) break;
+    while (Date.now() < deadline && !(await headingPresent(driver, "Projects"))) {
       await driver.sleep(1000);
       await body.sendKeys("g", "p");
+    }
+    // Navigation MUST have happened — otherwise we'd silently count the
+    // dashboard's capped card list and "prove" scoping with equal counts.
+    if (!(await headingPresent(driver, "Projects"))) {
+      throw new Error("Projects view did not render — cannot count cards there");
     }
     await driver.wait(
       until.elementsLocated(By.css("[data-testid='project-card']")),
