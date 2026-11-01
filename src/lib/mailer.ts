@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 import { DEFAULT_MAIL_FROM } from "@/config/app";
-import { hashPii, logError, logInfo } from "@/lib/observability";
+import { logError, logInfo } from "@/lib/observability";
+import { hashPii } from "@/lib/pii";
 // L-P0-11 — Pluggable transactional mail service.
 //
 // `Mailer` interface satisfied by any provider (Resend, SES, Postmark,

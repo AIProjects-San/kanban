@@ -1,64 +1,51 @@
 // ---------------------------------------------------------------------------
-// Next.js instrumentation hook + global error handlers.
+// Next.js instrumentation hook — runs in BOTH Node.js + Edge runtime.
 //
-// Next.js auto-loads `src/instrumentation.ts` (or `instrumentation.ts` at the
-// root) on server startup, BEFORE any request handler runs. We use it to
-// register process-level error handlers so unhandled rejections and uncaught
-// exceptions reach the error reporter instead of disappearing into Next's
-// default handler (which only console.logs them — they never hit Sentry, and
-// the request-id context from AsyncLocalStorage is lost).
-//
-// Why this matters: server-action rejections are caught by `toResult()` and
-// surface as ActionResult errors. But rejections in non-action async paths
-// — the JWT refresh callback (auth.ts), the NextAuth signOut event, the
-// audit-prune cron — fall through to the Node process's default handler.
-// Without these hooks, a wedged DB in the JWT callback would log
-// "UnhandledPromiseRejection" to stdout and the user's session would
-// silently fail to refresh, with no Sentry event ever firing.
-//
-// See https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
+// The Edge runtime does NOT support `process.on()`, `process.exit()`, or
+// `setTimeout` with `.unref()`. We guard ALL Node.js-specific code behind
+// a runtime check. The Edge runtime parses the code but never executes the
+// guarded paths.
 // ---------------------------------------------------------------------------
 
-import { captureError, logError } from "@/lib/observability";
-
 /**
- * Tracks whether the process is mid-shutdown. Set by SIGTERM/SIGINT handlers
- * so `uncaughtException` during graceful drain doesn't force-exit (which
- * would interrupt in-flight requests + trigger k8s crashloop backoff).
+ * Detects whether we're running in the Node.js Runtime (not Edge).
+ * Edge Runtime: `process` exists but `process.versions.node` is undefined.
  */
+function isNodeRuntime(): boolean {
+  try {
+    return typeof (process as { versions?: { node?: string } }).versions?.node === "string";
+  } catch {
+    return false;
+  }
+}
+
 let shuttingDown = false;
 
 /**
- * Next.js calls this once on server startup. We register the global error
- * handlers here (idempotent — if called twice, the second registration
- * replaces the first, which is safe).
+ * Next.js calls this once on server startup.
  */
 export async function register(): Promise<void> {
-  // P1 (production-readiness re-audit) — Server Actions CSRF surface.
-  // In production the operator MUST set SERVER_ACTIONS_ALLOWED_ORIGINS to
-  // their real origin(s). The default fallback in next.config.ts widens to
-  // preview domains (*.space-z.ai, *.fcapp.run) which are shared
-  // infrastructure — cross-tenant CSRF against Server Actions becomes
-  // possible. Refuse to boot here (not in next.config.ts, which also runs
-  // at build time) so production servers fail-fast while builds + dev
-  // remain unaffected.
+  if (!isNodeRuntime()) {
+    // Edge runtime — no-op. The proxy middleware handles its own errors.
+    return;
+  }
+
+  // ---- Node.js runtime only (beyond this point) ----
+
+  // P1 — Server Actions CSRF boot guard.
   if (
     process.env.NODE_ENV === "production" &&
     !process.env.SERVER_ACTIONS_ALLOWED_ORIGINS
   ) {
-    logError(
+    console.error(
       "[boot] FATAL: SERVER_ACTIONS_ALLOWED_ORIGINS is unset in production. " +
         "Set it to your real origin(s) — e.g. https://your-domain.example — " +
-        "so Server Actions reject cross-origin CSRF. The default fallback " +
-        "widens to shared preview domains and is NOT safe for production.",
+        "so Server Actions reject cross-origin CSRF.",
     );
     process.exit(1);
   }
 
-  // P2 (edge-case audit) — validate the value, not just presence. A
-  // wildcard "*" or an entry without a dot (and not localhost) is either
-  // a misconfiguration (Server Actions break) or a security hole (CSRF
-  // wide open, depending on the Next.js version's interpretation of "*").
+  // P2 — validate origins value.
   const origins = (process.env.SERVER_ACTIONS_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -67,59 +54,40 @@ export async function register(): Promise<void> {
     (o) => o === "*" || (!o.includes(".") && o !== "localhost" && !o.startsWith("127.")),
   );
   if (process.env.NODE_ENV === "production" && invalid.length > 0) {
-    logError(
-      `[boot] FATAL: SERVER_ACTIONS_ALLOWED_ORIGINS contains a wildcard or ` +
-        `invalid entry: ${invalid.join(", ")}. Each entry must be a real ` +
-        `origin (e.g. https://your-domain.example) — wildcards are insecure.`,
+    console.error(
+      `[boot] FATAL: SERVER_ACTIONS_ALLOWED_ORIGINS contains invalid entry: ${invalid.join(", ")}.`,
     );
     process.exit(1);
   }
 
-  // P2 (edge-case audit) — track graceful-shutdown state so
-  // uncaughtException during drain doesn't force-exit.
+  // P2 — track graceful-shutdown state.
   const markShuttingDown = () => { shuttingDown = true; };
   process.on("SIGTERM", markShuttingDown);
   process.on("SIGINT", markShuttingDown);
 
-  // P1 (edge-case audit) — wrap handler registration in try/catch so a
-  // throw in one registration doesn't leave the process running with NO
-  // global error handlers (the prior code would skip the second handler
-  // if the first threw, leaving uncaughtException unregistered).
+  // P1 — global error handlers.
   try {
-    // unhandledRejection — a Promise rejected with no .catch() anywhere in
-    // its chain. Almost always a bug; we want it in Sentry.
     process.on("unhandledRejection", (reason: unknown) => {
       const err = reason instanceof Error
         ? reason
         : new Error(`Unhandled rejection: ${JSON.stringify(reason)}`);
-      captureError(err, { source: "unhandledRejection" });
+      // Lazy-import observability to keep the Edge bundle clean.
+      import("@/lib/observability").then(({ captureError }) => {
+        captureError(err, { source: "unhandledRejection" });
+      });
     });
 
-    // uncaughtException — a synchronous throw that escaped all try/catch.
-    // The Node.js docs recommend exiting the process after one of these
-    // (the app may be in an inconsistent state), so we capture + flush
-    // the error to Sentry, then exit non-zero. The container runtime
-    // (Docker/k8s) will restart us.
-    //
-    // P2 (edge-case audit) — skip the forced exit during graceful shutdown
-    // (SIGTERM/SIGINT). The shutdown is already in progress; a forced exit
-    // would interrupt in-flight requests + may trigger k8s crashloop backoff.
     process.on("uncaughtException", (err: Error) => {
-      captureError(err, { source: "uncaughtException" });
-      if (shuttingDown) {
-        // Already draining — log but don't force-exit.
-        logError("[boot] uncaughtException during graceful shutdown (suppressed exit):", err);
-        return;
-      }
-      // Give the Sentry fire-and-forget POST a moment to leave the process
-      // before we exit. The reporter uses keepalive + a 5s AbortSignal, so
-      // 1s is enough for the request to be dispatched.
-      setTimeout(() => process.exit(1), 1000).unref();
+      import("@/lib/observability").then(({ captureError, logError }) => {
+        captureError(err, { source: "uncaughtException" });
+        if (shuttingDown) {
+          logError("[boot] uncaughtException during graceful shutdown:", err);
+          return;
+        }
+        setTimeout(() => process.exit(1), 1000).unref();
+      });
     });
-  } catch (err) {
-    // If process.on itself throws (polyfill shadowing, etc.), log but
-    // don't crash — the app can still serve requests, just without global
-    // error capture.
-    logError("[boot] failed to register global error handlers:", err);
+  } catch {
+    // Swallow — app can still serve requests without global error capture.
   }
 }

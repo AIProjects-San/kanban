@@ -18,25 +18,6 @@
 // ---------------------------------------------------------------------------
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
-
-/**
- * P1 (production-readiness re-audit) — PII hashing helper.
- *
- * Hashes a PII identifier (email, IP, name) into a short, stable, opaque
- * token for logging. Operators can correlate "is this the same user failing
- * repeatedly?" across log lines without retaining the original identifier.
- *
- * Uses SHA-256 truncated to 8 hex chars (32 bits) — enough to disambiguate
- * users within a single workspace, not enough to be a fingerprint outside
- * one. No salt: the goal is correlation, not password-grade hashing. The
- * input never goes to a password cracker — it goes to logs/Sentry, which
- * already see the hash and nothing else.
- */
-export function hashPii(value: string | undefined | null): string {
-  if (!value) return "unknown";
-  return createHash("sha256").update(value).digest("hex").slice(0, 8);
-}
 
 export interface ErrorContext {
   [key: string]: unknown;

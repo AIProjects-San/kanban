@@ -3,7 +3,8 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { createLoginLimiter } from "@/lib/rate-limit-redis";
-import { hashPii, logError, logWarn } from "@/lib/observability";
+import { logError, logWarn } from "@/lib/observability";
+import { hashPii } from "@/lib/pii";
 
 // L-P0-10 — pick the Redis-backed limiter when REDIS_URL + a Redis client
 // are configured, fall back to the in-memory limiter otherwise.
