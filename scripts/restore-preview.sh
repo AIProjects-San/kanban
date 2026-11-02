@@ -39,8 +39,15 @@ export async function GET() {
 }
 EOF
 
-echo "== 3. env: ensure demo password matches scripts/seed.js =="
+echo "== 3. env: ensure demo password + stable NEXTAUTH_SECRET =="
+# NEXT_PUBLIC_DEMO_PASSWORD — the value the seed hashes and the login form expects.
 grep -q NEXT_PUBLIC_DEMO_PASSWORD .env || echo 'NEXT_PUBLIC_DEMO_PASSWORD=fernly123' >> .env
+# NEXTAUTH_SECRET — must be STABLE across recycles. The auth.ts resolver falls back
+# to crypto.randomUUID() when unset, which rotates on every restart and invalidates
+# every existing session JWT (next-auth JWT_SESSION_ERROR "decryption operation failed").
+# Use a fixed non-weak value (the WEAK_SECRET_PREFIX guard in src/lib/auth.ts rejects
+# "fernly-dev-secret*" — this value doesn't match, so it's accepted as a real secret).
+grep -q '^NEXTAUTH_SECRET=' .env || echo 'NEXTAUTH_SECRET=fernly-preview-stable-secret-v1-do-not-use-in-production-32+' >> .env
 wc -c .env
 
 echo "== 4. bun install =="
@@ -50,6 +57,10 @@ echo "== 5. prisma generate =="
 # Route through run-with-env.sh so the provider is resolved from the restored
 # .env (file: URL -> gitignored prisma/schema.local.prisma variant, ADR-008).
 bash scripts/run-with-env.sh ./node_modules/.bin/prisma generate 2>&1 | tail -3
+
+echo "== 5b. push schema + seed (the recycle may have wiped custom.db) =="
+bash scripts/run-with-env.sh ./node_modules/.bin/prisma db push --skip-generate 2>&1 | tail -3
+SEED_DEMO=1 bash scripts/run-with-env.sh node scripts/seed.js 2>&1 | tail -3
 
 echo "== 6. next build (standalone) =="
 bun run build 2>&1 | tail -12
