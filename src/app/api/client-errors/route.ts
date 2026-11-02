@@ -28,21 +28,32 @@ function asString(value: unknown, max = 2000): string | undefined {
 /**
  * P1 (production-readiness re-audit) — origin check. The endpoint is
  * same-origin only: a malicious third-party site can't flood the operator's
- * error tracker with garbage events. We accept requests whose `Origin`
- * (or `Referer` fallback) matches `APP_URL`, and same-origin requests that
- * carry no `Origin` header (browsers always set it on cross-origin POSTs;
- * same-origin POSTs may omit it). When `APP_URL` is unset we fall back to
- * `NEXTAUTH_URL` so dev environments work without extra config.
+ * error tracker with garbage events. When `APP_URL` (or the `NEXTAUTH_URL`
+ * fallback) is set, the request's `Origin` (or `Referer` fallback) must match
+ * it. When neither is configured, the request's own `Host` header is the
+ * reference instead (see the QA-9 note inside) — production MUST still set
+ * APP_URL so the check is pinned to a canonical host.
  */
 function isSameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
   const allowed = process.env.APP_URL || process.env.NEXTAUTH_URL;
   if (!allowed) {
-    // No allowed origin configured — accept only requests with NO Origin
-    // header (same-origin browsers + curl-style probes from the host itself).
-    // This is conservative; production MUST set APP_URL.
-    return !origin;
+    // No allowed origin configured. QA-9: browsers send `Origin` on EVERY
+    // fetch POST (same-origin included), so the old `return !origin`
+    // rejected 100% of real browser reports with 403 whenever APP_URL /
+    // NEXTAUTH_URL were unset (exactly the sandbox / unconfigured-deploy
+    // case — errors were silently never reported). Without a configured
+    // origin, "same-origin" is instead judged against the request's own
+    // host: a browser cannot make a cross-site POST whose Origin host
+    // equals the target Host, so this keeps third-party floods out while
+    // letting legitimate reports through. Origin-less probes (curl) pass.
+    if (!origin) return true;
+    try {
+      return new URL(origin).host === req.headers.get("host");
+    } catch {
+      return false;
+    }
   }
   let allowedHost: string;
   try {

@@ -355,14 +355,58 @@ export async function decideLeaveRequest(input: {
     const requester = await db.user.findUnique({ where: { id: request.userId }, select: { name: true } });
 
     if (data.decision === "APPROVE") {
-      // `used` only ever changes here and in cancel — transactional.
+      // `used` only ever changes here and in cancel — transactionally, and
+      // always by exactly the request's `days`.
+      //
+      // QA-1 (overdraft guard): the balance is only re-validated at approval
+      // time, INSIDE the transaction. At submission each of two
+      // non-overlapping requests can individually pass the check, so the
+      // second approval must refuse (not blindly debit) once the first one
+      // has consumed the remaining days. QA-1b: the debit is an atomic
+      // `{ increment }` — the old read-then-write computed `used` outside the
+      // transaction and could lose a concurrent update.
       const year = request.startDate.getUTCFullYear();
-      const policy = await db.leavePolicy.findUnique({ where: { leaveTypeId: request.leaveTypeId } });
-      const balance = await getOrCreateBalance(request.userId, request.leaveTypeId, year, policy?.annualDays ?? 0);
       await db.$transaction(async (tx) => {
+        const row = await tx.leaveBalance.findUnique({
+          where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
+        });
+        // The three numbers that decide the guard. When the row was never
+        // materialized (e.g. entitled was 0 at submission and the policy was
+        // raised since), create it from the policy default. If the create
+        // loses a unique-trio race to a concurrent writer, re-read the
+        // winner's row — never assume zero usage (fail closed).
+        let entitled = row?.entitled;
+        let carriedOver = row?.carriedOver;
+        let used = row?.used;
+        if (entitled === undefined || carriedOver === undefined || used === undefined) {
+          const policy = await tx.leavePolicy.findUnique({ where: { leaveTypeId: request.leaveTypeId } });
+          entitled = policy?.annualDays ?? 0;
+          carriedOver = 0;
+          used = 0;
+          try {
+            await tx.leaveBalance.create({
+              data: { userId: request.userId, leaveTypeId: request.leaveTypeId, year, entitled, carriedOver, used },
+            });
+          } catch {
+            const winner = await tx.leaveBalance.findUnique({
+              where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
+            });
+            if (winner) {
+              entitled = winner.entitled;
+              carriedOver = winner.carriedOver;
+              used = winner.used;
+            }
+          }
+        }
+        const available = entitled + carriedOver - used;
+        if (request.days > available) {
+          throw new AuthorizationError(
+            `Insufficient balance: ${request.days} day(s) requested, only ${available} day(s) left for ${type?.name ?? "this leave type"}.`,
+          );
+        }
         await tx.leaveBalance.update({
           where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
-          data: { used: balance.used + request.days },
+          data: { used: { increment: request.days } },
         });
         await tx.leaveRequest.update({
           where: { id: request.id },
@@ -433,16 +477,18 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
 
     const wasApproved = request.status === "APPROVED";
     if (wasApproved) {
-      // Give the days back — transactional with the status flip.
+      // Give the days back — transactional with the status flip, and atomic
+      // (QA-1b): decrement by at most what is actually used so a drifted
+      // balance can never go below zero.
       const year = request.startDate.getUTCFullYear();
-      const balance = await db.leaveBalance.findUnique({
-        where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
-      });
       await db.$transaction(async (tx) => {
+        const balance = await tx.leaveBalance.findUnique({
+          where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
+        });
         if (balance) {
           await tx.leaveBalance.update({
             where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
-            data: { used: Math.max(0, balance.used - request.days) },
+            data: { used: { decrement: Math.min(request.days, balance.used) } },
           });
         }
         await tx.leaveRequest.update({

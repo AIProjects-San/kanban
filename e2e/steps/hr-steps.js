@@ -482,3 +482,18 @@ Then("the time log submission should be rejected with an error mentioning approv
     "a time entry was created although the date falls on approved leave",
   );
 });
+
+// Exposed for the QA-hardening steps (e2e/steps/hr-qa-steps.js) — the date
+// math and form-driving helpers must stay identical to the ones this file
+// uses, or the two suites would drift apart.
+module.exports = {
+  iso,
+  todayUTC,
+  mondayAtLeast,
+  dayOffset,
+  setInputValue,
+  waitForToast,
+  rowWithReason,
+  submitRange,
+  showAllFilterIfPresent,
+};

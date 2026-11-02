@@ -187,4 +187,53 @@ describe("POST /api/client-errors (route)", () => {
       delete process.env.APP_URL;
     }
   });
+
+  // -------------------------------------------------------------------------
+  // QA-9 — the no-config fallback. Browsers send `Origin` on EVERY fetch
+  // POST (same-origin included), so the old `return !origin` rejected 100%
+  // of real browser error reports with 403 whenever APP_URL/NEXTAUTH_URL
+  // were unset — the bridge was silently dead in exactly the environments
+  // that had never configured a canonical URL. The fallback must instead
+  // compare Origin against the request's own Host.
+  // -------------------------------------------------------------------------
+
+  it("QA-9: accepts a same-origin POST that carries Origin when nothing is configured", async () => {
+    const { captureError } = await import("@/lib/observability");
+    const { POST } = await import("@/app/api/client-errors/route");
+    // What a real browser sends: fetch POST to the page's own origin always
+    // includes an Origin header equal to that origin.
+    const req = new Request("http://localhost:3000/api/client-errors", {
+      method: "POST",
+      headers: { origin: "http://localhost:3000", host: "localhost:3000" },
+      body: JSON.stringify({ message: "boom" }),
+    });
+    const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+    expect(res.status).toBe(204);
+    expect(captureError).toHaveBeenCalledTimes(1);
+  });
+
+  it("QA-9: still rejects a cross-origin POST when nothing is configured", async () => {
+    const { captureError } = await import("@/lib/observability");
+    const { POST } = await import("@/app/api/client-errors/route");
+    const req = new Request("http://localhost:3000/api/client-errors", {
+      method: "POST",
+      headers: { origin: "https://evil.example", host: "localhost:3000" },
+      body: JSON.stringify({ message: "flood" }),
+    });
+    const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+    expect(res.status).toBe(403);
+    expect(captureError).not.toHaveBeenCalled();
+  });
+
+  it("QA-9: Origin-less probes (curl-style) still pass when nothing is configured", async () => {
+    const { captureError } = await import("@/lib/observability");
+    const { POST } = await import("@/app/api/client-errors/route");
+    const req = new Request("http://localhost:3000/api/client-errors", {
+      method: "POST",
+      body: JSON.stringify({ message: "boom" }),
+    });
+    const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+    expect(res.status).toBe(204);
+    expect(captureError).toHaveBeenCalledTimes(1);
+  });
 });

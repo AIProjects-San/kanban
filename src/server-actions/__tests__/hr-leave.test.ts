@@ -331,8 +331,10 @@ describe("decideLeaveRequest", () => {
 
     const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE", note: "Enjoy" });
     expect(res.ok).toBe(true);
+    // Atomic increment (QA-1b): the value is computed by the DB, not by a
+    // read-modify-write outside the transaction (lost-update race).
     expect(db.leaveBalance.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { used: 2 } }),
+      expect.objectContaining({ data: { used: { increment: 2 } } }),
     );
     expect(db.leaveRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "APPROVED", decidedById: "u-mgr" }) }),
@@ -379,6 +381,60 @@ describe("decideLeaveRequest", () => {
     const res = await decideLeaveRequest({ requestId: "lr-ghost", decision: "APPROVE" });
     expect(res.ok).toBe(false);
   });
+
+  // -----------------------------------------------------------------------
+  // QA-1 — overdraft guard. Balance is validated at SUBMISSION only; two
+  // non-overlapping requests both pass it, so approving the second one
+  // after the first consumed the balance must be refused, not blindly
+  // debited (which showed a negative "days left" to the member).
+  // -----------------------------------------------------------------------
+
+  it("QA-1: refuses approval when the remaining balance no longer covers the request", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, days: 6 });
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    // Entitled 20, 15 already used by a previously approved request → 5 left.
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 15 });
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/insufficient balance/i);
+    expect(res.ok === false && res.error).toMatch(/5 day/i);
+    // Neither the balance nor the request may change on the refused path.
+    expect(db.leaveBalance.update).not.toHaveBeenCalled();
+    expect(db.leaveRequest.update).not.toHaveBeenCalled();
+  });
+
+  it("QA-1: approves exactly at the remaining balance (boundary is inclusive)", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, days: 5 });
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 15 });
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveBalance.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { used: { increment: 5 } } }),
+    );
+  });
+
+  it("QA-1: materializes a missing balance row inside the transaction before debiting", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveBalance.findUnique.mockResolvedValue(null); // never materialized
+    db.leavePolicy.findUnique.mockResolvedValue({ annualDays: 10 });
+    db.leaveBalance.create.mockResolvedValue({});
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveBalance.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ entitled: 10, used: 0 }) }),
+    );
+    expect(db.leaveBalance.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { used: { increment: 2 } } }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -403,8 +459,9 @@ describe("cancelLeaveRequest", () => {
     db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 2 });
     const res = await cancelLeaveRequest({ requestId: "lr-1" });
     expect(res.ok).toBe(true);
+    // Atomic decrement (QA-1b) — the restore mirrors the approve increment.
     expect(db.leaveBalance.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { used: 0 } }),
+      expect.objectContaining({ data: { used: { decrement: 2 } } }),
     );
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({ action: "leave.cancelled", detail: expect.stringContaining("balance restored") }),
@@ -424,6 +481,18 @@ describe("cancelLeaveRequest", () => {
     db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, status: "REJECTED" });
     const res = await cancelLeaveRequest({ requestId: "lr-1" });
     expect(res.ok).toBe(false);
+  });
+
+  it("QA-1: floors the balance restore at zero when used is already lower than the request's days", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    // Hand-edited / drift state: only 1 day used but the request debited 2.
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, status: "APPROVED" });
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 1 });
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveBalance.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { used: { decrement: 1 } } }),
+    );
   });
 });
 

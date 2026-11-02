@@ -183,6 +183,7 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
         onClose={() => setShowForm(false)}
         types={types}
         balances={balances}
+        balanceYear={year}
         onCreated={async () => {
           setShowForm(false);
           await load();
@@ -221,12 +222,14 @@ function CancelRequestButton({
 }
 
 function RequestFormModal({
-  open, onClose, types, balances, onCreated,
+  open, onClose, types, balances, balanceYear, onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   types: LeaveTypeT[];
   balances: LeaveBalanceT[];
+  /** The calendar year `balances` were loaded for (the view's year selector). */
+  balanceYear: number;
   onCreated: () => Promise<void>;
 }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -240,6 +243,14 @@ function RequestFormModal({
   const selectedBalance = balances.find((b) => b.leaveTypeId === typeId);
   const days = useMemo(() => workingDaysBetween(startDate, endDate), [startDate, endDate]);
   const endBeforeStart = Boolean(startDate && endDate && endDate < startDate);
+  // QA-7: the balances in `balances` are for `balanceYear` (the view's
+  // year). A range starting in a different year is validated by the server
+  // against THAT year's fresh entitlement — the client-side balance guard
+  // must not apply to it. (QA-8 regression: this originally referenced the
+  // parent's `year` state directly, which is not in scope here — the whole
+  // Leave view crashed with `ReferenceError: year is not defined`.)
+  const startYear = startDate ? Number(startDate.slice(0, 4)) : balanceYear;
+  const crossYear = Boolean(startDate) && startYear !== balanceYear;
 
   return (
     <Modal open={open} onClose={onClose} title="Request leave">
@@ -339,7 +350,12 @@ function RequestFormModal({
                   ? "That range contains no working days (Mon–Fri)"
                   : "Pick a date range"}
           </span>
-          {selectedBalance && days > 0 && (
+          {selectedBalance && days > 0 && crossYear && (
+            <span className="text-muted-foreground tabular-nums">
+              {startYear} entitlement applies — the server validates on submit
+            </span>
+          )}
+          {selectedBalance && days > 0 && !crossYear && (
             <span className={cn("tabular-nums", days > selectedBalance.available ? "text-destructive font-medium" : "text-muted-foreground")}>
               {days} of {selectedBalance.available} available
             </span>
@@ -351,7 +367,16 @@ function RequestFormModal({
           <button
             type="submit"
             className="f-btn f-btn-primary f-btn-sm"
-            disabled={busy || days === 0 || endBeforeStart || (Boolean(selectedBalance) && days > (selectedBalance?.available ?? 0))}
+            disabled={
+              busy ||
+              days === 0 ||
+              endBeforeStart ||
+              // QA-7: the loaded balance is for the CURRENT year — a range
+              // that starts in a different year is validated server-side
+              // against that year's fresh entitlement, so the client must
+              // not block it (it only showed a misleading "X of Y available").
+              (Boolean(selectedBalance) && !crossYear && days > (selectedBalance?.available ?? 0))
+            }
           >
             {busy ? "Submitting…" : "Submit request"}
           </button>
