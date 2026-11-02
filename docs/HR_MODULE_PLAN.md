@@ -1,6 +1,20 @@
 # HR Module — Implementation Plan
 
-**Date:** 2026-11-02 · **Status:** APPROVED (scoping answers recorded below) · **Owner:** Fernly workspace
+**Date:** 2026-11-02 · **Status:** DELIVERED (all four features) · **Owner:** Fernly workspace
+
+> **Delivery record** — every feature below shipped through the full pipeline
+> (plan → review → dev → BDD → unit + automation suites → complete e2e →
+> review → commit → push):
+>
+> | Feature | Commit |
+> |---|---|
+> | F1 — Foundation + leave management | `18db279` |
+> | F2 — Employee directory | `b2bf437` |
+> | F3 — Performance reviews | `10f789f` |
+> | F4 — Onboarding | `f9529ca` |
+>
+> Verified green on the full suite: 1009 unit tests (+ coverage gates), 49
+> e2e scenarios / 345 steps, lint + typecheck clean.
 
 This plan follows the repo's per-feature pipeline: **Plan → Review plan → development →
 BDD test cases → update/create test suite → automation test suite → run complete e2e →
