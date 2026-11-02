@@ -324,3 +324,24 @@ export const leaveTypeSchema = z.object({
 }).strict();
 
 export const updateLeaveTypeSchema = leaveTypeSchema.partial();
+
+// ---------------------------------------------------------------------------
+// HR module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
+// `notes` is HR-only and excluded from the self-service schema on purpose.
+// ---------------------------------------------------------------------------
+
+const isoDateish = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be yyyy-mm-dd.").nullable().optional();
+
+export const employeeProfileSchema = z.object({
+  jobTitle: z.string().trim().max(100).optional(),
+  department: z.enum(["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"]).optional(),
+  hireDate: isoDateish,
+  phone: z.string().trim().max(40).optional(),
+  location: z.string().trim().max(100).optional(),
+  emergencyContactName: z.string().trim().max(100).optional(),
+  emergencyContactPhone: z.string().trim().max(40).optional(),
+  skills: z.string().trim().max(500).optional(),
+  notes: z.string().trim().max(2000).optional(),
+}).strict();
+
+export const employeeProfileAdminSchema = employeeProfileSchema; // notes included above

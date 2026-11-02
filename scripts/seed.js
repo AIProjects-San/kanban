@@ -1215,6 +1215,50 @@ async function main() {
 
   console.log(`  ✓ HR leave: 3 types + policies, balances for ${allUsers.length} users, ${leaveRequests.length} requests across all statuses (YEAR ${YEAR})`);
 
+  // -------------------------------------------------------------------------
+  // HR module seed — employee directory (docs/HR_MODULE_PLAN.md §5).
+  // Job titles mirror the team roster; manager display resolves from the
+  // org chart (User.managerId) at read time, not from these rows.
+  // -------------------------------------------------------------------------
+  await db.employeeProfile.deleteMany();
+  const profileSeed = [
+    ["Mira Hale", "Founder & Workspace Admin", "MANAGEMENT", "2024-01-15", "Auckland, NZ", "+64 21 555 0001", "Strategy, hiring, coffee sourcing"],
+    ["Ingrid Solberg", "Engineering Manager", "MANAGEMENT", "2024-03-04", "Oslo, Norway", "+47 405 55 002", "Team leadership, delivery, mentoring"],
+    ["Theo Vance", "Senior Frontend Engineer", "ENGINEERING", "2024-06-10", "Auckland, NZ", "+64 21 555 0003", "React, TypeScript, accessibility"],
+    ["Lena Okafor", "Backend Engineer", "ENGINEERING", "2024-08-19", "London, UK", "+44 7700 900004", "APIs, Postgres, performance tuning"],
+    ["Rafael Costa", "DevOps Engineer", "ENGINEERING", "2025-01-27", "São Paulo, Brazil", "+55 11 95555 0005", "Kubernetes, Terraform, observability"],
+    ["Yuki Tanaka", "Product Designer", "DESIGN", "2024-05-06", "Tokyo, Japan", "+81 90 5555 0006", "Design systems, prototyping, motion"],
+    ["Amara Diallo", "UX Researcher", "DESIGN", "2024-10-14", "Dakar, Senegal", "+221 77 555 0007", "Interviews, usability testing, insights"],
+    ["Soren Lindqvist", "QA Engineer", "ENGINEERING", "2025-02-03", "Stockholm, Sweden", "+46 70 555 0008", "Test automation, exploratory testing"],
+    ["Priya Nair", "Marketing Lead", "MARKETING", "2024-04-22", "Kolkata, India", "+91 98xxxxxxx9", "Brand, storytelling, campaigns"],
+    ["Marcus Bell", "Content Strategist", "MARKETING", "2025-03-17", "New York, USA", "+1 555 010 0010", "Copywriting, editorial planning"],
+    ["Hana Park", "Visual Designer", "DESIGN", "2024-11-11", "Seoul, South Korea", "+82 10 5550 0011", "Illustration, brand identity, typography"],
+    ["Diego Morales", "Mobile Engineer", "ENGINEERING", "2025-04-08", "Mexico City, Mexico", "+52 55 5555 0012", "React Native, offline-first, push"],
+  ];
+  let profileCount = 0;
+  for (const [name, jobTitle, department, hireDate, location, phone, skills] of profileSeed) {
+    const uid = userByName.get(name);
+    if (!uid) continue;
+    await db.employeeProfile.create({
+      data: {
+        userId: uid,
+        jobTitle,
+        department,
+        hireDate: new Date(`${hireDate}T00:00:00.000Z`),
+        location,
+        phone,
+        skills,
+        emergencyContactName: "",
+        emergencyContactPhone: "",
+        notes: "",
+      },
+    });
+    profileCount += 1;
+  }
+  console.log(`  ✓ HR directory: ${profileCount} employee profiles seeded`);
+
+
+
   // Deterministic task for Rafael (time-guard e2e — hr-leave.feature): a
   // task assigned to HIM in a real project, so the task modal's time-log
   // form is reachable when signed in as rafael@fernly.app, and his approved

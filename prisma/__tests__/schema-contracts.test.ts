@@ -181,6 +181,13 @@ describe("HR module leave models are declared", () => {
     expect(modelBlock("LeavePolicy")).toMatch(/leaveTypeId\s+String\s+@unique/);
   });
 
+  it("EmployeeProfile is 1:1 with the user (unique userId) — feature 2", () => {
+    const block = modelBlock("EmployeeProfile");
+    expect(block).toMatch(/userId\s+String\s+@unique/);
+    expect(block).toMatch(/jobTitle\s+String\s+@default\(""\)/);
+    expect(block).toMatch(/hireDate\s+DateTime\?/);
+  });
+
   it("the hr_leave migration exists with a down.sql rollback (repo convention)", () => {
     const dir = resolve(repoRoot, "prisma", "migrations", "20261103000000_hr_leave");
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);

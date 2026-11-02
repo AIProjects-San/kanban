@@ -18,6 +18,8 @@ const VIEW_HEADINGS = {
   Calendar: "Calendar",
   Leave: "Leave",
   HR: "HR",
+  Settings: "Settings",
+  Help: "Help",
 };
 
 // Kanban column labels -> the data-status the app stamps on each column

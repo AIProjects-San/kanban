@@ -22,6 +22,7 @@ import {
   createLeaveType,
   updateLeaveType,
 } from "@/server-actions/hr-leave";
+import { DirectoryTab } from "./hr-directory";
 import { useApp } from "@/store/app-store";
 
 interface CurrentUser {
@@ -30,7 +31,7 @@ interface CurrentUser {
   role: string;
 }
 
-type Tab = "requests" | "types";
+type Tab = "requests" | "types" | "directory";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
@@ -93,6 +94,9 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
             <Settings2 size={13} /> Types &amp; Policies
           </TabButton>
         )}
+        <TabButton active={tab === "directory"} onClick={() => setTab("directory")}>
+          <Briefcase size={13} /> Directory
+        </TabButton>
       </div>
 
       {tab === "requests" && (
@@ -105,6 +109,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
       {tab === "types" && canAdmin && (
         <TypesTab types={types} onChanged={load} />
       )}
+      {tab === "directory" && <DirectoryTab />}
     </div>
   );
 }

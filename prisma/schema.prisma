@@ -711,3 +711,25 @@ model LeaveBalance {
   @@unique([userId, leaveTypeId, year])
   @@index([userId])
 }
+
+// HR Module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
+// One row per user (userId unique): structured job + contact data. The
+// manager display comes from the existing User.managerId org chart — this
+// table adds NO manager field, avoiding a second source of truth.
+model EmployeeProfile {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  jobTitle             String    @default("")
+  department           String    @default("ENGINEERING") // mirrors Department union in lib/types
+  hireDate             DateTime?
+  phone                String    @default("")
+  location             String    @default("")
+  emergencyContactName String    @default("")
+  emergencyContactPhone String   @default("")
+  skills               String    @default("") // free-text, comma-separated
+  notes                String    @default("") // HR-visibility notes
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([department])
+}

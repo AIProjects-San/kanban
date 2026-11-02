@@ -11,6 +11,7 @@ import { updateProfile, changePassword, updateUserSettings } from "@/server-acti
 import { exportMyData } from "@/server-actions/data-export";
 import { actionErrorMessage } from "@/lib/action-errors";
 import { Section } from "../ui/section";
+import { EmployeeProfileSection } from "./hr-directory";
 import { Field } from "../ui/field";
 import { PasswordInput } from "../ui/password-input";
 import { AvatarColorPicker } from "../ui/avatar-color-picker";
@@ -151,6 +152,9 @@ export function SettingsView({ user }: SettingsViewProps) {
           <button onClick={saveProfile} className="f-btn f-btn-primary f-btn-sm">Save changes</button>
         </div>
       </Section>
+
+      {/* HR module — self-service employee profile (docs/HR_MODULE_PLAN.md §5) */}
+      <EmployeeProfileSection />
 
       {/* Security — change password */}
       <SecuritySection userId={user.id} email={user.email} />

@@ -65,6 +65,25 @@ export interface LeaveRequestT {
   createdAt: string;
 }
 
+// HR module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
+export interface EmployeeProfileT {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  managerName: string | null;
+  jobTitle: string;
+  department: "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT";
+  hireDate: string | null;
+  phone: string;
+  location: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  skills: string;
+  notes: string;
+}
+
 export interface LeaveBalanceT {
   leaveTypeId: string;
   typeName: string;
