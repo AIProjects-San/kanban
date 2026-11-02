@@ -8,6 +8,10 @@ import {
   sendMessageSchema,
   createReminderSchema,
   emailSchema,
+  employeeProfileSchema,
+  employeeProfileSelfSchema,
+  createLeaveRequestSchema,
+  createReviewSchema,
   parseOrThrow,
   validationError,
 } from "@/lib/validation";
@@ -177,5 +181,86 @@ describe("validationError", () => {
     expect(e).toBeInstanceOf(Error);
     expect(e.name).toBe("ValidationError");
     expect(e.message).toBe("bad input");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// QA-10 / QA-10b — employee profile schemas (HR audit)
+// ---------------------------------------------------------------------------
+
+describe("employeeProfileSchema hireDate (QA-10b)", () => {
+  it("accepts real calendar dates", () => {
+    expect(employeeProfileSchema.safeParse({ hireDate: "2026-02-28" }).success).toBe(true);
+    expect(employeeProfileSchema.safeParse({ hireDate: "2020-02-29" }).success).toBe(true); // leap year
+  });
+
+  it("rejects impossible calendar dates that pass the yyyy-mm-dd regex", () => {
+    for (const bad of ["2026-02-30", "2026-13-01", "9999-99-99", "2026-00-10", "2026-04-31"]) {
+      const res = employeeProfileSchema.safeParse({ hireDate: bad });
+      expect(res.success).toBe(false);
+    }
+  });
+
+  it("still accepts null (clearing) and undefined (omitting)", () => {
+    expect(employeeProfileSchema.safeParse({ hireDate: null }).success).toBe(true);
+    expect(employeeProfileSchema.safeParse({}).success).toBe(true);
+  });
+});
+
+describe("employeeProfileSelfSchema (QA-10)", () => {
+  it("accepts exactly the contact fields", () => {
+    const res = employeeProfileSelfSchema.safeParse({
+      phone: "+64 21 555 0003",
+      location: "Auckland, NZ",
+      emergencyContactName: "Ada",
+      emergencyContactPhone: "+64 9 555 0111",
+      skills: "React, TypeScript",
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it("rejects every HR-owned field", () => {
+    for (const smuggle of [
+      { jobTitle: "CTO" },
+      { department: "MANAGEMENT" },
+      { hireDate: "2020-01-01" },
+      { notes: "self-promoted" },
+    ]) {
+      expect(employeeProfileSelfSchema.safeParse(smuggle).success).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// QA-11b — the leave/review date schemas share the same real-calendar-date
+// refinement (a regex-only check let "2026-02-30" through, which either
+// blew up at the Prisma write or silently compared as NaN).
+// ---------------------------------------------------------------------------
+
+describe("createLeaveRequestSchema dates (QA-11b)", () => {
+  it("rejects impossible calendar dates", () => {
+    for (const bad of ["2026-02-30", "2026-13-01", "2026-04-31"]) {
+      const res = createLeaveRequestSchema.safeParse({ leaveTypeId: "c" + "x".repeat(24), startDate: bad, endDate: "2026-03-01" });
+      expect(res.success).toBe(false);
+    }
+    const badEnd = createLeaveRequestSchema.safeParse({ leaveTypeId: "c" + "x".repeat(24), startDate: "2026-03-01", endDate: "2026-02-30" });
+    expect(badEnd.success).toBe(false);
+  });
+
+  it("accepts real dates including leap days", () => {
+    const res = createLeaveRequestSchema.safeParse({ leaveTypeId: "c" + "x".repeat(24), startDate: "2028-02-29", endDate: "2028-03-01" });
+    expect(res.success).toBe(true);
+  });
+});
+
+describe("createReviewSchema dates (QA-11b)", () => {
+  it("rejects impossible calendar dates", () => {
+    const res = createReviewSchema.safeParse({ userId: "c" + "x".repeat(24), title: "Cycle", periodStart: "2026-02-30", periodEnd: "2026-12-31" });
+    expect(res.success).toBe(false);
+  });
+
+  it("accepts a real period", () => {
+    const res = createReviewSchema.safeParse({ userId: "c" + "x".repeat(24), title: "Cycle", periodStart: "2026-01-01", periodEnd: "2026-12-31" });
+    expect(res.success).toBe(true);
   });
 });

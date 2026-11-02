@@ -50,6 +50,7 @@ import {
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Ada", email: "ada@x.co" };
 const MANAGER_AUTH = { userId: "u-mgr", role: "MANAGER" as const, name: "Ingrid", email: "ingrid@x.co" };
+const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
 const MEMBER_AUTH = { userId: "u-theo", role: "MEMBER" as const, name: "Theo", email: "theo@x.co" };
 
 const DRAFT_REVIEW = {
@@ -212,6 +213,23 @@ describe("decideReview", () => {
     const res = await decideReview({ reviewId: "pr-1", managerComment: "x", managerRating: 0 });
     expect(res.ok).toBe(false);
     expect(db.performanceReview.update).not.toHaveBeenCalled();
+  });
+
+  // QA-11 — plan §6: "Reviewers must be in the subject's manager chain (or
+  // ADMIN/HR)". The original ADMIN-only short-circuit in assertReviewer
+  // rejected HR even though the RBAC matrix grants HR review:manage.
+  it("QA-11: HR completes a review without being in the subject's chain", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.performanceReview.findUnique.mockResolvedValue(SUBMITTED);
+    // Remy (HR) is NOT in Theo's chain — the old code rejected this call.
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    const res = await decideReview({ reviewId: "pr-1", managerComment: "HR-organized cycle.", managerRating: 4 });
+    expect(res.ok).toBe(true);
+    expect(db.performanceReview.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "REVIEWED", reviewedById: "u-hr", managerRating: 4 }),
+      }),
+    );
   });
 });
 

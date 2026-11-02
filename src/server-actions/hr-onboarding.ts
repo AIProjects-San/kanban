@@ -213,6 +213,20 @@ export async function addTask(input: {
       throw new AuthorizationError("This checklist is already complete — create a follow-up checklist instead.");
     }
 
+    // QA-12: an assignee, when given, must be a real active user — the old
+    // code accepted any cuid-shaped id, so a task could be assigned to a
+    // nonexistent (or soft-deleted) user: nobody could ever tick it and the
+    // UI rendered a blank assignee.
+    if (data.assigneeId) {
+      const assignee = await db.user.findUnique({
+        where: { id: data.assigneeId },
+        select: { id: true, deletedAt: true },
+      });
+      if (!assignee || assignee.deletedAt) {
+        throw new AuthorizationError("Assignee not found.");
+      }
+    }
+
     const last = await db.onboardingTask.findFirst({
       where: { checklistId: checklist.id },
       orderBy: { order: "desc" },

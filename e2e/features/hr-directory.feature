@@ -11,7 +11,7 @@ Feature: HR employee directory
     When I sign in as "manager@fernly.app" with the demo password
     And I open the "HR" view
     And I open the "Directory" tab
-    Then the directory should show 12 profiles
+    Then the directory should show 13 profiles
     And the directory card for "Theo Vance" should show manager "Mira Hale"
 
   Scenario: Directory search narrows the roster
@@ -35,11 +35,17 @@ Feature: HR employee directory
     And I edit "Theo Vance"'s profile setting job title to "Lead Frontend Engineer"
     Then the directory card for "Theo Vance" should show job title "Lead Frontend Engineer"
 
-  Scenario: A member self-serves their employee profile in Settings
+  Scenario: A member self-serves their contact fields — job data stays HR-owned
+    The plan (docs/HR_MODULE_PLAN.md §5) scopes self-service to CONTACT
+    fields; jobTitle/department/hireDate are HR-owned. The settings card
+    shows them read-only, and saving contact fields must never touch them.
     When I sign in as "member@fernly.app" with the demo password
     And I open the "Settings" view
-    And I set my employee profile job title to "Principal Frontend Engineer"
-    Then my employee profile should show job title "Principal Frontend Engineer"
+    Then my employee profile should show job data as read-only
+    When I set my employee profile phone to "+64 21 555 0999"
+    And I reload and reopen the Settings view
+    Then my employee profile should show phone "+64 21 555 0999"
+    And my employee profile should show job data as read-only
 
   Scenario: A member cannot reach the directory at all
     When I sign in as "member@fernly.app" with the demo password

@@ -126,10 +126,10 @@ When("I edit {string}'s profile setting job title to {string}", async function (
   }
 });
 
-When("I set my employee profile job title to {string}", async function (title) {
+When("I set my employee profile phone to {string}", async function (phone) {
   const driver = await this.getDriver();
-  // The Settings view's employee-profile card: its first text input after
-  // the "Employee profile" heading is the job title.
+  // The Settings view's employee-profile card: job data is read-only
+  // (QA-10), so the FIRST text input in the card is the phone field.
   const section = await driver.wait(
     until.elementLocated(
       By.xpath(`//div[contains(@class, "f-card")][.//h2[contains(text(), "Employee profile")]]`),
@@ -137,19 +137,81 @@ When("I set my employee profile job title to {string}", async function (title) {
     10_000,
     "employee profile section not found in settings",
   );
-  const jobInput = await section.findElement(By.xpath(`.//input[1]`));
-  await jobInput.clear();
-  await jobInput.sendKeys(title);
+  // NOTE: scope the input lookup to the SECTION — a driver-level
+  // `.//input[1]` resolves against the whole document (the first input on
+  // the Settings page), which silently typed the phone number into the
+  // wrong field and made this scenario fail only after a fresh re-seed
+  // (before that, the DB already held the expected value from a probe run).
+  const phoneInput = await section.findElement(By.xpath(`.//input[1]`));
+  await phoneInput.clear();
+  await phoneInput.sendKeys(phone);
   const save = await section.findElement(By.xpath(`.//button[contains(., "Save employee profile")]`));
   await save.click();
-  await driver.sleep(1_200);
+  // Wait for the server action to COMPLETE (the success toast) — a fixed
+  // sleep could reload the page while the POST is still in flight (dev
+  // cold-compiles the action module on first call), silently losing the
+  // save when the page unloads.
+  const { waitForToast } = require("./hr-steps");
+  await waitForToast(driver, "Employee profile saved");
 });
 
-Then("my employee profile should show job title {string}", async function (title) {
+When("I reload and reopen the Settings view", async function () {
   const driver = await this.getDriver();
-  const section = await driver.findElement(
-    By.xpath(`//div[contains(@class, "f-card")][.//h2[contains(text(), "Employee profile")]]`),
+  // A hard reload (not client-side navigation) so the persisted values are
+  // re-fetched from the server — proving the save actually stuck.
+  await driver.get(this.baseUrl || "http://localhost:3000");
+  await driver.sleep(1_500);
+  const body = await driver.findElement(By.css("body"));
+  for (let i = 0; i < 10; i++) {
+    await body.sendKeys("g", "s");
+    await driver.sleep(800);
+    const found = await driver.findElements(
+      By.xpath(`//div[contains(@class, "f-card")][.//h2[contains(text(), "Employee profile")]]`),
+    );
+    if (found.length > 0) return;
+  }
+  throw new Error("Settings view did not render the employee profile card after reload");
+});
+
+Then("my employee profile should show job data as read-only", async function () {
+  const driver = await this.getDriver();
+  const section = await driver.wait(
+    until.elementLocated(
+      By.xpath(`//div[contains(@class, "f-card")][.//h2[contains(text(), "Employee profile")]]`),
+    ),
+    10_000,
+    "employee profile section not found in settings",
   );
-  const jobInput = await section.findElement(By.xpath(`.//input[1]`));
-  assert.strictEqual(await jobInput.getAttribute("value"), title, "self-service job title did not persist");
+  // QA-10: the job-data strip exists, is not an input, and carries the
+  // read-only testids.
+  const roTitle = await driver.wait(
+    until.elementLocated(By.css("[data-testid='ro-job-title']")),
+    10_000,
+    "read-only job title element not found — job data became editable again?",
+  );
+  const tag = await roTitle.getTagName();
+  assert.strictEqual(tag, "span", `job title is editable (${tag}), expected a read-only span`);
+  const jobInputs = await section.findElements(
+    By.xpath(`.//input[@placeholder="e.g. Senior Frontend Engineer"]`),
+  );
+  assert.strictEqual(jobInputs.length, 0, "a job-title input is still present in the self-service card");
+  const deptSelects = await section.findElements(By.css("select"));
+  assert.strictEqual(deptSelects.length, 0, "a department select is still present in the self-service card");
+});
+
+Then("my employee profile should show phone {string}", async function (phone) {
+  const driver = await this.getDriver();
+  // Re-locate the card on EVERY poll — the section's children are replaced
+  // when the async profile fetch resolves (loading → form), which can go
+  // stale mid-poll.
+  await driver.wait(
+    async () => {
+      const section = await driver.findElement(
+        By.xpath(`//div[contains(@class, "f-card")][.//h2[contains(text(), "Employee profile")]]`),
+      );
+      return (await section.findElement(By.xpath(`.//input[1]`)).getAttribute("value")) === phone;
+    },
+    10_000,
+    "saved phone did not persist after reload",
+  );
 });

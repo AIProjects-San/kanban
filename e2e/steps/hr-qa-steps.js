@@ -69,6 +69,56 @@ Before({ tags: "@hr-qa" }, async function () {
 });
 
 /**
+ * Read the CURRENT available-days number from a balance card. The QA
+ * scenarios assert RELATIVE deltas ("dropped by 12") instead of absolute
+ * numbers — the seeded balance differs between a fresh seed (20 available)
+ * and the state left by the hr-leave feature that runs earlier in the full
+ * suite (18 available), and the scenario must hold in BOTH.
+ */
+async function readBalanceAvailable(driver, typeName) {
+  await driver.wait(
+    async () =>
+      (await driver.findElements(
+        By.xpath(`//div[contains(@class, "f-card")][contains(., "${typeName}")]//*[@data-testid='balance-available']`),
+      )).length > 0,
+    10_000,
+    `balance card for "${typeName}" not found`,
+  );
+  const el = await driver.findElement(
+    By.xpath(`//div[contains(@class, "f-card")][contains(., "${typeName}")]//*[@data-testid='balance-available']`),
+  );
+  return Number((await el.getText()).trim());
+}
+
+Then("I note the current leave balance for {string}", async function (typeName) {
+  const driver = await this.getDriver();
+  this.qaNotedBalance = await readBalanceAvailable(driver, typeName);
+});
+
+Then("the leave balance for {string} should have dropped by {int} days", async function (typeName, drop) {
+  const driver = await this.getDriver();
+  // POLL: the mutation's server action may still be in flight when this
+  // step starts — the earlier one-shot read raced the client refresh and
+  // failed even though the DB was already correct.
+  await driver.wait(
+    async () => (await readBalanceAvailable(driver, typeName)) === this.qaNotedBalance - drop,
+    10_000,
+    `balance for "${typeName}" never showed the noted ${this.qaNotedBalance} minus ${drop}`,
+  );
+});
+
+Then("the leave balance for {string} should be back at the noted value", async function (typeName) {
+  const driver = await this.getDriver();
+  // POLL for the same reason — the cancel's balance restore lands on the
+  // server before the client's balance cards refresh.
+  await driver.wait(
+    async () => (await readBalanceAvailable(driver, typeName)) === this.qaNotedBalance,
+    10_000,
+    `balance for "${typeName}" never returned to the noted ${this.qaNotedBalance}`,
+  );
+});
+
+/**
  * Wait until no dialog (nor its backdrop) is mounted. After a successful
  * submission the modal unmounts asynchronously — clicking "Request Leave"
  * again too early is intercepted by the leftover backdrop.

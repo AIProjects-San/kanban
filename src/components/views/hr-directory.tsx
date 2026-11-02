@@ -3,11 +3,13 @@
 // HR module feature 2 — self-service employee profile card (settings view)
 // + the HR console's directory tab (docs/HR_MODULE_PLAN.md §5).
 //
-// Self-service: every signed-in user edits THEIR OWN job/contact fields
-// (settings:edit baseline — jobTitle, phone, location, emergency contact,
-// skills; department is a select). The HR console directory tab (hr:view)
-// shows the roster with org-chart manager names; hr:admin can edit anyone
-// including the HR-only `notes` field.
+// Self-service: every signed-in user edits THEIR OWN contact fields
+// (settings:edit baseline — phone, location, emergency contact, skills).
+// Job data (jobTitle, department, hireDate) is HR-owned and shown
+// read-only here (QA-10 — the plan says "self-service edit of own contact
+// fields; HR/ADMIN edit everything"). The HR console directory tab
+// (hr:view) shows the roster with org-chart manager names; hr:admin can
+// edit anyone including the HR-only `notes` field.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Briefcase, Search, Pencil } from "lucide-react";
@@ -17,7 +19,7 @@ import { Field } from "../ui/field";
 import { Modal } from "../ui/modal";
 import { Avatar } from "../ui/avatar";
 import { RoleBadge } from "../ui/role-badge";
-import { DEPARTMENT_LABELS } from "@/lib/config";
+import { DEPARTMENT_LABELS, departmentLabel } from "@/lib/config";
 import type { EmployeeProfileT } from "@/lib/types";
 import {
   getMyProfile,
@@ -32,8 +34,6 @@ import {
 
 export function EmployeeProfileSection() {
   const [profile, setProfile] = useState<EmployeeProfileT | null | "none">(null); // null → loading; "none" → no row yet
-  const [jobTitle, setJobTitle] = useState("");
-  const [department, setDepartment] = useState("ENGINEERING");
   const [phone, setPhone] = useState("");
   const [location, setLocation] = useState("");
   const [ecName, setEcName] = useState("");
@@ -47,8 +47,6 @@ export function EmployeeProfileSection() {
       const p = res.data;
       setProfile(p ?? "none");
       if (p) {
-        setJobTitle(p.jobTitle);
-        setDepartment(p.department);
         setPhone(p.phone);
         setLocation(p.location);
         setEcName(p.emergencyContactName);
@@ -69,14 +67,19 @@ export function EmployeeProfileSection() {
         <div className="text-sm text-muted-foreground py-2">Loading employee profile…</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Job title">
-            <input className="f-input" value={jobTitle} maxLength={100} onChange={(e) => setJobTitle(e.target.value)} placeholder="e.g. Senior Frontend Engineer" />
-          </Field>
-          <Field label="Department">
-            <select className="f-input" value={department} onChange={(e) => setDepartment(e.target.value)}>
-              {DEPARTMENT_LABELS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
-            </select>
-          </Field>
+          {/* QA-10: job data is HR-owned — displayed read-only, not editable. */}
+          <div className="sm:col-span-2 rounded-lg border border-border bg-muted/40 px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-1">
+            <span className="text-xs uppercase tracking-wide text-muted-foreground">Job data (set by HR)</span>
+            <span className="text-sm font-medium text-foreground" data-testid="ro-job-title">
+              {profile !== "none" && profile.jobTitle ? profile.jobTitle : "—"}
+            </span>
+            <span className="text-sm text-muted-foreground" data-testid="ro-department">
+              {profile !== "none" ? departmentLabel(profile.department) : "—"}
+            </span>
+            {profile !== "none" && profile.hireDate ? (
+              <span className="text-sm text-muted-foreground">Hired {profile.hireDate}</span>
+            ) : null}
+          </div>
           <Field label="Phone">
             <input className="f-input" value={phone} maxLength={40} onChange={(e) => setPhone(e.target.value)} placeholder="+64 21 555 0123" />
           </Field>
@@ -106,7 +109,7 @@ export function EmployeeProfileSection() {
           onClick={async () => {
             setBusy(true);
             const res = await upsertMyProfile({
-              jobTitle, department, phone, location,
+              phone, location,
               emergencyContactName: ecName, emergencyContactPhone: ecPhone, skills,
             });
             setBusy(false);

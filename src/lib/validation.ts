@@ -289,12 +289,24 @@ export function validationError(message: string): Error {
 // HR module — leave management (docs/HR_MODULE_PLAN.md §4). Dates arrive as
 // ISO date strings (yyyy-mm-dd) from <input type="date">; the actions
 // normalize to UTC midnight before computing working days.
+// `isoDateStr` also rejects impossible calendar dates ("2026-02-30") that
+// pass the regex — before the QA-10b/QA-11b refinement these only blew up
+// at the Prisma write with a generic "unexpected failure" (or silently
+// compared as NaN).
 // ---------------------------------------------------------------------------
+
+const isoDateStr = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be yyyy-mm-dd.")
+  .refine((v) => {
+    const d = new Date(`${v}T00:00:00.000Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+  }, "Date must be a real calendar date.");
 
 export const createLeaveRequestSchema = z.object({
   leaveTypeId: cuidish,
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Start date must be a valid date."),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "End date must be a valid date."),
+  startDate: isoDateStr,
+  endDate: isoDateStr,
   reason: z.string().trim().max(500).optional(),
 }).strict();
 
@@ -330,7 +342,18 @@ export const updateLeaveTypeSchema = leaveTypeSchema.partial();
 // `notes` is HR-only and excluded from the self-service schema on purpose.
 // ---------------------------------------------------------------------------
 
-const isoDateish = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be yyyy-mm-dd.").nullable().optional();
+const isoDateish = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be yyyy-mm-dd.")
+  // QA-10b: the regex alone accepts impossible dates ("2026-02-30",
+  // "9999-99-99") which only exploded later at the Prisma write with a
+  // generic "unexpected failure". Reject them at the schema boundary.
+  .refine((v) => {
+    const d = new Date(`${v}T00:00:00.000Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+  }, "Date must be a real calendar date.")
+  .nullable()
+  .optional();
 
 export const employeeProfileSchema = z.object({
   jobTitle: z.string().trim().max(100).optional(),
@@ -346,6 +369,21 @@ export const employeeProfileSchema = z.object({
 
 export const employeeProfileAdminSchema = employeeProfileSchema; // notes included above
 
+// QA-10: self-service may only edit CONTACT fields — job data (jobTitle,
+// department, hireDate, notes) is HR-owned per docs/HR_MODULE_PLAN.md §5
+// ("Self-service edit of own contact fields; HR/ADMIN edit everything").
+// Before this schema existed the self-service action accepted jobTitle /
+// department / hireDate, so any member could self-certify "CTO" in the
+// shared directory. .strict() rejects any attempt to smuggle HR-owned
+// keys through the self-service path.
+export const employeeProfileSelfSchema = z.object({
+  phone: z.string().trim().max(40).optional(),
+  location: z.string().trim().max(100).optional(),
+  emergencyContactName: z.string().trim().max(100).optional(),
+  emergencyContactPhone: z.string().trim().max(40).optional(),
+  skills: z.string().trim().max(500).optional(),
+}).strict();
+
 // ---------------------------------------------------------------------------
 // HR module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).
 // ---------------------------------------------------------------------------
@@ -353,8 +391,8 @@ export const employeeProfileAdminSchema = employeeProfileSchema; // notes includ
 export const createReviewSchema = z.object({
   userId: cuidish,
   title: z.string().trim().min(1, "Title is required.").max(200),
-  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Period start must be a valid date."),
-  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Period end must be a valid date."),
+  periodStart: isoDateStr,
+  periodEnd: isoDateStr,
 }).strict();
 
 export const selfAssessmentSchema = z.object({

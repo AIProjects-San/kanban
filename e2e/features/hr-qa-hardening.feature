@@ -13,10 +13,14 @@ Feature: HR QA hardening
     The balance is fully validated at submission only, so two
     non-overlapping requests each pass it on their own. The second
     approval must be refused once the first has consumed the remaining
-    days — not blindly debited into a negative "days left".
+    days — not blindly debited into a negative "days left". Assertions
+    are RELATIVE (deltas from a noted baseline) so the scenario holds
+    both on a fresh seed (20 available) and after the hr-leave feature
+    has run (18 available).
     When I sign in as "member@fernly.app" with the demo password
     And I open the "Leave" view
-    And I request "Annual Leave" from a Monday 14 days out for 12 working days with reason "QA overdraft near"
+    Then I note the current leave balance for "Annual Leave"
+    When I request "Annual Leave" from a Monday 14 days out for 12 working days with reason "QA overdraft near"
     And I request "Annual Leave" from a Monday 42 days out for 12 working days with reason "QA overdraft far"
     And I sign out
     And I sign in as "demo@fernly.app" with the demo password
@@ -28,10 +32,10 @@ Feature: HR QA hardening
     And I sign out
     And I sign in as "member@fernly.app" with the demo password
     And I open the "Leave" view
-    Then the leave balance for "Annual Leave" should show 6 days available
+    Then the leave balance for "Annual Leave" should have dropped by 12 days
     When I cancel my request with reason "QA overdraft near"
     And I cancel my request with reason "QA overdraft far"
-    Then the leave balance for "Annual Leave" should show 18 days available
+    Then the leave balance for "Annual Leave" should be back at the noted value
 
   # --- QA-7: cross-year requests vs the current-year balance preview -------
 

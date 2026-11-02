@@ -37,6 +37,17 @@ Feature: HR performance reviews
     And I review "2026 Mid-year review" for "Lena Okafor" with comment "Outstanding API work" and rating 5
     Then the review queue should show a cycle "2026 Mid-year review" for "Lena Okafor" with status "Reviewed"
 
+  Scenario: QA-11 — HR (outside the subject's chain) completes a review
+    Remy holds the HR role. The plan (§6) scopes reviewers to "the
+    subject's manager chain (or ADMIN/HR)" — Amara reports to Mira, so
+    Remy is NOT in her chain. The original ADMIN-only short-circuit
+    rejected exactly this call; the e2e proves the HR path works.
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Reviews" tab
+    And I review "2026 Q3 check-in" for "Amara Diallo" with comment "Deep user insights — sharpen the survey metrics" and rating 4
+    Then the review queue should show a cycle "2026 Q3 check-in" for "Amara Diallo" with status "Reviewed"
+
   Scenario: The employee acknowledges the reviewed result
     When I sign in as "rafael@fernly.app" with the demo password
     And I open the "Settings" view

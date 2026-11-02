@@ -19,7 +19,7 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { DEPARTMENT_LABELS } from "@/lib/config";
 import type { EmployeeProfileT } from "@/lib/types";
-import { employeeProfileSchema, parseOrThrow } from "@/lib/validation";
+import { employeeProfileSchema, employeeProfileSelfSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -112,9 +112,6 @@ export async function getMyProfile(): Promise<ActionResult<EmployeeProfileT | nu
 // ---------------------------------------------------------------------------
 
 export async function upsertMyProfile(input: {
-  jobTitle?: string;
-  department?: string;
-  hireDate?: string | null;
   phone?: string;
   location?: string;
   emergencyContactName?: string;
@@ -123,18 +120,20 @@ export async function upsertMyProfile(input: {
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("settings:edit");
-    const data = parseOrThrow(employeeProfileSchema, input);
-    if (data.department && !VALID_DEPARTMENTS.has(data.department)) {
-      throw new AuthorizationError("Unknown department.");
-    }
+    // QA-10: self-service is CONTACT-FIELDS-ONLY (docs/HR_MODULE_PLAN.md §5:
+    // "Self-service edit of own contact fields; HR/ADMIN edit everything").
+    // The strict self schema rejects jobTitle / department / hireDate /
+    // notes — job data used to be self-certifiable (any member could set
+    // their own directory job title to "CTO").
+    const data = parseOrThrow(employeeProfileSelfSchema, input);
 
     await db.employeeProfile.upsert({
       where: { userId: auth.userId },
       create: {
         userId: auth.userId,
-        jobTitle: data.jobTitle ?? "",
-        department: data.department ?? "ENGINEERING",
-        hireDate: data.hireDate ? new Date(`${data.hireDate}T00:00:00.000Z`) : null,
+        jobTitle: "",
+        department: "ENGINEERING",
+        hireDate: null,
         phone: data.phone ?? "",
         location: data.location ?? "",
         emergencyContactName: data.emergencyContactName ?? "",
@@ -142,9 +141,6 @@ export async function upsertMyProfile(input: {
         skills: data.skills ?? "",
       },
       update: {
-        ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
-        ...(data.department !== undefined ? { department: data.department } : {}),
-        ...(data.hireDate !== undefined ? { hireDate: data.hireDate ? new Date(`${data.hireDate}T00:00:00.000Z`) : null } : {}),
         ...(data.phone !== undefined ? { phone: data.phone } : {}),
         ...(data.location !== undefined ? { location: data.location } : {}),
         ...(data.emergencyContactName !== undefined ? { emergencyContactName: data.emergencyContactName } : {}),

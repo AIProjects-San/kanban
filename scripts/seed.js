@@ -323,6 +323,10 @@ async function main() {
     { email: "marcus@fernly.app", name: "Marcus Bell", role: "MEMBER", timezone: "America/New_York", bio: "Content Strategist. Words that work.", avatarColor: "plum" },
     { email: "hana@fernly.app", name: "Hana Park", role: "MEMBER", timezone: "Asia/Seoul", bio: "Senior Designer. Design system architect.", avatarColor: "forest" },
     { email: "diego@fernly.app", name: "Diego Morales", role: "MEMBER", timezone: "America/Mexico_City", bio: "Full-stack Engineer. Ships fast.", avatarColor: "ember" },
+    // QA-13 — the HR role existed in the RBAC matrix but NO user held it,
+    // so every hr:* permission path (including the QA-11 reviewer gap)
+    // was never exercised by any e2e. Seed one real People Ops account.
+    { email: "remy@fernly.app", name: "Remy Laurent", role: "HR", timezone: "Europe/Paris", bio: "People Operations Lead. Runs onboarding and review cycles.", avatarColor: "plum" },
   ];
   for (const u of extraUsers) {
     await db.user.create({ data: { ...u, passwordHash } });
@@ -364,6 +368,7 @@ async function main() {
     ["Soren Lindqvist", mgrIngrid],
     ["Marcus Bell", mgrPriya],                // Marcus → Priya
     ["Hana Park", mgrPriya],
+    ["Remy Laurent", demoUser.id],           // QA-13: HR reports to the admin
   ];
   for (const [name, mgrId] of treeAssignments) {
     const uid = userByName.get(name);
@@ -1234,6 +1239,7 @@ async function main() {
     ["Marcus Bell", "Content Strategist", "MARKETING", "2025-03-17", "New York, USA", "+1 555 010 0010", "Copywriting, editorial planning"],
     ["Hana Park", "Visual Designer", "DESIGN", "2024-11-11", "Seoul, South Korea", "+82 10 5550 0011", "Illustration, brand identity, typography"],
     ["Diego Morales", "Mobile Engineer", "ENGINEERING", "2025-04-08", "Mexico City, Mexico", "+52 55 5555 0012", "React Native, offline-first, push"],
+    ["Remy Laurent", "People Operations Lead", "MANAGEMENT", "2025-05-20", "Paris, France", "+33 6 55 55 01 13", "People ops, onboarding design, coaching"],
   ];
   let profileCount = 0;
   for (const [name, jobTitle, department, hireDate, location, phone, skills] of profileSeed) {
@@ -1272,6 +1278,10 @@ async function main() {
     ["Lena Okafor", "SUBMITTED", `${YEAR_NOW} Mid-year review`, "Shipped the billing API ahead of schedule; mentoring Amara.", 4, "", null, null, null],
     ["Rafael Costa", "REVIEWED", `${YEAR_NOW} Q1 check-in`, "Cut deploy times by 60% with the pipeline overhaul.", 4, "Reliability champion — keep leading incident reviews.", 5, "Ingrid Solberg"],
     ["Yuki Tanaka", "ACKNOWLEDGED", `${YEAR_NOW - 1} Annual review`, "Redesigned the design system; adoption at 90%.", 5, "Outstanding craft and collaboration.", 5, "Mira Hale"],
+    // QA-13/QA-11 — a SUBMITTED cycle outside Ingrid's subtree (Amara
+    // reports to Mira) that only ADMIN or the new HR user can review:
+    // the e2e proves HR (not in Amara's chain) completes it.
+    ["Amara Diallo", "SUBMITTED", `${YEAR_NOW} Q3 check-in`, "Ran 24 interviews and rebuilt the onboarding survey.", 4, "", null, null, null],
   ];
   for (const [name, status, title, selfAssessment, selfRating, managerComment, managerRating, reviewedBy, ] of reviewSeed) {
     const uid = userByName.get(name);
@@ -1310,7 +1320,7 @@ async function main() {
       title: "Nov 2026 onboarding — Diego",
       tasks: {
         create: [
-          { title: "Sign the employment contract", assigneeId: null, dueOffsetDays: 1, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Remy") ?? null },
+          { title: "Sign the employment contract", assigneeId: null, dueOffsetDays: 1, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Remy Laurent") ?? null },
           { title: "Set up accounts and SSO access", assigneeId: null, dueOffsetDays: 2, order: 1 },
           { title: "Meet your manager for the 1:1 kick-off", assigneeId: userByName.get("Ingrid Solberg") ?? null, dueOffsetDays: 3, order: 2 },
           { title: "Complete the workspace tour", assigneeId: diegoId, dueOffsetDays: 5, order: 3 },

@@ -134,6 +134,41 @@ describe("addTask", () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/complete/i);
   });
+
+  // QA-12 — the assignee id was never validated, so a task could be
+  // assigned to a nonexistent (or soft-deleted) user: nobody could ever
+  // tick it and the UI rendered a blank assignee.
+  it("QA-12: rejects an assignee that does not exist", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findUnique.mockResolvedValue({ ...CHECKLIST, completedAt: null });
+    db.user.findUnique.mockResolvedValue(null);
+    const res = await addTask({ checklistId: "c-1", title: "Ghost task", assigneeId: "u-ghost" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/assignee not found/i);
+    expect(db.onboardingTask.create).not.toHaveBeenCalled();
+  });
+
+  it("QA-12: rejects a soft-deleted assignee", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findUnique.mockResolvedValue({ ...CHECKLIST, completedAt: null });
+    db.user.findUnique.mockResolvedValue({ id: "u-ex", deletedAt: new Date() });
+    const res = await addTask({ checklistId: "c-1", title: "Ex-employee task", assigneeId: "u-ex" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/assignee not found/i);
+    expect(db.onboardingTask.create).not.toHaveBeenCalled();
+  });
+
+  it("QA-12: accepts a real assignee", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findUnique.mockResolvedValue({ ...CHECKLIST, completedAt: null });
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", deletedAt: null });
+    db.onboardingTask.findFirst.mockResolvedValue({ order: 4 });
+    const res = await addTask({ checklistId: "c-1", title: "Pair with Theo", assigneeId: "u-theo" });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTask.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ assigneeId: "u-theo" }) }),
+    );
+  });
 });
 
 describe("setTaskDone", () => {

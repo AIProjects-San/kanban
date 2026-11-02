@@ -13,8 +13,9 @@
 //   settings:edit — self-service reads/writes on OWN reviews
 //   review:manage — create cycles for reports; read the review queue
 //                   (MANAGER: subtree; ADMIN/HR: whole workspace)
-// Decisions are CHAIN-scoped like leave: only the subject's manager
-// (User.managerId) or an ADMIN writes the manager review.
+// Decisions are CHAIN-scoped like leave: the subject's manager
+// (User.managerId), an ADMIN, or HR writes the manager review — plan §6:
+// "Reviewers must be in the subject's manager chain (or ADMIN/HR)".
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
@@ -34,9 +35,15 @@ import { getApproverIdsFor } from "./hr-shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
-/** The subject's manager chain or an ADMIN may write the manager review. */
+/**
+ * The subject's manager chain, an ADMIN, or HR may write the manager review.
+ * QA-11: the plan (docs/HR_MODULE_PLAN.md §6) explicitly grants HR the
+ * reviewer role ("the subject's manager chain (or ADMIN/HR)") — the
+ * original ADMIN-only short-circuit rejected HR with "Only the employee's
+ * manager…", contradicting the approved plan.
+ */
 async function assertReviewer(auth: { userId: string; role: string }, subjectId: string): Promise<void> {
-  if (auth.role === "ADMIN") return;
+  if (auth.role === "ADMIN" || auth.role === "HR") return;
   const approvers = await getApproverIdsFor(subjectId);
   if (!approvers.includes(auth.userId)) {
     throw new AuthorizationError("Only the employee's manager (or an admin) can review this cycle.");

@@ -129,14 +129,16 @@ describe("getMyProfile", () => {
 });
 
 describe("upsertMyProfile", () => {
-  it("creates a first profile row for the caller", async () => {
+  it("creates a first profile row for the caller — job data gets neutral defaults", async () => {
     requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
-    const res = await upsertMyProfile({ jobTitle: "Frontend Engineer", department: "ENGINEERING", phone: "+64 21 555 0003" });
+    const res = await upsertMyProfile({ phone: "+64 21 555 0003" });
     expect(res.ok).toBe(true);
     expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "u-theo" },
-        create: expect.objectContaining({ userId: "u-theo", jobTitle: "Frontend Engineer" }),
+        // QA-10: a self-created profile starts with EMPTY job data — HR
+        // fills in title/department/hireDate later via the admin path.
+        create: expect.objectContaining({ userId: "u-theo", jobTitle: "", department: "ENGINEERING", hireDate: null }),
       }),
     );
     expect(logAuditMock).toHaveBeenCalledWith(
@@ -144,11 +146,32 @@ describe("upsertMyProfile", () => {
     );
   });
 
-  it("rejects an unknown department", async () => {
+  // QA-10 — self-service is contact-fields-only (docs/HR_MODULE_PLAN.md §5:
+  // "Self-service edit of own contact fields; HR/ADMIN edit everything").
+  // The strict schema must reject HR-owned keys outright.
+  it("QA-10: rejects self-service attempts to write HR-owned fields", async () => {
     requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
-    const res = await upsertMyProfile({ department: "LEGAL" as never });
-    expect(res.ok).toBe(false);
+    for (const smuggle of [
+      { jobTitle: "CTO" },
+      { department: "MANAGEMENT" },
+      { hireDate: "2020-01-01" },
+      { notes: "self-promoted" },
+    ]) {
+      const res = await upsertMyProfile(smuggle as never);
+      expect(res.ok).toBe(false);
+    }
     expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
+  });
+
+  it("QA-10: a legitimate self-service save never carries job data in the update payload", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    const res = await upsertMyProfile({ phone: "+64 21 555 0003", skills: "React" });
+    expect(res.ok).toBe(true);
+    const call = db.employeeProfile.upsert.mock.calls[0][0];
+    expect(call.update).toEqual({ phone: "+64 21 555 0003", skills: "React" });
+    expect("jobTitle" in call.update).toBe(false);
+    expect("department" in call.update).toBe(false);
+    expect("hireDate" in call.update).toBe(false);
   });
 });
 
@@ -204,9 +227,17 @@ describe("upsert update paths (partial fields)", () => {
     expect(call.update).toEqual({ phone: "+64 21 555 9999" });
   });
 
-  it("upsertMyProfile clears the hire date when explicitly null", async () => {
+  it("QA-10: self-service cannot clear the hire date — that is HR-owned now", async () => {
     requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
-    const res = await upsertMyProfile({ hireDate: null });
+    const res = await upsertMyProfile({ hireDate: null } as never);
+    expect(res.ok).toBe(false);
+    expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
+  });
+
+  it("updateProfileAsAdmin (HR) clears the hire date when explicitly null", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { hireDate: null });
     expect(res.ok).toBe(true);
     const call = db.employeeProfile.upsert.mock.calls[0][0];
     expect(call.update).toEqual({ hireDate: null });
