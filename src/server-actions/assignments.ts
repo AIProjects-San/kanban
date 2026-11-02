@@ -17,10 +17,12 @@ export async function assignUserToProject(
 ): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
-    const user = await db.user.findUnique({ where: { id: userId } });
+    // PR-23 — exclude soft-deleted users: a trashed account must not be
+    // (re-)staffed onto a project while it sits in the trash.
+    const user = await db.user.findUnique({ where: { id: userId, deletedAt: null } });
     if (!user) throw new AuthorizationError("User not found.");
-    const project = await db.project.findUnique({ where: { id: projectId } });
-    if (!project) throw new AuthorizationError("Project not found.");
+    const project = await db.project.findUnique({ where: { id: projectId }, select: { id: true, name: true, deletedAt: true } });
+    if (!project || project.deletedAt) throw new AuthorizationError("Project not found.");
     // upsert so calling twice is idempotent
     await db.projectAssignment.upsert({
       where: { projectId_userId: { projectId, userId } },
@@ -42,8 +44,10 @@ export async function assignUserToProject(
 export async function unassignUserFromProject(userId: string, projectId: string): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");
-    const user = await db.user.findUnique({ where: { id: userId } });
-    const project = await db.project.findUnique({ where: { id: projectId } });
+    // PR-23 — soft-deleted users can be unassigned (cleanup) but the audit
+    // log still needs a name; the lookup itself is informational.
+    const user = await db.user.findUnique({ where: { id: userId }, select: { id: true, name: true } });
+    const project = await db.project.findUnique({ where: { id: projectId }, select: { id: true, name: true } });
     await db.projectAssignment.deleteMany({
       where: { projectId, userId },
     });
@@ -76,6 +80,8 @@ export async function getUserProjectAssignments(userId: string): Promise<ActionR
       where: { userId },
       include: { project: true },
       orderBy: { createdAt: "asc" },
+      // PR-21 — hard cap.
+      take: 500,
     });
     return assignments.map((a) => ({
       id: a.id,
@@ -108,6 +114,8 @@ export async function getProjectAssignments(projectId: string): Promise<ActionRe
       where: { projectId },
       include: { user: true },
       orderBy: { createdAt: "asc" },
+      // PR-21 — hard cap.
+      take: 500,
     });
     return assignments.map((a) => ({
       id: a.id,
@@ -159,6 +167,8 @@ export async function getProjectAssignableUsers(projectId: string): Promise<Acti
       where: { projectId, user: { deletedAt: null } },
       include: { user: true },
       orderBy: { createdAt: "asc" },
+      // PR-21 — hard cap.
+      take: 500,
     });
 
     const merged = new Map<

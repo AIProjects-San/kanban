@@ -56,7 +56,16 @@ export interface IcsExport {
   ics: string;
   /** Number of events included. */
   eventCount: number;
+  /** PR-05 — true when the export hit its row cap and is a partial export. */
+  truncated: boolean;
 }
+
+/** PR-05 (production-readiness audit) — hard cap on the export size. The
+ * query previously ran with no `take`, so a workspace with years of events
+ * (or a bot spamming events) would render an unbounded ICS document in
+ * memory. 1000 events ≈ a multi-year workspace; beyond that the client
+ * shows a "partial export" notice instead of pretending completeness. */
+const ICS_EXPORT_MAX_EVENTS = 1000;
 
 /**
  * Export every calendar event as an ICS document. Any signed-in user can
@@ -70,7 +79,9 @@ export async function exportCalendarIcs(): Promise<ActionResult<IcsExport>> {
 
     const events = await db.calendarEvent.findMany({
       orderBy: { date: "asc" },
+      take: ICS_EXPORT_MAX_EVENTS,
     });
+    const truncated = events.length >= ICS_EXPORT_MAX_EVENTS;
 
     const lines: string[] = [
       "BEGIN:VCALENDAR",
@@ -108,6 +119,7 @@ export async function exportCalendarIcs(): Promise<ActionResult<IcsExport>> {
     return {
       ics: lines.map(csFoldLine).join("\r\n") + "\r\n",
       eventCount: events.length,
+      truncated,
     };
   });
 }

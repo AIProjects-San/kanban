@@ -222,6 +222,7 @@ class FailOpenRedisLimiterAdapter implements LimiterLike {
 
 let cachedLoginLimiter: LimiterLike | null = null;
 let cachedPasswordResetLimiter: LimiterLike | null = null;
+let cachedClientErrorLimiter: LimiterLike | null = null;
 
 /**
  * Create (and cache) the login limiter. Picks Redis when `REDIS_URL` is set
@@ -307,8 +308,49 @@ export function createPasswordResetLimiter(opts?: {
   return cachedPasswordResetLimiter;
 }
 
+/**
+ * PR-13 (production-readiness audit) — rate limiter for the client-error
+ * ingestion endpoint (/api/client-errors). The endpoint is unauthenticated
+ * by design (error bridges must report before/without a session) and accepts
+ * Origin-less probes (QA-9), so a scripted non-browser client could flood
+ * the operator's error tracker with 8 KB payloads. Budget: 20 reports per
+ * source IP per 5 minutes — far above what one browser tab can legitimately
+ * produce (the bridge batches + dedupes), far below flood volume. Fail-open
+ * on Redis outage like the other limiters: losing throttle here only means
+ * noisier logs, never a broken app.
+ */
+export function createClientErrorLimiter(opts?: {
+  redisClient?: RedisLike;
+  redisUrl?: string;
+  maxHits?: number;
+  windowMs?: number;
+}): LimiterLike {
+  if (cachedClientErrorLimiter) return cachedClientErrorLimiter;
+
+  const maxHits = opts?.maxHits ?? 20;
+  const windowMs = opts?.windowMs ?? 5 * 60 * 1000; // 5 minutes
+  const redisUrl = opts?.redisUrl ?? process.env.REDIS_URL;
+  const redisClient = opts?.redisClient ?? (redisUrl ? getSharedRedisClient(redisUrl) : undefined);
+
+  if (redisUrl && redisClient) {
+    const limiter = new RedisSlidingWindowLimiter({
+      maxHits,
+      windowMs,
+      redis: redisClient,
+      keyPrefix: `${redisKeyPrefix()}clienterr:`,
+      progressiveDelayThreshold: 0, // no progressive delay — plain window
+    });
+    cachedClientErrorLimiter = new FailOpenRedisLimiterAdapter(limiter, "client-errors");
+  } else {
+    const inner = new SlidingWindowLimiter(maxHits, windowMs);
+    cachedClientErrorLimiter = new InMemoryLimiterAdapter(inner);
+  }
+  return cachedClientErrorLimiter;
+}
+
 /** Test-only: reset the cached limiters so new ones are created on next call. */
 export function _resetLoginLimiterCacheForTests(): void {
   cachedLoginLimiter = null;
   cachedPasswordResetLimiter = null;
+  cachedClientErrorLimiter = null;
 }

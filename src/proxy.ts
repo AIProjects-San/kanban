@@ -30,9 +30,20 @@ import { randomBytes } from "node:crypto";
 // kept ONLY in development (HMR / React Refresh needs it); production
 // ships without it.
 
-// Mirrors the cookie name pinned in src/lib/auth.ts (the app sets it
-// explicitly, so it is identical in dev and production — no __Secure- prefix).
-const SESSION_COOKIE = "next-auth.session-token";
+// Mirrors the cookie name pinned in src/lib/auth.ts. Production uses the
+// `__Secure-` prefix (PR-27); development/sandbox keeps the classic name.
+const SESSION_COOKIE =
+  process.env.NODE_ENV === "production"
+    ? "__Secure-next-auth.session-token"
+    : "next-auth.session-token";
+const CSRF_COOKIE =
+  process.env.NODE_ENV === "production"
+    ? "__Secure-next-auth.csrf-token"
+    : "next-auth.csrf-token";
+const CALLBACK_COOKIE =
+  process.env.NODE_ENV === "production"
+    ? "__Secure-next-auth.callback-url"
+    : "next-auth.callback-url";
 
 /**
  * Generate a per-request nonce for CSP. 16 bytes (128 bits) base64-encoded
@@ -52,13 +63,24 @@ function buildCsp(nonce: string): string {
   const scriptSrc = isDev
     ? `script-src 'self' 'nonce-${nonce}' 'unsafe-eval'`
     : `script-src 'self' 'nonce-${nonce}'`;
+  // PR-06 (production-readiness audit) — connect-src was `'self' https: ws:
+  // wss:'`, where the bare `https:` scheme-source allows the page to POST to
+  // ANY https origin — a single XSS (or a compromised dependency) could exfil
+  // everything to an attacker host. The app makes no cross-origin client
+  // requests (server actions, the error bridge and auth are same-origin; mail
+  // and Sentry are server-side), so production is now strictly `'self'`.
+  // Development keeps `ws:` for the HMR websocket (CSP2 'self' does not
+  // cover the ws: scheme on all engines).
+  const connectSrc = isDev
+    ? "connect-src 'self' ws:"
+    : "connect-src 'self'";
   const directives = [
     "default-src 'self'",
     scriptSrc,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self' https: ws: wss:",
+    connectSrc,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -105,12 +127,6 @@ export default async function proxy(req: NextRequest) {
     function stampHeaders(res: NextResponse) {
       res.headers.set("Content-Security-Policy", csp);
       res.headers.set("X-Request-Id", requestId);
-      // Also pass the nonce as a request header so server components can
-      // read it via headers() and apply it to custom <script> tags.
-      res.headers.set("x-nonce", nonce);
-      // P2 re-audit — per-request structured log with durationMs + route +
-      // statusCode. Operators can build p95 + error-rate alerts from this.
-      // Emitted at info level for successful requests; warn for 5xx.
       const durationMs = Date.now() - startMs;
       const method = req.method;
       const path = req.nextUrl.pathname;
@@ -124,8 +140,22 @@ export default async function proxy(req: NextRequest) {
       return res;
     }
 
+    // PR-06 — propagate the CSP + nonce on the FORWARDED REQUEST headers so
+    // (a) Next.js picks the nonce out of `content-security-policy` and stamps
+    // its bootstrap scripts with it, and (b) server components can read the
+    // nonce via `headers().get("x-nonce")` for custom <script> tags. The old
+    // code set both only on the RESPONSE, which the renderer never sees —
+    // the nonce was decorative. Build the header set AFTER any cookie
+    // stripping below so a cleaned request is what gets forwarded.
+    function forward(): NextResponse {
+      const requestHeaders = new Headers(req.headers);
+      requestHeaders.set("x-nonce", nonce);
+      requestHeaders.set("content-security-policy", csp);
+      return NextResponse.next({ request: { headers: requestHeaders } });
+    }
+
     // No cookie to check, or no explicit secret: pass through with CSP.
-    if (!raw || !secret) return stampHeaders(NextResponse.next());
+    if (!raw || !secret) return stampHeaders(forward());
 
     let valid = false;
     try {
@@ -141,7 +171,7 @@ export default async function proxy(req: NextRequest) {
       });
       valid = false;
     }
-    if (valid) return stampHeaders(NextResponse.next());
+    if (valid) return stampHeaders(forward());
 
     // Stale or corrupt session cookie. Strip it from the request we forward
     // and expire it in the browser so it never comes back.
@@ -154,9 +184,9 @@ export default async function proxy(req: NextRequest) {
       path: req.nextUrl.pathname,
     });
     req.cookies.delete(SESSION_COOKIE);
-    req.cookies.delete("next-auth.csrf-token");
-    req.cookies.delete("next-auth.callback-url");
-    const res = NextResponse.next({ request: { headers: req.headers } });
+    req.cookies.delete(CSRF_COOKIE);
+    req.cookies.delete(CALLBACK_COOKIE);
+    const res = forward();
     const expiredCookie = {
       httpOnly: true,
       sameSite: "lax" as const,

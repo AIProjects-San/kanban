@@ -79,6 +79,7 @@ beforeEach(() => {
   loginLimiter.reset("login:ip:198.51.100.5");
   loginLimiter.reset("login:ip:1.2.3.4");
   loginLimiter.reset("login:ip:unknown");
+  loginLimiter.reset("login:ip:203.0.113.99"); // PR-11 NAT test
 });
 
 // ---------------------------------------------------------------------------
@@ -147,6 +148,25 @@ describe("authorize()", () => {
     const state = loginLimiter.check("login:email:ada@fernly.dev");
     expect(state.blocked).toBe(false);
     expect(state.count).toBe(0);
+  });
+
+  it("PR-11: also clears the per-IP throttle on successful sign-in (shared-NAT lockout)", async () => {
+    // 4 failures from one shared-egress IP (office NAT) — one below budget.
+    const NAT_REQ = { headers: { "x-real-ip": "203.0.113.99" } };
+    for (let i = 0; i < 4; i++) {
+      await getAuthorize()({ email: "ada@fernly.dev", password: "wrong" }, NAT_REQ);
+    }
+    expect(loginLimiter.check("login:ip:203.0.113.99").count).toBe(4);
+    // A successful sign-in must clear the IP bucket too — otherwise everyone
+    // behind that NAT stays one typo away from a shared lockout.
+    db.user.findUnique.mockResolvedValue(USER);
+    const result = await getAuthorize()({ email: "ada@fernly.dev", password: "correct-horse-1" }, NAT_REQ);
+    expect(result).toMatchObject({ id: "u-1" });
+    const state = loginLimiter.check("login:ip:203.0.113.99");
+    expect(state.blocked).toBe(false);
+    expect(state.count).toBe(0);
+    // The email bucket was cleared as well.
+    expect(loginLimiter.check("login:email:ada@fernly.dev").count).toBe(0);
   });
 
   it("normalises the x-forwarded-for header for IP throttling", async () => {
@@ -571,6 +591,12 @@ describe("production cookie security (P0-7)", () => {
     expect(session.httpOnly).toBe(true);
     expect(session.sameSite).toBe("lax");
     expect(session.path).toBe("/");
+    // PR-27 — in production every cookie NAME carries the __Secure- prefix
+    // (browsers then refuse to set them over plain HTTP or without Secure).
+    for (const key of ["sessionToken", "callbackUrl", "csrfToken"] as const) {
+      const cookie = opts.cookies![key] as { name?: string };
+      expect(cookie.name).toMatch(/^__Secure-next-auth\./);
+    }
     restoreEnv(snap);
   });
 
@@ -582,8 +608,11 @@ describe("production cookie security (P0-7)", () => {
     const opts = await freshAuthOptions();
     expect(opts.useSecureCookies).toBe(false);
     for (const key of ["sessionToken", "callbackUrl", "csrfToken"] as const) {
-      const cookie = opts.cookies![key] as { options?: { secure?: boolean } };
+      const cookie = opts.cookies![key] as { options?: { secure?: boolean }; name?: string };
       expect(cookie.options?.secure).toBe(false);
+      // PR-27 — dev/sandbox keeps the CLASSIC (unprefixed) names so the HTTP
+      // preview proxies keep working.
+      expect(cookie.name).toMatch(/^next-auth\./);
     }
     restoreEnv(snap);
   });

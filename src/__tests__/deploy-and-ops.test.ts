@@ -191,3 +191,65 @@ describe("L-P1-26 DB region decision", () => {
     expect(content).toMatch(/Owner/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Production-readiness audit (PR-01/24/25) — deploy stack contracts.
+// ---------------------------------------------------------------------------
+
+describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
+  const dockerfile = readFileSync(resolve(repoRoot, "Dockerfile"), "utf-8");
+  const compose = readFileSync(resolve(repoRoot, "docker-compose.yml"), "utf-8");
+  const nginx = readFileSync(resolve(repoRoot, "nginx.conf"), "utf-8");
+
+  it("PR-24: the Dockerfile has a migrator stage carrying prisma + CLI", () => {
+    expect(dockerfile).toMatch(/AS migrator/);
+    expect(dockerfile).toMatch(/migrate deploy/);
+  });
+
+  it("PR-24: compose wires the app behind the one-shot migrate gate", () => {
+    expect(compose).toMatch(/migrate:/);
+    expect(compose).toMatch(/service_completed_successfully/);
+  });
+
+  it("PR-24: compose offers the optional bundled PostgreSQL (local-db profile)", () => {
+    expect(compose).toMatch(/postgres:16-alpine/);
+    expect(compose).toMatch(/profiles:\s*\["local-db"\]/);
+  });
+
+  it("PR-24: Redis uses volatile-lru (limiter keys evictable, nothing else sacrificed)", () => {
+    // Match the actual redis-server command line, not the prose comments.
+    expect(compose).toMatch(/redis-server --maxmemory \d+mb --maxmemory-policy volatile-lru/);
+    expect(compose).not.toMatch(/--maxmemory-policy allkeys-lru/);
+  });
+
+  it("PR-25: nginx exposes a REAL upstream health probe for external monitors", () => {
+    expect(nginx).toMatch(/\/upstream-health/);
+    expect(nginx).toMatch(/proxy_pass http:\/\/fernly\/api\/health/);
+  });
+
+  it("PR-25: TLS options are documented and materialised as config files", () => {
+    expect(existsSync(resolve(repoRoot, "deploy", "Caddyfile.production"))).toBe(true);
+    expect(existsSync(resolve(repoRoot, "deploy", "nginx-tls.conf.example"))).toBe(true);
+  });
+
+  it("PR-01: the sandbox Caddyfile (port-transform handler) lives OUTSIDE the deploy root with a warning", () => {
+    const sandbox = resolve(repoRoot, "deploy", "sandbox-preview", "Caddyfile");
+    expect(existsSync(sandbox)).toBe(true);
+    // The warning header must be present, and the production Caddyfile must
+    // NOT contain the port-transform handler.
+    expect(readFileSync(sandbox, "utf-8")).toMatch(/NEVER be exposed/i);
+    expect(readFileSync(resolve(repoRoot, "deploy", "Caddyfile.production"), "utf-8"))
+      .not.toMatch(/XTransformPort/);
+  });
+
+  it("PR-24: .env.example exists and documents the boot contract", () => {
+    const env = readFileSync(resolve(repoRoot, ".env.example"), "utf-8");
+    for (const key of [
+      "DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "SERVER_ACTIONS_ALLOWED_ORIGINS",
+      "REDIS_URL", "CRON_SECRET", "RESEND_API_KEY", "MAIL_FROM", "SENTRY_DSN",
+    ]) {
+      expect(env).toMatch(new RegExp(`^${key}=`, "m"));
+    }
+    expect(env).toMatch(/REFUSES to boot/);
+  });
+});

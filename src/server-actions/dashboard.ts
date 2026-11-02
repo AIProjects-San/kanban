@@ -9,7 +9,7 @@
 
 import { db } from "@/lib/db";
 import { getSession, AuthorizationError } from "./auth-guard";
-import { getScopedProjectIds } from "./shared";
+import { getScopedProjectIds, getWorkspaceLimit } from "./shared";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 import { toResult } from "./result";
@@ -130,6 +130,12 @@ export async function getDashboardData(): Promise<DashboardData> {
     memberWhere = notDeleted;
   }
 
+  // PR-18 — the notification feed cap is admin-editable (Workspace Settings →
+  // "Dashboard notification limit"); fall back to the old hardcoded 20.
+  const notifLimit = currentUserId
+    ? await getWorkspaceLimit("dashboardNotifLimit", 20, 100)
+    : 20;
+
   const [projects, tasks, members, reminders, notifs, timeEntries, events, approvedLeave, messages, bugTaskLinks] = await Promise.all([
     // P1 (production-readiness re-audit) — every query has a `take` cap so a
     // workspace with 10k tasks / time entries / messages can't OOM the
@@ -157,12 +163,14 @@ export async function getDashboardData(): Promise<DashboardData> {
       take: 100,
     }),
     // Notifications: addressed to me + workspace-wide broadcasts.
+    // PR-18 — honour the admin-editable Workspace.dashboardNotifLimit
+    // (previously hardcoded at 20) with the old default as fallback.
     db.notification.findMany({
       where: currentUserId
         ? { OR: [{ recipientUserId: currentUserId }, { recipientUserId: null }] }
         : undefined,
       orderBy: { createdAt: "desc" },
-      take: 20,
+      take: notifLimit,
     }),
     // Time entries: scoped to the last 90 days so the loader stays fast even
     // for workspaces with years of history. Older entries are accessible via
@@ -399,6 +407,8 @@ export async function getMyProjects(): Promise<ActionResult<
       },
       select: { id: true, name: true, color: true, status: true },
       orderBy: { name: "asc" },
+      // PR-21 — hard cap; this feeds the task-modal's project dropdown.
+      take: 500,
     });
     return projects;
   });
@@ -454,6 +464,8 @@ export async function getProjectMembers(projectId: string): Promise<ActionResult
     const assignments = await db.projectAssignment.findMany({
       where: { projectId },
       select: { userId: true },
+      // PR-21 — hard cap; a project beyond ~500 staff is a paging concern.
+      take: 500,
     });
     const associatedUserIds = new Set(assignments.map((a) => a.userId));
     if (project.ownerUserId) associatedUserIds.add(project.ownerUserId);
@@ -464,6 +476,8 @@ export async function getProjectMembers(projectId: string): Promise<ActionResult
     const members = await db.teamMember.findMany({
       where: { userId: { in: Array.from(associatedUserIds) }, deletedAt: null },
       orderBy: { name: "asc" },
+      // PR-21 — hard cap, mirroring the assignment cap above.
+      take: 500,
     });
 
     return members.map((m) => ({

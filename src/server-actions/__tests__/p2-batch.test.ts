@@ -16,6 +16,12 @@ const db = vi.hoisted(() => {
     obj[m] = {};
     for (const meth of methods) obj[m][meth] = vi.fn();
   }
+  // PR-15 — interactive transactions: execute the callback against the same
+  // mock (array form still resolves via Promise.all).
+  (obj as Record<string, unknown>).$transaction = vi.fn(
+    async (fn: unknown) =>
+      typeof fn === "function" ? fn(obj) : Promise.all(fn as unknown[]),
+  );
   return obj;
 });
 
@@ -50,6 +56,8 @@ import { exportMyData } from "../data-export";
 
 const MEMBER_AUTH = { userId: "u-mia", role: "MEMBER" as const, name: "Mia", email: "mia@x.co" };
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Admin", email: "a@x.co" };
+// PR-02 — hierarchy-path tests for restoreUser.
+const MANAGER_AUTH = { userId: "u-mgr", role: "MANAGER" as const, name: "Ingrid", email: "ingrid@x.co" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -60,6 +68,8 @@ beforeEach(() => {
   // assertions stay meaningful; scoping tests override this.
   getScopedProjectIdsMock.mockResolvedValue(null);
   for (const m of Object.values(db)) {
+    // Skip non-model entries (e.g. the top-level $transaction mock — PR-15).
+    if (!m || typeof m !== "object") continue;
     for (const fn of Object.values(m)) fn.mockResolvedValue([]);
   }
   db.notification.createMany.mockResolvedValue({ count: 0 });
@@ -344,12 +354,17 @@ describe("L-P2-33 restoreProject", () => {
 });
 
 describe("L-P2-33 restoreUser", () => {
-  it("clears deletedAt on the User AND the linked TeamMember row", async () => {
+  it("clears deletedAt on the User AND the linked TeamMember row (inside one transaction — PR-15)", async () => {
+    // The caller is ADMIN (beforeEach default) → hierarchy check short-circuits.
     db.user.findUnique.mockResolvedValue({
-      id: "u-oli", name: "Oli", email: "oli@x.co", deletedAt: new Date("2026-10-30"),
+      id: "u-oli", name: "Oli", email: "oli@x.co", role: "MEMBER", managerId: "u-admin",
+      deletedAt: new Date("2026-10-30"),
     });
     const res = await restoreUser("u-oli");
     expect(res.ok).toBe(true);
+    // PR-02 — both writes now happen inside a transaction: the mock's
+    // $transaction executes the callback against the same model mocks.
+    expect(db.$transaction).toHaveBeenCalled();
     expect(db.user.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "u-oli" }, data: { deletedAt: null } }),
     );
@@ -362,9 +377,76 @@ describe("L-P2-33 restoreUser", () => {
   });
 
   it("refuses to restore a user who is not in the trash", async () => {
-    db.user.findUnique.mockResolvedValue({ id: "u-oli", name: "Oli", email: "oli@x.co", deletedAt: null });
+    db.user.findUnique.mockResolvedValue({ id: "u-oli", name: "Oli", email: "oli@x.co", role: "MEMBER", managerId: null, deletedAt: null });
     const res = await restoreUser("u-oli");
     expect(res.ok).toBe(false);
+  });
+
+  it("refuses to restore an unknown user", async () => {
+    db.user.findUnique.mockResolvedValue(null);
+    const res = await restoreUser("u-ghost");
+    expect(res.ok).toBe(false);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+
+  // PR-02 regression — restoreUser used to route through
+  // requirePermissionForTarget, whose target lookup filters deletedAt: null.
+  // A soft-deleted target ALWAYS failed that lookup, so the restore feature
+  // could never restore anyone (the old unit test passed only because its
+  // mock intercepted both lookups). This test signs in as a MANAGER whose
+  // subtree contains the trashed user and proves the inline hierarchy path
+  // (which deliberately does NOT filter soft-deleted targets) lets the
+  // restore through.
+  it("PR-02: a MANAGER can restore a soft-deleted user in their subtree (guard no longer rejects trashed targets)", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    // The actor's subtree (getSubtreeUserIds walks User.managerId without
+    // filtering deletedAt — the trashed user remains in the tree).
+    db.user.findMany.mockImplementation(
+      ({ where }: { where?: { managerId?: string } }) =>
+        Promise.resolve(
+          where?.managerId === "u-mgr" ? [{ id: "u-oli" }] : [],
+        ),
+    );
+    db.user.findUnique.mockImplementation(
+      ({ where }: { where?: { id?: string } }) =>
+        Promise.resolve(
+          where?.id === "u-oli"
+            ? { id: "u-oli", name: "Oli", email: "oli@x.co", role: "MEMBER", managerId: "u-mgr", deletedAt: new Date("2026-10-30") }
+            : where?.id === "u-mgr"
+              ? { id: "u-mgr", name: "Ingrid", email: "ingrid@x.co", role: "MANAGER", managerId: null, deletedAt: null }
+              : null,
+        ),
+    );
+    const res = await restoreUser("u-oli");
+    expect(res.ok).toBe(true);
+    expect(db.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "u-oli" }, data: { deletedAt: null } }),
+    );
+  });
+
+  it("PR-02: a MANAGER cannot restore a user outside their subtree", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.user.findMany.mockResolvedValue([]); // empty subtree
+    db.user.findUnique.mockImplementation(
+      ({ where }: { where?: { id?: string } }) =>
+        Promise.resolve(
+          where?.id === "u-stranger"
+            ? { id: "u-stranger", name: "Ada", email: "ada@x.co", role: "ADMIN", managerId: null, deletedAt: new Date("2026-10-30") }
+            : where?.id === "u-mgr"
+              ? { id: "u-mgr", name: "Ingrid", email: "ingrid@x.co", role: "MANAGER", managerId: null, deletedAt: null }
+              : null,
+        ),
+    );
+    const res = await restoreUser("u-stranger");
+    expect(res.ok).toBe(false);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses self-restore", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    const res = await restoreUser("u-mgr");
+    expect(res.ok).toBe(false);
+    expect(db.user.update).not.toHaveBeenCalled();
   });
 });
 

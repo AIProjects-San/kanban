@@ -75,6 +75,7 @@ import {
   getProjectAssignableUsers,
   changePassword,
   updateWorkspaceSettings,
+  loadWorkspaceConfig,
   createConfigItem,
   updateConfigItem,
   deleteConfigItem,
@@ -119,6 +120,10 @@ beforeEach(() => {
   db.auditLog.create.mockResolvedValue({});
   db.task.aggregate.mockResolvedValue({ _max: { order: 3 } });
   db.teamMember.findUnique.mockResolvedValue(null);
+  // PR-20 — recalcMemberStats now uses two indexed COUNT queries; default
+  // them to 0 so tests that don't care about that side-effect don't produce
+  // NaN workload values. Tests that DO care override this.
+  db.task.count.mockResolvedValue(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -388,10 +393,11 @@ describe("task lifecycle", () => {
   });
 
   it("recalcMemberStats computes open/completed/workload (cap 6 open = 100%)", async () => {
-    const tasks = Array.from({ length: 7 }, (_, i) => ({ id: `t-${i}`, status: "TODO", assigneeId: "m-mia" }))
-      .concat([{ id: "t-done", status: "DONE", assigneeId: "m-mia" }]);
+    // PR-20 — recalc now issues two COUNT queries (open = status != DONE,
+    // completed = status = DONE) instead of fetching all task rows.
     db.task.findUnique.mockResolvedValue(existing);
-    db.task.findMany.mockResolvedValue(tasks);
+    db.task.count.mockImplementation(({ where }: { where?: { status?: unknown } }) =>
+      Promise.resolve(where?.status === "DONE" ? 1 : 7));
     db.task.update.mockResolvedValue(existing);
     db.teamMember.update.mockResolvedValue({});
     // L-P0-16: workspace row missing → fallback capacity of 6
@@ -408,10 +414,9 @@ describe("task lifecycle", () => {
   it("recalcMemberStats honours Workspace.workloadFullCapacity (L-P0-16)", async () => {
     // Workspace capacity set to 10 — 5 open tasks = 50% workload, not the
     // hardcoded-6 default of 83%. Verifies the admin-editable setting is wired.
-    const tasks = Array.from({ length: 5 }, (_, i) => ({ id: `t-${i}`, status: "TODO", assigneeId: "m-mia" }))
-      .concat([{ id: "t-done", status: "DONE", assigneeId: "m-mia" }]);
     db.task.findUnique.mockResolvedValue(existing);
-    db.task.findMany.mockResolvedValue(tasks);
+    db.task.count.mockImplementation(({ where }: { where?: { status?: unknown } }) =>
+      Promise.resolve(where?.status === "DONE" ? 1 : 5));
     db.task.update.mockResolvedValue(existing);
     db.teamMember.update.mockResolvedValue({});
     db.workspace.findUnique.mockResolvedValue({ workloadFullCapacity: 10 });
@@ -764,6 +769,8 @@ describe("profile & settings", () => {
   });
 
   it("getUserSettings returns DB values when present", async () => {
+    // PR-03 — settings are self-scoped now; sign in as the owner.
+    signIn(MEMBER);
     db.userSettings.findUnique.mockResolvedValue({
       accent: "ocean", dark: true, notifEmail: false, notifPush: true,
       notifMentions: false, notifDueToday: true, notifWeekly: true, notifProduct: false,
@@ -773,9 +780,37 @@ describe("profile & settings", () => {
   });
 
   it("getUserSettings returns defaults when the user has no settings row", async () => {
+    signIn(MEMBER);
     db.userSettings.findUnique.mockResolvedValue(null);
     const s = await getUserSettings(MEMBER.userId);
     expect(s).toMatchObject({ accent: "forest", dark: false, notifEmail: true });
+  });
+
+  it("getUserSettings rejects a signed-in user reading someone else's settings (PR-03 IDOR)", async () => {
+    signIn(MEMBER);
+    await expect(getUserSettings(ADMIN.userId)).rejects.toThrow(/own settings/i);
+    expect(db.userSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("PR-04: loadWorkspaceConfig requires a session (was callable anonymously)", async () => {
+    // Anonymous caller → AUTH error, no config tables touched.
+    signIn(null);
+    const anon = await loadWorkspaceConfig();
+    expectErr(anon, /signed in/i);
+    expect(db.role.findMany).not.toHaveBeenCalled();
+    // Signed-in MEMBER (settings:edit is granted to every role) → ok.
+    // Default the config tables so getWorkspaceConfig resolves.
+    for (const table of [
+      "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
+      "taskTagConfig", "priorityConfig", "departmentConfig",
+      "role", "permission", "rolePermission",
+    ]) {
+      db[table].findMany.mockResolvedValue([]);
+    }
+    db.workspace.findFirst.mockResolvedValue(null);
+    signIn(MEMBER);
+    const ok = await loadWorkspaceConfig();
+    expect(ok.ok).toBe(true);
   });
 
   it("getUserSettings rejects anonymous callers", async () => {
@@ -1208,7 +1243,7 @@ describe("role mutations", () => {
     db.role.create.mockResolvedValue({ id: "r-new", label: "Contractor" });
     db.role.count.mockResolvedValue(3);
     db.permission.findMany.mockResolvedValue([{ id: "p-1", key: "task:create" }]);
-    db.rolePermission.create.mockResolvedValue({});
+    db.rolePermission.createMany.mockResolvedValue({ count: 1 });
 
     await createRole({ key: "CONTRACTOR", label: "Contractor", permissions: ["task:create"] });
     expect(db.role.create).toHaveBeenCalledWith(
@@ -1216,7 +1251,12 @@ describe("role mutations", () => {
         data: expect.objectContaining({ key: "CONTRACTOR", isSystem: false, sortOrder: 3 }),
       }),
     );
-    expect(db.rolePermission.create).toHaveBeenCalledTimes(1);
+    // PR-15 — permissions are linked with ONE createMany inside the same
+    // transaction as the role row (previously a per-permission loop).
+    expect(db.rolePermission.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ roleId: "r-new", permissionId: "p-1" }] }),
+    );
+    expect(db.rolePermission.create).not.toHaveBeenCalled();
   });
 
   it("deleteRole removes a non-system, unassigned role", async () => {

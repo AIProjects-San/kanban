@@ -2,8 +2,9 @@
 
 End-to-end procedure for shipping Fernly to a production host. The
 canonical deployment target is a single Linux host running
-`docker compose` (2 app replicas + nginx + Redis + audit-cron). The
-same procedure applies to staging; only the env file differs.
+`docker compose` (migration gate + 2 app replicas + nginx + Redis +
+maintenance cron; an optional bundled PostgreSQL via the `local-db`
+profile). The same procedure applies to staging; only the env file differs.
 
 **Prerequisites:** the host has Docker 24+ and the Docker Compose v2
 plugin installed, ports 80/443 are open, and you have SSH access.
@@ -23,17 +24,24 @@ Copy these files into `/opt/fernly/`:
 - `Dockerfile`
 - `docker-compose.yml`
 - `nginx.conf`
-- `.env` (real production values — never commit)
+- `deploy/` (TLS examples + production Caddyfile)
+- `.env` (real production values — never commit; start from `.env.example`)
 
 ### 1.2 Configure the production `.env`
 
-Open `.env` and set every variable per `.env.example`. Critically:
+Open `.env` (copy from `.env.example` — every variable is documented there)
+and set at minimum:
 
 ```bash
 # Required — refuse to boot without these in production.
+# Self-hosted with the bundled db (add --profile local-db below):
+#   postgresql://fernly:<DB_PASSWORD>@db:5432/fernly
+# Managed Postgres (Supabase/Neon/RDS) — use the POOLER host:
 DATABASE_URL=postgresql://postgres:<DB_PASSWORD>@<pooler-host>:5432/postgres
+POSTGRES_PASSWORD=<DB_PASSWORD>     # only needed for the local-db profile
 NEXTAUTH_SECRET=$(openssl rand -base64 32)
 NEXTAUTH_URL=https://your-production-domain.example
+APP_URL=https://your-production-domain.example
 SERVER_ACTIONS_ALLOWED_ORIGINS=https://your-production-domain.example
 
 # Email (password reset) — without this, reset emails are silently dropped.
@@ -44,7 +52,8 @@ MAIL_FROM="Fernly <onboarding@your-domain.example>"
 REDIS_URL=redis://redis:6379
 REDIS_KEY_PREFIX=fernly:
 
-# Cron (audit prune at 03:00 UTC daily).
+# Cron (daily maintenance at 03:00 UTC: audit retention + expired-token,
+# read-notification and stale read-state purges).
 CRON_SECRET=$(openssl rand -base64 32)
 
 # Optional but recommended.
@@ -55,45 +64,68 @@ SENTRY_ENVIRONMENT=production
 ### 1.3 Build + start
 
 ```bash
-# Build the image (multi-stage; ~30s on a 2-core host).
+# Build the images (multi-stage; ~30s on a 2-core host).
 docker compose build
 
-# Start everything in detached mode.
+# Fully self-hosted stack (bundled PostgreSQL):
+docker compose --profile local-db up -d
+
+# …or with an external managed Postgres (DATABASE_URL points at it):
 docker compose up -d
+
+# Plain `docker compose` ignores `deploy.replicas` — scale explicitly
+# to actually run 2 app containers behind nginx:
+docker compose up -d --scale fernly-1=2
 
 # Wait for the health checks to go green (max 60s).
 docker compose ps
-# All services should show Up (healthy).
+# All services should show Up (healthy); `migrate` shows Exited (0).
 
 # Smoke check the public endpoint.
 curl -fsS https://your-production-domain.example/api/health
-# → {"status":"ok","db":"up","redis":"up","timestamp":"..."}
+# → {"status":"ok","timestamp":"..."}
 ```
 
-### 1.4 Apply DB migrations
+The `migrate` one-shot service runs `prisma migrate deploy` (retrying while
+the DB accepts connections) and the app containers only start after it
+succeeds — a failed migration fails the deploy loudly instead of serving a
+mismatched schema.
 
-The first deploy must apply schema migrations before the app can serve
-real traffic:
+### 1.4 Database schema
+
+The `migrate` service already applied all migrations before the app started
+(the PR-24 startup gate). Verify with:
 
 ```bash
-docker compose exec fernly-1 bunx prisma migrate deploy
-docker compose exec fernly-1 SEED_DEMO=0 node scripts/seed.js   # only if you want demo accounts
+docker compose run --rm migrate bunx prisma migrate status --schema prisma/schema.prisma
+# → "Database schema is up to date!"
 ```
 
-Verify with `bunx prisma migrate status` — should report
-"Database schema is up to date!".
+(If you ever need to run one manually: `docker compose run --rm migrate` —
+the app image itself ships no Prisma CLI/migrations by design.)
 
 ### 1.5 Seed an admin
 
-If you didn't seed demo accounts, create a real admin via Prisma:
+If you didn't seed demo accounts, create the first admin directly in the
+database (the app image ships no Prisma CLI by design — PR-24):
 
 ```bash
-docker compose exec fernly-1 bunx prisma studio
-# Or via psql against the Supabase pooler.
+# Local bundled db profile:
+docker compose exec db psql -U fernly -d fernly
+# …or connect psql to your managed Postgres / Supabase pooler.
 ```
 
 Insert a `User` row with `role: ADMIN` and a bcrypt-hashed password
-(use the `bcrypt.hash` from the app: `node -e "console.log(require('bcrypt').hashSync('YourPassword1', 12))"`).
+(hash locally: `node -e "console.log(require('bcryptjs').hashSync('YourPassword1', 12))"`):
+
+```sql
+INSERT INTO "User" (id, email, name, role, "passwordHash", "tokenVersion", "createdAt", "updatedAt")
+VALUES ('u-admin', 'admin@example.com', 'Admin', 'ADMIN',
+        '<bcrypt hash from above>', 0, now(), now());
+```
+
+(Sign-in filters `deletedAt IS NULL`, which is the column default — no extra
+values needed. Every other column has a default too.)
 
 ### 1.6 Smoke test
 
@@ -126,12 +158,13 @@ docker compose ps
 docker compose logs -f --tail=50 fernly-1 fernly-2
 ```
 
-If a new migration ships with the deploy:
+If a new migration ships with the deploy, `docker compose up -d` runs it
+via the `migrate` gate automatically; then restart both replicas so they
+pick up the generated client:
 
 ```bash
-docker compose exec fernly-1 bunx prisma migrate deploy
-# Then restart both replicas so they pick up the new schema.
-docker compose restart fernly-1 fernly-2
+docker compose build && docker compose up -d --scale fernly-1=2
+docker compose restart fernly-1
 ```
 
 ---
@@ -177,16 +210,35 @@ staging deploy → smoke test → production deploy`.
 ## 5. Health monitoring
 
 - **Liveness/readiness:** `GET /api/health` returns 200 with
-  `{ status: "ok", db: "up", redis: "up" }`. Returns 503 if the DB is
-  unreachable. Suitable for k8s probes / Docker `HEALTHCHECK` / nginx
-  passive checks.
+  `{ "status": "ok", "timestamp": … }` and 503 when the DB is unreachable.
+  Suitable for k8s probes / Docker `HEALTHCHECK` / nginx passive checks.
+  With `?detail=1` + `Authorization: Bearer $CRON_SECRET` it also reports
+  `db` and `redis`.
+- **Through the LB:** `http://<host>/health` is nginx's own liveness (static);
+  point external uptime monitors at `http://<host>/upstream-health` — it
+  proxies the app's full DB+Redis probe and is the honest "site is up"
+  signal.
 - **Logs:** `docker compose logs -f fernly-1` — structured JSON from
   the proxy middleware, plus console output from the app.
 - **Sentry:** if `SENTRY_DSN` is set, uncaught server + client errors
   forward automatically.
-- **Audit prune cron:** the `audit-cron` service calls
-  `/api/cron/prune-audit` daily at 03:00 UTC; check its logs with
-  `docker compose logs audit-cron`.
+- **Maintenance cron:** the `audit-cron` service calls
+  `/api/cron/prune-audit` daily at 03:00 UTC (audit retention + the PR-17
+  purges); check its logs with `docker compose logs audit-cron`.
+
+## 5a. TLS
+
+The compose stack serves HTTP on :80. Terminate TLS ONE of these ways
+(pick one — the app's HSTS header becomes effective only after this):
+
+1. **Caddy edge (recommended, automatic Let's Encrypt):** install Caddy on
+   the host, point DNS at it, and use `deploy/Caddyfile.production`
+   (`FERNLY_DOMAIN=app.example.com`). Zero cert management.
+2. **nginx TLS:** swap `nginx.conf` for `deploy/nginx-tls.conf.example` and
+   mount `./deploy/certs` (see the header comment in that file). Certbot
+   renewals keep working via the open ACME path on :80.
+3. **External load balancer / CDN** (cloud LB, Cloudflare): terminate TLS
+   there and forward to :80 — X-Forwarded-* headers are already respected.
 
 ---
 
@@ -199,8 +251,8 @@ staging deploy → smoke test → production deploy`.
 | Restart one replica | `docker compose restart fernly-1` |
 | Restart everything | `docker compose restart` |
 | Open a shell in a replica | `docker compose exec fernly-1 /bin/sh` |
-| Apply migrations | `docker compose exec fernly-1 bunx prisma migrate deploy` |
-| Check migration status | `docker compose exec fernly-1 bunx prisma migrate status` |
+| Apply migrations (manual) | `docker compose run --rm migrate` |
+| Check migration status | `docker compose run --rm migrate bunx prisma migrate status --schema prisma/schema.prisma` |
 | Inspect Redis | `docker compose exec redis redis-cli INFO` |
 | Reload nginx config | `docker compose exec nginx nginx -s reload` |
 | Pull an image-only update | `docker compose pull && docker compose up -d` |
@@ -209,7 +261,7 @@ staging deploy → smoke test → production deploy`.
 
 ## 7. Post-deploy checklist
 
-- [ ] `/api/health` returns 200 with `db:up` and `redis:up`.
+- [ ] `/api/health` (or `/upstream-health` through the LB) returns 200.
 - [ ] Login works as the admin account.
 - [ ] Login works for a MEMBER (lowest privilege).
 - [ ] A non-existent email returns the same UI as a wrong password.

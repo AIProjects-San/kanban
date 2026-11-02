@@ -104,7 +104,11 @@ beforeEach(() => {
   db.leaveRequest.create.mockResolvedValue({ id: "lr-1" });
   db.leaveRequest.update.mockResolvedValue({});
   db.leaveBalance.findUnique.mockResolvedValue(BALANCE);
+  // PR-19 — getMyLeaveData now reads balances in ONE batched findMany
+  // (+ createMany materialization for missing rows).
+  db.leaveBalance.findMany.mockResolvedValue([{ leaveTypeId: "lt-annual", ...BALANCE }]);
   db.leaveBalance.create.mockResolvedValue({});
+  db.leaveBalance.createMany.mockResolvedValue({ count: 0 });
   db.leaveBalance.update.mockResolvedValue({});
   db.user.findUnique.mockResolvedValue(null);
   db.user.findMany.mockResolvedValue([]);
@@ -726,10 +730,18 @@ describe("getMyLeaveData", () => {
     requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
     db.leaveType.findMany.mockResolvedValue([ANNUAL_TYPE]);
     db.leaveRequest.findMany.mockResolvedValue([]);
-    db.leaveBalance.findUnique.mockResolvedValue(null);
-    db.leaveBalance.create.mockResolvedValue({});
+    // PR-19 — no balance row exists: the batched read returns nothing, the
+    // loader materializes the entitlement via ONE createMany (not a
+    // per-type loop), and the fallback entitlement is used for this render.
+    db.leaveBalance.findMany.mockResolvedValue([]);
     const res = await getMyLeaveData();
     expect(res.ok).toBe(true);
+    expect(db.leaveBalance.createMany).toHaveBeenCalledTimes(1);
+    expect(db.leaveBalance.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ leaveTypeId: "lt-annual", entitled: 20, carriedOver: 0, used: 0 })],
+      }),
+    );
     if (res.ok) {
       expect(res.data.balances).toHaveLength(1);
       expect(res.data.balances[0]).toMatchObject({ typeName: "Annual Leave", available: 20 });
@@ -750,7 +762,7 @@ describe("getMyLeaveData", () => {
       { ...PENDING_REQUEST, leaveTypeId: "lt-annual", createdAt: new Date("2026-01-01T00:00:00.000Z") },
       { ...REQUEST_ROW, leaveTypeId: "lt-annual", status: "APPROVED", decidedById: "u-mgr" },
     ]);
-    db.leaveBalance.findUnique.mockResolvedValue(BALANCE);
+    db.leaveBalance.findMany.mockResolvedValue([{ leaveTypeId: "lt-annual", ...BALANCE }]);
     db.user.findMany.mockResolvedValue([{ id: "u-mgr", name: "Ingrid" }]);
     const res = await getMyLeaveData();
     expect(res.ok).toBe(true);
@@ -816,7 +828,7 @@ describe("read mapping with data", () => {
     requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
     db.leaveType.findMany.mockResolvedValue([ANNUAL_TYPE]);
     db.leaveRequest.findMany.mockResolvedValue([REQUEST_ROW]);
-    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 0 });
+    db.leaveBalance.findMany.mockResolvedValue([{ leaveTypeId: "lt-annual", entitled: 20, carriedOver: 0, used: 0 }]);
     db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
     db.user.findMany.mockResolvedValue([{ id: "u-mgr", name: "Ingrid" }]);
     const res = await getMyLeaveData();
@@ -888,7 +900,7 @@ describe("read mapping with data", () => {
       { ...REQUEST_ROW, status: "REJECTED", decidedById: "u-mgr", decidedAt: new Date("2026-02-02"), decisionNote: "No" },
     ]);
     db.user.findMany.mockResolvedValue([{ id: "u-mgr", name: "Ingrid" }]);
-    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 0 });
+    db.leaveBalance.findMany.mockResolvedValue([{ leaveTypeId: "lt-annual", entitled: 20, carriedOver: 0, used: 0 }]);
     const res = await getMyLeaveData();
     expect(res.ok).toBe(true);
     if (res.ok) {

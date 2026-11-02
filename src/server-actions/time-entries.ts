@@ -175,6 +175,8 @@ export async function getTaskTimeLog(taskId: string): Promise<ActionResult<{
     const entries = await db.timeEntry.findMany({
       where: { taskId },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      // PR-21 — hard cap; the task time-log renders inline in the modal.
+      take: 500,
     });
 
     // Resolve member names in bulk (no N+1).

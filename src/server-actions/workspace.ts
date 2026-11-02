@@ -19,7 +19,18 @@ import { workspaceSettingsSchema, configItemSchema, parseOrThrow } from "@/lib/v
  * from client components as a server action, returning a result object.
  */
 export async function loadWorkspaceConfig(): Promise<ActionResult<WorkspaceConfig>> {
-  return toResult(() => getWorkspaceConfig());
+  return toResult(async () => {
+    // PR-04 (production-readiness audit) — session gate. This was the only
+    // exported action with NO auth check: an anonymous caller could invoke it
+    // and receive the workspace name, defaults and the full role/permission
+    // matrix. None of it is secret to signed-in users, but the app's own
+    // standard is deny-by-default — every other action requires at least a
+    // session. The login screen renders without calling this action, so
+    // gating it breaks nothing.
+    const auth = await requirePermission("settings:edit");
+    void auth;
+    return getWorkspaceConfig();
+  });
 }
 
 export async function updateWorkspaceSettings(input: Partial<{
@@ -172,35 +183,39 @@ export async function updateRole(roleId: string, data: {
     const role = await db.role.findUnique({ where: { id: roleId } });
     if (!role) throw new AuthorizationError("Role not found.");
 
-    await db.role.update({
-      where: { id: roleId },
-      data: {
-        ...(data.label !== undefined && { label: data.label }),
-        ...(data.description !== undefined && { description: data.description }),
-        ...(data.iconName !== undefined && { iconName: data.iconName }),
-        ...(data.badgeClass !== undefined && { badgeClass: data.badgeClass }),
-      },
-    });
+    // PR-15 — role.update previously ran OUTSIDE the permission-replacement
+    // transaction, so a crash between them could persist the label change
+    // while rolling back the permissions (or vice versa). One transaction now
+    // covers both.
+    await db.$transaction(async (tx) => {
+      await tx.role.update({
+        where: { id: roleId },
+        data: {
+          ...(data.label !== undefined && { label: data.label }),
+          ...(data.description !== undefined && { description: data.description }),
+          ...(data.iconName !== undefined && { iconName: data.iconName }),
+          ...(data.badgeClass !== undefined && { badgeClass: data.badgeClass }),
+        },
+      });
 
-    // Update permissions if provided
-    if (data.permissions !== undefined) {
-      // P2 (production-readiness re-audit) — prevent privilege escalation:
-      // `role:manage` is an ADMIN-only capability. A MANAGER with `role:manage`
-      // (granted by an admin via the DB) could otherwise grant `role:manage`
-      // to their own role, then grant `user:manage:any` to themselves, etc.
-      // Only ADMIN may add `role:manage` to any role.
-      const PROTECTED_PERMS = ["role:manage"];
-      if (auth.role !== "ADMIN") {
-        const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
-        if (conflicting.length > 0) {
-          throw new AuthorizationError(
-            `Only ADMIN may grant: ${conflicting.join(", ")}.`,
-          );
+      // Update permissions if provided
+      if (data.permissions !== undefined) {
+        // P2 (production-readiness re-audit) — prevent privilege escalation:
+        // `role:manage` is an ADMIN-only capability. A MANAGER with `role:manage`
+        // (granted by an admin via the DB) could otherwise grant `role:manage`
+        // to their own role, then grant `user:manage:any` to themselves, etc.
+        // Only ADMIN may add `role:manage` to any role.
+        const PROTECTED_PERMS = ["role:manage"];
+        if (auth.role !== "ADMIN") {
+          const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
+          if (conflicting.length > 0) {
+            throw new AuthorizationError(
+              `Only ADMIN may grant: ${conflicting.join(", ")}.`,
+            );
+          }
         }
-      }
-      // Replace atomically — a failure mid-way can never leave the role with
-      // zero or duplicated permissions.
-      await db.$transaction(async (tx) => {
+        // Replace atomically — a failure mid-way can never leave the role with
+        // zero or duplicated permissions.
         await tx.rolePermission.deleteMany({ where: { roleId } });
         const perms = await tx.permission.findMany({
           where: { key: { in: data.permissions } },
@@ -208,8 +223,8 @@ export async function updateRole(roleId: string, data: {
         await tx.rolePermission.createMany({
           data: perms.map((p) => ({ roleId, permissionId: p.id })),
         });
-      });
-    }
+      }
+    });
 
     bumpConfigCache();
     await logAudit({
@@ -237,38 +252,43 @@ export async function createRole(data: {
     const existing = await db.role.findUnique({ where: { key: data.key } });
     if (existing) throw new AuthorizationError(`Role "${data.key}" already exists.`);
 
-    const role = await db.role.create({
-      data: {
-        key: data.key,
-        label: data.label,
-        description: data.description ?? "",
-        iconName: data.iconName ?? "Shield",
-        badgeClass: data.badgeClass ?? "bg-muted text-muted-foreground",
-        isSystem: false,
-        sortOrder: await db.role.count(),
-      },
-    });
-
-    if (data.permissions && data.permissions.length > 0) {
-      // P2 re-audit — same protected-permission guard as updateRole.
-      const PROTECTED_PERMS = ["role:manage"];
-      if (auth.role !== "ADMIN") {
-        const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
-        if (conflicting.length > 0) {
-          throw new AuthorizationError(
-            `Only ADMIN may grant: ${conflicting.join(", ")}.`,
-          );
-        }
-      }
-      const perms = await db.permission.findMany({
-        where: { key: { in: data.permissions } },
+    // PR-15 (production-readiness audit) — the role row and its permission
+    // grants are one logical write. Previously the role was created first and
+    // permissions inserted one-by-one in a loop: a crash mid-loop left a
+    // half-permissioned role, and the loop itself was an N+1 write. Both are
+    // fixed — a single transaction with one createMany.
+    const role = await db.$transaction(async (tx) => {
+      const created = await tx.role.create({
+        data: {
+          key: data.key,
+          label: data.label,
+          description: data.description ?? "",
+          iconName: data.iconName ?? "Shield",
+          badgeClass: data.badgeClass ?? "bg-muted text-muted-foreground",
+          isSystem: false,
+          sortOrder: await tx.role.count(),
+        },
       });
-      for (const p of perms) {
-        await db.rolePermission.create({
-          data: { roleId: role.id, permissionId: p.id },
+      if (data.permissions && data.permissions.length > 0) {
+        // P2 re-audit — same protected-permission guard as updateRole.
+        const PROTECTED_PERMS = ["role:manage"];
+        if (auth.role !== "ADMIN") {
+          const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
+          if (conflicting.length > 0) {
+            throw new AuthorizationError(
+              `Only ADMIN may grant: ${conflicting.join(", ")}.`,
+            );
+          }
+        }
+        const perms = await tx.permission.findMany({
+          where: { key: { in: data.permissions } },
+        });
+        await tx.rolePermission.createMany({
+          data: perms.map((p) => ({ roleId: created.id, permissionId: p.id })),
         });
       }
-    }
+      return created;
+    });
 
     bumpConfigCache();
     await logAudit({

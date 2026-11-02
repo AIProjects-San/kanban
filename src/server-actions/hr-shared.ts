@@ -5,6 +5,7 @@
 // client components.
 
 import { db } from "@/lib/db";
+import { logError } from "@/lib/observability";
 import { AuthorizationError } from "./auth-guard";
 
 // ---------------------------------------------------------------------------
@@ -65,9 +66,12 @@ export async function getApproverIdsFor(userId: string): Promise<string[]> {
   });
   if (user?.managerId) return [user.managerId];
   // No manager on record — every ADMIN may decide.
+  // PR-21 — take 50: a workspace with >50 admins is a config smell; the cap
+  // just bounds the IN-clause built from this list.
   const admins = await db.user.findMany({
     where: { role: "ADMIN", deletedAt: null },
     select: { id: true },
+    take: 50,
   });
   return admins.map((a) => a.id);
 }
@@ -110,14 +114,65 @@ export async function getOrCreateBalance(
   // No row yet — materialize the entitlement from the policy default.
   await db.leaveBalance.create({
     data: { userId, leaveTypeId, year, entitled: defaultEntitled, carriedOver: 0, used: 0 },
-  }).catch(() => {
+  }).catch((err) => {
     // Unique-trio race with a concurrent reader: read the winner's row.
+    // PR-22 — this catch was previously completely silent; log it so a
+    // persistent (non-race) failure is visible in the log stream.
+    logError("[hr-shared] leave balance materialize raced with a concurrent create:", err);
   });
   const row = await db.leaveBalance.findUnique({
     where: { userId_leaveTypeId_year: { userId, leaveTypeId, year } },
     select: { entitled: true, carriedOver: true, used: true },
   });
   return row ?? { entitled: defaultEntitled, carriedOver: 0, used: 0 };
+}
+
+/**
+ * PR-19 (production-readiness audit) — batched variant of the above for read
+ * paths that need balances for EVERY leave type (the Leave view's header).
+ * The per-type loop was a true query N+1 (3 queries per type, including a
+ * WRITE on a read path); steady-state is now exactly 2 queries, and the
+ * lazy-materialize write only happens for types missing a row (first ever
+ * view, or a newly created type). Not exported as a server action — helper.
+ */
+export async function getOrCreateBalancesBatch(
+  userId: string,
+  types: Array<{ id: string; entitled: number }>,
+  year: number,
+): Promise<Map<string, { entitled: number; carriedOver: number; used: number }>> {
+  const result = new Map<string, { entitled: number; carriedOver: number; used: number }>();
+  if (types.length === 0) return result;
+
+  const rows = await db.leaveBalance.findMany({
+    where: { userId, year, leaveTypeId: { in: types.map((t) => t.id) } },
+    select: { leaveTypeId: true, entitled: true, carriedOver: true, used: true },
+  });
+  const byType = new Map(rows.map((r) => [r.leaveTypeId, r]));
+
+  const missing = types.filter((t) => !byType.has(t.id));
+  if (missing.length > 0) {
+    // Materialize missing rows. createMany without skipDuplicates (unsupported
+    // on SQLite) — a unique-trio race with a concurrent reader is handled by
+    // re-reading below (same contract as getOrCreateBalance).
+    await db.leaveBalance.createMany({
+      data: missing.map((t) => ({
+        userId, leaveTypeId: t.id, year, entitled: t.entitled, carriedOver: 0, used: 0,
+      })),
+    }).catch((err) => {
+      logError("[hr-shared] balance batch materialize raced with a concurrent create:", err);
+    });
+    const retry = await db.leaveBalance.findMany({
+      where: { userId, year, leaveTypeId: { in: missing.map((t) => t.id) } },
+      select: { leaveTypeId: true, entitled: true, carriedOver: true, used: true },
+    });
+    for (const r of retry) byType.set(r.leaveTypeId, r);
+  }
+
+  for (const t of types) {
+    const row = byType.get(t.id);
+    result.set(t.id, row ?? { entitled: t.entitled, carriedOver: 0, used: 0 });
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

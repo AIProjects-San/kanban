@@ -1,0 +1,41 @@
+# =============================================================================
+# Production edge (optional alternative to nginx.conf) — PR-25.
+#
+# Caddy terminates TLS with automatic Let's Encrypt certificates: point a DNS
+# A/AAAA record at the host, set FERNLY_DOMAIN, and run Caddy in front of the
+# compose stack. No certbot, no renewal cron.
+#
+# Usage:
+#   1. Install Caddy on the host (https://caddyserver.com/docs/install) or
+#      `docker run -p 80:80 -p 443:443 -v ./deploy/Caddyfile.production:/etc/caddy/Caddyfile caddy:alpine`
+#      (add `--network <compose-network>` so `fernly-1` resolves, or proxy to
+#      the compose-published port on the host, as written below).
+#   2. Set the domain:  export FERNLY_DOMAIN=app.example.com
+#   3. Ensure ports 80 + 443 reach Caddy and the compose nginx publishes 80.
+#
+# This file intentionally has NO port-transform handler — see
+# deploy/sandbox-preview/Caddyfile for why that pattern is sandbox-only.
+# =============================================================================
+
+{$FERNLY_DOMAIN} {
+	encode zstd gzip
+
+	# Real client IPs for the app's rate limiting + audit logs (the app's
+	# authorize() prefers X-Real-IP, falling back to the last XFF hop).
+	reverse_proxy 127.0.0.1:80 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	header {
+		# The app already sets HSTS/X-Frame-Options/etc. via next.config.ts;
+		# Caddy adds Strict-Transport-Security reinforcement is NOT duplicated
+		# here (double headers would be a config smell).
+		-Server
+	}
+
+	log {
+		output stdout
+	}
+}

@@ -1,0 +1,38 @@
+# =============================================================================
+# SANDBOX / PREVIEW ONLY — this file must NEVER be exposed to the public
+# internet. (Production-readiness audit PR-01.)
+#
+# The XTransformPort handler below lets the caller choose the localhost port
+# the request is forwarded to (a query parameter selects the upstream). That
+# is an intentional convenience for the space-z.ai sandbox preview platform,
+# which routes external requests to different local dev servers by port —
+# but on a public host it would be an open SSRF-style proxy into every
+# service bound to the host's loopback interface.
+#
+# The production edge is nginx.conf (docker-compose) or
+# deploy/Caddyfile.production (automatic HTTPS). See docs/DEPLOY.md.
+# =============================================================================
+
+:81 {
+	@transform_port_query {
+		query XTransformPort=*
+	}
+
+	handle @transform_port_query {
+		reverse_proxy localhost:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		reverse_proxy localhost:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

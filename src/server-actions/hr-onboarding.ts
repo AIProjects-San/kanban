@@ -94,6 +94,8 @@ export async function getOnboarding(): Promise<ActionResult<OnboardingChecklistT
     const rows = await db.onboardingChecklist.findMany({
       orderBy: { createdAt: "desc" },
       include: { tasks: true },
+      // PR-21 — hard cap; onboarding is a transient program, not an archive.
+      take: 200,
     });
     const names = await namesFor([
       ...rows.map((r) => r.newHireId),
@@ -116,6 +118,8 @@ export async function getMyOnboardingTasks(): Promise<ActionResult<{
       },
       orderBy: { createdAt: "desc" },
       include: { tasks: true },
+      // PR-21 — hard cap (a hire's own checklists are single digits).
+      take: 100,
     });
     const names = await namesFor([
       ...rows.map((r) => r.newHireId),
@@ -147,42 +151,50 @@ export async function createChecklist(input: {
     });
     if (!hire || hire.deletedAt) throw new AuthorizationError("New hire not found.");
 
-    const checklist = await db.onboardingChecklist.create({
-      data: {
-        newHireId: data.newHireId,
-        title: data.title,
-        ...(data.useTemplate
-          ? {
-              tasks: {
-                create: DEFAULT_TEMPLATE.map((t, i) => ({
-                  title: t.title,
-                  dueOffsetDays: t.dueOffsetDays,
-                  // Self tasks go to the hire; manager tasks default to the
-                  // hire's manager when one exists, else unassigned (HR picks up).
-                  assigneeId: t.assignSelf ? data.newHireId : null,
-                  order: i,
-                })),
-              },
-            }
-          : {}),
-      },
-      include: { tasks: true },
-    });
-
-    // The manager tasks belong to the hire's manager — assign them now.
-    if (data.useTemplate) {
-      const approvers = await db.user.findUnique({
-        where: { id: data.newHireId },
-        select: { managerId: true },
+    // PR-15 (production-readiness audit) — the checklist row, its template
+    // tasks and the manager auto-assignment are one logical creation. The
+    // nested create was already atomic; the manager updateMany now joins it
+    // in the same transaction so a crash can't leave manager tasks stranded
+    // unassigned while the checklist exists.
+    const checklist = await db.$transaction(async (tx) => {
+      const created = await tx.onboardingChecklist.create({
+        data: {
+          newHireId: data.newHireId,
+          title: data.title,
+          ...(data.useTemplate
+            ? {
+                tasks: {
+                  create: DEFAULT_TEMPLATE.map((t, i) => ({
+                    title: t.title,
+                    dueOffsetDays: t.dueOffsetDays,
+                    // Self tasks go to the hire; manager tasks default to the
+                    // hire's manager when one exists, else unassigned (HR picks up).
+                    assigneeId: t.assignSelf ? data.newHireId : null,
+                    order: i,
+                  })),
+                },
+              }
+            : {}),
+        },
+        include: { tasks: true },
       });
-      const managerId = approvers?.managerId ?? null;
-      if (managerId) {
-        await db.onboardingTask.updateMany({
-          where: { checklistId: checklist.id, assigneeId: null },
-          data: { assigneeId: managerId },
+
+      // The manager tasks belong to the hire's manager — assign them now.
+      if (data.useTemplate) {
+        const approvers = await tx.user.findUnique({
+          where: { id: data.newHireId },
+          select: { managerId: true },
         });
+        const managerId = approvers?.managerId ?? null;
+        if (managerId) {
+          await tx.onboardingTask.updateMany({
+            where: { checklistId: created.id, assigneeId: null },
+            data: { assigneeId: managerId },
+          });
+        }
       }
-    }
+      return created;
+    });
 
     await logAudit({
       actor: auth,
@@ -290,30 +302,38 @@ export async function setTaskDone(input: {
     const taskId = parseOrThrow(taskDoneSchema, input).taskId;
     const task = await assertCanTick(auth, taskId);
 
-    await db.onboardingTask.update({
-      where: { id: task.id },
-      data: {
-        done: input.done,
-        doneAt: input.done ? new Date() : null,
-        doneById: input.done ? auth.userId : null,
-      },
-    });
-
-    // Auto-complete / reopen the checklist based on the remaining tasks.
+    // PR-15 — the task tick and the derived checklist completion state are
+    // one logical write. Previously a crash between them could auto-complete
+    // a checklist whose last task never persisted as done (or leave a fully-
+    // ticked checklist showing "in progress"). The count read stays outside
+    // the transaction (it only informs the second write; the guarded
+    // updateMany below is idempotent either way).
     const remaining = await db.onboardingTask.count({
       where: { checklistId: task.checklistId, done: false },
     });
-    if (input.done && remaining === 0) {
-      await db.onboardingChecklist.update({
-        where: { id: task.checklistId },
-        data: { completedAt: new Date() },
+    await db.$transaction(async (tx) => {
+      await tx.onboardingTask.update({
+        where: { id: task.id },
+        data: {
+          done: input.done,
+          doneAt: input.done ? new Date() : null,
+          doneById: input.done ? auth.userId : null,
+        },
       });
-    } else if (!input.done) {
-      await db.onboardingChecklist.updateMany({
-        where: { id: task.checklistId, completedAt: { not: null } },
-        data: { completedAt: null },
-      });
-    }
+
+      // Auto-complete / reopen the checklist based on the remaining tasks.
+      if (input.done && remaining === 0) {
+        await tx.onboardingChecklist.update({
+          where: { id: task.checklistId },
+          data: { completedAt: new Date() },
+        });
+      } else if (!input.done) {
+        await tx.onboardingChecklist.updateMany({
+          where: { id: task.checklistId, completedAt: { not: null } },
+          data: { completedAt: null },
+        });
+      }
+    });
 
     await logAudit({
       actor: auth,

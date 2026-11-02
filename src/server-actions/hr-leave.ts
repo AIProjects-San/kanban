@@ -16,6 +16,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
+import { logError } from "@/lib/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { LEAVE_STATUS_LABELS } from "@/lib/config";
@@ -39,6 +40,7 @@ import {
   getApproverIdsFor,
   assertLeaveDecider,
   getOrCreateBalance,
+  getOrCreateBalancesBatch,
   findOverlappingActiveRequest,
 } from "./hr-shared";
 
@@ -68,14 +70,24 @@ export async function getMyLeaveData(): Promise<
       db.leaveRequest.findMany({
         where: { userId: auth.userId },
         orderBy: { createdAt: "desc" },
+        // PR-21 — hard cap. A personal history beyond a few hundred requests
+        // is a paginated-list concern, not a self-service view concern.
+        take: 200,
       }),
     ]);
 
-    const balances: LeaveBalanceT[] = [];
-    for (const t of types) {
-      const entitled = t.policy?.annualDays ?? 0;
-      const b = await getOrCreateBalance(auth.userId, t.id, year, entitled);
-      balances.push({
+    // PR-19 — balances for every active type in ONE batched read (+ a rare
+    // lazy materialize write for missing rows). The previous per-type loop
+    // ran 3 queries per leave type — a genuine N+1 with a write on the read
+    // path — on every Leave-view load.
+    const balancesByType = await getOrCreateBalancesBatch(
+      auth.userId,
+      types.map((t) => ({ id: t.id, entitled: t.policy?.annualDays ?? 0 })),
+      year,
+    );
+    const balances: LeaveBalanceT[] = types.map((t) => {
+      const b = balancesByType.get(t.id) ?? { entitled: t.policy?.annualDays ?? 0, carriedOver: 0, used: 0 };
+      return {
         leaveTypeId: t.id,
         typeName: t.name,
         typeColor: t.color,
@@ -84,8 +96,8 @@ export async function getMyLeaveData(): Promise<
         carriedOver: b.carriedOver,
         used: b.used,
         available: b.entitled + b.carriedOver - b.used,
-      });
-    }
+      };
+    });
 
     const typeById = new Map(types.map((t) => [t.id, t]));
     // Decided rows render "<name>: <note>" — only DECIDERS' names are
@@ -169,6 +181,9 @@ export async function getLeaveQueue(): Promise<
     const requests = await db.leaveRequest.findMany({
       where: visibleUserIds ? { userId: { in: visibleUserIds } } : {},
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+      // PR-21 — hard cap; the queue view renders one screen of cards, and a
+      // multi-year workspace archive is a paginated/reporting concern.
+      take: 500,
     });
 
     const types = await db.leaveType.findMany({ orderBy: { name: "asc" }, include: { policy: true } });
@@ -312,8 +327,9 @@ export async function createLeaveRequest(input: {
           })),
         });
       }
-    } catch {
+    } catch (err) {
       // Notification failures must not break the request.
+      logError("[hr-leave] notification createMany failed:", err);
     }
 
     await logAudit({
@@ -460,8 +476,9 @@ export async function decideLeaveRequest(input: {
           message: `${auth.name} ${data.decision === "APPROVE" ? "approved" : "rejected"} your ${request.days}-day ${type?.name ?? "leave"} request${data.note ? `: ${data.note}` : "."}`,
         },
       });
-    } catch {
+    } catch (err) {
       // Never break the decision on a notification failure.
+      logError("[hr-leave] notification create failed:", err);
     }
 
     await logAudit({
@@ -636,23 +653,29 @@ export async function updateLeaveType(id: string, input: {
     const existing = await db.leaveType.findUnique({ where: { id } });
     if (!existing) throw new AuthorizationError("Leave type not found.");
 
-    await db.leaveType.update({
-      where: { id },
-      data: {
-        ...(data.name !== undefined ? { name: data.name } : {}),
-        ...(data.color !== undefined ? { color: data.color } : {}),
-        ...(data.requiresDoc !== undefined ? { requiresDoc: data.requiresDoc } : {}),
-        ...(data.paid !== undefined ? { paid: data.paid } : {}),
-        ...(data.active !== undefined ? { active: data.active } : {}),
-      },
-    });
-    if (data.policy) {
-      await db.leavePolicy.upsert({
-        where: { leaveTypeId: id },
-        create: { leaveTypeId: id, ...data.policy },
-        update: data.policy,
+    // PR-15 (production-readiness audit) — the leave type and its policy are
+    // one logical write. A crash between the update and the upsert previously
+    // left the type renamed but the entitlement (annual days) unchanged —
+    // balances materialised afterwards would disagree with older ones.
+    await db.$transaction(async (tx) => {
+      await tx.leaveType.update({
+        where: { id },
+        data: {
+          ...(data.name !== undefined ? { name: data.name } : {}),
+          ...(data.color !== undefined ? { color: data.color } : {}),
+          ...(data.requiresDoc !== undefined ? { requiresDoc: data.requiresDoc } : {}),
+          ...(data.paid !== undefined ? { paid: data.paid } : {}),
+          ...(data.active !== undefined ? { active: data.active } : {}),
+        },
       });
-    }
+      if (data.policy) {
+        await tx.leavePolicy.upsert({
+          where: { leaveTypeId: id },
+          create: { leaveTypeId: id, ...data.policy },
+          update: data.policy,
+        });
+      }
+    });
 
     await logAudit({
       actor: auth,

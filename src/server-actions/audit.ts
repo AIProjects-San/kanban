@@ -10,6 +10,7 @@
 import { db } from "@/lib/db";
 import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
+import { getWorkspaceLimit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -29,9 +30,12 @@ export async function getAuditLogs(): Promise<ActionResult<
 >> {
   return toResult(async () => {
     await requirePermission("audit:view");
+    // PR-18 — honour the admin-editable Workspace.auditLogLimit (previously
+    // hardcoded at 300) with the old default as fallback, clamped to 1000.
+    const limit = await getWorkspaceLimit("auditLogLimit", 300, 1000);
     const logs = await db.auditLog.findMany({
       orderBy: { createdAt: "desc" },
-      take: 300,
+      take: limit,
     });
     return logs.map((l) => ({
       ...l,
@@ -75,10 +79,13 @@ export async function getAuditLogsForEntity(
     if (!openEntityTypes.has(entityType) && !hasPermission(auth.role, "audit:view")) {
       throw new AuthorizationError("You can only view history for tasks, projects and team entities.");
     }
+    // PR-18 — honour the admin-editable Workspace.entityHistoryLimit
+    // (previously hardcoded at 50) with the old default as fallback.
+    const limit = await getWorkspaceLimit("entityHistoryLimit", 50, 500);
     const logs = await db.auditLog.findMany({
       where: { entityType, entityId },
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: limit,
     });
     return logs.map((l) => ({
       ...l,

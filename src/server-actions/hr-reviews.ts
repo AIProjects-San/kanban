@@ -20,6 +20,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
+import { logError } from "@/lib/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { REVIEW_STATUS_LABELS } from "@/lib/config";
 import type { ReviewStatus, PerformanceReviewT } from "@/lib/types";
@@ -105,6 +106,8 @@ export async function getMyReviews(): Promise<ActionResult<PerformanceReviewT[]>
     const rows = await db.performanceReview.findMany({
       where: { userId: auth.userId },
       orderBy: { periodStart: "desc" },
+      // PR-21 — hard cap on the self-service review history.
+      take: 200,
     });
     const reviewerNames = await namesFor(rows.map((r) => r.reviewedById).filter(Boolean) as string[]);
     return rows.map((r) => serialize(r, auth.name, r.reviewedById ? reviewerNames.get(r.reviewedById) ?? null : null));
@@ -126,6 +129,8 @@ export async function getReviewQueue(): Promise<
     const rows = await db.performanceReview.findMany({
       where: visibleUserIds ? { userId: { in: visibleUserIds } } : {},
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+      // PR-21 — hard cap; same rationale as the leave queue.
+      take: 500,
     });
     const names = await namesFor([...rows.map((r) => r.userId), ...rows.map((r) => r.reviewedById).filter(Boolean) as string[]]);
     return {
@@ -189,8 +194,9 @@ export async function createReview(input: {
           message: `${auth.name} opened "${data.title}" (${data.periodStart} → ${data.periodEnd}). Write your self-assessment and submit it.`,
         },
       });
-    } catch {
+    } catch (err) {
       // Notification failures must never break the mutation.
+      logError("[hr-reviews] notification create failed:", err);
     }
 
     await logAudit({
@@ -280,8 +286,9 @@ export async function submitReview(input: { reviewId: string }): Promise<ActionR
           })),
         });
       }
-    } catch {
+    } catch (err) {
       // Never break the mutation on a notification failure.
+      logError("[hr-reviews] notification createMany failed:", err);
     }
 
     await logAudit({
@@ -376,8 +383,9 @@ export async function decideReview(input: {
           message: `${auth.name} completed the review of "${review.title}" — acknowledge it to close the cycle.`,
         },
       });
-    } catch {
+    } catch (err) {
       // Never break the mutation on a notification failure.
+      logError("[hr-reviews] notification createMany failed:", err);
     }
 
     await logAudit({

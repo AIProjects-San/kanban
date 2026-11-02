@@ -14,6 +14,10 @@ vi.mock("@/lib/db", () => ({
     workspace: { findUnique: vi.fn().mockResolvedValue({ auditRetentionDays: 180 }) },
     $executeRaw: vi.fn().mockResolvedValue(0),
     auditLog: { create: vi.fn().mockResolvedValue({}) },
+    // PR-17 — maintenance purges (deleteMany returns a count object).
+    passwordResetToken: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    notification: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    messageRead: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
   },
 }));
 
@@ -76,6 +80,10 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
     expect(body.ok).toBe(true);
     expect(body.retentionDays).toBe(180);
     expect(body.deletedCount).toBe(0);
+    // PR-17 — the maintenance purge counters are present.
+    expect(body.purgedResetTokens).toBe(0);
+    expect(body.purgedReadNotifications).toBe(0);
+    expect(body.purgedStaleMessageReads).toBe(0);
     // The prune result only carries counters — never audit contents.
     expect(JSON.stringify(body)).not.toMatch(/actorName|detail/);
     expect(res.headers.get("cache-control")).toMatch(/no-store/i);

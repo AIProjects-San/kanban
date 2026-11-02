@@ -289,6 +289,37 @@ describe("L-P2-38 exportCalendarIcs", () => {
     const res = await exportCalendarIcs();
     expect(res.ok).toBe(false);
   });
+
+  it("PR-05: caps the export at 1000 events and flags it as truncated", async () => {
+    // 1000 rows back from the DB (the cap itself) → truncated: true.
+    const rows = Array.from({ length: 1000 }, (_, i) => ({
+      id: `evt-${i}`,
+      title: `Event ${i}`,
+      description: "",
+      location: "",
+      type: "FOCUS",
+      date: new Date(Date.UTC(2026, 9, 30)),
+      time: "09:00",
+      durationMin: 30,
+      createdAt: new Date(Date.UTC(2026, 9, 1)),
+    }));
+    db.calendarEvent.findMany.mockResolvedValue(rows);
+    const res = await exportCalendarIcs();
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.eventCount).toBe(1000);
+    expect(res.data.truncated).toBe(true);
+    // The query itself carries the take cap.
+    expect(db.calendarEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 1000 }),
+    );
+  });
+
+  it("PR-05: a partial export reports truncated: false", async () => {
+    db.calendarEvent.findMany.mockResolvedValue([]);
+    const res = await exportCalendarIcs();
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.truncated).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

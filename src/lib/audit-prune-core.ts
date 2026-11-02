@@ -82,3 +82,98 @@ export async function runAuditPrune(
     retentionDays,
   };
 }
+
+// ---------------------------------------------------------------------------
+// PR-17 (production-readiness audit) — daily maintenance purges.
+//
+// The audit log was the only table with a retention story. Three more tables
+// grow without bound and hold either garbage or derived state:
+//
+//   PasswordResetToken — expired (or long-used) tokens are pure garbage: the
+//                        raw token was emailed once and is unusable. Kept 24h
+//                        after use for incident forensics, then deleted.
+//   Notification       — a notification the recipient has READ has done its
+//                        job; 90 days later it is noise. Unread rows are NEVER
+//                        purged (an unread badge must not silently vanish).
+//   MessageRead        — read-state rows pointing at messages soft-deleted
+//                        >90 days ago can never be rendered again.
+//
+// Deliberately NOT purged: Message bodies, TimeEntry, CalendarEvent, Reminder
+// (workspace business data — deletion there is an owner decision, documented
+// in docs/PRODUCTION_READINESS.md).
+//
+// All volumes are inherently bounded (reset requests are rate-limited to
+// 5/email/h + 20/IP/h; notifications are per-action), so plain deleteMany is
+// safe here — unlike the audit table, which needs the batched raw loop above.
+// ---------------------------------------------------------------------------
+
+/** How long a used reset token is kept after use (incident forensics). */
+const RESET_TOKEN_USED_GRACE_MS = 24 * 60 * 60 * 1000;
+/** Read notifications older than this are purged. */
+const READ_NOTIFICATION_RETENTION_DAYS = 90;
+/** Read-state rows of messages soft-deleted longer ago than this are purged. */
+const STALE_MESSAGE_READ_RETENTION_DAYS = 90;
+
+export interface MaintenanceResult extends PruneResult {
+  /** Expired/used password-reset tokens deleted. */
+  purgedResetTokens: number;
+  /** Read notifications older than the retention window deleted. */
+  purgedReadNotifications: number;
+  /** Read-state rows of long-soft-deleted messages deleted. */
+  purgedStaleMessageReads: number;
+}
+
+/**
+ * The full daily maintenance pass: audit retention (above) + the PR-17
+ * purges. The cron route calls this; failures in one purge do not abort the
+ * others — each is wrapped so a wedged table can't block the rest.
+ */
+export async function runMaintenancePurge(
+  actor: { userId: string; name: string; role: string } = CRON_ACTOR,
+): Promise<MaintenanceResult> {
+  const audit = await runAuditPrune(actor);
+
+  const now = Date.now();
+  const notifCutoff = new Date(now - READ_NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const readCutoff = new Date(now - STALE_MESSAGE_READ_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  let purgedResetTokens = 0;
+  let purgedReadNotifications = 0;
+  let purgedStaleMessageReads = 0;
+  try {
+    const r = await db.passwordResetToken.deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: new Date(now) } },
+          { usedAt: { lt: new Date(now - RESET_TOKEN_USED_GRACE_MS) } },
+        ],
+      },
+    });
+    purgedResetTokens = r.count;
+  } catch {
+    // Counted as 0 — the next run retries. Never block the other purges.
+  }
+  try {
+    const r = await db.notification.deleteMany({
+      where: { read: true, createdAt: { lt: notifCutoff } },
+    });
+    purgedReadNotifications = r.count;
+  } catch {
+    // see above
+  }
+  try {
+    const r = await db.messageRead.deleteMany({
+      where: { message: { deletedAt: { lt: readCutoff } } },
+    });
+    purgedStaleMessageReads = r.count;
+  } catch {
+    // see above
+  }
+
+  return {
+    ...audit,
+    purgedResetTokens,
+    purgedReadNotifications,
+    purgedStaleMessageReads,
+  };
+}

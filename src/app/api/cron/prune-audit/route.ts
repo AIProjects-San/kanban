@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runAuditPrune } from "@/lib/audit-prune-core";
+import { runMaintenancePurge } from "@/lib/audit-prune-core";
 import { captureError } from "@/lib/observability";
 
 // ---------------------------------------------------------------------------
@@ -76,7 +76,10 @@ async function handle(req: Request): Promise<NextResponse> {
   lastRunAt = now;
 
   try {
-    const data = await runAuditPrune();
+    // PR-17 — the daily pass is now full maintenance: audit retention PLUS
+    // purges of expired password-reset tokens, read notifications and stale
+    // message-read state (see audit-prune-core.ts).
+    const data = await runMaintenancePurge();
     return NextResponse.json(
       { ok: true, ...data },
       { status: 200, headers: { "Cache-Control": "no-store" } },

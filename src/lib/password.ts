@@ -1,8 +1,14 @@
 // ---------------------------------------------------------------------------
 // Password policy — single source of truth for hashing and strength rules.
 //
-// The minimum length is workspace-configurable (Workspace.minPasswordLength);
-// everything else (cost factor, charset rules) is enforced here.
+// The minimum length is workspace-configurable (Workspace.minPasswordLength).
+// PR-14 (production-readiness audit): the policy is deliberately LENGTH-ONLY
+// (NIST SP 800-63B style — no forced charset/complexity rules, which measurably
+// push users toward weaker, predictable patterns). The old header comment
+// claimed "charset rules are enforced here"; they never were. A breach-list
+// check (k-anonymity API) is the one recommended addition — tracked in
+// docs/PRODUCTION_READINESS.md as roadmap, not implemented here because it
+// requires an external dependency no self-hosted operator should be forced into.
 // ---------------------------------------------------------------------------
 
 import bcrypt from "bcryptjs";

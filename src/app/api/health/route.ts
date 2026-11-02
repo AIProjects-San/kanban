@@ -77,10 +77,17 @@ export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   const expectedToken = process.env.CRON_SECRET ?? "";
-  const isAuthorized =
-    expectedToken.length >= 16 &&
-    token.length === expectedToken.length &&
-    token === expectedToken; // constant-time-ish via length check + compare
+  // PR-12 (production-readiness audit) — constant-time comparison, mirroring
+  // /api/cron/prune-audit. The previous `===` compare leaked (in theory) a
+  // timing oracle on the secret; the length pre-check alone doesn't equalise
+  // comparison time across matching lengths.
+  const tokenEqualsExpected = (() => {
+    if (token.length !== expectedToken.length) return false;
+    let diff = 0;
+    for (let i = 0; i < token.length; i++) diff |= token.charCodeAt(i) ^ expectedToken.charCodeAt(i);
+    return diff === 0;
+  })();
+  const isAuthorized = expectedToken.length >= 16 && token.length > 0 && tokenEqualsExpected;
   const wantsDetail = url.searchParams.get("detail") === "1" && isAuthorized;
 
   const [dbUp, redisStatus] = await Promise.all([probeDb(), probeRedis()]);

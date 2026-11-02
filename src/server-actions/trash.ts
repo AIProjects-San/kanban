@@ -15,6 +15,8 @@
 
 import { db } from "@/lib/db";
 import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { canManageUser, getSubtreeUserIds } from "@/lib/hierarchy";
+import { isValidRole, type Role } from "@/lib/rbac";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -118,21 +120,52 @@ export async function restoreProject(id: string): Promise<ActionResult<void>> {
  */
 export async function restoreUser(userId: string): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await requirePermissionForTargetCompat("role:manage", userId);
+    // PR-02 (production-readiness audit) — this previously routed through
+    // requirePermissionForTarget, whose target lookup filters `deletedAt: null`.
+    // A user in the trash is soft-deleted by definition, so the lookup ALWAYS
+    // returned null and restoreUser could never restore anyone (the unit test
+    // passed only because its mock intercepted both lookups). Now the guard is
+    // done inline WITHOUT the deletedAt filter: permission first, then the
+    // hierarchy check (admins manage everyone; managers only their subtree —
+    // getSubtreeUserIds does not filter soft-deleted users, so a manager can
+    // still restore their own former reports).
+    const auth = await requirePermission("role:manage");
     if (userId === auth.userId) {
       throw new AuthorizationError("You cannot restore your own account this way.");
     }
-    const target = await db.user.findUnique({ where: { id: userId } });
+    const target = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, role: true, managerId: true, deletedAt: true },
+    });
     if (!target) throw new AuthorizationError("User not found.");
     if (!target.deletedAt) throw new AuthorizationError("User is not in the trash.");
-    await db.user.update({ where: { id: userId }, data: { deletedAt: null } });
-    // Also restore the linked TeamMember row (soft-deleted alongside the User).
-    if (target.email) {
-      await db.teamMember.updateMany({
-        where: { email: target.email.toLowerCase() },
-        data: { deletedAt: null },
-      });
+    if (auth.role !== "ADMIN") {
+      const targetRole: Role = isValidRole(target.role) ? target.role : "MEMBER";
+      const actorSubtree = await getSubtreeUserIds(auth.userId);
+      if (!canManageUser(
+        { userId: auth.userId, role: auth.role },
+        { userId: target.id, role: targetRole, managerId: target.managerId },
+        actorSubtree,
+      )) {
+        throw new AuthorizationError(
+          "You can only restore users in your reporting chain. " +
+          "This user is not one of your direct or transitive reports.",
+        );
+      }
     }
+    // PR-15 — the User + TeamMember restores are two halves of one operation;
+    // a crash between them used to leave the roster row soft-deleted while the
+    // user could sign in again. Wrap both writes in a transaction.
+    await db.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { deletedAt: null } });
+      // Also restore the linked TeamMember row (soft-deleted alongside the User).
+      if (target.email) {
+        await tx.teamMember.updateMany({
+          where: { email: target.email.toLowerCase() },
+          data: { deletedAt: null },
+        });
+      }
+    });
     await logAudit({
       actor: auth,
       action: "user.restored",
@@ -173,9 +206,4 @@ export async function restoreMessage(id: string): Promise<ActionResult<void>> {
   });
 }
 
-// Local import shim: requirePermissionForTarget lives in auth-guard; using it
-// directly keeps hierarchy checks consistent with updateUser/deleteUser.
-async function requirePermissionForTargetCompat(permission: Parameters<typeof import("./auth-guard").requirePermissionForTarget>[0], targetUserId: string) {
-  const { requirePermissionForTarget } = await import("./auth-guard");
-  return requirePermissionForTarget(permission, targetUserId);
-}
+

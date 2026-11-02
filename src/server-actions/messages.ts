@@ -53,10 +53,13 @@ export async function sendMessage(raw: {
 
     // Resolve the recipient's display name from the DB when we have a user
     // id, so the client can't spoof who a thread is "with".
+    // PR-23 — filter soft-deleted recipients: messaging a trashed account
+    // would create a thread the recipient can never see (their sessions are
+    // invalid and reads filter them out).
     let recipientName = input.recipientName ?? "";
     if (input.recipientUserId) {
       const recipient = await db.user.findUnique({
-        where: { id: input.recipientUserId },
+        where: { id: input.recipientUserId, deletedAt: null },
         select: { name: true },
       });
       if (recipient) recipientName = recipient.name;
@@ -128,6 +131,8 @@ export async function markThreadRead(threadId: string): Promise<ActionResult<voi
     // recipientUserId === me, which is the actual recipient check.
     const auth = await getSessionOrThrow();
     // Find all unread messages in this thread addressed to me.
+    // PR-21 — hard cap (a thread beyond ~500 unread messages marks in bulk
+    // below anyway; the createMany is idempotent).
     const unreadMsgs = await db.message.findMany({
       where: {
         threadId,
@@ -135,6 +140,7 @@ export async function markThreadRead(threadId: string): Promise<ActionResult<voi
         readBy: { none: { userId: auth.userId } },
       },
       select: { id: true },
+      take: 500,
     });
     if (unreadMsgs.length === 0) return;
     // Bulk-insert MessageRead rows. `skipDuplicates` is deliberately NOT set:

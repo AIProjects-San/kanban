@@ -82,6 +82,8 @@ beforeEach(() => {
   signIn(ADMIN);
   db.auditLog.create.mockResolvedValue({});
   db.teamMember.findUnique.mockResolvedValue(null);
+  // PR-20 — recalcMemberStats now uses two COUNT queries; default to 0.
+  db.task.count.mockResolvedValue(0);
 });
 
 describe("updateTask change-detection matrix", () => {

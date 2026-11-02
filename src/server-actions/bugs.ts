@@ -514,19 +514,25 @@ export async function changeBugStatus(
       patch.closedAt = null;
     }
 
-    await db.bug.update({ where: { id }, data: patch });
-
-    // Optional comment alongside the status change.
-    if (data.comment && data.comment.trim().length > 0) {
-      await db.bugComment.create({
-        data: {
-          bugId: id,
-          authorId: auth.userId,
-          authorName: auth.name,
-          body: data.comment.trim(),
-        },
-      });
-    }
+    // PR-15 (production-readiness audit) — the status change and its comment
+    // are one logical write. Previously a crash between the bug.update and the
+    // bugComment.create left the transition without its narrative (the comment
+    // is the audit trail reviewers see inline). Both writes now commit (or
+    // roll back) together.
+    await db.$transaction(async (tx) => {
+      await tx.bug.update({ where: { id }, data: patch });
+      // Optional comment alongside the status change.
+      if (data.comment && data.comment.trim().length > 0) {
+        await tx.bugComment.create({
+          data: {
+            bugId: id,
+            authorId: auth.userId,
+            authorName: auth.name,
+            body: data.comment.trim(),
+          },
+        });
+      }
+    });
 
     // Audit with the right action for the transition.
     const action =
@@ -891,6 +897,8 @@ export async function getTaskLinkedBugs(taskId: string): Promise<ActionResult<
       select: {
         id: true, title: true, severity: true, priority: true, status: true, resolution: true,
       },
+      // PR-21 — hard cap; the per-task bug list renders inline in the modal.
+      take: 500,
     });
     return bugs;
   });

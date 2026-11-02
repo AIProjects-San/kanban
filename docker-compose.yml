@@ -1,13 +1,51 @@
 # L-P1-21 — docker-compose for multi-instance deployment.
 # 2 Fernly replicas behind nginx (probing /api/health) + shared Redis
-# (for the L-P0-10 rate limiter) + the audit-retention scheduler
-# (launch gate 12: daily prune via /api/cron/prune-audit).
+# (for the L-P0-10 rate limiter) + a one-shot migration gate + the
+# daily maintenance scheduler (launch gate 12: /api/cron/prune-audit).
+#
+# PR-24 (production-readiness audit) changes:
+#   • `migrate` service — the app image ships no prisma CLI/migrations, so
+#     migrations now run in a dedicated one-shot stage before the app starts.
+#   • `db` service (profile: local-db) — an optional bundled PostgreSQL for a
+#     fully self-hosted stack. Enable with:  docker compose --profile local-db up -d
+#     (or point DATABASE_URL at a managed Postgres and leave the profile off).
+#   • Redis eviction policy allkeys-lru → volatile-lru: only keys with a TTL
+#     (i.e. the limiter's own keys) can be evicted under memory pressure, and
+#     non-TTL state is never sacrificed to the throttle.
+#
+# NOTE on replicas: plain `docker compose` IGNORES `deploy.replicas` (a swarm
+# key). To actually run 2 app containers:  docker compose up -d --scale fernly-1=2
+# Docker DNS then resolves `fernly-1` to both container IPs (nginx round-robins).
 
 services:
+  # Optional bundled PostgreSQL — enable with `--profile local-db`.
+  # Set POSTGRES_PASSWORD (and optionally POSTGRES_USER/POSTGRES_DB) in .env;
+  # DATABASE_URL must match (postgres://<user>:<pw>@db:5432/<db>).
+  db:
+    image: postgres:16-alpine
+    profiles: ["local-db"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fernly}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set when using the local-db profile}
+      POSTGRES_DB: ${POSTGRES_DB:-fernly}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fernly} -d ${POSTGRES_DB:-fernly}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
+    # volatile-lru (PR-24): evict only keys with a TTL under memory pressure.
+    # Every key the rate limiters write carries an expiry, so this preserves
+    # the eviction safety of allkeys-lru without ever dropping non-TTL state.
+    # 64 MB is far beyond limiter needs; if Redis ever reports evictions
+    # (INFO stats, evicted_keys > 0) something besides the limiter is using it.
+    command: redis-server --maxmemory 64mb --maxmemory-policy volatile-lru
     volumes:
       - redis-data:/data
     healthcheck:
@@ -16,10 +54,23 @@ services:
       timeout: 3s
       retries: 5
 
+  # PR-24 — one-shot schema migration gate. Runs `prisma migrate deploy`
+  # against DATABASE_URL (retrying while the DB warms up) and exits; the app
+  # containers below wait for service_completed_successfully, so a failed
+  # migration fails the deploy loudly instead of serving a mismatched schema.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    restart: "no"
+    env_file: .env
+
   fernly-1:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runner
       args:
         # L-P0-12 — production builds must NOT ship demo credentials.
         NEXT_PUBLIC_SEED_DEMO: "0"
@@ -32,6 +83,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -51,6 +104,9 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      # 443 stays mapped for the day TLS is enabled in nginx.conf (see
+      # deploy/nginx-tls.conf.example + DEPLOY.md §TLS). Until then nothing
+      # listens on it inside the container.
       - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
@@ -63,9 +119,11 @@ services:
       timeout: 5s
       retries: 3
 
-  # Launch gate 12 — audit-log retention job. Calls the CRON_SECRET-protected
+  # Launch gate 12 — daily maintenance job. Calls the CRON_SECRET-protected
   # /api/cron/prune-audit endpoint once a day (03:00-ish, drifts by design —
-  # the endpoint itself is idempotent and overlap-guarded). Requires a
+  # the endpoint itself is idempotent and overlap-guarded). PR-17 extended
+  # the endpoint: audit retention + expired reset-token, read-notification
+  # and stale message-read purges, all in the same pass. Requires a
   # CRON_SECRET (>= 16 chars) in .env; without it the endpoint returns 503
   # and the scheduler logs the failure visibly instead of silently no-op'ing.
   # The loop prints a timestamped line per attempt for `docker logs audit-cron`.
@@ -87,7 +145,7 @@ services:
         echo "[audit-cron] scheduler started (daily at 03:00 UTC)"
         while true; do
           # Sleep until the next 03:00 UTC (today's if still ahead, else
-          # tomorrow's), then prune.
+          # tomorrow's), then run maintenance.
           now=$$(date +%s)
           target=$$(( (now / 86400) * 86400 + 3 * 3600 ))
           if [ $$target -le $$now ]; then target=$$(( target + 86400 )); fi
@@ -96,8 +154,9 @@ services:
           wget -q -O- --server-response \
             --header="Authorization: Bearer $${CRON_SECRET}" \
             http://nginx/api/cron/prune-audit 2>&1 | tail -n 4
-          echo "[audit-cron] $$(date -u +%FT%TZ) prune call finished"
+          echo "[audit-cron] $$(date -u +%FT%TZ) maintenance call finished"
         done
 
 volumes:
+  pg-data:
   redis-data:

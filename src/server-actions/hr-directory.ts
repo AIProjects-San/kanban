@@ -74,11 +74,14 @@ export async function getDirectory(): Promise<
   return toResult(async () => {
     const auth = await requirePermission("hr:view");
 
+    // PR-21 — hard caps on both roster queries (a directory beyond ~500
+    // people is a paginated-list concern, not a single-render concern).
     const [rows, users] = await Promise.all([
-      db.employeeProfile.findMany({ orderBy: { createdAt: "asc" } }),
+      db.employeeProfile.findMany({ orderBy: { createdAt: "asc" }, take: 500 }),
       db.user.findMany({
         where: { deletedAt: null },
         select: { id: true, name: true, email: true, role: true, managerId: true },
+        take: 500,
       }),
     ]);
     const usersById = new Map(users.map((u) => [u.id, u]));

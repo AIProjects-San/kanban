@@ -211,6 +211,10 @@ model CalendarEvent {
   type        String   @default("MEETING") // MEETING | DEADLINE | REVIEW | SOCIAL | FOCUS
   location    String   @default("")
   createdAt   DateTime @default(now())
+
+  // PR-16 — the dashboard's upcoming-events window and the ICS export both
+  // filter + order on date; the model previously had zero indexes.
+  @@index([date])
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +238,10 @@ model Notification {
   user            User?   @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
 
   @@index([recipientUserId, read])
+  // PR-16 — the dashboard feed orders every user's notifications by
+  // createdAt DESC; the composite with recipientUserId serves the common
+  // `recipient = me OR null` + newest-first query.
+  @@index([recipientUserId, createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +284,10 @@ model Reminder {
   // Owner of the reminder. Null = workspace-wide reminder (visible to
   // everyone); set = personal reminder visible only to that user.
   ownerId   String?
+
+  // PR-16 — the dashboard widget filters on ownerId (personal vs broadcast);
+  // the model previously had zero indexes.
+  @@index([ownerId])
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +328,9 @@ model Message {
   @@index([direction])
   @@index([recipientUserId])
   @@index([senderUserId])
+  // PR-16 — the dashboard inbox orders messages by createdAt DESC on every
+  // page load.
+  @@index([createdAt])
 }
 
 // Per-recipient message read state. Each row records that `userId` has read
@@ -361,6 +376,10 @@ model AuditLog {
   @@index([createdAt])
   @@index([entityType])
   @@index([actorId])
+  // PR-16 — the entity-history panel filters on (entityType, entityId); the
+  // single-column entityType index left the entityId discrimination to a
+  // scan inside every entity-type group.
+  @@index([entityType, entityId])
 }
 
 // ---------------------------------------------------------------------------
@@ -550,6 +569,9 @@ model PasswordResetToken {
   createdAt DateTime  @default(now())
 
   @@index([userId])
+  // PR-16 — the daily maintenance purge deletes expired/used tokens by
+  // expiresAt; without the index that is a full-table scan on every run.
+  @@index([expiresAt])
 }
 
 // ---------------------------------------------------------------------------

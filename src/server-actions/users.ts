@@ -65,6 +65,15 @@ export async function getUserProfile(userId: string) {
 export async function getUserSettings(userId: string) {
   const auth = await getSession();
   if (!auth) throw new AuthorizationError("You must be signed in.");
+  // PR-03 (production-readiness audit) — ownership check. Previously any
+  // signed-in user could read any other user's settings by passing their id
+  // (an IDOR; updateUserSettings already enforced ownership, this read path
+  // did not). The payload is low-sensitivity (theme + notification toggles)
+  // but the app's own standard — server-derived identity on every self-
+  // scoped read — applies here too.
+  if (auth.userId !== userId) {
+    throw new AuthorizationError("You can only view your own settings.");
+  }
   const settings = await db.userSettings.findUnique({ where: { userId } });
   if (!settings) {
     // Return defaults
@@ -149,16 +158,22 @@ export async function updateProfile(userId: string, input: {
     const data = parseOrThrow(updateProfileSchema, input);
     const existing = await db.user.findUnique({ where: { id: userId } });
     if (!existing) throw new AuthorizationError("Account not found.");
-    await db.user.update({
-      where: { id: userId },
-      // NOTE: no `role` — RBAC role changes go through updateUser (role:manage).
-      data: { name: data.name, timezone: data.timezone, bio: data.bio, avatarColor: data.avatarColor },
-    });
-    // Keep the linked roster row's display fields in sync (same contract as
-    // updateUser) so the team directory reflects the new name/avatar.
-    await db.teamMember.updateMany({
-      where: { userId },
-      data: { name: data.name, avatarColor: data.avatarColor },
+    // PR-15 — the User row and the roster row are two halves of one profile
+    // update; a crash between them previously left the directory showing the
+    // old name/avatar while the account had the new one. Both writes now
+    // commit together.
+    await db.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        // NOTE: no `role` — RBAC role changes go through updateUser (role:manage).
+        data: { name: data.name, timezone: data.timezone, bio: data.bio, avatarColor: data.avatarColor },
+      });
+      // Keep the linked roster row's display fields in sync (same contract as
+      // updateUser) so the team directory reflects the new name/avatar.
+      await tx.teamMember.updateMany({
+        where: { userId },
+        data: { name: data.name, avatarColor: data.avatarColor },
+      });
     });
     const changes: string[] = [];
     if (data.name !== existing.name) changes.push("name");
@@ -267,6 +282,8 @@ export async function getAllUsers(): Promise<ActionResult<
     await requirePermission("role:manage");
     // Single query with the manager relation included so the UI can render
     // the "Reports To" column without N+1 follow-up reads.
+    // PR-21 — hard cap; a workspace beyond ~500 accounts needs pagination
+    // (getUsersPage already provides it), not an unbounded admin list.
     const users = await db.user.findMany({
       select: {
         id: true, email: true, name: true, role: true, avatarColor: true, createdAt: true,
@@ -275,6 +292,7 @@ export async function getAllUsers(): Promise<ActionResult<
         _count: { select: { projectAssignments: true } },
       },
       orderBy: { name: "asc" },
+      take: 500,
     });
     return users.map(u => ({
       id: u.id,
@@ -505,21 +523,25 @@ export async function updateUser(userId: string, input: {
       data.tokenVersion = { increment: 1 };
     }
 
-    await db.user.update({ where: { id: userId }, data });
+    // PR-15 — user + roster sync in one transaction (same rationale as
+    // updateProfile/createUser/deleteUser, which already had it).
+    await db.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data });
 
-    // Sync name/email/avatarColor to the matching TeamMember record (if any)
-    const memberUpdate: Record<string, unknown> = {};
-    if (input.name !== undefined) memberUpdate.name = input.name.trim();
-    if (input.email !== undefined) memberUpdate.email = input.email.trim().toLowerCase();
-    if (input.avatarColor !== undefined) memberUpdate.avatarColor = input.avatarColor;
-    if (input.jobTitle !== undefined) memberUpdate.role = input.jobTitle;
-    if (input.department !== undefined) memberUpdate.department = input.department;
-    if (Object.keys(memberUpdate).length > 0) {
-      await db.teamMember.updateMany({
-        where: { email: target.email },
-        data: memberUpdate,
-      });
-    }
+      // Sync name/email/avatarColor to the matching TeamMember record (if any)
+      const memberUpdate: Record<string, unknown> = {};
+      if (input.name !== undefined) memberUpdate.name = input.name.trim();
+      if (input.email !== undefined) memberUpdate.email = input.email.trim().toLowerCase();
+      if (input.avatarColor !== undefined) memberUpdate.avatarColor = input.avatarColor;
+      if (input.jobTitle !== undefined) memberUpdate.role = input.jobTitle;
+      if (input.department !== undefined) memberUpdate.department = input.department;
+      if (Object.keys(memberUpdate).length > 0) {
+        await tx.teamMember.updateMany({
+          where: { email: target.email },
+          data: memberUpdate,
+        });
+      }
+    });
 
     const changes: string[] = [];
     if (input.name !== undefined && input.name !== target.name) changes.push("name");

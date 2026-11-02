@@ -17,6 +17,12 @@ const db = vi.hoisted(() => {
     obj[m] = {};
     for (const meth of methods) obj[m][meth] = vi.fn();
   }
+  // PR-15 — interactive transactions: execute the callback against the same
+  // mock (array form still resolves via Promise.all).
+  (obj as Record<string, unknown>).$transaction = vi.fn(
+    async (fn: unknown) =>
+      typeof fn === "function" ? fn(obj) : Promise.all(fn as unknown[]),
+  );
   return obj;
 });
 

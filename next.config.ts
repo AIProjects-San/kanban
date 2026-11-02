@@ -37,13 +37,15 @@ const serverActionsAllowedOrigins = envOrigins
 
 // Fallback CSP — restrictive. API routes don't serve HTML so script-src is
 // irrelevant; this is just defense-in-depth for any route the proxy misses.
+// PR-06 (production-readiness audit) — connect-src no longer contains the
+// bare `https:` scheme-source (which allowed exfiltration to any HTTPS host).
 const fallbackCspDirectives = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self' https: ws: wss:",
+  "connect-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

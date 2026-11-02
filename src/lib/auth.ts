@@ -67,8 +67,15 @@ export const authOptions: NextAuthOptions = {
   // In production we require secure cookies since traffic is HTTPS.
   useSecureCookies: isProd,
   cookies: {
+    // PR-27 (production-readiness audit) — in production the cookies carry
+    // the `__Secure-` prefix (browsers then refuse to set them over plain
+    // HTTP or without the Secure attribute — defence in depth against a
+    // same-site HTTP downgrade stripping/overwriting them). Development keeps
+    // the classic names so the sandbox (HTTP preview proxies) keeps working.
+    // The proxy (src/proxy.ts) and the signout wrapper (lib/auth-cookies.ts)
+    // mirror both name variants.
     sessionToken: {
-      name: "next-auth.session-token",
+      name: isProd ? "__Secure-next-auth.session-token" : "next-auth.session-token",
       options: {
         httpOnly: true,
         sameSite: "lax",
@@ -77,7 +84,7 @@ export const authOptions: NextAuthOptions = {
       },
     },
     callbackUrl: {
-      name: "next-auth.callback-url",
+      name: isProd ? "__Secure-next-auth.callback-url" : "next-auth.callback-url",
       options: {
         sameSite: "lax",
         path: "/",
@@ -85,7 +92,7 @@ export const authOptions: NextAuthOptions = {
       },
     },
     csrfToken: {
-      name: "next-auth.csrf-token",
+      name: isProd ? "__Secure-next-auth.csrf-token" : "next-auth.csrf-token",
       options: {
         httpOnly: true,
         sameSite: "lax",
@@ -203,7 +210,15 @@ export const authOptions: NextAuthOptions = {
         }
         // Successful sign-in clears the per-email budget (a legit user who
         // mistyped their password a few times shouldn't stay blocked).
+        // PR-11 (production-readiness audit) — also clear the per-IP budget.
+        // Previously only the email bucket was reset, so a user behind a
+        // shared egress IP (office NAT, VPN, university network) who mistyped
+        // 5 times stayed IP-blocked even after a successful sign-in — and
+        // their failures counted towards everyone else behind the same IP.
+        // Clearing both buckets on success matches the standard "successful
+        // login resets your lockout" contract.
         await loginLimiter.reset(emailKey);
+        await loginLimiter.reset(ipKey);
         // Audit trail: record successful sign-ins (with source IP + UA —
         // P1 production-readiness re-audit for post-incident forensics).
         try {

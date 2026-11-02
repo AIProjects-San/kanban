@@ -27,13 +27,44 @@ export async function getClientInfo(): Promise<{ ip: string; userAgent: string }
     const ip = xff.split(",")[0].trim() || "unknown";
     const userAgent = (h.get("user-agent") ?? "").slice(0, 500) || "unknown";
     return { ip, userAgent };
-  } catch {
+  } catch (err) {
+    // PR-22 — log the miss. headers() throws outside a request context
+    // (e.g. tests, background jobs); that's expected, but a persistent
+    // failure in a real request should be visible.
+    logError("[shared] getClientInfo failed (outside request context?):", err);
     return { ip: "unknown", userAgent: "unknown" };
   }
 }
 
 export function fmtDay(d: Date) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/**
+ * PR-18 (production-readiness audit) — read an admin-editable display limit
+ * from the Workspace row. The three limits (auditLogLimit, entityHistoryLimit,
+ * dashboardNotifLimit) were admin-editable in Workspace Settings but the read
+ * paths hardcoded the defaults (300 / 50 / 20) — the app's own audit standard
+ * is "a setting must either work or be absent". This helper honours the
+ * configured value with the previous default as fallback, clamped to `max` so
+ * a fat-fingered 1,000,000 can't OOM a view. Tolerant of a missing/erroring
+ * Workspace row (defaults apply), so it is safe on every read path.
+ */
+export async function getWorkspaceLimit(
+  field: "auditLogLimit" | "entityHistoryLimit" | "dashboardNotifLimit",
+  fallback: number,
+  max: number,
+): Promise<number> {
+  try {
+    const ws = await db.workspace.findFirst({
+      where: { id: "default" },
+      select: { [field]: true },
+    });
+    const v = ws?.[field];
+    return typeof v === "number" && v > 0 ? Math.min(Math.floor(v), max) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export async function logAudit(entry: {
@@ -113,19 +144,25 @@ export async function getScopedProjectIds(
   auth: { userId: string; role: string },
 ): Promise<Set<string> | null> {
   if (auth.role === "ADMIN") return null;
+  // PR-21 — safety caps on the three scoping queries. A user genuinely
+  // associated with >1000 projects is a pagination/reporting concern; the
+  // cap bounds the Set size (and the IN-clauses built from it) instead.
   const [owned, assignedProjects, explicitAssignments] = await Promise.all([
     db.project.findMany({
       where: { ownerUserId: auth.userId },
       select: { id: true },
+      take: 1000,
     }),
     db.task.findMany({
       where: { assignee: { userId: auth.userId } },
       select: { projectId: true },
       distinct: ["projectId"],
+      take: 1000,
     }),
     db.projectAssignment.findMany({
       where: { userId: auth.userId },
       select: { projectId: true },
+      take: 1000,
     }),
   ]);
   return new Set([
@@ -168,6 +205,8 @@ export async function getProjectAssociatedUserIds(
   const assignments = await db.projectAssignment.findMany({
     where: { projectId },
     select: { userId: true },
+    // PR-21 — safety cap.
+    take: 1000,
   });
   const ids = new Set(assignments.map((a) => a.userId));
   if (project.ownerUserId) ids.add(project.ownerUserId);
@@ -240,9 +279,14 @@ export async function assertTaskEditPermission(
  */
 export async function recalcMemberStats(memberId: string | null) {
   if (!memberId) return;
-  const tasks = await db.task.findMany({ where: { assigneeId: memberId } });
-  const open = tasks.filter((t) => t.status !== "DONE").length;
-  const completed = tasks.filter((t) => t.status === "DONE").length;
+  // PR-20 (production-readiness audit) — two indexed COUNT queries instead of
+  // fetching every task row and counting in JS. A member with a long task
+  // history used to transfer all of it on every task mutation (and once per
+  // distinct assignee in bulk updates); the counts are O(index) now.
+  const [open, completed] = await Promise.all([
+    db.task.count({ where: { assigneeId: memberId, status: { not: "DONE" } } }),
+    db.task.count({ where: { assigneeId: memberId, status: "DONE" } }),
+  ]);
   const workspace = await db.workspace.findUnique({
     where: { id: "default" },
     select: { workloadFullCapacity: true },
