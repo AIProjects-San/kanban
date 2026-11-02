@@ -29,7 +29,7 @@ import {
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit } from "./shared";
-import { toResult } from "./result";
+import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import {
   parseDay,
@@ -88,16 +88,15 @@ export async function getMyLeaveData(): Promise<
     }
 
     const typeById = new Map(types.map((t) => [t.id, t]));
-    // Names needed for BOTH the pending approvers (shown as "awaiting X")
-    // AND the decidedBy users of already-processed rows — the decision column
-    // renders "Ingrid: Enjoy" for approved/rejected requests too.
-    const pendingApproverIds = (await Promise.all(
-      requests.filter((r) => r.status === "PENDING").map((r) => getApproverIdsFor(r.userId)),
-    )).flat();
-    const deciderIds = [...new Set([
-      ...pendingApproverIds,
-      ...(requests.map((r) => r.decidedById).filter(Boolean) as string[]),
-    ])];
+    // Decided rows render "<name>: <note>" — only DECIDERS' names are
+    // needed. (QA-21: this loader used to also resolve the pending
+    // approver ids of every PENDING request and fold their names into the
+    // map below — but the map is only ever read with decidedById, which is
+    // null while PENDING. The pending approver names were never rendered;
+    // the resolution walks were dead queries on every Leave-view load.)
+    const deciderIds = [...new Set(
+      requests.map((r) => r.decidedById).filter(Boolean) as string[],
+    )];
     const deciders = deciderIds.length
       ? await db.user.findMany({ where: { id: { in: deciderIds } }, select: { id: true, name: true } })
       : [];
@@ -358,15 +357,37 @@ export async function decideLeaveRequest(input: {
       // `used` only ever changes here and in cancel — transactionally, and
       // always by exactly the request's `days`.
       //
-      // QA-1 (overdraft guard): the balance is only re-validated at approval
+      // QA-1 (overdraft guard): the balance is re-validated at approval
       // time, INSIDE the transaction. At submission each of two
       // non-overlapping requests can individually pass the check, so the
       // second approval must refuse (not blindly debit) once the first one
       // has consumed the remaining days. QA-1b: the debit is an atomic
       // `{ increment }` — the old read-then-write computed `used` outside the
       // transaction and could lose a concurrent update.
+      //
+      // QA-16: the PENDING precheck above runs BEFORE this write. Two tabs
+      // (or two deciders) can both pass it; without a status guard in the
+      // WHERE clause both "win" and the balance is debited TWICE (or an
+      // approve/reject interleave leaves a REJECTED row with debited days).
+      // The guarded updateMany flips the row atomically; a zero count means
+      // someone else won the race — abort BEFORE any balance write, with a
+      // message the UI can show as a normal (retryable) failure.
       const year = request.startDate.getUTCFullYear();
       await db.$transaction(async (tx) => {
+        const flipped = await tx.leaveRequest.updateMany({
+          where: { id: request.id, status: "PENDING" },
+          data: {
+            status: newStatus,
+            decidedById: auth.userId,
+            decidedAt: new Date(),
+            decisionNote: data.note ?? "",
+          },
+        });
+        if (flipped.count === 0) {
+          throw new AuthorizationError(
+            "This request is no longer pending — it was just decided or cancelled elsewhere. Refresh and try again.",
+          );
+        }
         const row = await tx.leaveBalance.findUnique({
           where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
         });
@@ -408,19 +429,13 @@ export async function decideLeaveRequest(input: {
           where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
           data: { used: { increment: request.days } },
         });
-        await tx.leaveRequest.update({
-          where: { id: request.id },
-          data: {
-            status: newStatus,
-            decidedById: auth.userId,
-            decidedAt: new Date(),
-            decisionNote: data.note ?? "",
-          },
-        });
       });
     } else {
-      await db.leaveRequest.update({
-        where: { id: request.id },
+      // QA-16: same guarded write on the reject path — a concurrent
+      // decide/cancel must not be overwritten (last-writer-wins used to
+      // silently flip an APPROVED request to REJECTED, decidedBy and all).
+      const flipped = await db.leaveRequest.updateMany({
+        where: { id: request.id, status: "PENDING" },
         data: {
           status: newStatus,
           decidedById: auth.userId,
@@ -428,6 +443,11 @@ export async function decideLeaveRequest(input: {
           decisionNote: data.note ?? "",
         },
       });
+      if (flipped.count === 0) {
+        throw new AuthorizationError(
+          "This request is no longer pending — it was just decided or cancelled elsewhere. Refresh and try again.",
+        );
+      }
     }
 
     // Notify the requester (best-effort).
@@ -480,8 +500,21 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
       // Give the days back — transactional with the status flip, and atomic
       // (QA-1b): decrement by at most what is actually used so a drifted
       // balance can never go below zero.
+      // QA-16: the status precheck above ran BEFORE this write — two tabs
+      // cancelling the same APPROVED request both passed it and the second
+      // restore was a double refund. The guarded updateMany makes a stale
+      // cancel a zero-row update that aborts BEFORE the decrement.
       const year = request.startDate.getUTCFullYear();
       await db.$transaction(async (tx) => {
+        const flipped = await tx.leaveRequest.updateMany({
+          where: { id: request.id, status: "APPROVED" },
+          data: { status: "CANCELLED", updatedAt: new Date() },
+        });
+        if (flipped.count === 0) {
+          throw new AuthorizationError(
+            "This request is no longer approved — it was just cancelled or changed elsewhere. Refresh and try again.",
+          );
+        }
         const balance = await tx.leaveBalance.findUnique({
           where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
         });
@@ -491,16 +524,22 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
             data: { used: { decrement: Math.min(request.days, balance.used) } },
           });
         }
-        await tx.leaveRequest.update({
-          where: { id: request.id },
-          data: { status: "CANCELLED", updatedAt: new Date() },
-        });
       });
     } else {
-      await db.leaveRequest.update({
-        where: { id: request.id },
+      // QA-16: a cancel that read PENDING can race a concurrent approval —
+      // a plain update would flip the just-APPROVED row to CANCELLED
+      // WITHOUT restoring the days the approval debited (permanent leak).
+      // The guarded write loses that race loudly instead; retrying the
+      // cancel then takes the proper APPROVED restore path above.
+      const flipped = await db.leaveRequest.updateMany({
+        where: { id: request.id, status: "PENDING" },
         data: { status: "CANCELLED", updatedAt: new Date() },
       });
+      if (flipped.count === 0) {
+        throw new AuthorizationError(
+          "This request is no longer pending — it was just approved or decided elsewhere. Cancel it again to undo the approved days.",
+        );
+      }
     }
 
     const type = await db.leaveType.findUnique({ where: { id: request.leaveTypeId }, select: { name: true } });
@@ -537,18 +576,32 @@ export async function createLeaveType(input: {
     const auth = await requirePermission("hr:admin");
     const data = parseOrThrow(leaveTypeSchema, input);
 
-    const created = await db.leaveType.create({
-      data: {
-        name: data.name,
-        code: data.code,
-        color: data.color,
-        requiresDoc: data.requiresDoc,
-        paid: data.paid,
-        active: true,
-        policy: { create: data.policy },
-      },
-      include: { policy: true },
-    });
+    let created;
+    try {
+      created = await db.leaveType.create({
+        data: {
+          name: data.name,
+          code: data.code,
+          color: data.color,
+          requiresDoc: data.requiresDoc,
+          paid: data.paid,
+          active: true,
+          policy: { create: data.policy },
+        },
+        include: { policy: true },
+      });
+    } catch (e) {
+      // QA-18: LeaveType.name and .code are @unique. A duplicate used to
+      // surface as the generic INTERNAL "Something went wrong" — which
+      // reads like a server bug and can never succeed on retry. Map the
+      // unique-constraint violation to a real message.
+      if (isUniqueConstraintError(e)) {
+        throw new AuthorizationError(
+          `A leave type named "${data.name}" (or code ${data.code}) already exists — names and codes must be unique.`,
+        );
+      }
+      throw e;
+    }
 
     await logAudit({
       actor: auth,

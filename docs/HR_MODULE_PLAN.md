@@ -65,8 +65,12 @@ localization of leave law per jurisdiction.
   `review:manage` (ADMIN/MANAGER/HR), `onboarding:manage` (ADMIN/HR). ADMIN keeps every
   permission (existing test invariant). HR gets the MEMBER baseline plus hr:* — no
   project/task powers.
-- **Approver resolution**: reuse the existing org chart — `getManagerChain()` from
-  `lib/hierarchy.ts` (`User.managerId`). No new manager model needed in F1.
+- **Approver resolution**: reuse the existing org chart (`User.managerId`, walked via
+  `lib/hierarchy.ts`). No new manager model needed in F1. Leave decisions follow the
+  §1 single-approver rule (the employee's IMMEDIATE manager, admin fallback); review
+  decisions (§6) accept the subject's full manager chain via `getManagerChain()`
+  (QA-17 — the original wording named `getManagerChain()` for both, contradicting the
+  user-confirmed §1 row).
 - **Server actions**: one file per feature — `src/server-actions/hr-leave.ts`,
   `hr-directory.ts`, `hr-reviews.ts`, `hr-onboarding.ts` (+ shared helpers in
   `hr-shared.ts`). Same shape as `bugs.ts`: `requirePermission` → zod `parseOrThrow` →
@@ -111,7 +115,8 @@ localization of leave law per jurisdiction.
   (`start ≥ today + minNoticeDays`), max consecutive; balance check
   (`days ≤ available`) — insufficient balance rejects at submission (per scoping).
   Overlap check: no two PENDING/APPROVED requests may overlap for the same user.
-- Approve/reject: caller must be the requester's manager (manager chain) or ADMIN;
+- Approve/reject: caller must be the requester's manager (`User.managerId` — single
+  approver per §1, admin fallback) or ADMIN;
   status must be PENDING; approve increments `used`; reject leaves balance untouched.
 - Cancel: requester (or ADMIN) may cancel while PENDING or APPROVED; cancelling an
   APPROVED request decrements `used` again (balance restored).

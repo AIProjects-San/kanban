@@ -41,12 +41,19 @@ import type { ActionResult } from "@/lib/action-result";
  * reviewer role ("the subject's manager chain (or ADMIN/HR)") — the
  * original ADMIN-only short-circuit rejected HR with "Only the employee's
  * manager…", contradicting the approved plan.
+ *
+ * QA-17: §6 scopes reviewers to the subject's manager CHAIN (§3 even names
+ * getManagerChain() as the resolution mechanism) — the guard used to
+ * resolve ONE level only (User.managerId), so a grand-manager was rejected
+ * with the same message. The chain walk excludes the subject themself and
+ * caps at 32 hops (lib/hierarchy.ts).
  */
 async function assertReviewer(auth: { userId: string; role: string }, subjectId: string): Promise<void> {
   if (auth.role === "ADMIN" || auth.role === "HR") return;
-  const approvers = await getApproverIdsFor(subjectId);
-  if (!approvers.includes(auth.userId)) {
-    throw new AuthorizationError("Only the employee's manager (or an admin) can review this cycle.");
+  const { getManagerChain } = await import("@/lib/hierarchy");
+  const chain = await getManagerChain(subjectId);
+  if (!chain.includes(auth.userId)) {
+    throw new AuthorizationError("Only the employee's manager chain (or an admin) can review this cycle.");
   }
 }
 
@@ -337,6 +344,13 @@ export async function decideReview(input: {
     if (!review) throw new AuthorizationError("Review not found.");
     if (review.status !== "SUBMITTED") {
       throw new AuthorizationError(`Only a submitted cycle can be reviewed — this one is ${review.status.toLowerCase()}.`);
+    }
+    // QA-20: ADMIN/HR bypass the chain check, so a subject holding either
+    // role could otherwise write their own manager review, stamp themselves
+    // as the reviewer and rate themselves. The plan's model is "manager
+    // reviews, employee acknowledges" — never both sides of the table.
+    if (review.userId === auth.userId) {
+      throw new AuthorizationError("You cannot review your own cycle — it is reviewed by your manager chain, HR, or another admin.");
     }
     await assertReviewer(auth, review.userId);
 

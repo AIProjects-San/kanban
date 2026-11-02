@@ -232,6 +232,27 @@ describe("employeeProfileSelfSchema (QA-10)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// QA-19 — "" is the "not classified yet" department. The admin schema must
+// accept it (HR can save a profile without picking a department), while any
+// other unknown string stays rejected. The roster renders "" as "—".
+// ---------------------------------------------------------------------------
+
+describe("employeeProfileSchema department (QA-19)", () => {
+  it("accepts the empty string as 'not set'", () => {
+    expect(employeeProfileSchema.safeParse({ department: "" }).success).toBe(true);
+  });
+  it("still rejects unknown departments", () => {
+    expect(employeeProfileSchema.safeParse({ department: "SALES" }).success).toBe(false);
+    expect(employeeProfileSchema.safeParse({ department: "engineering" }).success).toBe(false);
+  });
+  it("accepts the four real departments", () => {
+    for (const d of ["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"]) {
+      expect(employeeProfileSchema.safeParse({ department: d }).success).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // QA-11b — the leave/review date schemas share the same real-calendar-date
 // refinement (a regex-only check let "2026-02-30" through, which either
 // blew up at the Prisma write or silently compared as NaN).

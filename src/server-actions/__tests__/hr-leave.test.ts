@@ -110,6 +110,9 @@ beforeEach(() => {
   db.user.findMany.mockResolvedValue([]);
   db.notification.create.mockResolvedValue({});
   db.notification.createMany.mockResolvedValue({ count: 0 });
+  // QA-16: decision/cancel writes are guarded updateMany calls — the happy
+  // path matches exactly one row.
+  db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
 });
 
 // ---------------------------------------------------------------------------
@@ -336,7 +339,8 @@ describe("decideLeaveRequest", () => {
     expect(db.leaveBalance.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { used: { increment: 2 } } }),
     );
-    expect(db.leaveRequest.update).toHaveBeenCalledWith(
+    // QA-16: the status flip is a guarded updateMany — see the QA-16 block.
+    expect(db.leaveRequest.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "APPROVED", decidedById: "u-mgr" }) }),
     );
     expect(logAuditMock).toHaveBeenCalledWith(
@@ -352,7 +356,7 @@ describe("decideLeaveRequest", () => {
     const res = await decideLeaveRequest({ requestId: "lr-1", decision: "REJECT", note: "Capacity" });
     expect(res.ok).toBe(true);
     expect(db.leaveBalance.update).not.toHaveBeenCalled();
-    expect(db.leaveRequest.update).toHaveBeenCalledWith(
+    expect(db.leaveRequest.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "REJECTED", decisionNote: "Capacity" }) }),
     );
     expect(logAuditMock).toHaveBeenCalledWith(
@@ -383,6 +387,74 @@ describe("decideLeaveRequest", () => {
   });
 
   // -----------------------------------------------------------------------
+  // QA-16 — decision writes are guarded by the status in the WHERE clause.
+  // The PENDING precheck runs BEFORE the write; two tabs (or two reviewers)
+  // can both pass it and then both "win" their write. The approve path is
+  // worse than a duplicated toast: each winner increments `used`, so the
+  // balance is debited TWICE for one request. The status guard makes the
+  // loser's write a zero-row update, which must abort with the same
+  // friendly "already decided" error instead of silently succeeding.
+  // -----------------------------------------------------------------------
+
+  it("QA-16: the approve write guards on PENDING in its WHERE clause", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
+    db.leaveBalance.findUnique.mockResolvedValue(BALANCE);
+
+    await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(db.leaveRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "lr-1", status: "PENDING" },
+        data: expect.objectContaining({ status: "APPROVED" }),
+      }),
+    );
+  });
+
+  it("QA-16: a concurrent decision (zero-row guarded write) refuses AND never debits", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    // The guarded update matched nothing — another decider won the race and
+    // the row is no longer PENDING.
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 0 });
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe("AUTH");
+    expect(res.ok === false && res.error).toMatch(/no longer pending|already/i);
+    // The transaction aborted before the debit — used was never incremented.
+    expect(db.leaveBalance.update).not.toHaveBeenCalled();
+  });
+
+  it("QA-16: the reject write guards on PENDING in its WHERE clause", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
+
+    await decideLeaveRequest({ requestId: "lr-1", decision: "REJECT" });
+    expect(db.leaveRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "lr-1", status: "PENDING" },
+        data: expect.objectContaining({ status: "REJECTED" }),
+      }),
+    );
+  });
+
+  it("QA-16: a concurrent decision on the reject path surfaces the race, not silence", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 0 });
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "REJECT" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/no longer pending|already/i);
+  });
+
+  // -----------------------------------------------------------------------
   // QA-1 — overdraft guard. Balance is validated at SUBMISSION only; two
   // non-overlapping requests both pass it, so approving the second one
   // after the first consumed the balance must be refused, not blindly
@@ -400,9 +472,10 @@ describe("decideLeaveRequest", () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/insufficient balance/i);
     expect(res.ok === false && res.error).toMatch(/5 day/i);
-    // Neither the balance nor the request may change on the refused path.
+    // Neither the balance nor the request may change on the refused path —
+    // the guarded flip inside the transaction is rolled back with it
+    // (QA-16), so no debit ever lands.
     expect(db.leaveBalance.update).not.toHaveBeenCalled();
-    expect(db.leaveRequest.update).not.toHaveBeenCalled();
   });
 
   it("QA-1: approves exactly at the remaining balance (boundary is inclusive)", async () => {
@@ -448,7 +521,7 @@ describe("cancelLeaveRequest", () => {
     const res = await cancelLeaveRequest({ requestId: "lr-1" });
     expect(res.ok).toBe(true);
     expect(db.leaveBalance.update).not.toHaveBeenCalled();
-    expect(db.leaveRequest.update).toHaveBeenCalledWith(
+    expect(db.leaveRequest.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }),
     );
   });
@@ -493,6 +566,75 @@ describe("cancelLeaveRequest", () => {
     expect(db.leaveBalance.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { used: { decrement: 1 } } }),
     );
+  });
+
+  // -----------------------------------------------------------------------
+  // QA-16 (cancel side) — the status precheck sits outside the write. Two
+  // tabs cancelling the same APPROVED request both pass it; the second
+  // cancel must not restore the days a second time. Worse interleaving:
+  // a cancel that read PENDING races an approval — the plain update then
+  // flips the just-approved request to CANCELLED without ever restoring
+  // the days the approval debited (permanent balance leak). The guarded
+  // write makes the stale cancel a zero-row update → clear error, and
+  // the retry takes the proper restore path.
+  // -----------------------------------------------------------------------
+
+  it("QA-16: cancelling an APPROVED request guards the write on APPROVED status", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, status: "APPROVED" });
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 2 });
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "lr-1", status: "APPROVED" },
+        data: expect.objectContaining({ status: "CANCELLED" }),
+      }),
+    );
+  });
+
+  it("QA-16: a concurrent cancel (zero-row guarded write) aborts before restoring days", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    // This cancel read APPROVED; another tab already cancelled it.
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, status: "APPROVED" });
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 0 });
+
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe("AUTH");
+    expect(res.ok === false && res.error).toMatch(/no longer|already/i);
+    expect(db.leaveBalance.update).not.toHaveBeenCalled();
+  });
+
+  it("QA-16: cancelling a PENDING request guards the write on PENDING status", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "lr-1", status: "PENDING" },
+        data: expect.objectContaining({ status: "CANCELLED" }),
+      }),
+    );
+    expect(db.leaveBalance.update).not.toHaveBeenCalled();
+  });
+
+  it("QA-16: a PENDING cancel that races an approval loses cleanly (no silent leak)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    // This cancel read PENDING; an approval landed first — the row is now
+    // APPROVED, so the guarded PENDING write matches nothing.
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 0 });
+
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/no longer pending|approved/i);
+    expect(db.leaveBalance.update).not.toHaveBeenCalled();
   });
 });
 
@@ -550,6 +692,29 @@ describe("createLeaveType / updateLeaveType", () => {
       }),
     );
   });
+
+  // -----------------------------------------------------------------------
+  // QA-18 — LeaveType.name and .code are @unique. Creating a duplicate
+  // threw Prisma P2002, which toResult converted into the generic INTERNAL
+  // "Something went wrong. Please try again." — the admin had no idea the
+  // name was taken (it looks like a server bug, and retrying can never
+  // succeed). The result.ts isUniqueConstraintError helper existed for
+  // exactly this and was wired to nothing.
+  // -----------------------------------------------------------------------
+
+  it("QA-18: a duplicate type name surfaces a friendly conflict, not a generic 500", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.leaveType.create.mockRejectedValue({ code: "P2002" });
+    const res = await createLeaveType({
+      name: "Annual Leave",
+      code: "ANNUAL",
+      policy: { annualDays: 20, maxCarryOver: 5, minNoticeDays: 1, maxConsecutiveDays: 15 },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe("AUTH");
+    expect(res.ok === false && res.error).toMatch(/already exists/i);
+    expect(res.ok === false && res.error).not.toMatch(/something went wrong/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -568,6 +733,35 @@ describe("getMyLeaveData", () => {
     if (res.ok) {
       expect(res.data.balances).toHaveLength(1);
       expect(res.data.balances[0]).toMatchObject({ typeName: "Annual Leave", available: 20 });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // QA-21 — the loader resolved the pending approver ids of MY pending
+  // requests (getApproverIdsFor per request) and folded their names into
+  // the decider-names map… which is only ever read with decidedById —
+  // always null for PENDING rows. Dead queries on every Leave-view load.
+  // -----------------------------------------------------------------------
+
+  it("QA-21: does not resolve approver names for pending requests (they were never rendered)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findMany.mockResolvedValue([ANNUAL_TYPE]);
+    db.leaveRequest.findMany.mockResolvedValue([
+      { ...PENDING_REQUEST, leaveTypeId: "lt-annual", createdAt: new Date("2026-01-01T00:00:00.000Z") },
+      { ...REQUEST_ROW, leaveTypeId: "lt-annual", status: "APPROVED", decidedById: "u-mgr" },
+    ]);
+    db.leaveBalance.findUnique.mockResolvedValue(BALANCE);
+    db.user.findMany.mockResolvedValue([{ id: "u-mgr", name: "Ingrid" }]);
+    const res = await getMyLeaveData();
+    expect(res.ok).toBe(true);
+    // No per-request approver resolution walks — decided names come from a
+    // single findMany, and pending rows render "awaiting a decision" only.
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+    if (res.ok) {
+      const pending = res.data.requests.find((r) => r.status === "PENDING");
+      const decided = res.data.requests.find((r) => r.status === "APPROVED");
+      expect(pending?.decidedBy).toBeNull();
+      expect(decided?.decidedBy).toBe("Ingrid");
     }
   });
 });

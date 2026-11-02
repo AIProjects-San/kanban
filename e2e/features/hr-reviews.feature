@@ -48,6 +48,24 @@ Feature: HR performance reviews
     And I review "2026 Q3 check-in" for "Amara Diallo" with comment "Deep user insights — sharpen the survey metrics" and rating 4
     Then the review queue should show a cycle "2026 Q3 check-in" for "Amara Diallo" with status "Reviewed"
 
+  Scenario: QA-17 — a skip-level manager in the subject's chain completes the review
+    Soren reports to Lena, who reports to Ingrid. The plan (§6) scopes
+    reviewers to the subject's manager CHAIN, but the guard resolved ONE
+    level only (User.managerId) — Ingrid was rejected with "Only the
+    employee's manager…". With Lena out of office, nobody but ADMIN/HR
+    could complete Soren's cycle.
+    When I sign in as "soren@fernly.app" with the demo password
+    And I open the "Settings" view
+    And I write the self-assessment for "2026 Skip-level check-in" saying "Rebuilt the regression suite and cut flaky tests by half."
+    And I submit the self-assessment
+    Then my review "2026 Skip-level check-in" should show status "Submitted"
+    When I sign out
+    And I sign in as "manager@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Reviews" tab
+    And I review "2026 Skip-level check-in" for "Soren Lindqvist" with comment "Excellent QA leadership — owning the flaky-test cleanup" and rating 5
+    Then the review queue should show a cycle "2026 Skip-level check-in" for "Soren Lindqvist" with status "Reviewed"
+
   Scenario: The employee acknowledges the reviewed result
     When I sign in as "rafael@fernly.app" with the demo password
     And I open the "Settings" view

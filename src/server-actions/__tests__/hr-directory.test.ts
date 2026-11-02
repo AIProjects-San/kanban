@@ -136,14 +136,28 @@ describe("upsertMyProfile", () => {
     expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "u-theo" },
-        // QA-10: a self-created profile starts with EMPTY job data — HR
-        // fills in title/department/hireDate later via the admin path.
-        create: expect.objectContaining({ userId: "u-theo", jobTitle: "", department: "ENGINEERING", hireDate: null }),
+        // QA-10 + QA-19: a self-created profile starts with EMPTY job data
+        // — HR fills in title/department/hireDate later via the admin path.
+        // The department used to default to "ENGINEERING", fabricating
+        // HR-owned classification the roster then displayed as fact.
+        create: expect.objectContaining({ userId: "u-theo", jobTitle: "", department: "", hireDate: null }),
       }),
     );
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({ action: "profile.updated", entityType: "EMPLOYEE_PROFILE" }),
     );
+  });
+
+  // QA-19 — QA-10 emptied jobTitle/hireDate on the self-create path but
+  // left department stamping "ENGINEERING" (the column default + an
+  // explicit value). Every member who self-created a profile showed up
+  // in the shared roster as "Engineering", whatever they actually do.
+  it("QA-19: a self-created profile never fabricates a department", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    const res = await upsertMyProfile({ location: "Auckland, NZ" });
+    expect(res.ok).toBe(true);
+    const call = db.employeeProfile.upsert.mock.calls[0][0];
+    expect(call.create.department).toBe("");
   });
 
   // QA-10 — self-service is contact-fields-only (docs/HR_MODULE_PLAN.md §5:
@@ -199,6 +213,18 @@ describe("updateProfileAsAdmin", () => {
         update: expect.objectContaining({ notes: "Probation ended." }),
       }),
     );
+  });
+
+  // QA-19 (admin side) — the admin upsert create-branch also defaulted
+  // the department to "ENGINEERING" when HR saved a profile without
+  // picking one. "" must mean "not classified yet", rendered as "—".
+  it("QA-19: the admin create-branch without a department leaves it unset", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { jobTitle: "Senior FE", phone: "+64 21 555 0001" });
+    expect(res.ok).toBe(true);
+    const call = db.employeeProfile.upsert.mock.calls[0][0];
+    expect(call.create.department).toBe("");
   });
 
   it("rejects an unknown target user", async () => {

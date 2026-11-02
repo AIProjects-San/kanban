@@ -720,7 +720,10 @@ model EmployeeProfile {
   id                   String    @id @default(cuid())
   userId               String    @unique
   jobTitle             String    @default("")
-  department           String    @default("ENGINEERING") // mirrors Department union in lib/types
+  // QA-19: "" = not classified yet (rendered as "—"). Self-created and
+  // admin-created profiles without a picked department must not fabricate
+  // the old "ENGINEERING" default into the shared roster.
+  department           String    @default("") // mirrors Department union in lib/types
   hireDate             DateTime?
   phone                String    @default("")
   location             String    @default("")

@@ -357,7 +357,10 @@ const isoDateish = z
 
 export const employeeProfileSchema = z.object({
   jobTitle: z.string().trim().max(100).optional(),
-  department: z.enum(["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"]).optional(),
+  // QA-19: "" is the "not classified yet" value (roster renders "—") — the
+  // admin path may save a profile without picking a department. Every other
+  // unknown string stays rejected.
+  department: z.enum(["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"]).or(z.literal("")).optional(),
   hireDate: isoDateish,
   phone: z.string().trim().max(40).optional(),
   location: z.string().trim().max(100).optional(),

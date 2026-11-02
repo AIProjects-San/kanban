@@ -74,7 +74,7 @@ export function EmployeeProfileSection() {
               {profile !== "none" && profile.jobTitle ? profile.jobTitle : "—"}
             </span>
             <span className="text-sm text-muted-foreground" data-testid="ro-department">
-              {profile !== "none" ? departmentLabel(profile.department) : "—"}
+              {profile !== "none" && profile.department ? departmentLabel(profile.department) : "—"}
             </span>
             {profile !== "none" && profile.hireDate ? (
               <span className="text-sm text-muted-foreground">Hired {profile.hireDate}</span>
@@ -200,7 +200,7 @@ export function DirectoryTab() {
               )}
             </div>
             <div className="mt-3 space-y-1 text-[0.6875rem] text-muted-foreground">
-              <div><span className="font-medium text-foreground/70">Department:</span> {DEPARTMENT_LABELS.find((d) => d.key === p.department)?.label ?? p.department}</div>
+              <div><span className="font-medium text-foreground/70">Department:</span> {p.department ? DEPARTMENT_LABELS.find((d) => d.key === p.department)?.label ?? p.department : "—"}</div>
               <div><span className="font-medium text-foreground/70">Manager:</span> {p.managerName ?? "—"}</div>
               <div><span className="font-medium text-foreground/70">Location:</span> {p.location || "—"}</div>
               {p.skills && <div className="truncate"><span className="font-medium text-foreground/70">Skills:</span> {p.skills}</div>}
@@ -283,6 +283,10 @@ function EditProfileModal({
           </Field>
           <Field label="Department">
             <select className="f-input" value={department} onChange={(e) => setDepartment(e.target.value)}>
+              {/* QA-19: "" = not classified yet — saving without picking one
+                  must not fabricate a department (it used to stamp
+                  "ENGINEERING" on the create branch). */}
+              <option value="">— Not set —</option>
               {DEPARTMENT_LABELS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
             </select>
           </Field>

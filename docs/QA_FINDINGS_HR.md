@@ -1,4 +1,4 @@
-# HR Module — QA Audit Findings (Round 1 & 2)
+# HR Module — QA Audit Findings (Rounds 1, 2 & 3)
 
 > **Auditor stance:** adversarial ("devil principal QA") — every server action,
 > schema, seed and e2e scenario of the HR module (docs/HR_MODULE_PLAN.md) was
@@ -7,7 +7,7 @@
 > below and covered by an automated regression test.
 >
 > **Verification gate (all green at audit close):** lint ✓ · typecheck ✓ ·
-> unit **1031/1031** ✓ · e2e **52 scenarios / 389 steps** ✓ (fresh seed,
+> unit **1051/1051** ✓ · e2e **53 scenarios / 403 steps** ✓ (fresh seed,
 > full suite in file order).
 
 ## Summary
@@ -27,6 +27,12 @@
 | QA-13 | P1 | seed / test coverage | **No user held the HR role** — the entire `hr:*` permission family (incl. the QA-11 gap) was never exercised by any e2e | **Fixed** |
 | QA-14 | P3 | e2e infrastructure | Sandbox exports a platform `DATABASE_URL` pointing at `db/custom.db`; any tool that doesn't override it via `.env` silently hits the wrong database | **Mitigated** (documented + hook) |
 | QA-15 | P3 | e2e infrastructure | The QA e2e scenarios were not re-runnable: failed runs left APPROVED requests that poisoned the next run (poisoned-state cascade) | **Fixed** (self-cleaning hook) |
+| QA-16 | P1 | leave / decide + cancel | The PENDING/APPROVED precheck ran BEFORE the status write, outside the transaction — two tabs (or a decide/cancel interleave) both "won" and the balance was debited twice (or an APPROVED row was silently flipped to CANCELLED without restoring the days) | **Fixed** |
+| QA-17 | P2 | reviews / `assertReviewer` | Plan §6 scopes reviewers to the subject's manager **chain** (§3 names `getManagerChain()`), but the guard resolved ONE level (`User.managerId`) — a grand-manager was rejected with "Only the employee's manager…" | **Fixed** |
+| QA-18 | P3 | leave / `createLeaveType` | `LeaveType.name` and `.code` are `@unique`; a duplicate surfaced as the generic "Something went wrong" 500 — reads like a server bug, never succeeds on retry | **Fixed** |
+| QA-19 | P3 | directory / `EmployeeProfile.department` | Column + self-create + admin-create all defaulted to `"ENGINEERING"` — any profile saved without a picked department showed up in the shared roster as "Engineering", an HR-owned classification nobody had asserted | **Fixed** |
+| QA-20 | P3 | reviews / `decideReview` | ADMIN/HR bypass the chain check entirely, so a subject holding either role could review their own cycle, stamp themselves as the reviewer and rate themselves | **Fixed** |
+| QA-21 | P3 | leave / `getMyLeaveData` | The loader resolved pending-approver ids for every PENDING request and folded their names into a map only ever read with `decidedById` (always null while PENDING) — dead `getApproverIdsFor` walks on every Leave-view load | **Fixed** |
 
 Severity scale — **P0** crash/data loss on a main path · **P1** spec violation,
 security/data-integrity hole, or silently-dead subsystem · **P2** correctness
@@ -251,6 +257,170 @@ dropped by N → back to noted) so they hold on a fresh seed AND mid-suite;
 the request step fails loudly when the submit button is disabled instead of
 clicking into the void.
 
+### QA-16 — decide/cancel race around the PENDING precheck (P1)
+
+**Where:** `src/server-actions/hr-leave.ts` → `decideLeaveRequest`,
+`cancelLeaveRequest`.
+
+**Root cause:** the `request.status !== "PENDING"` (or `!== "APPROVED"`)
+guard ran BEFORE the write, outside the `$transaction`. Two browser tabs
+(or a decide/cancel interleave) both passed it; without a status predicate
+in the `WHERE` clause, both writes "won":
+
+- **Approve / approve** — `used` was debited TWICE for one request. The
+  UI's `useTransition` button-disable only blocks one tab.
+- **Approve / reject** — last-writer-wins silently flipped an APPROVED
+  row (with debited days) to REJECTED, leaving the balance permanently
+  debited for a request that was never approved.
+- **Cancel / cancel** on an APPROVED request — the second restore was a
+  double refund.
+- **Cancel (PENDING read) / approve** — the plain update flipped the
+  just-APPROVED row to CANCELLED WITHOUT restoring the days the approval
+  had just debited (permanent leak).
+
+**Manual repro (pre-fix):** open two tabs as the manager on the same
+PENDING request → click Approve in both within the same render tick →
+both succeed; the balance drops by `2 × request.days`.
+
+**Fix:** every status flip is now a guarded
+`updateMany({ where: { id, status: <expected> }, data: { status: <new>, … } })`
+INSIDE the transaction (or, on the no-balance-work reject / pending-cancel
+paths, just inside the same flow). A `count === 0` means someone else won
+the race — abort BEFORE any balance read or write, with the same friendly
+"This request is no longer pending/approved — it was just decided or
+cancelled elsewhere. Refresh and try again." message the UI surfaces as a
+normal retryable failure. The approve path flips BEFORE the balance read
+so a losing transaction never debits. The pending-cancel path's
+zero-count message even tells the user to "Cancel it again to undo the
+approved days" — the retry then takes the proper APPROVED restore branch.
+
+**Tests:** 8 unit cases in `hr-leave.test.ts` — guarded WHERE on each of
+the 4 paths (approve / reject / cancel-approved / cancel-pending) plus a
+zero-row outcome on each that asserts (a) the result is `AUTH` with the
+"no longer" message and (b) `db.leaveBalance.update` was NEVER called.
+
+### QA-17 — reviewer scope was one level, not the chain (P2, spec violation)
+
+**Where:** `src/server-actions/hr-reviews.ts` → `assertReviewer`.
+
+**Root cause:** plan §6 says reviewers are "the subject's manager chain
+(or **ADMIN/HR**)" and §3 names `getManagerChain()` as the resolution
+mechanism. The guard called `getApproverIdsFor(subjectId)` which resolves
+ONE level only (`User.managerId`). A grand-manager — the only fallback
+when the immediate manager is on leave — was rejected with "Only the
+employee's manager…". The seeded org chart had every grand-manager as
+ADMIN, so the gap was invisible to e2e.
+
+**Manual repro (pre-fix):** with Soren reporting to Lena who reports to
+Ingrid, sign in as Ingrid and try to review Soren's SUBMITTED cycle →
+rejected.
+
+**Fix:** `assertReviewer` calls `getManagerChain(subjectId)` (lib/hierarchy.ts,
+which already powers the leave decision path and excludes the subject
+themself, capping at 32 hops with a cycle guard).
+
+**Seed change:** Soren now reports to Lena (who reports to Ingrid) — the
+org chart has a non-ADMIN grand-manager, the only shape in which the
+plan-§6 scope is observable. Ingrid stays inside the same subtree, so
+queue scoping is unchanged; Lena keeps her MEMBER role (the org chart and
+RBAC are separate axes). A new DRAFT "2026 Skip-level check-in" cycle for
+Soren is seeded.
+
+**Tests:** 3 unit cases (skip-level approval succeeds, manager one level
+up but OUTSIDE the chain rejected, subject themself never in own chain) +
+1 e2e scenario (Soren self-submits, Ingrid — the grand-manager —
+completes the review through the real UI).
+
+### QA-18 — duplicate leave type surfaced as a generic 500 (P3)
+
+**Where:** `src/server-actions/hr-leave.ts` → `createLeaveType`.
+
+**Root cause:** `LeaveType.name` and `.code` are `@unique`. Creating a
+duplicate threw Prisma `P2002`, which `toResult` converted into the
+generic `INTERNAL` "Something went wrong. Please try again." — the admin
+had no idea the name was taken (it reads like a server bug, and retrying
+can never succeed). The `isUniqueConstraintError` helper in `result.ts`
+existed for exactly this and was wired to nothing.
+
+**Fix:** the `db.leaveType.create` call is wrapped in a try/catch; on a
+unique-constraint violation the action throws an `AuthorizationError`
+with `A leave type named "…" (or code …) already exists — names and codes
+must be unique.` (`AUTH` code, surfaces as a normal toast).
+
+**Tests:** 1 unit case (duplicate name → friendly conflict, NOT
+"something went wrong").
+
+### QA-19 — `EmployeeProfile.department` defaulted to "ENGINEERING" (P3)
+
+**Where:** `prisma/schema.prisma` (column default),
+`src/server-actions/hr-directory.ts` (self-create + admin-create
+branches), `src/lib/validation.ts` (schema), `src/lib/types/index.ts`
+(type union).
+
+**Root cause:** the column `@default("ENGINEERING")`, the self-create
+upsert branch, AND the admin-create upsert branch all stamped
+`"ENGINEERING"` when no department was picked. Any profile saved without
+an explicit department — including every member's self-created profile
+after QA-10 locked self-service down to contact fields — showed up in the
+shared roster as "Engineering", an HR-owned classification nobody had
+asserted. The directory renders `department` via `DEPARTMENT_LABELS`,
+so the fabricated value was indistinguishable from a real one.
+
+**Manual repro (pre-fix):** sign in as a member who has never been
+classified → Settings → save a phone number → open the directory → your
+row says "Engineering".
+
+**Fix:** the column default is now `""`; both create branches default to
+`""`; the schema accepts `""` alongside the four real departments (`""`
+means "not classified yet", rendered as "—" in the roster). The runtime
+guard in `updateProfileAsAdmin` keeps rejecting unknown strings (`""` is
+falsy so it skips the `VALID_DEPARTMENTS.has` check). A migration
+(`20261107000000_qa3_department_default`) changes the SQL default;
+existing rows keep their stored value, only future inserts change.
+
+**Tests:** 3 schema cases (`""` accepted, unknown strings rejected, the
+four real departments accepted) + 2 action cases (self-create and
+admin-create branches both leave department `""` when none is supplied).
+
+### QA-20 — ADMIN/HR could review their own cycle (P3)
+
+**Where:** `src/server-actions/hr-reviews.ts` → `decideReview`.
+
+**Root cause:** `assertReviewer` short-circuits `ADMIN` and `HR` (the
+QA-11 fix), so a subject holding either role could write their own
+manager review — stamp themselves as the reviewer and rate themselves.
+The plan's model is "manager reviews, employee acknowledges"; the
+employee must never sit on both sides of the table, regardless of role.
+
+**Manual repro (pre-fix):** as the admin, create a review cycle for
+yourself, submit it, then complete the manager side → it went through.
+
+**Fix:** an explicit `review.userId === auth.userId` check before
+`assertReviewer`, with "You cannot review your own cycle — it is
+reviewed by your manager chain, HR, or another admin.".
+
+**Tests:** 2 unit cases (ADMIN self-review and HR self-review both
+rejected; `db.performanceReview.update` never called).
+
+### QA-21 — `getMyLeaveData` resolved approver names that were never rendered (P3)
+
+**Where:** `src/server-actions/hr-leave.ts` → `getMyLeaveData`.
+
+**Root cause:** the loader resolved the pending-approver ids of MY
+pending requests (`getApproverIdsFor` per request) and folded their names
+into the `deciders` map… which is only ever read with `decidedById` —
+always `null` while PENDING. The pending approver names were never
+rendered (the UI shows "Awaiting approval" for PENDING rows, not the
+approver's name). Dead `getApproverIdsFor` walks — one per pending
+request — on every Leave-view load.
+
+**Fix:** the loader now resolves only the `decidedById` set. The walk
+and the `pendingApproverIds` fold are gone.
+
+**Tests:** 1 unit case (with a mix of PENDING and APPROVED requests, the
+action never calls `getApproverIdsFor`; only the `decidedById` user is
+fetched).
+
 ---
 
 ## Not filed (checked and cleared)
@@ -278,12 +448,15 @@ clicking into the void.
 
 | Layer | File | Cases |
 |-------|------|-------|
-| Unit | `src/server-actions/__tests__/hr-leave.test.ts` | +6 (QA-1/1b) |
+| Unit | `src/server-actions/__tests__/hr-leave.test.ts` | +6 (QA-1/1b) · +8 (QA-16, 4 decide + 4 cancel) · +1 (QA-18) · +1 (QA-21) |
 | Unit | `src/lib/__tests__/client-error-bridge.test.ts` | +3 (QA-9) |
-| Unit | `src/server-actions/__tests__/hr-directory.test.ts` | +5 (QA-10) |
-| Unit | `src/lib/__tests__/validation.test.ts` | +9 (QA-10b/11b, QA-10) |
-| Unit | `src/server-actions/__tests__/hr-reviews.test.ts` | +1 (QA-11) |
+| Unit | `src/server-actions/__tests__/hr-directory.test.ts` | +5 (QA-10) · +2 (QA-19 action side) |
+| Unit | `src/lib/__tests__/validation.test.ts` | +9 (QA-10b/11b, QA-10) · +3 (QA-19 schema side) |
+| Unit | `src/server-actions/__tests__/hr-reviews.test.ts` | +1 (QA-11) · +3 (QA-17) · +2 (QA-20) |
 | Unit | `src/server-actions/__tests__/hr-onboarding.test.ts` | +3 (QA-12) |
 | e2e | `e2e/features/hr-qa-hardening.feature` | 2 scenarios (QA-1, QA-7) |
 | e2e | `e2e/features/hr-directory.feature` | rewritten self-service scenario (QA-10) |
-| e2e | `e2e/features/hr-reviews.feature` | +1 scenario (QA-11/QA-13) |
+| e2e | `e2e/features/hr-reviews.feature` | +1 scenario (QA-11/QA-13) · +1 scenario (QA-17) |
+
+**Round 3 totals:** +20 unit cases (8 + 1 + 1 + 5 + 3 + 2 = 20), +1 e2e
+scenario, +14 e2e steps. Suite size at audit close: 1051 unit / 53 e2e.

@@ -24,7 +24,10 @@ import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
-const VALID_DEPARTMENTS = new Set(DEPARTMENT_LABELS.map((d) => d.key));
+// QA-19: "" (not classified yet) is a valid stored value, so the set is
+// keyed by plain strings; the four real departments remain the only
+// classifiable keys.
+const VALID_DEPARTMENTS = new Set<string>(DEPARTMENT_LABELS.map((d) => d.key));
 
 function serialize(
   row: {
@@ -132,7 +135,11 @@ export async function upsertMyProfile(input: {
       create: {
         userId: auth.userId,
         jobTitle: "",
-        department: "ENGINEERING",
+        // QA-19: no fabricated classification — "" renders as "—" until HR
+        // sets the department via the admin path. (Used to stamp
+        // "ENGINEERING", so self-created profiles polluted the shared
+        // roster with an HR-owned fact nobody had asserted.)
+        department: "",
         hireDate: null,
         phone: data.phone ?? "",
         location: data.location ?? "",
@@ -190,7 +197,10 @@ export async function updateProfileAsAdmin(userId: string, input: {
       create: {
         userId,
         jobTitle: data.jobTitle ?? "",
-        department: data.department ?? "ENGINEERING",
+        // QA-19: same no-fabrication rule on the admin create branch — an
+        // HR save without a picked department leaves it unset, not
+        // "ENGINEERING".
+        department: data.department ?? "",
         hireDate: hireDate ?? null,
         phone: data.phone ?? "",
         location: data.location ?? "",

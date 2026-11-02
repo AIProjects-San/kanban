@@ -340,12 +340,12 @@ async function main() {
   const userByName = new Map(allUsers.map((u) => [u.name, u.id]));
 
   // -----------------------------------------------------------------
-  // Reporting hierarchy (org chart) — 3-level tree rooted at the ADMIN.
+  // Reporting hierarchy (org chart) — 4-level chain rooted at the ADMIN.
   //   Mira (ADMIN, root)
   //     ├── Ingrid (MANAGER)        ← Engineering Manager
-  //     │     ├── Lena              ← Backend Eng
-  //     │     ├── Rafael            ← DevOps
-  //     │     └── Soren             ← QA
+  //     │     ├── Lena (MEMBER)     ← backend lead (has a report, no role)
+  //     │     │     └── Soren       ← QA (reports to Lena)   [QA-17]
+  //     │     └── Rafael            ← DevOps
   //     ├── Priya (MANAGER)         ← Marketing Lead
   //     │     ├── Marcus            ← Content
   //     │     └── Hana              ← Design
@@ -353,19 +353,26 @@ async function main() {
   //     ├── Yuki                    ← Product Designer
   //     ├── Amara                   ← UX Researcher
   //     └── Diego                   ← Full-stack
+  //
+  // QA-17: Soren reports to Lena (who reports to Ingrid) so the org chart
+  // has a NON-ADMIN grand-manager — the only shape in which the plan-§6
+  // "manager chain" reviewer scope is observable. Ingrid stays inside
+  // the same subtree (queue scoping unchanged); Lena keeps her MEMBER
+  // role (the org chart and RBAC are separate axes).
   // -----------------------------------------------------------------
   const mgrIngrid = userByName.get("Ingrid Solberg");
   const mgrPriya = userByName.get("Priya Nair");
+  const lenaId = userByName.get("Lena Okafor");
   const treeAssignments = [
     ["Ingrid Solberg", demoUser.id],          // Ingrid → Mira
     ["Priya Nair", demoUser.id],              // Priya → Mira
+    ["Lena Okafor", mgrIngrid],               // Lena → Ingrid
     ["Theo Vance", demoUser.id],              // Theo → Mira
     ["Yuki Tanaka", demoUser.id],
     ["Amara Diallo", demoUser.id],
     ["Diego Morales", demoUser.id],
-    ["Lena Okafor", mgrIngrid],               // Lena → Ingrid
+    ["Soren Lindqvist", lenaId],              // QA-17: Soren → Lena → Ingrid
     ["Rafael Costa", mgrIngrid],
-    ["Soren Lindqvist", mgrIngrid],
     ["Marcus Bell", mgrPriya],                // Marcus → Priya
     ["Hana Park", mgrPriya],
     ["Remy Laurent", demoUser.id],           // QA-13: HR reports to the admin
@@ -1282,6 +1289,11 @@ async function main() {
     // reports to Mira) that only ADMIN or the new HR user can review:
     // the e2e proves HR (not in Amara's chain) completes it.
     ["Amara Diallo", "SUBMITTED", `${YEAR_NOW} Q3 check-in`, "Ran 24 interviews and rebuilt the onboarding survey.", 4, "", null, null, null],
+    // QA-17 — a DRAFT cycle for Soren (chain: Soren → Lena → Ingrid →
+    // Mira). The e2e has Soren submit it and INGRID (the grand-manager,
+    // not the immediate manager Lena) complete the review — the plan §6
+    // "manager chain" scope the original one-level guard violated.
+    ["Soren Lindqvist", "DRAFT", `${YEAR_NOW} Skip-level check-in`, "", null, "", null, null, null],
   ];
   for (const [name, status, title, selfAssessment, selfRating, managerComment, managerRating, reviewedBy, ] of reviewSeed) {
     const uid = userByName.get(name);

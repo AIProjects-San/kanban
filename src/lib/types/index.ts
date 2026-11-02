@@ -120,7 +120,8 @@ export interface EmployeeProfileT {
   role: string;
   managerName: string | null;
   jobTitle: string;
-  department: "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT";
+  /** QA-19: "" means "not classified yet" — rendered as "—" until HR sets it. */
+  department: "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT" | "";
   hireDate: string | null;
   phone: string;
   location: string;

@@ -231,6 +231,84 @@ describe("decideReview", () => {
       }),
     );
   });
+
+  // -----------------------------------------------------------------------
+  // QA-17 — plan §6 scopes reviewers to "the subject's manager chain", not
+  // just the immediate manager (§3 even names getManagerChain() as the
+  // resolution mechanism). The guard resolved ONE level (User.managerId),
+  // so a grand-manager was rejected with "Only the employee's manager…".
+  // In the seed, Soren → Lena → Ingrid: only Lena could review Soren's
+  // cycle; if Lena is unavailable, only ADMIN/HR could step in.
+  // -----------------------------------------------------------------------
+
+  const CHAIN_BY_ID: Record<string, { managerId: string | null }> = {
+    "u-soren": { managerId: "u-lena" },   // Soren → Lena
+    "u-lena": { managerId: "u-mgr" },     // Lena → Ingrid (the grand-manager)
+    "u-mgr": { managerId: null },         // Ingrid is the root of this chain
+  };
+
+  it("QA-17: a skip-level manager in the subject's chain can complete the review", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH); // Ingrid
+    db.performanceReview.findUnique.mockResolvedValue({ ...SUBMITTED, userId: "u-soren" });
+    db.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      CHAIN_BY_ID[where.id] ?? null,
+    );
+    const res = await decideReview({ reviewId: "pr-1", managerComment: "Covering for Lena.", managerRating: 4 });
+    expect(res.ok).toBe(true);
+    expect(db.performanceReview.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "REVIEWED", reviewedById: "u-mgr" }),
+      }),
+    );
+  });
+
+  it("QA-17: a manager one level up but OUTSIDE the chain is still rejected", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH); // Ingrid, NOT in Soren's chain below
+    db.performanceReview.findUnique.mockResolvedValue({ ...SUBMITTED, userId: "u-soren" });
+    // Soren reports to Priya's org instead — Ingrid is a stranger here.
+    db.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === "u-soren" ? { managerId: "u-priya" } : { managerId: null },
+    );
+    const res = await decideReview({ reviewId: "pr-1", managerComment: "x", managerRating: 3 });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/manager/i);
+  });
+
+  it("QA-17: the subject themself is never in their own reviewer chain", async () => {
+    requirePermissionMock.mockResolvedValue({ ...MANAGER_AUTH, userId: "u-soren", role: "MANAGER" as const });
+    db.performanceReview.findUnique.mockResolvedValue({ ...SUBMITTED, userId: "u-soren" });
+    db.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      CHAIN_BY_ID[where.id] ?? null,
+    );
+    const res = await decideReview({ reviewId: "pr-1", managerComment: "self-review attempt", managerRating: 5 });
+    expect(res.ok).toBe(false);
+  });
+
+  // -----------------------------------------------------------------------
+  // QA-20 — ADMIN/HR bypass the chain check entirely, so the SUBJECT of a
+  // cycle (if they hold ADMIN or HR) could write their own manager review,
+  // stamp themselves as the reviewer and rate themselves. The plan's model
+  // is "manager reviews, employee acknowledges" — the employee must never
+  // sit on both sides of the table, regardless of role.
+  // -----------------------------------------------------------------------
+
+  it("QA-20: an ADMIN cannot review their own cycle", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH); // u-admin
+    db.performanceReview.findUnique.mockResolvedValue({ ...SUBMITTED, userId: "u-admin" });
+    const res = await decideReview({ reviewId: "pr-1", managerComment: "Great work, me.", managerRating: 5 });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/own/i);
+    expect(db.performanceReview.update).not.toHaveBeenCalled();
+  });
+
+  it("QA-20: an HR user cannot review their own cycle", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH); // u-hr
+    db.performanceReview.findUnique.mockResolvedValue({ ...SUBMITTED, userId: "u-hr" });
+    const res = await decideReview({ reviewId: "pr-1", managerComment: "Modest, honest.", managerRating: 3 });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/own/i);
+    expect(db.performanceReview.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("acknowledgeReview", () => {
