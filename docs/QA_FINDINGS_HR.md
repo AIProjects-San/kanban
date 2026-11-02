@@ -267,6 +267,12 @@ clicking into the void.
 - **Read-check-then-write races in review/onboarding transitions** —
   single-row last-writer-wins, no balance-style invariant at risk; noted for
   a future hardening pass if concurrency matters.
+- **Onboarding template instantiation sends no notifications** (leave and
+  reviews do notify) — a minor UX inconsistency, not a plan violation;
+  candidate for a follow-up polish ticket.
+- **Checklist auto-completion is not in one transaction with the task tick** —
+  a crash between the two writes leaves an all-done-but-incomplete checklist;
+  self-heals on the next tick/untick. Acceptable for the demo tier.
 
 ## Regression-test inventory added by this audit
 
