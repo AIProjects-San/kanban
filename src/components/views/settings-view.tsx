@@ -13,6 +13,7 @@ import { actionErrorMessage } from "@/lib/action-errors";
 import { Section } from "../ui/section";
 import { EmployeeProfileSection } from "./hr-directory";
 import { MyReviewsSection } from "./hr-reviews";
+import { MyOnboardingSection } from "./hr-onboarding";
 import { Field } from "../ui/field";
 import { PasswordInput } from "../ui/password-input";
 import { AvatarColorPicker } from "../ui/avatar-color-picker";
@@ -159,6 +160,9 @@ export function SettingsView({ user }: SettingsViewProps) {
 
       {/* HR module — my performance reviews (docs/HR_MODULE_PLAN.md §6) */}
       <MyReviewsSection />
+
+      {/* HR module — my onboarding tasks (docs/HR_MODULE_PLAN.md §7) */}
+      <MyOnboardingSection />
 
       {/* Security — change password */}
       <SecuritySection userId={user.id} email={user.email} />

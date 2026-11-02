@@ -84,7 +84,12 @@ export type AuditAction =
   | "review.updated"
   | "review.submitted"
   | "review.reviewed"
-  | "review.acknowledged";
+  | "review.acknowledged"
+  // HR module — onboarding lifecycle (docs/HR_MODULE_PLAN.md §7)
+  | "onboarding.created"
+  | "onboarding.task_added"
+  | "onboarding.task_done"
+  | "onboarding.task_undone";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -171,6 +176,11 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "review.submitted": { icon: Send, cls: "text-blue-500 bg-blue-500/10" },
   "review.reviewed": { icon: CheckCircle2, cls: "text-amber-500 bg-amber-500/10" },
   "review.acknowledged": { icon: ShieldCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+
+  "onboarding.created": { icon: Plus, cls: "text-primary bg-primary/10" },
+  "onboarding.task_added": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
+  "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
+  "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

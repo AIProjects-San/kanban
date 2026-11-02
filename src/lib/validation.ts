@@ -374,3 +374,25 @@ export const decideReviewSchema = z.object({
   managerComment: z.string().trim().min(1, "A comment is required.").max(10_000),
   managerRating: z.number().int().min(1, "Rating must be 1-5.").max(5, "Rating must be 1-5."),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// HR module feature 4 — onboarding (docs/HR_MODULE_PLAN.md §7).
+// ---------------------------------------------------------------------------
+
+export const createChecklistSchema = z.object({
+  newHireId: cuidish,
+  title: z.string().trim().min(1, "Title is required.").max(200),
+  useTemplate: z.boolean().default(true),
+}).strict();
+
+export const addTaskSchema = z.object({
+  checklistId: cuidish,
+  title: z.string().trim().min(1, "Task title is required.").max(200),
+  assigneeId: cuidish.nullable().optional(),
+  dueOffsetDays: z.number().int().min(0).max(365).optional(),
+}).strict();
+
+export const taskDoneSchema = z.object({
+  taskId: cuidish,
+  done: z.boolean(),
+}).strict();

@@ -87,6 +87,31 @@ export interface PerformanceReviewT {
   createdAt: string;
 }
 
+// HR module feature 4 — onboarding (docs/HR_MODULE_PLAN.md §7).
+export interface OnboardingTaskT {
+  id: string;
+  checklistId: string;
+  title: string;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  dueOffsetDays: number;
+  done: boolean;
+  doneAt: string | null;
+  doneBy: string | null;
+  notes: string;
+  order: number;
+}
+
+export interface OnboardingChecklistT {
+  id: string;
+  newHireId: string;
+  hireName: string;
+  title: string;
+  completedAt: string | null;
+  createdAt: string;
+  tasks: OnboardingTaskT[];
+}
+
 export interface EmployeeProfileT {
   id: string;
   userId: string;

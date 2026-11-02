@@ -760,3 +760,44 @@ model PerformanceReview {
   @@index([status])
   @@index([createdAt])
 }
+
+// HR Module feature 4 — onboarding (docs/HR_MODULE_PLAN.md §7).
+// A checklist is instantiated per new hire from a default template; each
+// task has an assignee (a User) and a due offset from the hire date. The
+// checklist auto-completes when every task is done.
+model OnboardingChecklist {
+  id          String    @id @default(cuid())
+  newHireId   String
+  title       String
+  // Derived: when every task is done, the checklist is complete.
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tasks OnboardingTask[]
+
+  @@index([newHireId])
+  @@index([createdAt])
+}
+
+model OnboardingTask {
+  id           String   @id @default(cuid())
+  checklistId  String
+  checklist    OnboardingChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  title        String
+  // The User responsible for ticking this task (HR, the hire's manager,
+  // or the hire themself).
+  assigneeId   String?
+  // Days after the checklist start the task is due by.
+  dueOffsetDays Int     @default(7)
+  done         Boolean  @default(false)
+  doneAt       DateTime?
+  doneById     String?
+  notes        String   @default("")
+  order        Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([checklistId])
+  @@index([assigneeId])
+}

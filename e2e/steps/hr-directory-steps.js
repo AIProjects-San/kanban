@@ -33,6 +33,16 @@ When("I open the {string} tab", async function (label) {
     await driver.wait(until.elementsLocated(By.css("[data-testid='hr-reviews']")), 10_000, "reviews queue did not render");
     return;
   }
+  if (label === "Onboarding") {
+    const tab = await driver.wait(
+      until.elementLocated(By.xpath(`//button[contains(., "Onboarding")]`)),
+      10_000,
+      "Onboarding tab button not found",
+    );
+    await driver.executeScript("arguments[0].click();", tab);
+    await driver.wait(until.elementsLocated(By.css("[data-testid='hr-onboarding']")), 10_000, "onboarding tab did not render");
+    return;
+  }
   throw new Error(`unknown tab: ${label}`);
 });
 

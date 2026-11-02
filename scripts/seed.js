@@ -1295,6 +1295,52 @@ async function main() {
   }
   console.log(`  ✓ HR reviews: ${reviewSeed.length} cycles seeded across all lifecycle stages`);
 
+  // -------------------------------------------------------------------------
+  // HR module seed — onboarding (docs/HR_MODULE_PLAN.md §7). Diego is the
+  // "new hire" (reports to Ingrid) with a template checklist in progress;
+  // Hana's checklist is one task from completion for the auto-complete e2e.
+  // -------------------------------------------------------------------------
+  await db.onboardingChecklist.deleteMany();
+  await db.onboardingTask.deleteMany();
+  const diegoId = userByName.get("Diego Morales");
+  const hanaId = userByName.get("Hana Park");
+  const diegoChecklist = await db.onboardingChecklist.create({
+    data: {
+      newHireId: diegoId,
+      title: "Nov 2026 onboarding — Diego",
+      tasks: {
+        create: [
+          { title: "Sign the employment contract", assigneeId: null, dueOffsetDays: 1, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Remy") ?? null },
+          { title: "Set up accounts and SSO access", assigneeId: null, dueOffsetDays: 2, order: 1 },
+          { title: "Meet your manager for the 1:1 kick-off", assigneeId: userByName.get("Ingrid Solberg") ?? null, dueOffsetDays: 3, order: 2 },
+          { title: "Complete the workspace tour", assigneeId: diegoId, dueOffsetDays: 5, order: 3 },
+          { title: "First small task shipped with a mentor", assigneeId: diegoId, dueOffsetDays: 14, order: 4 },
+        ],
+      },
+    },
+  });
+  // Unassigned manager tasks fall to the hire's manager (Ingrid).
+  await db.onboardingTask.updateMany({
+    where: { checklistId: diegoChecklist.id, assigneeId: null },
+    data: { assigneeId: userByName.get("Ingrid Solberg") ?? null },
+  });
+  const hanaChecklist = await db.onboardingChecklist.create({
+    data: {
+      newHireId: hanaId,
+      title: "Nov 2026 onboarding — Hana",
+      tasks: {
+        create: [
+          { title: "Sign the employment contract", assigneeId: userByName.get("Priya Nair") ?? null, dueOffsetDays: 1, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Priya Nair") ?? null },
+          { title: "Set up accounts and SSO access", assigneeId: userByName.get("Priya Nair") ?? null, dueOffsetDays: 2, order: 1, done: true, doneAt: new Date(), doneById: userByName.get("Priya Nair") ?? null },
+          { title: "Meet your manager for the 1:1 kick-off", assigneeId: userByName.get("Priya Nair") ?? null, dueOffsetDays: 3, order: 2 },
+        ],
+      },
+    },
+  });
+  console.log(`  ✓ HR onboarding: 2 checklists seeded (Diego in progress, Hana one task from completion)`);
+
+
+
 
 
 

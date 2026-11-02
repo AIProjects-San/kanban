@@ -8,7 +8,7 @@
 // Directory / Reviews / Onboarding tabs arrive with features 2–4.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck } from "lucide-react";
+import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -24,6 +24,7 @@ import {
 } from "@/server-actions/hr-leave";
 import { DirectoryTab } from "./hr-directory";
 import { ReviewsTab } from "./hr-reviews";
+import { OnboardingTab } from "./hr-onboarding";
 
 interface CurrentUser {
   id: string;
@@ -31,7 +32,7 @@ interface CurrentUser {
   role: string;
 }
 
-type Tab = "requests" | "types" | "directory" | "reviews";
+type Tab = "requests" | "types" | "directory" | "reviews" | "onboarding";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
@@ -99,6 +100,9 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
         <TabButton active={tab === "reviews"} onClick={() => setTab("reviews")}>
           <ClipboardCheck size={13} /> Reviews
         </TabButton>
+        <TabButton active={tab === "onboarding"} onClick={() => setTab("onboarding")}>
+          <ListChecks size={13} /> Onboarding
+        </TabButton>
       </div>
 
       {tab === "requests" && (
@@ -113,6 +117,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
       )}
       {tab === "directory" && <DirectoryTab />}
       {tab === "reviews" && <ReviewsTab />}
+      {tab === "onboarding" && <OnboardingTab />}
     </div>
   );
 }
