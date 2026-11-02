@@ -193,3 +193,31 @@ describe("updateProfileAsAdmin", () => {
     expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe("upsert update paths (partial fields)", () => {
+  it("upsertMyProfile updates an existing row with only the changed fields", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    const res = await upsertMyProfile({ phone: "+64 21 555 9999" });
+    expect(res.ok).toBe(true);
+    const call = db.employeeProfile.upsert.mock.calls[0][0];
+    expect(call.where).toEqual({ userId: "u-theo" });
+    expect(call.update).toEqual({ phone: "+64 21 555 9999" });
+  });
+
+  it("upsertMyProfile clears the hire date when explicitly null", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    const res = await upsertMyProfile({ hireDate: null });
+    expect(res.ok).toBe(true);
+    const call = db.employeeProfile.upsert.mock.calls[0][0];
+    expect(call.update).toEqual({ hireDate: null });
+  });
+
+  it("updateProfileAsAdmin updates partially and keeps other fields", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { skills: "Rust" });
+    expect(res.ok).toBe(true);
+    const call = db.employeeProfile.upsert.mock.calls[0][0];
+    expect(call.update).toEqual({ skills: "Rust" });
+  });
+});

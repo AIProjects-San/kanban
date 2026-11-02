@@ -733,3 +733,30 @@ model EmployeeProfile {
 
   @@index([department])
 }
+
+// HR Module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).
+// Self + manager model: the employee writes a self-assessment (DRAFT),
+// submits it (SUBMITTED), their manager reviews + rates (REVIEWED), and the
+// employee acknowledges the result (ACKNOWLEDGED). Ratings are 1–5.
+model PerformanceReview {
+  id               String    @id @default(cuid())
+  userId           String
+  title            String
+  periodStart      DateTime
+  periodEnd        DateTime
+  // DRAFT → SUBMITTED → REVIEWED → ACKNOWLEDGED (terminal).
+  status           String    @default("DRAFT")
+  selfAssessment   String    @default("")
+  selfRating       Int?
+  managerComment   String    @default("")
+  managerRating    Int?
+  reviewedById     String?
+  reviewedAt       DateTime?
+  acknowledgedAt   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}

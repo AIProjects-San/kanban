@@ -8,7 +8,7 @@
 // Directory / Reviews / Onboarding tabs arrive with features 2–4.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, X, Plus, Settings2 } from "lucide-react";
+import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -23,7 +23,7 @@ import {
   updateLeaveType,
 } from "@/server-actions/hr-leave";
 import { DirectoryTab } from "./hr-directory";
-import { useApp } from "@/store/app-store";
+import { ReviewsTab } from "./hr-reviews";
 
 interface CurrentUser {
   id: string;
@@ -31,7 +31,7 @@ interface CurrentUser {
   role: string;
 }
 
-type Tab = "requests" | "types" | "directory";
+type Tab = "requests" | "types" | "directory" | "reviews";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
@@ -45,7 +45,6 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
   const [types, setTypes] = useState<LeaveTypeT[]>([]);
   const [canAdmin, setCanAdmin] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const { bumpRefresh } = useApp();
 
   const load = useCallback(async () => {
     const res = await getLeaveQueue();
@@ -97,19 +96,23 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
         <TabButton active={tab === "directory"} onClick={() => setTab("directory")}>
           <Briefcase size={13} /> Directory
         </TabButton>
+        <TabButton active={tab === "reviews"} onClick={() => setTab("reviews")}>
+          <ClipboardCheck size={13} /> Reviews
+        </TabButton>
       </div>
 
       {tab === "requests" && (
         <RequestsTab
           requests={requests}
           currentUserId={currentUser.id}
-          onChanged={async () => { await load(); bumpRefresh(); }}
+          onChanged={load}
         />
       )}
       {tab === "types" && canAdmin && (
         <TypesTab types={types} onChanged={load} />
       )}
       {tab === "directory" && <DirectoryTab />}
+      {tab === "reviews" && <ReviewsTab />}
     </div>
   );
 }

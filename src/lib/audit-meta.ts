@@ -78,7 +78,13 @@ export type AuditAction =
   | "leave.rejected"
   | "leave.cancelled"
   | "leave.type_created"
-  | "leave.type_updated";
+  | "leave.type_updated"
+  // HR module — performance review lifecycle (docs/HR_MODULE_PLAN.md §6)
+  | "review.created"
+  | "review.updated"
+  | "review.submitted"
+  | "review.reviewed"
+  | "review.acknowledged";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -159,6 +165,12 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.cancelled": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "leave.type_created": { icon: Plus, cls: "text-primary bg-primary/10" },
   "leave.type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+
+  "review.created": { icon: Plus, cls: "text-primary bg-primary/10" },
+  "review.updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "review.submitted": { icon: Send, cls: "text-blue-500 bg-blue-500/10" },
+  "review.reviewed": { icon: CheckCircle2, cls: "text-amber-500 bg-amber-500/10" },
+  "review.acknowledged": { icon: ShieldCheck, cls: "text-emerald-500 bg-emerald-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

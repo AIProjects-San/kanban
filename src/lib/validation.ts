@@ -345,3 +345,32 @@ export const employeeProfileSchema = z.object({
 }).strict();
 
 export const employeeProfileAdminSchema = employeeProfileSchema; // notes included above
+
+// ---------------------------------------------------------------------------
+// HR module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).
+// ---------------------------------------------------------------------------
+
+export const createReviewSchema = z.object({
+  userId: cuidish,
+  title: z.string().trim().min(1, "Title is required.").max(200),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Period start must be a valid date."),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Period end must be a valid date."),
+}).strict();
+
+export const selfAssessmentSchema = z.object({
+  reviewId: cuidish,
+  selfAssessment: z.string().trim().max(10_000),
+  selfRating: z.number().int().min(1, "Rating must be 1-5.").max(5, "Rating must be 1-5.").optional(),
+}).strict();
+
+/** Shared id-carrier for the single-id transitions (submit / acknowledge). */
+export const reviewDecisionSchema = z.object({
+  reviewId: cuidish,
+}).strict();
+
+/** Manager decision: comment + 1-5 rating on a SUBMITTED cycle. */
+export const decideReviewSchema = z.object({
+  reviewId: cuidish,
+  managerComment: z.string().trim().min(1, "A comment is required.").max(10_000),
+  managerRating: z.number().int().min(1, "Rating must be 1-5.").max(5, "Rating must be 1-5."),
+}).strict();

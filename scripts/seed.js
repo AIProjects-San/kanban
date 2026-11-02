@@ -1257,6 +1257,46 @@ async function main() {
   }
   console.log(`  ✓ HR directory: ${profileCount} employee profiles seeded`);
 
+  // -------------------------------------------------------------------------
+  // HR module seed — performance reviews (docs/HR_MODULE_PLAN.md §6).
+  // One cycle per lifecycle stage so every transition is demonstrable:
+  //   • Theo (member@): DRAFT — self-service write + submit in e2e
+  //   • Lena: SUBMITTED — manager@ (her manager) completes the review
+  //   • Rafael: REVIEWED — he acknowledges in e2e
+  //   • Yuki: ACKNOWLEDGED — terminal example with ratings on both sides
+  // -------------------------------------------------------------------------
+  await db.performanceReview.deleteMany();
+  const YEAR_NOW = new Date().getUTCFullYear();
+  const reviewSeed = [
+    ["Theo Vance", "DRAFT", `${YEAR_NOW} Mid-year review`, "", null, "", null, null, null],
+    ["Lena Okafor", "SUBMITTED", `${YEAR_NOW} Mid-year review`, "Shipped the billing API ahead of schedule; mentoring Amara.", 4, "", null, null, null],
+    ["Rafael Costa", "REVIEWED", `${YEAR_NOW} Q1 check-in`, "Cut deploy times by 60% with the pipeline overhaul.", 4, "Reliability champion — keep leading incident reviews.", 5, "Ingrid Solberg"],
+    ["Yuki Tanaka", "ACKNOWLEDGED", `${YEAR_NOW - 1} Annual review`, "Redesigned the design system; adoption at 90%.", 5, "Outstanding craft and collaboration.", 5, "Mira Hale"],
+  ];
+  for (const [name, status, title, selfAssessment, selfRating, managerComment, managerRating, reviewedBy, ] of reviewSeed) {
+    const uid = userByName.get(name);
+    if (!uid) continue;
+    await db.performanceReview.create({
+      data: {
+        userId: uid,
+        title,
+        periodStart: new Date(`${YEAR_NOW}-01-01T00:00:00.000Z`),
+        periodEnd: new Date(`${YEAR_NOW}-12-31T00:00:00.000Z`),
+        status,
+        selfAssessment,
+        selfRating,
+        managerComment,
+        managerRating,
+        reviewedById: reviewedBy ? userByName.get(reviewedBy) ?? null : null,
+        reviewedAt: reviewedBy ? new Date() : null,
+        acknowledgedAt: status === "ACKNOWLEDGED" ? new Date() : null,
+      },
+    });
+  }
+  console.log(`  ✓ HR reviews: ${reviewSeed.length} cycles seeded across all lifecycle stages`);
+
+
+
 
 
   // Deterministic task for Rafael (time-guard e2e — hr-leave.feature): a

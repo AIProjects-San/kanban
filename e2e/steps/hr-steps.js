@@ -163,24 +163,28 @@ async function showAllFilterIfPresent(driver) {
   }
 }
 
-Then("my request with reason {string} should show status {string}", async function (reason, status) {
-  const driver = await this.getDriver();
-  await showAllFilterIfPresent(driver);
+async function waitForRowWithStatus(driver, reason, status, timeoutMsg) {
+  // Re-assert the "All" filter on every poll — a view remount resets it to
+  // PENDING, which would hide decided rows (a race observed live).
   await driver.wait(
-    until.elementsLocated(By.xpath(`//table//tr[contains(., "${reason}")][contains(., "${status}")]`)),
+    async () => {
+      await showAllFilterIfPresent(driver);
+      const rows = await driver.findElements(
+        By.xpath(`//table//tr[contains(., "${reason}")][contains(., "${status}")]`),
+      );
+      return rows.length > 0;
+    },
     10_000,
-    `request "${reason}" never showed status ${status}`,
+    timeoutMsg,
   );
+}
+
+Then("my request with reason {string} should show status {string}", async function (reason, status) {
+  await waitForRowWithStatus(await this.getDriver(), reason, status, `request "${reason}" never showed status ${status}`);
 });
 
 Then("the request with reason {string} should show status {string}", async function (reason, status) {
-  const driver = await this.getDriver();
-  await showAllFilterIfPresent(driver);
-  await driver.wait(
-    until.elementsLocated(By.xpath(`//table//tr[contains(., "${reason}")][contains(., "${status}")]`)),
-    10_000,
-    `request "${reason}" never showed status ${status}`,
-  );
+  await waitForRowWithStatus(await this.getDriver(), reason, status, `request "${reason}" never showed status ${status}`);
 });
 
 // ---------------------------------------------------------------------------

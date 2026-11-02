@@ -12,6 +12,7 @@ import { exportMyData } from "@/server-actions/data-export";
 import { actionErrorMessage } from "@/lib/action-errors";
 import { Section } from "../ui/section";
 import { EmployeeProfileSection } from "./hr-directory";
+import { MyReviewsSection } from "./hr-reviews";
 import { Field } from "../ui/field";
 import { PasswordInput } from "../ui/password-input";
 import { AvatarColorPicker } from "../ui/avatar-color-picker";
@@ -155,6 +156,9 @@ export function SettingsView({ user }: SettingsViewProps) {
 
       {/* HR module — self-service employee profile (docs/HR_MODULE_PLAN.md §5) */}
       <EmployeeProfileSection />
+
+      {/* HR module — my performance reviews (docs/HR_MODULE_PLAN.md §6) */}
+      <MyReviewsSection />
 
       {/* Security — change password */}
       <SecuritySection userId={user.id} email={user.email} />

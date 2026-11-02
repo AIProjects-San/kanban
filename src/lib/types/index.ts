@@ -66,6 +66,27 @@ export interface LeaveRequestT {
 }
 
 // HR module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
+// HR module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).
+export type ReviewStatus = "DRAFT" | "SUBMITTED" | "REVIEWED" | "ACKNOWLEDGED";
+
+export interface PerformanceReviewT {
+  id: string;
+  userId: string;
+  userName: string;
+  title: string;
+  periodStart: string;
+  periodEnd: string;
+  status: ReviewStatus;
+  selfAssessment: string;
+  selfRating: number | null;
+  managerComment: string;
+  managerRating: number | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  acknowledgedAt: string | null;
+  createdAt: string;
+}
+
 export interface EmployeeProfileT {
   id: string;
   userId: string;
