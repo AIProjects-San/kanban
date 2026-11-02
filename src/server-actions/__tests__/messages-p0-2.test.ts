@@ -24,6 +24,7 @@ const { db, getServerSession } = vi.hoisted(() => {
     "timeEntry", "calendarEvent", "message", "messageRead", "bug", "user", "userSettings",
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
+    "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "taskTagConfig", "priorityConfig", "departmentConfig",
   ];
   const methods = [

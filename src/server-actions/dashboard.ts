@@ -130,7 +130,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     memberWhere = notDeleted;
   }
 
-  const [projects, tasks, members, reminders, notifs, timeEntries, events, messages, bugTaskLinks] = await Promise.all([
+  const [projects, tasks, members, reminders, notifs, timeEntries, events, approvedLeave, messages, bugTaskLinks] = await Promise.all([
     // P1 (production-readiness re-audit) — every query has a `take` cap so a
     // workspace with 10k tasks / time entries / messages can't OOM the
     // dashboard loader. 200 is well above what any one screen can render
@@ -178,6 +178,14 @@ export async function getDashboardData(): Promise<DashboardData> {
       orderBy: { date: "asc" },
       take: 200,
     }),
+    // HR module — approved leave overlapping the calendar window; merged
+    // into the event feed below as virtual LEAVE events (no CalendarEvent
+    // row exists, so cancel/reject propagates automatically).
+    db.leaveRequest.findMany({
+      where: { status: "APPROVED", endDate: { gte: startOfToday() } },
+      orderBy: { startDate: "asc" },
+      take: 200,
+    }),
     db.message.findMany({
       where: currentUserId
         ? {
@@ -217,6 +225,47 @@ export async function getDashboardData(): Promise<DashboardData> {
   if (memberWhere) {
     const visibleMemberIds = new Set(members.map((m) => m.id));
     visibleTimeEntries = timeEntries.filter((te) => te.memberId != null && visibleMemberIds.has(te.memberId));
+  }
+
+  // ---------------------------------------------------------------------
+  // HR module — approved leave becomes virtual calendar events. Scoped
+  // users see leave only for members they can already see (plus their own,
+  // which memberWhere always includes) — same minimization rule as time
+  // entries. Leave of users with no TeamMember row is admin-only.
+  // ---------------------------------------------------------------------
+  const visibleUserIds = new Set(
+    members.map((m) => m.userId).filter(Boolean) as string[],
+  );
+  if (currentUserId) visibleUserIds.add(currentUserId);
+  const calendarLeave = (approvedLeave ?? []).filter(
+    (lr) => !memberWhere || visibleUserIds.has(lr.userId),
+  );
+  let leaveEvents: {
+    id: string; title: string; description: string; date: Date;
+    time: string; durationMin: number; type: string; location: string;
+    createdAt: Date;
+  }[] = [];
+  if (calendarLeave.length) {
+    const [leaveUsers, leaveTypes] = await Promise.all([
+      db.user.findMany({
+        where: { id: { in: [...new Set(calendarLeave.map((lr) => lr.userId))] } },
+        select: { id: true, name: true },
+      }),
+      db.leaveType.findMany({ select: { id: true, name: true, color: true } }),
+    ]);
+    const nameById = new Map(leaveUsers.map((u) => [u.id, u.name]));
+    const typeById = new Map(leaveTypes.map((t) => [t.id, t]));
+    leaveEvents = calendarLeave.map((lr) => ({
+      id: `leave-${lr.id}`,
+      title: `${nameById.get(lr.userId) ?? "Member"} — ${typeById.get(lr.leaveTypeId)?.name ?? "Leave"}`,
+      description: lr.days === 1 ? "1 working day" : `${lr.days} working days`,
+      date: lr.startDate,
+      time: "09:00",
+      durationMin: Math.round(lr.days * 480),
+      type: "LEAVE",
+      location: "",
+      createdAt: lr.createdAt,
+    }));
   }
 
   const total = projects.length;
@@ -291,7 +340,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       date: te.date.toISOString(),
       createdAt: te.createdAt.toISOString(),
     })),
-    events: events.map(e => ({
+    events: [...events, ...leaveEvents].map(e => ({
       ...e,
       date: e.date.toISOString(),
       createdAt: e.createdAt.toISOString(),

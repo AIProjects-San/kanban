@@ -18,6 +18,7 @@ import type {
   BugPriority,
   BugStatus,
   BugResolution,
+  LeaveStatus,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,9 @@ export const EVENT_TYPES: EventTypeDef[] = [
   { key: "REVIEW", label: "Review", dot: "bg-amber-500", bg: "bg-amber-500/10" },
   { key: "SOCIAL", label: "Social", dot: "bg-pink-500", bg: "bg-pink-500/10" },
   { key: "FOCUS", label: "Focus", dot: "bg-emerald-500", bg: "bg-emerald-500/10" },
+  // HR module — approved leave, synthesized onto the calendar at read time
+  // (dashboard.ts merges them into the event feed; there is no DB row).
+  { key: "LEAVE", label: "Leave", dot: "bg-violet-500", bg: "bg-violet-500/10" },
 ];
 
 export const EVENT_TYPE_MAP: Record<EventType, EventTypeDef> = Object.fromEntries(
@@ -218,4 +222,39 @@ export const BUG_STATUS_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   RESOLVED: ["REOPENED", "CLOSED"],
   CLOSED: ["REOPENED"],
   REOPENED: ["IN_PROGRESS", "CLOSED"],
+};
+
+// ---------------------------------------------------------------------------
+// HR module — leave management status definitions (docs/HR_MODULE_PLAN.md).
+// PENDING → APPROVED | REJECTED; PENDING/APPROVED → CANCELLED (balance is
+// restored on cancel-after-approval).
+// ---------------------------------------------------------------------------
+
+export interface LeaveStatusDef {
+  key: LeaveStatus;
+  label: string;
+  badge: string;
+  dot: string;
+}
+
+export const LEAVE_STATUSES: LeaveStatusDef[] = [
+  { key: "PENDING", label: "Pending", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "APPROVED", label: "Approved", badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { key: "REJECTED", label: "Rejected", badge: "bg-red-500/10 text-red-600 dark:text-red-400", dot: "bg-red-500" },
+  { key: "CANCELLED", label: "Cancelled", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", dot: "bg-zinc-400" },
+];
+
+export const LEAVE_STATUS_LABELS: Record<LeaveStatus, string> = Object.fromEntries(
+  LEAVE_STATUSES.map((s) => [s.key, s.label]),
+) as Record<LeaveStatus, string>;
+
+export const LEAVE_STATUS_BADGE: Record<LeaveStatus, string> = Object.fromEntries(
+  LEAVE_STATUSES.map((s) => [s.key, s.badge]),
+) as Record<LeaveStatus, string>;
+
+export const LEAVE_STATUS_TRANSITIONS: Record<LeaveStatus, LeaveStatus[]> = {
+  PENDING: ["APPROVED", "REJECTED", "CANCELLED"],
+  APPROVED: ["CANCELLED"],
+  REJECTED: [],
+  CANCELLED: [],
 };

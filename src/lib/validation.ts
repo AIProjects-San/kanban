@@ -284,3 +284,43 @@ export function validationError(message: string): Error {
   err.name = "ValidationError";
   return err;
 }
+
+// ---------------------------------------------------------------------------
+// HR module — leave management (docs/HR_MODULE_PLAN.md §4). Dates arrive as
+// ISO date strings (yyyy-mm-dd) from <input type="date">; the actions
+// normalize to UTC midnight before computing working days.
+// ---------------------------------------------------------------------------
+
+export const createLeaveRequestSchema = z.object({
+  leaveTypeId: cuidish,
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Start date must be a valid date."),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "End date must be a valid date."),
+  reason: z.string().trim().max(500).optional(),
+}).strict();
+
+export const decideLeaveRequestSchema = z.object({
+  requestId: cuidish,
+  decision: z.enum(["APPROVE", "REJECT"]),
+  note: z.string().trim().max(500).optional(),
+}).strict();
+
+export const cancelLeaveRequestSchema = z.object({
+  requestId: cuidish,
+}).strict();
+
+export const leaveTypeSchema = z.object({
+  name: z.string().trim().min(1, "Name is required.").max(50),
+  code: z.string().trim().min(1, "Code is required.").max(20).regex(/^[A-Z_]+$/, "Code must be UPPER_CASE letters/underscores."),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Color must be a #rrggbb hex value.").default("#8b5cf6"),
+  requiresDoc: z.boolean().default(false),
+  paid: z.boolean().default(true),
+  active: z.boolean().default(true),
+  policy: z.object({
+    annualDays: z.number().min(0).max(365),
+    maxCarryOver: z.number().min(0).max(365),
+    minNoticeDays: z.number().int().min(0).max(90),
+    maxConsecutiveDays: z.number().int().min(1).max(365),
+  }).strict(),
+}).strict();
+
+export const updateLeaveTypeSchema = leaveTypeSchema.partial();

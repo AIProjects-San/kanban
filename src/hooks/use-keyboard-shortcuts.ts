@@ -18,6 +18,7 @@ const SHORTCUT_PERMISSION_GATE: Record<string, Permission> = {
   u: "role:manage",  // G U → users view — admin only
   w: "role:manage",  // G W → workspace-settings — admin only
   l: "audit:view",   // G L → audit log — admin + manager
+  r: "hr:view",      // G R → HR console — admin + manager + HR
 };
 
 export function useKeyboardShortcuts() {
@@ -100,6 +101,8 @@ export function useKeyboardShortcuts() {
           h: () => setView("help"),
           l: () => setView("audit"),
           b: () => setView("bugs"),
+          v: () => setView("leave"),
+          r: () => setView("hr"),
         };
         const shortcutKey = e.key.toLowerCase();
         const action = map[shortcutKey];

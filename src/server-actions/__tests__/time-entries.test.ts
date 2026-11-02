@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["task", "timeEntry", "teamMember", "project", "auditLog"];
+  const models = ["task", "timeEntry", "teamMember", "project", "auditLog", "leaveRequest", "leaveType"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -79,6 +79,9 @@ beforeEach(() => {
   db.timeEntry.delete.mockResolvedValue({});
   db.teamMember.findMany.mockResolvedValue([{ id: "m-mia", name: "Mia" }]);
   db.project.findUnique.mockResolvedValue({ name: "Apollo" });
+  // HR module time guard — no approved leave by default.
+  db.leaveRequest.findMany.mockResolvedValue([]);
+  db.leaveType.findUnique.mockResolvedValue({ name: "Annual Leave" });
 });
 
 // ---------------------------------------------------------------------------
@@ -102,6 +105,23 @@ describe("logTaskTime", () => {
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({ action: "time.logged", entityLabel: "Implement board" }),
     );
+  });
+
+  // HR module time guard (docs/HR_MODULE_PLAN.md §4) — logging hours on an
+  // approved-leave day is rejected at the write boundary.
+  it("rejects logging hours on a day the user is on approved leave", async () => {
+    db.leaveRequest.findMany.mockResolvedValue([{ id: "lr-1", leaveTypeId: "lt-annual" }]);
+    const res = await logTaskTime({ taskId: "t-1", date: "2026-11-02", hours: 3.5 });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/approved Annual Leave/i);
+    expect(db.timeEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("allows logging hours on a normal working day", async () => {
+    db.leaveRequest.findMany.mockResolvedValue([]);
+    const res = await logTaskTime({ taskId: "t-1", date: "2026-11-02", hours: 3.5 });
+    expect(res.ok).toBe(true);
+    expect(db.timeEntry.create).toHaveBeenCalled();
   });
 
   it("rejects hours <= 0", async () => {

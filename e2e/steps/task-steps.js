@@ -16,6 +16,8 @@ const VIEW_HEADINGS = {
   Team: "Team",
   Analytics: "Analytics",
   Calendar: "Calendar",
+  Leave: "Leave",
+  HR: "HR",
 };
 
 // Kanban column labels -> the data-status the app stamps on each column
@@ -66,13 +68,13 @@ When("I open the {string} view", async function (label) {
   // restyles. Keys must mirror the app's shortcut map
   // (src/hooks/use-keyboard-shortcuts.ts + sidebar.tsx): d/t/p/c/a/m/b.
   // Note Team is "m" (G M), not "e".
-  const shortcuts = { Dashboard: "d", Tasks: "t", Projects: "p", Team: "m", Analytics: "a", Calendar: "c", Bugs: "b" };
+  const shortcuts = { Dashboard: "d", Tasks: "t", Projects: "p", Team: "m", Analytics: "a", Calendar: "c", Bugs: "b", Leave: "v", HR: "r" };
   const expected = VIEW_HEADINGS[label];
 
   // The first shortcut can be lost when it lands between the login
   // redirect's first paint and React hydration attaching the keyboard
   // listener — so re-send it until the target heading actually renders.
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 45_000; // 45s: slow on-demand dev-server view compiles (CI is faster)
   while (Date.now() < deadline) {
     if (await headingPresent(driver, expected)) {
       await driver.sleep(250); // let the content below the heading settle

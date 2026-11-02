@@ -82,6 +82,10 @@ async function main() {
 
   await db.notification.deleteMany();
   await db.timeEntry.deleteMany();
+  await db.leaveRequest.deleteMany();
+  await db.leaveBalance.deleteMany();
+  await db.leavePolicy.deleteMany();
+  await db.leaveType.deleteMany();
   await db.calendarEvent.deleteMany();
   await db.reminder.deleteMany();
   await db.task.deleteMany();
@@ -1101,6 +1105,146 @@ async function main() {
     }
   }
   console.log(`  ✓ ${bugSeed.length} bugs seeded across all lifecycle states (NEW, TRIAGED, IN_PROGRESS, RESOLVED, CLOSED, REOPENED)`);
+
+  // -------------------------------------------------------------------------
+  // HR module seed — leave management (docs/HR_MODULE_PLAN.md). Deterministic
+  // demo data for the e2e suite + the preview: three types with policies,
+  // balances for the current year, and requests in every status.
+  //
+  // Approver wiring (single-approver rule): Theo (member@) reports to Mira
+  // (ADMIN); Lena/Rafael/Soren report to Ingrid (manager@). So:
+  //   • Theo's PENDING request is decided by demo@fernly.app (admin fallback)
+  //   • Lena's PENDING request is decided by manager@fernly.app
+  //   • Rafael's APPROVED leave covers TODAY+2..TODAY+6 (calendar + time guard)
+  // -------------------------------------------------------------------------
+  const YEAR = new Date().getUTCFullYear();
+  const day = (offset) => {
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() + offset);
+    return d;
+  };
+  // Working-day offset helper: adds N Mon-Fri days to a base date.
+  const workday = (base, n) => {
+    const d = new Date(base);
+    let added = 0;
+    while (added < n) {
+      d.setUTCDate(d.getUTCDate() + 1);
+      const dow = d.getUTCDay();
+      if (dow !== 0 && dow !== 6) added += 1;
+    }
+    return d;
+  };
+
+  const annualType = await db.leaveType.create({
+    data: {
+      name: "Annual Leave", code: "ANNUAL", color: "#8b5cf6", paid: true, requiresDoc: false,
+      policy: { create: { annualDays: 20, maxCarryOver: 5, minNoticeDays: 1, maxConsecutiveDays: 15 } },
+    },
+    include: { policy: true },
+  });
+  const sickType = await db.leaveType.create({
+    data: {
+      name: "Sick Leave", code: "SICK", color: "#f59e0b", paid: true, requiresDoc: true,
+      policy: { create: { annualDays: 10, maxCarryOver: 0, minNoticeDays: 0, maxConsecutiveDays: 120 } },
+    },
+    include: { policy: true },
+  });
+  const unpaidType = await db.leaveType.create({
+    data: {
+      name: "Unpaid Leave", code: "UNPAID", color: "#71717a", paid: false, requiresDoc: false,
+      policy: { create: { annualDays: 0, maxCarryOver: 0, minNoticeDays: 2, maxConsecutiveDays: 30 } },
+    },
+    include: { policy: true },
+  });
+
+  const balanceFor = async (userId, type, entitled, used) => {
+    await db.leaveBalance.create({
+      data: { userId, leaveTypeId: type.id, year: YEAR, entitled, carriedOver: 0, used },
+    });
+  };
+  // Everyone gets the full 20-day annual entitlement; Rafael already used 5.
+  for (const u of allUsers) {
+    await balanceFor(u.id, annualType, 20, 0);
+    await balanceFor(u.id, sickType, 10, 0);
+    await balanceFor(u.id, unpaidType, 0, 0);
+  }
+  const rafaelId = userByName.get("Rafael Costa");
+  if (rafaelId) {
+    await db.leaveBalance.update({
+      where: { userId_leaveTypeId_year: { userId: rafaelId, leaveTypeId: annualType.id, year: YEAR } },
+      data: { used: 5 },
+    });
+  }
+
+  const leaveRequests = [];
+  const mkRequest = async (userName, type, startOffset, endOffset, status, decidedBy, note, days) => {
+    const userId = userByName.get(userName);
+    if (!userId) return;
+    const r = await db.leaveRequest.create({
+      data: {
+        userId,
+        leaveTypeId: type.id,
+        startDate: day(startOffset),
+        endDate: day(endOffset),
+        days,
+        reason: note?.reason ?? "",
+        status,
+        decidedById: decidedBy ? userByName.get(decidedBy) ?? null : null,
+        decidedAt: decidedBy ? new Date() : null,
+        decisionNote: note?.decision ?? "",
+      },
+    });
+    leaveRequests.push(r);
+  };
+
+  // Theo (reports to admin Mira) — PENDING, next week, 2 working days.
+  await mkRequest("Theo Vance", annualType, 7, 8, "PENDING", null, { reason: "Family visit" }, 2);
+  // Lena (reports to manager Ingrid) — PENDING, 3 working days.
+  await mkRequest("Lena Okafor", annualType, 10, 14, "PENDING", null, { reason: "Conference trip" }, 3);
+  // Rafael — APPROVED, covers TODAY+2..TODAY+6 (5 working days; used=5 matches).
+  await mkRequest("Rafael Costa", annualType, 2, 6, "APPROVED", "Ingrid Solberg", { reason: "Wedding abroad", decision: "Approved — enjoy!" }, 5);
+  // Yuki — APPROVED single day (TODAY+10), 1 day used.
+  await mkRequest("Yuki Tanaka", annualType, 10, 10, "APPROVED", "Mira Hale", { reason: "Personal day" }, 1);
+  // Marcus — REJECTED with a note (capacity).
+  await mkRequest("Marcus Bell", unpaidType, 20, 27, "REJECTED", "Priya Nair", { reason: "Study sabbatical", decision: "Not this quarter — campaign launch." }, 6);
+  // Amara — CANCELLED after approval (balance restored: used stays 0).
+  await mkRequest("Amara Diallo", annualType, 30, 32, "CANCELLED", "Mira Hale", { reason: "Trip cancelled", decision: "" }, 3);
+  // Soren — REJECTED sick-leave (no doc) as a documentation example.
+  await mkRequest("Soren Lindqvist", sickType, -5, -5, "REJECTED", "Ingrid Solberg", { reason: "Migraine", decision: "No medical certificate attached." }, 1);
+
+  console.log(`  ✓ HR leave: 3 types + policies, balances for ${allUsers.length} users, ${leaveRequests.length} requests across all statuses (YEAR ${YEAR})`);
+
+  // Deterministic task for Rafael (time-guard e2e — hr-leave.feature): a
+  // task assigned to HIM in a real project, so the task modal's time-log
+  // form is reachable when signed in as rafael@fernly.app, and his approved
+  // leave (TODAY+2..+6) blocks logging hours on those days.
+  if (rafaelId) {
+    const rafaelMember = await db.teamMember.findFirst({ where: { userId: rafaelId } });
+    const guardProject = await db.project.findFirst({ select: { id: true } });
+    if (rafaelMember && guardProject) {
+      await db.projectAssignment.upsert({
+        where: { projectId_userId: { projectId: guardProject.id, userId: rafaelId } },
+        create: { projectId: guardProject.id, userId: rafaelId, role: "MEMBER" },
+        update: {},
+      });
+      await db.task.create({
+        data: {
+          title: "Harden CI pipeline",
+          description: "Deterministic e2e task for the HR leave time guard.",
+          status: "IN_PROGRESS",
+          priority: "MEDIUM",
+          tag: "BACKEND",
+          projectId: guardProject.id,
+          assigneeId: rafaelMember.id,
+          order: 999,
+        },
+      });
+      console.log("  ✓ HR leave: Rafael's time-guard task + project staffing");
+    }
+  }
+
+
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }

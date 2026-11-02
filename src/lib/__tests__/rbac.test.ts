@@ -13,10 +13,11 @@ import {
 } from "@/lib/rbac";
 
 describe("isValidRole", () => {
-  it("accepts the three canonical roles", () => {
+  it("accepts the four canonical roles", () => {
     expect(isValidRole("ADMIN")).toBe(true);
     expect(isValidRole("MANAGER")).toBe(true);
     expect(isValidRole("MEMBER")).toBe(true);
+    expect(isValidRole("HR")).toBe(true);
   });
 
   it("rejects arbitrary strings, case variants and empty input", () => {
@@ -67,6 +68,39 @@ describe("hasPermission", () => {
     expect(hasPermission("MANAGER", "project:delete")).toBe(false);
     expect(hasPermission("MANAGER", "role:manage")).toBe(false);
   });
+
+  // ---------------------------------------------------------------------
+  // HR role (docs/HR_MODULE_PLAN.md) — people-operations powers ONLY:
+  // hr:* + the MEMBER self-service baseline, no task/project authority.
+  // ---------------------------------------------------------------------
+  it("grants HR the hr:* family", () => {
+    expect(hasPermission("HR", "hr:view")).toBe(true);
+    expect(hasPermission("HR", "hr:admin")).toBe(true);
+    expect(hasPermission("HR", "review:manage")).toBe(true);
+    expect(hasPermission("HR", "onboarding:manage")).toBe(true);
+    expect(hasPermission("HR", "leave:request")).toBe(true);
+  });
+
+  it("denies HR project/task/member authority", () => {
+    const denied: Permission[] = [
+      "task:create", "task:edit:any", "task:edit:own", "task:delete",
+      "project:create", "project:edit", "project:delete",
+      "member:invite", "member:edit", "member:delete",
+      "role:manage", "audit:view",
+      "bug:create", "bug:edit:any", "bug:edit:own", "bug:delete", "bug:assign",
+    ];
+    for (const p of denied) {
+      expect(hasPermission("HR", p)).toBe(false);
+    }
+  });
+
+  it("denies MEMBER the HR console and review/onboarding management", () => {
+    expect(hasPermission("MEMBER", "hr:view")).toBe(false);
+    expect(hasPermission("MEMBER", "hr:admin")).toBe(false);
+    expect(hasPermission("MEMBER", "review:manage")).toBe(false);
+    expect(hasPermission("MEMBER", "onboarding:manage")).toBe(false);
+    expect(hasPermission("MEMBER", "leave:request")).toBe(true);
+  });
 });
 
 describe("role matrix sanity", () => {
@@ -109,6 +143,14 @@ describe("roleRank", () => {
   it("assigns ADMIN > MANAGER > MEMBER", () => {
     expect(roleRank("ADMIN")).toBeGreaterThan(roleRank("MANAGER"));
     expect(roleRank("MANAGER")).toBeGreaterThan(roleRank("MEMBER"));
+  });
+
+  it("ranks HR at MANAGER level (strict outranks keeps them mutually unmanaged)", () => {
+    expect(roleRank("HR")).toBe(roleRank("MANAGER"));
+    expect(roleRank("HR")).toBeGreaterThan(roleRank("MEMBER"));
+    expect(outranks("HR", "MANAGER")).toBe(false);
+    expect(outranks("MANAGER", "HR")).toBe(false);
+    expect(outranks("HR", "MEMBER")).toBe(true);
   });
 
   it("returns 0 for unknown / missing roles", () => {

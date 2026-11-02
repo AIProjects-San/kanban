@@ -1,7 +1,7 @@
 // Fernly RBAC — Role-Based Access Control
 // Defines roles, permissions, and helper functions for authorization.
 
-export type Role = "ADMIN" | "MANAGER" | "MEMBER";
+export type Role = "ADMIN" | "MANAGER" | "MEMBER" | "HR";
 
 export type Permission =
   | "task:create"
@@ -27,7 +27,16 @@ export type Permission =
   | "bug:edit:any"
   | "bug:edit:own"
   | "bug:delete"
-  | "bug:assign";
+  | "bug:assign"
+  // HR module (docs/HR_MODULE_PLAN.md) — leave, directory, reviews,
+  // onboarding. hr:view gates the HR console nav; hr:admin gates
+  // workspace-level config (leave types & policies). leave:request is the
+  // self-service baseline every role holds.
+  | "hr:view"
+  | "hr:admin"
+  | "leave:request"
+  | "review:manage"
+  | "onboarding:manage";
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ADMIN: [
@@ -38,6 +47,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "settings:edit", "role:manage", "analytics:view", "team:view",
     "audit:view",
     "bug:create", "bug:edit:any", "bug:edit:own", "bug:delete", "bug:assign",
+    "hr:view", "hr:admin", "leave:request", "review:manage", "onboarding:manage",
   ],
   MANAGER: [
     "task:create", "task:edit:any", "task:edit:own",
@@ -47,12 +57,24 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "settings:edit", "analytics:view", "team:view",
     "audit:view",
     "bug:create", "bug:edit:any", "bug:edit:own", "bug:assign",
+    "hr:view", "leave:request", "review:manage",
   ],
   MEMBER: [
     "task:create", "task:edit:own",
     "message:send",
     "settings:edit", "analytics:view", "team:view",
     "bug:create", "bug:edit:own",
+    "leave:request",
+  ],
+  // HR — the people-operations role (docs/HR_MODULE_PLAN.md). Rank 2 (same
+  // as MANAGER): outranks() is strict, so HR and MANAGER cannot manage each
+  // other by rank alone. HR holds the MEMBER self-service baseline plus the
+  // hr:* family — deliberately NO task/project powers.
+  HR: [
+    "message:send",
+    "settings:edit", "analytics:view", "team:view",
+    "leave:request",
+    "hr:view", "hr:admin", "review:manage", "onboarding:manage",
   ],
 };
 
@@ -60,12 +82,14 @@ export const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Admin",
   MANAGER: "Manager",
   MEMBER: "Member",
+  HR: "HR",
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   ADMIN: "Full access — can delete anything, manage roles, and configure the workspace",
   MANAGER: "Can create projects, invite members, and edit tasks. Cannot delete or manage roles.",
   MEMBER: "Can create/edit own tasks, send messages, and view analytics. Cannot create projects or invite members.",
+  HR: "People operations — manages leave types/policies, reviews and onboarding, and sees the leave console. No project or task powers.",
 };
 
 export const ALL_PERMISSIONS: { key: Permission; label: string; description: string }[] = [
@@ -92,6 +116,11 @@ export const ALL_PERMISSIONS: { key: Permission; label: string; description: str
   { key: "bug:edit:any", label: "Edit any bug", description: "Edit any bug regardless of reporter/assignee" },
   { key: "bug:delete", label: "Delete bugs", description: "Permanently remove a bug report" },
   { key: "bug:assign", label: "Assign bugs", description: "Assign a bug to a developer" },
+  { key: "hr:view", label: "View HR console", description: "See the leave queue, directory, reviews and onboarding dashboards" },
+  { key: "hr:admin", label: "Configure HR", description: "Manage leave types, policies and onboarding templates" },
+  { key: "leave:request", label: "Request leave", description: "Submit time-off requests and see own balances" },
+  { key: "review:manage", label: "Manage reviews", description: "Create performance review cycles for direct reports" },
+  { key: "onboarding:manage", label: "Manage onboarding", description: "Create and assign onboarding checklists" },
 ];
 
 export function hasPermission(role: Role | undefined | null, permission: Permission): boolean {
@@ -115,6 +144,7 @@ export function roleRank(role: Role | string | undefined | null): number {
   switch (role) {
     case "ADMIN": return 3;
     case "MANAGER": return 2;
+    case "HR": return 2; // same rank as MANAGER — outranks() stays strict, so neither manages the other by rank
     case "MEMBER": return 1;
     default: return 0;
   }
@@ -130,5 +160,5 @@ export function outranks(actorRole: Role | string | undefined | null, targetRole
 }
 
 export function isValidRole(role: string): role is Role {
-  return role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
+  return role === "ADMIN" || role === "MANAGER" || role === "MEMBER" || role === "HR";
 }

@@ -5,7 +5,7 @@ export type Priority = "HIGH" | "MEDIUM" | "LOW";
 export type TaskStatus = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE";
 export type TaskTag = "FRONTEND" | "BACKEND" | "DESIGN" | "QA" | "MARKETING";
 export type Department = "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT";
-export type EventType = "MEETING" | "DEADLINE" | "REVIEW" | "SOCIAL" | "FOCUS";
+export type EventType = "MEETING" | "DEADLINE" | "REVIEW" | "SOCIAL" | "FOCUS" | "LEAVE";
 type AccentColor = "forest" | "ocean" | "plum" | "ember" | "slate";
 
 // Bug tracking lifecycle
@@ -25,6 +25,56 @@ export type BugResolution =
   | "DUPLICATE"
   | "CANNOT_REPRODUCE"
   | "WORKS_AS_INTENDED";
+
+// HR module — leave management (docs/HR_MODULE_PLAN.md)
+export type LeaveStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type LeaveDecision = "APPROVE" | "REJECT";
+
+export interface LeaveTypeT {
+  id: string;
+  name: string;
+  code: string;
+  requiresDoc: boolean;
+  paid: boolean;
+  color: string;
+  active: boolean;
+  policy: {
+    annualDays: number;
+    maxCarryOver: number;
+    minNoticeDays: number;
+    maxConsecutiveDays: number;
+  } | null;
+}
+
+export interface LeaveRequestT {
+  id: string;
+  leaveTypeId: string;
+  typeName: string;
+  typeColor: string;
+  userId: string;
+  userName: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  reason: string;
+  status: LeaveStatus;
+  decidedById: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionNote: string;
+  createdAt: string;
+}
+
+export interface LeaveBalanceT {
+  leaveTypeId: string;
+  typeName: string;
+  typeColor: string;
+  year: number;
+  entitled: number;
+  carriedOver: number;
+  used: number;
+  available: number;
+}
 
 export interface ProjectT {
   id: string;

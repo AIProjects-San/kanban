@@ -152,3 +152,38 @@ describe("ADR-008 canonical prisma provider is postgresql", () => {
     expect(gitignore).toMatch(/prisma\/schema\.local\.prisma/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// HR module (docs/HR_MODULE_PLAN.md) — schema-level guards: the four leave
+// models exist with their balance invariant (unique user+type+year) and the
+// request status column defaults to PENDING.
+// ---------------------------------------------------------------------------
+
+describe("HR module leave models are declared", () => {
+  it("LeaveRequest defaults to PENDING and indexes status/user/dates", () => {
+    const block = modelBlock("LeaveRequest");
+    expect(block).toMatch(/status\s+String\s+@default\("PENDING"\)/);
+    expect(block).toMatch(/@@index\(\[status\]\)/);
+    expect(block).toMatch(/@@index\(\[userId\]\)/);
+  });
+
+  it("LeaveBalance enforces one row per user+type+year", () => {
+    expect(modelBlock("LeaveBalance")).toMatch(/@@unique\(\[userId,\s*leaveTypeId,\s*year\]\)/);
+  });
+
+  it("LeaveType carries a unique code and an active flag", () => {
+    const block = modelBlock("LeaveType");
+    expect(block).toMatch(/code\s+String\s+@unique/);
+    expect(block).toMatch(/active\s+Boolean\s+@default\(true\)/);
+  });
+
+  it("LeavePolicy is 1:1 with its leave type", () => {
+    expect(modelBlock("LeavePolicy")).toMatch(/leaveTypeId\s+String\s+@unique/);
+  });
+
+  it("the hr_leave migration exists with a down.sql rollback (repo convention)", () => {
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261103000000_hr_leave");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+  });
+});

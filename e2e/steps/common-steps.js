@@ -21,7 +21,12 @@ function loadDemoPassword() {
       .readFileSync(envPath, "utf8")
       .split("\n")
       .find((l) => l.startsWith("NEXT_PUBLIC_DEMO_PASSWORD="));
-    const value = line ? line.slice("NEXT_PUBLIC_DEMO_PASSWORD=".length).trim() : "";
+    // Strip surrounding quotes — dotenv and shell sourcing both do this, so
+    // a quoted .env value (`PASSWORD="x"`) must not leak the quote chars
+    // into the login form (bcrypt mismatch → 401 → limiter exhaustion).
+    const value = line
+      ? line.slice("NEXT_PUBLIC_DEMO_PASSWORD=".length).trim().replace(/^["'](.*)["']$/, "$1")
+      : "";
     if (value) return value;
   } catch {
     /* fall through to the error below */

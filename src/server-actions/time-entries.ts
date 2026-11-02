@@ -14,6 +14,7 @@ import { db } from "@/lib/db";
 import { getSession, getSessionOrThrow, requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { logAudit, getMyTeamMemberId, getScopedProjectIds, assertTaskEditPermission } from "./shared";
+import { findApprovedLeaveOn } from "./hr-shared";
 import { logTimeSchema, logTaskTimeSchema, parseOrThrow } from "@/lib/validation";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -33,6 +34,15 @@ export async function logTime(raw: {
     const myMemberId = await getMyTeamMemberId(auth);
     if (!myMemberId) {
       throw new AuthorizationError("You don't have a team member profile to log time against.");
+    }
+    // HR module time guard (docs/HR_MODULE_PLAN.md §4) — logging hours on a
+    // day the user is on APPROVED leave is double-booking; rejected at the
+    // write boundary, same philosophy as the project-association rule.
+    const leaveOnDay = await findApprovedLeaveOn(auth.userId, new Date(input.date));
+    if (leaveOnDay) {
+      throw new AuthorizationError(
+        `You are on approved ${leaveOnDay.typeName} on ${input.date} — hours cannot be logged for that day.`,
+      );
     }
     const entry = await db.timeEntry.create({
       data: {
@@ -85,6 +95,14 @@ export async function logTaskTime(raw: {
     const myMemberId = await getMyTeamMemberId(auth);
     if (!myMemberId) {
       throw new AuthorizationError("You don't have a team member profile to log time against.");
+    }
+
+    // HR module time guard — see logTime above.
+    const leaveOnDay = await findApprovedLeaveOn(auth.userId, new Date(input.date));
+    if (leaveOnDay) {
+      throw new AuthorizationError(
+        `You are on approved ${leaveOnDay.typeName} on ${input.date} — hours cannot be logged for that day.`,
+      );
     }
 
     const entry = await db.timeEntry.create({

@@ -12,6 +12,7 @@ const { db, getServerSession } = vi.hoisted(() => {
     "timeEntry", "calendarEvent", "message", "bug", "user", "userSettings",
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
+    "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "taskTagConfig", "priorityConfig", "departmentConfig",
     // P1 (edge-case audit) — changePassword now invalidates pending reset
     // tokens via $transaction, so the test mock needs this model.

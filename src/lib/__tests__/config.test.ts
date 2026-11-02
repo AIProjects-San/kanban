@@ -55,8 +55,8 @@ describe("project status config", () => {
 });
 
 describe("event type config", () => {
-  it("defines all five event types with styles", () => {
-    expect(EVENT_TYPES).toHaveLength(5);
+  it("defines all six event types with styles", () => {
+    expect(EVENT_TYPES).toHaveLength(6); // 5 base + LEAVE (HR module)
     for (const e of EVENT_TYPES) {
       expect(e.label).toBeTruthy();
       expect(e.dot).toMatch(/^bg-/);

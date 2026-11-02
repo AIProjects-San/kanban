@@ -14,6 +14,7 @@ const { db, getServerSession } = vi.hoisted(() => {
     "timeEntry", "calendarEvent", "message", "messageRead", "bug", "user", "userSettings",
     "projectAssignment", "workspace", "role", "permission", "rolePermission",
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
+    "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "taskTagConfig", "priorityConfig", "departmentConfig",
   ];
   const methods = [
@@ -188,6 +189,7 @@ beforeEach(() => {
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
     "taskTagConfig", "priorityConfig", "departmentConfig",
     "role", "permission", "rolePermission",
+    "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
   ]) {
     db[table].findMany.mockResolvedValue([]);
   }

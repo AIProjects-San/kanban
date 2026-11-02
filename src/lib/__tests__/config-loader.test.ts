@@ -48,7 +48,7 @@ describe("getWorkspaceConfig — fallbacks", () => {
     expect(config.workspace.minPasswordLength).toBe(8);
     expect(config.taskStatuses).toHaveLength(4);
     expect(config.projectStatuses).toHaveLength(4);
-    expect(config.eventTypes).toHaveLength(5);
+    expect(config.eventTypes).toHaveLength(6); // 5 base + LEAVE (HR module)
     expect(config.departments).toHaveLength(4);
   });
 

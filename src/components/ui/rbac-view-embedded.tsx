@@ -2,7 +2,7 @@
 
 import {
   Shield, ShieldCheck, ShieldAlert, ShieldX,
-  UserCog,
+  UserCog, HeartHandshake,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
@@ -139,11 +139,13 @@ function RoleIcon({ role, size = 24 }: { role: Role; size?: number }) {
     ADMIN: ShieldAlert,
     MANAGER: ShieldCheck,
     MEMBER: Shield,
+    HR: HeartHandshake,
   };
   const colors: Record<Role, string> = {
     ADMIN: "text-destructive bg-destructive/10",
     MANAGER: "text-primary bg-primary/10",
     MEMBER: "text-muted-foreground bg-muted",
+    HR: "text-pink-600 bg-pink-500/10",
   };
   const Icon = icons[role];
   return (

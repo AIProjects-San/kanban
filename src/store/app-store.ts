@@ -15,7 +15,9 @@ export type ViewKey =
   | "audit"
   | "users"
   | "workspace-settings"
-  | "bugs";
+  | "bugs"
+  | "leave"
+  | "hr";
 
 export type AccentTheme = "forest" | "ocean" | "plum" | "ember";
 

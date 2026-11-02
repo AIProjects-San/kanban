@@ -68,6 +68,16 @@ const BugsView = dynamic(() => import("@/components/views/bugs-view").then(m => 
   loading: () => <div className="p-6 text-sm text-muted-foreground">Loading bugs…</div>,
 });
 
+const LeaveView = dynamic(() => import("@/components/views/leave-view").then(m => ({ default: m.LeaveView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading leave…</div>,
+});
+
+const HRView = dynamic(() => import("@/components/views/hr-view").then(m => ({ default: m.HRView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading HR console…</div>,
+});
+
 interface AppShellProps {
   data: {
     projects: ProjectT[];
@@ -168,7 +178,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
           <div
             key={`${view}-${refreshTick}`}
             className={`f-view-enter p-4 lg:p-6 ${
-              ["settings", "users", "audit", "workspace-settings", "help", "bugs"].includes(view)
+              ["settings", "users", "audit", "workspace-settings", "help", "bugs", "leave", "hr"].includes(view)
                 ? "w-full"
                 : "max-w-7xl mx-auto"
             }`}
@@ -225,6 +235,8 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
             {view === "bugs" && (
               <BugsView currentUser={user} projects={data.projects} tasks={data.tasks} />
             )}
+            {view === "leave" && <LeaveView currentUser={user} />}
+            {view === "hr" && <HRView currentUser={user} />}
           </div>
         </main>
       </div>

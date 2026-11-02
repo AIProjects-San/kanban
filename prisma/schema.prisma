@@ -622,3 +622,92 @@ model BugComment {
   @@index([bugId])
   @@index([authorId])
 }
+
+// ---------------------------------------------------------------------------
+// HR Module — leave management (feature 1 of docs/HR_MODULE_PLAN.md).
+//
+// Deliberately relation-light (plain string FKs, like CalendarEvent): the
+// module resolves names/colors via bulk lookups, and NOT adding relations to
+// User keeps the core model untouched. All types are SQLite-compatible so
+// the sandbox preview (ADR-008) runs the same schema.
+// ---------------------------------------------------------------------------
+
+// A category of absence (Annual, Sick, Unpaid, ...). `code` is stable for
+// programmatic reference; `color` drives the calendar chip; `requiresDoc`
+// prompts for a document reference (e.g. medical certificate).
+model LeaveType {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  code         String   @unique
+  requiresDoc  Boolean  @default(false)
+  paid         Boolean  @default(true)
+  color        String   @default("#8b5cf6")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  policy LeavePolicy?
+}
+
+// Entitlement + guard rails per leave type. One policy row per type
+// (single-workspace deployment — the 1:1 lives in code, not a unique on a
+// synthetic key, so the upsert path is deterministic).
+model LeavePolicy {
+  id                  String    @id @default(cuid())
+  leaveTypeId         String    @unique
+  leaveType           LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  // Full entitlement in working days per calendar year.
+  annualDays          Float     @default(20)
+  // Cap on unused days carried into the next year (balance math only —
+  // carry-over itself is applied by the year-end rollover, not here).
+  maxCarryOver        Float     @default(5)
+  // A request must start at least this many working days from today.
+  minNoticeDays       Int       @default(1)
+  // Maximum consecutive working days one request may span.
+  maxConsecutiveDays  Int       @default(15)
+  updatedAt           DateTime  @updatedAt
+}
+
+// A member's time-off request. `days` is denormalized at creation from the
+// working-day count (Mon-Fri) between startDate and endDate inclusive —
+// the balance arithmetic never re-derives it, so the number on the request
+// always matches what was actually deducted.
+model LeaveRequest {
+  id           String    @id @default(cuid())
+  leaveTypeId  String
+  userId       String
+  startDate    DateTime
+  endDate      DateTime
+  days         Float
+  reason       String    @default("")
+  // PENDING → APPROVED | REJECTED; PENDING/APPROVED → CANCELLED.
+  status       String    @default("PENDING")
+  decidedById  String?
+  decidedAt    DateTime?
+  decisionNote String    @default("")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status])
+  @@index([userId])
+  @@index([leaveTypeId])
+  @@index([startDate])
+  @@index([createdAt])
+}
+
+// Per-user, per-type, per-year balance. `used` counts APPROVED days only and
+// is mutated exclusively inside approve/cancel (transactional) so the
+// invariant used == sum(days of non-cancelled APPROVED requests) holds.
+model LeaveBalance {
+  id          String   @id @default(cuid())
+  userId      String
+  leaveTypeId String
+  year        Int
+  entitled    Float    @default(0)
+  carriedOver Float    @default(0)
+  used        Float    @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, leaveTypeId, year])
+  @@index([userId])
+}

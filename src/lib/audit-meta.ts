@@ -71,7 +71,14 @@ export type AuditAction =
   | "bug.linked"
   | "bug.unlinked"
   | "bug.moved"
-  | "time.deleted";
+  | "time.deleted"
+  // HR module — leave management lifecycle (docs/HR_MODULE_PLAN.md)
+  | "leave.requested"
+  | "leave.approved"
+  | "leave.rejected"
+  | "leave.cancelled"
+  | "leave.type_created"
+  | "leave.type_updated";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -145,6 +152,13 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "bug.unlinked": { icon: Link2, cls: "text-muted-foreground bg-muted" },
   "bug.moved": { icon: ArrowRightLeft, cls: "text-amber-500 bg-amber-500/10" },
   "time.deleted": { icon: Clock, cls: "text-destructive bg-destructive/10" },
+
+  "leave.requested": { icon: CalendarPlus, cls: "text-amber-500 bg-amber-500/10" },
+  "leave.approved": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
+  "leave.rejected": { icon: CalendarX, cls: "text-red-500 bg-red-500/10" },
+  "leave.cancelled": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
+  "leave.type_created": { icon: Plus, cls: "text-primary bg-primary/10" },
+  "leave.type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

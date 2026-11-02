@@ -261,3 +261,52 @@ schema → `migrate deploy` on the service container). Costs: one generated ~26 
 per wrapper invocation (negligible), one indirection to know about when debugging
 Prisma locally, and `--schema` appended after the subcommand (Prisma 6 rejects it as a
 global flag). Dependabot PRs #1/#2 must rebase onto this fix to go green.
+
+---
+
+## ADR-009 — HR module: HR role, chain-scoped leave approvals, virtual calendar events
+
+**Date:** 2026-11-02 · **Status:** ACCEPTED · **Type:** product/RBAC/data-model
+
+**Context.** The workspace needed people-operations capability (docs/HR_MODULE_PLAN.md):
+leave management first, then directory, performance reviews and onboarding. Three
+scoping questions shaped the design: who holds HR power, who approves a leave request,
+and how approved leave integrates with the existing calendar and time log.
+
+**Analysis.** Add HR powers to MANAGER (managers become pseudo-HR, privacy leak of leave
+reasons across teams) vs. a dedicated HR role (one more role in every Record<Role,…>
+map, but the blast radius is a compile error, not a behavior change). Approvals: role-
+scoped (any hr:view holder decides — leaks reasons) vs. chain-scoped (only the
+requester's manager or an ADMIN). Calendar: duplicate CalendarEvent rows on approval
+(sync/dedup hazard on cancel) vs. read-time virtual events.
+
+**Decision.**
+
+1. **New `HR` role** at MANAGER rank (strict `outranks` keeps HR/MANAGER mutually
+   unmanaged): MEMBER baseline + `hr:view`, `hr:admin`, `review:manage`,
+   `onboarding:manage` — deliberately NO task/project powers. `leave:request` is a
+   baseline permission every role holds (self-service).
+2. **Leave decisions are chain-scoped, not permission-scoped**: only the requester's
+   manager (`User.managerId`, the existing org chart) or an ADMIN may approve/reject.
+   A MANAGER's queue is subtree-filtered; HR sees the workspace but decides nothing.
+3. **Balances are transactionally invariant**: `LeaveBalance.used` mutates only inside
+   approve/cancel, always by exactly the request's denormalized `days`; cancel-after-
+   approval restores the balance. Insufficient balance rejects at submission.
+4. **Approved leave renders as virtual `LEAVE` calendar events** merged into the
+   dashboard's event feed at read time — no DB rows, so cancel/reject propagates
+   automatically; scoped users see only their visible members' leave.
+5. **Time guard at the write boundary**: `logTime`/`logTaskTime` reject logging hours
+   on a day the user is on approved leave (same philosophy as the ADR-007
+   project-association rule — the UI is convenience, the action is the boundary).
+6. Relation-light schema (plain string FKs, CalendarEvent-style) — the core `User`
+   model is untouched; names resolve via bulk lookups.
+
+**Consequences.** Every `Record<Role, …>` map gains an HR entry (role-badge,
+rbac-view icons — caught at compile time, updated in this change). e2e must run
+scenarios in file order against a fresh seed (state-dependent balance arithmetic);
+sandbox runs batch by tag because the reaper kills long-lived background processes
+between tool calls. Sonner toasts proved unreliable to assert in headless Chrome —
+rejection scenarios assert structural outcomes (form stays open, no row created)
+instead. The e2e `.env` parser now strips quotes like dotenv/shell do (a quoted
+`NEXT_PUBLIC_DEMO_PASSWORD` previously caused bcrypt-mismatch 401s and drained the
+login-rate-limit budget).

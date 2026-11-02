@@ -16,6 +16,8 @@ import {
   UserCog,
   Settings2,
   Bug,
+  CalendarDays,
+  Briefcase,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
@@ -39,6 +41,10 @@ const mainNav: NavItem[] = [
   { key: "analytics", label: "Analytics", icon: BarChart3, shortcut: "G A" },
   { key: "team", label: "Team", icon: Users, shortcut: "G M" },
   { key: "bugs", label: "Bugs", icon: Bug, shortcut: "G B" },
+  // HR module (docs/HR_MODULE_PLAN.md): Leave is self-service for every
+  // role; the HR console (queue / types & policies) needs hr:view.
+  { key: "leave", label: "Leave", icon: CalendarDays, shortcut: "G V" },
+  { key: "hr", label: "HR", icon: Briefcase, shortcut: "G R" },
 ];
 
 const generalNav: NavItem[] = [
@@ -56,6 +62,11 @@ export function Sidebar() {
   // Audit Log is only visible to roles with audit:view (Admin, Manager).
   // Users management is only visible to roles with role:manage (Admin only).
   // Workspace Config is only visible to roles with role:manage (Admin only).
+  // The HR console is only visible to roles with hr:view (Admin, Manager, HR).
+  const visibleMainNav = mainNav.filter((item) => {
+    if (item.key === "hr") return hasPermission(role, "hr:view");
+    return true;
+  });
   const visibleGeneralNav = generalNav.filter((item) => {
     if (item.key === "audit") return hasPermission(role, "audit:view");
     if (item.key === "users") return hasPermission(role, "role:manage");
@@ -105,7 +116,7 @@ export function Sidebar() {
             Workspace
           </div>
           <div className="space-y-1">
-            {mainNav.map((item) => (
+            {visibleMainNav.map((item) => (
               <NavButton key={item.key} item={item} active={view === item.key} onClick={() => setView(item.key)} />
             ))}
           </div>

@@ -8,6 +8,7 @@ const ROLE_STYLES: Record<Role, string> = {
   ADMIN: "bg-destructive/10 text-destructive",
   MANAGER: "bg-primary/10 text-primary",
   MEMBER: "bg-muted text-muted-foreground",
+  HR: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
 };
 
 /**
