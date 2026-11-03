@@ -15,7 +15,7 @@
 
 import { db } from "@/lib/db";
 import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
-import { getScopedProjectIds } from "./shared";
+import { getScopedProjectIds, getVisibleMemberIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -324,24 +324,44 @@ export async function getTimeEntriesPage(input?: {
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
 
-    // Deep-dive review F-03 — the dashboard filters time entries to members
-    // the viewer can see for scoped roles; this action previously returned
-    // every entry in the workspace. Scope to the viewer's projects + their
-    // own entries.
+    // PR-53 — align the time-entries scope with getDashboardData. The
+    // dashboard uses a member-visibility rule (scoped users see entries
+    // only for members they can already see: members of their projects +
+    // themselves). This action previously used a project-centric rule
+    // (`projectId in scoped OR member is me`) which leaked: a non-visible
+    // member's entry on a visible project was returned with that member's
+    // name — data the dashboard deliberately hides. Now both read paths
+    // funnel through getVisibleMemberIds so the scopes can't drift.
+    //
+    // The caller's `memberId` filter is INTERSECTED with the visible set:
+    // a scoped user requesting a member they can't see gets an empty page,
+    // not that member's entries. (Previously the filter overwrote the
+    // scope entirely, letting any signed-in MEMBER pass `memberId: "m-x"
+    // and read member m-x's time logs.)
     const scopedIds = await getScopedProjectIds(auth);
+    const visibleMemberIds = await getVisibleMemberIds(auth, scopedIds);
 
     const where: Record<string, unknown> = { project: { deletedAt: null } };
-    if (scopedIds) {
-      where.OR = [
-        { projectId: { in: Array.from(scopedIds) } },
-        { member: { userId: auth.userId } },
-      ];
+    if (visibleMemberIds) {
+      if (input?.memberId) {
+        // Caller wants a specific member — only allow it if that member
+        // is visible to the scoped viewer; otherwise return an empty page
+        // (not a leak of the requested member's entries).
+        if (!visibleMemberIds.has(input.memberId)) {
+          return { items: [], nextCursor: null, hasMore: false };
+        }
+        where.memberId = input.memberId;
+      } else {
+        where.memberId = { in: Array.from(visibleMemberIds) };
+      }
+    } else if (input?.memberId) {
+      // ADMIN — no member scope; honour the caller's filter directly.
+      where.memberId = input.memberId;
     }
     if (search) {
       where.description = { contains: search, mode: "insensitive" };
     }
     if (input?.projectId) where.projectId = input.projectId;
-    if (input?.memberId) where.memberId = input.memberId;
 
     const rows = await db.timeEntry.findMany({
       where,

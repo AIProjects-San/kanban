@@ -173,6 +173,72 @@ export async function getScopedProjectIds(
 }
 
 // ---------------------------------------------------------------------------
+// PR-53 — visible-member resolution for the time-entries read path.
+//
+// getDashboardData scopes time entries to "members the viewer can already
+// see" (members of their projects + themselves) — a data-minimization rule
+// that prevents a MEMBER from seeing another member's time logs just
+// because they happen to share a project. getTimeEntriesPage previously
+// used a different, project-centric scope (`projectId in scoped OR member
+// is me`) which leaked: a non-visible member's entry on a visible project
+// was returned with that member's name. This helper mirrors the dashboard's
+// member-visibility rule so the two read paths can't drift apart.
+//
+// Returns:
+//   • null  → unscoped (ADMIN) — the caller sees every member's entries.
+//   • Set   → the TeamMember ids whose entries the caller may see
+//             (possibly empty — a scoped user with no visible members
+//             sees no entries at all, which is correct).
+//
+// NOTE: getDashboardData inlines the same logic (it already has the member
+// list in hand for display, so it post-filters in JS rather than re-querying).
+// If you change the rule here, update dashboard.ts too — both are commented
+// to point at each other.
+// ---------------------------------------------------------------------------
+
+export async function getVisibleMemberIds(
+  auth: { userId: string; role: string },
+  scopedIds: Set<string> | null,
+): Promise<Set<string> | null> {
+  // ADMIN → unscoped. Mirrors getScopedProjectIds returning null for admins.
+  if (scopedIds === null) return null;
+
+  // Scoped user with no projects — only their own member row (if any).
+  // A roster-less user (no TeamMember row) sees no time entries.
+  if (scopedIds.size === 0) {
+    const me = await db.teamMember.findUnique({
+      where: { userId: auth.userId, deletedAt: null },
+      select: { id: true },
+    });
+    return me?.id ? new Set([me.id]) : new Set();
+  }
+
+  const projectIdArray = Array.from(scopedIds);
+  // Same three sources as the dashboard's memberWhere (dashboard.ts):
+  //   1. members with tasks in the viewer's projects
+  //   2. members explicitly staffed on those projects (ProjectAssignment)
+  //   3. the viewer themselves (always visible)
+  const assignedUserIds = await db.projectAssignment.findMany({
+    where: { projectId: { in: projectIdArray } },
+    select: { userId: true },
+    take: 1000,
+  }).then((rows) => rows.map((r) => r.userId));
+  const members = await db.teamMember.findMany({
+    where: {
+      OR: [
+        { tasks: { some: { projectId: { in: projectIdArray } } } },
+        { userId: { in: assignedUserIds } },
+        { userId: auth.userId },
+      ],
+      deletedAt: null,
+    },
+    select: { id: true },
+    take: 1000,
+  });
+  return new Set(members.map((m) => m.id));
+}
+
+// ---------------------------------------------------------------------------
 // Project association — the canonical "user is associated with a project"
 // rule used by every assignee validation.
 //

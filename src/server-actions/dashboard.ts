@@ -108,6 +108,10 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   // For scoped users, only show team members who have tasks in the user's
   // projects or who are explicitly assigned to those projects. Admins see all.
+  // PR-53 — the same member-visibility rule is mirrored in getVisibleMemberIds
+  // (shared.ts) for the paginated time-entries read path. If you change the
+  // rule here, update that helper too — both are commented to point at each
+  // other so the scopes can't drift apart.
   let memberWhere: Prisma.TeamMemberWhereInput | undefined;
   if (isScoped && scopedProjectIds && scopedProjectIds.size > 0) {
     const projectIdArray = Array.from(scopedProjectIds);

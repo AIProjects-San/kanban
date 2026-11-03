@@ -286,7 +286,8 @@ describe("L-P0-9 getTimeEntriesPage (cursor pagination + search + filters)", () 
     expect(db.timeEntry.findMany.mock.calls[0][0].where.description).toEqual({ contains: "deploy", mode: "insensitive" });
   });
 
-  it("passes projectId and memberId filters through", async () => {
+  it("passes projectId and memberId filters through (ADMIN — no scope)", async () => {
+    // ADMIN is unscoped, so the caller's memberId filter is honoured directly.
     db.timeEntry.findMany.mockResolvedValue([]);
     await getTimeEntriesPage({ projectId: "p-1", memberId: "m-1" });
     const call = db.timeEntry.findMany.mock.calls[0][0];
@@ -294,16 +295,91 @@ describe("L-P0-9 getTimeEntriesPage (cursor pagination + search + filters)", () 
     expect(call.where.memberId).toBe("m-1");
   });
 
-  it("scopes time entries to the caller's projects + own entries for MEMBER/MANAGER (F-03)", async () => {
+  // PR-53 — getTimeEntriesPage now mirrors the dashboard's member-visibility
+  // rule (scoped users see entries only for members they can already see),
+  // not the old project-centric rule. This closes a leak where a non-visible
+  // member's entry on a visible project was returned with that member's name.
+  it("scopes time entries to visible members for MEMBER/MANAGER (PR-53)", async () => {
     getSessionMock.mockResolvedValue(MEMBER_AUTH);
+    // getScopedProjectIds: MEMBER owns "p-owned".
     db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
       Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    // getVisibleMemberIds: the viewer's own TeamMember row is visible
+    // (always included via { userId: auth.userId }). A second member "m-x"
+    // is also visible (e.g. staffed on the same project). A third "m-hidden"
+    // is NOT returned by the mock → not in the visible set.
+    db.teamMember.findMany.mockResolvedValue([{ id: "m-mem" }, { id: "m-x" }]);
     db.timeEntry.findMany.mockResolvedValue([]);
     await getTimeEntriesPage();
     const call = db.timeEntry.findMany.mock.calls[0][0];
-    expect(call.where.OR).toEqual([
-      { projectId: { in: ["p-owned"] } },
-      { member: { userId: MEMBER_AUTH.userId } },
-    ]);
+    // Member-visibility scope: memberId IN the visible set, NOT the old
+    // project-centric OR clause.
+    expect(call.where.memberId).toEqual({ in: ["m-mem", "m-x"] });
+    expect(call.where).not.toHaveProperty("OR");
+  });
+
+  it("does NOT scope time entries for ADMIN (PR-53)", async () => {
+    // ADMIN is unscoped — no memberId filter unless the caller provides one.
+    db.timeEntry.findMany.mockResolvedValue([]);
+    await getTimeEntriesPage();
+    const call = db.timeEntry.findMany.mock.calls[0][0];
+    expect(call.where).not.toHaveProperty("memberId");
+    expect(call.where).not.toHaveProperty("OR");
+  });
+
+  it("scoped user requesting a NON-visible memberId → empty page (PR-53 leak fix)", async () => {
+    // The old code let any signed-in MEMBER pass memberId: "m-x" and read
+    // that member's entries — the caller filter overwrote the scope. Now
+    // the filter is intersected with the visible set: a memberId outside
+    // the set yields an empty page, not a leak.
+    getSessionMock.mockResolvedValue(MEMBER_AUTH);
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
+      Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    db.teamMember.findMany.mockResolvedValue([{ id: "m-mem" }]); // only self visible
+    db.timeEntry.findMany.mockResolvedValue([{ id: "leaked", memberId: "m-hidden" }]);
+    const res = await getTimeEntriesPage({ memberId: "m-hidden" });
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.data.items).toEqual([]);
+    expect(res.data.hasMore).toBe(false);
+    // Crucially, the DB was never queried with the leaked memberId.
+    expect(db.timeEntry.findMany).not.toHaveBeenCalled();
+  });
+
+  it("scoped user requesting their OWN memberId → filtered to just them (PR-53)", async () => {
+    getSessionMock.mockResolvedValue(MEMBER_AUTH);
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
+      Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    db.teamMember.findMany.mockResolvedValue([{ id: "m-mem" }, { id: "m-x" }]);
+    db.timeEntry.findMany.mockResolvedValue([]);
+    await getTimeEntriesPage({ memberId: "m-mem" });
+    const call = db.timeEntry.findMany.mock.calls[0][0];
+    // Visible + requested → honoured as a scalar (not an IN clause).
+    expect(call.where.memberId).toBe("m-mem");
+  });
+
+  it("scoped user requesting a visible-but-not-self memberId → honoured (PR-53)", async () => {
+    // A MEMBER can legitimately filter to a teammate they can see (e.g. to
+    // review a colleague's logged time on a shared project).
+    getSessionMock.mockResolvedValue(MEMBER_AUTH);
+    db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
+      Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    db.teamMember.findMany.mockResolvedValue([{ id: "m-mem" }, { id: "m-x" }]);
+    db.timeEntry.findMany.mockResolvedValue([]);
+    await getTimeEntriesPage({ memberId: "m-x" });
+    const call = db.timeEntry.findMany.mock.calls[0][0];
+    expect(call.where.memberId).toBe("m-x");
+  });
+
+  it("scoped user with no projects → only own member row visible (PR-53)", async () => {
+    // Edge case: a MEMBER with no project associations. getScopedProjectIds
+    // returns an empty Set; getVisibleMemberIds falls back to the viewer's
+    // own TeamMember row only.
+    getSessionMock.mockResolvedValue(MEMBER_AUTH);
+    db.project.findMany.mockResolvedValue([]); // owns nothing
+    db.teamMember.findUnique.mockResolvedValue({ id: "m-mem" });
+    db.timeEntry.findMany.mockResolvedValue([]);
+    await getTimeEntriesPage();
+    const call = db.timeEntry.findMany.mock.calls[0][0];
+    expect(call.where.memberId).toEqual({ in: ["m-mem"] });
   });
 });
