@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "cucumber-js -c e2e/cucumber.cjs --tags \"not @auth-better\"",
+    "test:e2e": "cucumber-js -c e2e/cucumber.cjs",
     "test:prodsmoke": "node scripts/prod-smoke.mjs",
     "bundle:check": "node scripts/check-bundle-budget.mjs",
     "audit:check": "node scripts/check-audit.mjs",
@@ -21,8 +21,7 @@
     "db:deploy": "bash scripts/run-with-env.sh bunx prisma migrate deploy",
     "db:status": "bash scripts/run-with-env.sh bunx prisma migrate status",
     "db:reset": "bash scripts/run-with-env.sh bunx prisma migrate reset",
-    "db:seed": "SEED_DEMO=1 bash scripts/run-with-env.sh node scripts/seed.js",
-    "test:e2e:better": "cucumber-js -c e2e/cucumber.cjs --tags \"@auth-better\""
+    "db:seed": "SEED_DEMO=1 bash scripts/run-with-env.sh node scripts/seed.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -34,7 +33,6 @@
     "ioredis": "^6.0.0",
     "lucide-react": "^0.525.0",
     "next": "16.4.4",
-    "next-auth": "4.24.15",
     "prisma": "^6.19.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -64,5 +62,5 @@
     "typescript": "^5.9.3",
     "vitest": "^5.0.5"
   },
-  "description": "Fernly \u2014 project management workspace (Next.js 16 App Router, Prisma, NextAuth)"
+  "description": "Fernly — project management workspace (Next.js 16 App Router, Prisma, Better Auth)"
 }

@@ -34,15 +34,15 @@ else
 fi
 ls -d src prisma e2e .git 2>/dev/null
 
-echo "== 2. env: ensure demo password + stable NEXTAUTH_SECRET =="
+echo "== 2. env: ensure demo password + stable BETTER_AUTH_SECRET =="
 # NEXT_PUBLIC_DEMO_PASSWORD — the value the seed hashes and the login form expects.
 grep -q NEXT_PUBLIC_DEMO_PASSWORD .env || echo 'NEXT_PUBLIC_DEMO_PASSWORD=fernly123' >> .env
-# NEXTAUTH_SECRET — must be STABLE across recycles. The auth.ts resolver falls back
-# to crypto.randomUUID() when unset, which rotates on every restart and invalidates
-# every existing session JWT (next-auth JWT_SESSION_ERROR "decryption operation failed").
-# Use a fixed non-weak value (the WEAK_SECRET_PREFIX guard in src/lib/auth.ts rejects
-# "fernly-dev-secret*" — this value doesn't match, so it's accepted as a real secret).
-grep -q '^NEXTAUTH_SECRET=' .env || echo 'NEXTAUTH_SECRET=fernly-preview-stable-secret-v1-do-not-use-in-production-32+' >> .env
+# BETTER_AUTH_SECRET — must be STABLE across recycles. The auth-better resolver
+# falls back to crypto.randomUUID() when unset, which rotates on every restart
+# and invalidates every existing session row's signature.
+# Use a fixed non-weak value (the WEAK_SECRET_PREFIX guard in src/lib/auth-better.ts
+# rejects "fernly-dev-secret*" — this value doesn't match, so it's accepted as a real secret).
+grep -q '^BETTER_AUTH_SECRET=' .env || echo 'BETTER_AUTH_SECRET=fernly-preview-stable-secret-v1-do-not-use-in-production-32+' >> .env
 # .env.example is committed (PR-45) — heal it too if the platform deleted it.
 [ -f .env.example ] || git show HEAD:.env.example > .env.example
 wc -c .env

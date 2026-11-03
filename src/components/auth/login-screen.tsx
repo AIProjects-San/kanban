@@ -58,9 +58,8 @@ export function LoginScreen() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // PR-48 — appSignIn drives whichever auth stack the deployment runs
-    // (v4 credentials callback by default; Better Auth /sign-in/email when
-    // NEXT_PUBLIC_AUTH_STACK=better). redirect stays ours: the reload keeps
+    // appSignIn drives the Better Auth /sign-in/email endpoint
+    // (src/lib/auth-client-better.ts). redirect stays ours: the reload keeps
     // the current origin (critical behind reverse proxies / previews) and
     // picks up the session cookie set by the POST response.
     const res = await appSignIn(email, password);

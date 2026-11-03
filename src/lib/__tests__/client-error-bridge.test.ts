@@ -191,7 +191,7 @@ describe("POST /api/client-errors (route)", () => {
   // -------------------------------------------------------------------------
   // QA-9 — the no-config fallback. Browsers send `Origin` on EVERY fetch
   // POST (same-origin included), so the old `return !origin` rejected 100%
-  // of real browser error reports with 403 whenever APP_URL/NEXTAUTH_URL
+  // of real browser error reports with 403 whenever APP_URL/BETTER_AUTH_URL
   // were unset — the bridge was silently dead in exactly the environments
   // that had never configured a canonical URL. The fallback must instead
   // compare Origin against the request's own Host.

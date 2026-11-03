@@ -90,13 +90,12 @@ model User {
 }
 
 // ---------------------------------------------------------------------------
-// PR-48 (auth migration Phase 1) — Better Auth 1.7 table set.
-// docs/AUTH_MIGRATION_PLAN.md §5 Phase 1: added alongside the existing User
-// (mapped, not duplicated — `user.modelName: "User"`). While
-// NEXT_PUBLIC_AUTH_STACK=nextauth (v4 default) these tables are inert; they
-// back the parallel /api/auth-better/* stack and become the primary session
-// store at cutover. Credentials themselves stay on User.passwordHash (the
-// single source of truth) — the sign-in bridge syncs 1.7 credential
+// PR-48/PR-49 (auth migration) — Better Auth 1.7 table set.
+// docs/AUTH_MIGRATION_PLAN.md §5: added alongside the existing User
+// (mapped, not duplicated — `user.modelName: "User"`). Since the PR-49
+// cleanup these tables are THE session/credential store (the NextAuth v4
+// JWT stack is removed). Credentials themselves stay on User.passwordHash
+// (the single source of truth) — the sign-in bridge syncs 1.7 credential
 // Account rows lazily (spike finding F3).
 // ---------------------------------------------------------------------------
 

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
-// PR-48 Phase 2 — parity port of __tests__/auth.test.ts to the Better Auth
-// stack (docs/AUTH_MIGRATION_PLAN.md §5 Phase 2). The v4 suite stays green
-// untouched; every behavioural case below is its better-stack counterpart.
+// PR-48/PR-49 — the Better Auth auth-stack suite (docs/AUTH_MIGRATION_PLAN.md).
+// Ported 1:1 from the retired v4 auth.test.ts at Phase 2; since the PR-49
+// cleanup it is the ONLY auth suite (the v4 counterpart is deleted).
 //
 // The harness drives the REAL HTTP handler (auth.handler) with Request
 // objects — the same dispatch path production uses (hooks → adapter →
@@ -122,8 +122,9 @@ const { db, store } = vi.hoisted(() => {
 
 vi.mock("@/lib/db", () => ({ db }));
 
-// Same limiter bridge as __tests__/auth.test.ts — the better stack must draw
-// from the SAME in-memory budgets the v4 stack uses (shared-defence contract).
+// Limiter bridge: the auth stack's Redis-backed factory is swapped for the
+// in-memory limiter so budget tests are deterministic and assertable
+// through the same loginLimiter export the app uses.
 const { loginLimiter: inMemoryLoginLimiter } = await import("@/lib/rate-limit");
 vi.mock("@/lib/rate-limit-redis", () => ({
   createLoginLimiter: () => ({
@@ -142,13 +143,10 @@ vi.mock("next/headers", () => ({
   headers: async () => mockHeaderBag.current,
 }));
 
-process.env.NEXTAUTH_SECRET = "unit-test-secret-0123456789abcdef-456789";
-delete process.env.BETTER_AUTH_SECRET;
-delete process.env.NEXT_PUBLIC_AUTH_STACK;
+process.env.BETTER_AUTH_SECRET = "unit-test-secret-0123456789abcdef-456789";
 process.env.DATABASE_URL = "file:./unit-test.db";
 
-import { auth, revokeUserSessions, isBetterAuthStack, getBetterSession } from "@/lib/auth-better";
-import { authOptions } from "@/lib/auth";
+import { auth, revokeUserSessions, getBetterSession } from "@/lib/auth-better";
 import { loginLimiter } from "@/lib/rate-limit";
 import bcrypt from "bcryptjs";
 
@@ -344,33 +342,6 @@ describe("sign-in/email (authorize port)", () => {
     const res = await signIn("ada@fernly.dev", "whatever-1");
     expect(res.res.status).toBe(401);
   });
-
-  it("shares throttle budgets with the v4 stack (parallel-period contract)", async () => {
-    seedUser();
-    // Exhaust the email budget through the V4 authorize()…
-    const authorize = (
-      authOptions.providers[0] as unknown as {
-        options: {
-          authorize: (
-            c: Record<string, string>,
-            req?: { headers?: Record<string, string> },
-          ) => Promise<unknown>;
-        };
-      }
-    ).options.authorize;
-    for (let i = 0; i < 5; i++) {
-      await authorize(
-        { email: "ada@fernly.dev", password: "wrong" },
-        { headers: { "x-forwarded-for": "198.51.100.5" } },
-      );
-    }
-    // …the BETTER stack must be blocked too (same limiter store), before
-    // touching the database.
-    db.user.findUnique.mockClear();
-    const res = await signIn("ada@fernly.dev", "correct-horse-1");
-    expect([401, 429]).toContain(res.res.status);
-    expect(db.user.findUnique).not.toHaveBeenCalled();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -445,7 +416,7 @@ describe("session cookies + posture", () => {
 // ---------------------------------------------------------------------------
 
 describe("revocation (tokenVersion counterpart)", () => {
-  it("deleteUserSessions removes every session row for the user (repo default = better since PR-49)", async () => {
+  it("deleteUserSessions removes every session row for the user", async () => {
     store.sessions.push(
       { id: "s-1", token: "t1", userId: "u-1", expiresAt: new Date(Date.now() + 1000) },
       { id: "s-2", token: "t2", userId: "u-9", expiresAt: new Date(Date.now() + 1000) },
@@ -454,26 +425,12 @@ describe("revocation (tokenVersion counterpart)", () => {
     expect(store.sessions.map((s) => s.id)).toEqual(["s-2"]);
   });
 
-  it("revokeUserSessions is inert while the v4 stack is explicitly selected (rollback path)", async () => {
-    process.env.NEXT_PUBLIC_AUTH_STACK = "nextauth";
-    try {
-      expect(isBetterAuthStack()).toBe(false);
-      store.sessions.push({
-        id: "s-1", token: "t1", userId: "u-1", expiresAt: new Date(Date.now() + 1000),
-      });
-      // The flag-aware wrapper (what the app actions call) must no-op, and
-      // so must the raw export — on the v4 stack revocation is the
-      // tokenVersion JWT check, not a session-row delete.
-      const { revokeUserSessionsIfActive } = await import("@/lib/auth-revoke");
-      await revokeUserSessionsIfActive("u-1");
-      await revokeUserSessions("u-1");
-      expect(store.sessions).toHaveLength(1);
-    } finally {
-      delete process.env.NEXT_PUBLIC_AUTH_STACK;
-    }
-    // Repo default (flag unset) is "better" since the PR-49 flip: deletes.
-    expect(isBetterAuthStack()).toBe(true);
-    await revokeUserSessions("u-1");
+  it("the bridge the app actions call always revokes (single stack since PR-49)", async () => {
+    store.sessions.push({
+      id: "s-1", token: "t1", userId: "u-1", expiresAt: new Date(Date.now() + 1000),
+    });
+    const { revokeUserSessionsIfActive } = await import("@/lib/auth-revoke");
+    await revokeUserSessionsIfActive("u-1");
     expect(store.sessions).toHaveLength(0);
   });
 
@@ -535,7 +492,7 @@ describe("getBetterSession (server-side helper)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Config posture (mirrors the v4 NEXTAUTH_SECRET/cookie-security blocks)
+// Config posture (secret boot contract)
 // ---------------------------------------------------------------------------
 
 describe("config posture", () => {
@@ -543,16 +500,15 @@ describe("config posture", () => {
     // resolveBetterSecret is module-private; its contract is observable via
     // the cookie signature: a signed cookie must NOT verify against the
     // public dev constant. (The strong test secret is set in this suite.)
-    const secret = process.env.NEXTAUTH_SECRET ?? "";
+    const secret = process.env.BETTER_AUTH_SECRET ?? "";
     expect(secret).not.toMatch(/^fernly-dev-secret/);
     expect(secret.length).toBeGreaterThan(31);
   });
 
-  it("falls back to NEXTAUTH_SECRET during the parallel period (single secret)", async () => {
-    // Importing auth-better with only NEXTAUTH_SECRET set (this suite's
-    // arrangement) must not throw — proven by every test above using the
-    // same instance. A weak secret in production must refuse to boot:
-    vi.stubEnv("NEXTAUTH_SECRET", "fernly-dev-secret-legacy");
+  it("refuses to boot in production on a missing/weak BETTER_AUTH_SECRET", async () => {
+    // A strong secret lets the module load — proven by every test above
+    // using the same instance. A weak secret in production must throw:
+    vi.stubEnv("BETTER_AUTH_SECRET", "fernly-dev-secret-legacy");
     vi.stubEnv("NODE_ENV", "production");
     try {
       vi.resetModules();

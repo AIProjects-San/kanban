@@ -45,7 +45,7 @@ function asString(value: unknown, max = 2000): string | undefined {
 /**
  * P1 (production-readiness re-audit) — origin check. The endpoint is
  * same-origin only: a malicious third-party site can't flood the operator's
- * error tracker with garbage events. When `APP_URL` (or the `NEXTAUTH_URL`
+ * error tracker with garbage events. When `APP_URL` (or the `BETTER_AUTH_URL`
  * fallback) is set, the request's `Origin` (or `Referer` fallback) must match
  * it. When neither is configured, the request's own `Host` header is the
  * reference instead (see the QA-9 note inside) — production MUST still set
@@ -54,12 +54,12 @@ function asString(value: unknown, max = 2000): string | undefined {
 function isSameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
-  const allowed = process.env.APP_URL || process.env.NEXTAUTH_URL;
+  const allowed = process.env.APP_URL || process.env.BETTER_AUTH_URL;
   if (!allowed) {
     // No allowed origin configured. QA-9: browsers send `Origin` on EVERY
     // fetch POST (same-origin included), so the old `return !origin`
     // rejected 100% of real browser reports with 403 whenever APP_URL /
-    // NEXTAUTH_URL were unset (exactly the sandbox / unconfigured-deploy
+    // BETTER_AUTH_URL were unset (exactly the sandbox / unconfigured-deploy
     // case — errors were silently never reported). Without a configured
     // origin, "same-origin" is instead judged against the request's own
     // host: a browser cannot make a cross-site POST whose Origin host

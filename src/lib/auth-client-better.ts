@@ -1,12 +1,10 @@
 "use client";
 
 // ---------------------------------------------------------------------------
-// PR-48 — Better Auth client (auth migration Phase 1).
-//
-// The next-auth/react client stays in place for the v4 stack; components
-// that need a session or a sign-in/out call go through the flag-aware
-// wrappers (`useAppSession`, `appSignIn`, `appSignOut`) instead of picking
-// a client directly.
+// PR-48/PR-49 — the Better Auth client (the only auth client since the
+// migration cleanup). Components that need a session or a sign-in/out call
+// the wrappers in `src/hooks/use-app-session.ts` (useAppSession /
+// appSignIn / appSignOut), which drive this client.
 // ---------------------------------------------------------------------------
 
 import { createAuthClient } from "better-auth/react";

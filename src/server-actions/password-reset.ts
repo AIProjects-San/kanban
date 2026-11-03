@@ -70,7 +70,7 @@ function hashToken(token: string): string {
 }
 
 function buildResetUrl(token: string): string {
-  const base = process.env.NEXTAUTH_URL ?? process.env.APP_URL ?? "http://localhost:3000";
+  const base = process.env.BETTER_AUTH_URL ?? process.env.APP_URL ?? "http://localhost:3000";
   return `${base}/reset-password?token=${encodeURIComponent(token)}`;
 }
 

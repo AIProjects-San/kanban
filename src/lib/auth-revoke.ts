@@ -1,22 +1,18 @@
 // ---------------------------------------------------------------------------
-// PR-48 — session-revocation bridge (auth migration Phase 1, §6 port map).
+// PR-48/PR-49 — session-revocation bridge (§6 port map).
 //
-// The v4 stack revokes sessions by bumping User.tokenVersion (the jwt
-// callback notices within ≤5 min). The Better Auth stack revokes by DELETING
-// the user's DB session rows — immediate for lookups, ≤5 min for the cookie
-// cache (same worst-case window as v4).
+// Revocation on the Better Auth stack works by DELETING the user's DB
+// session rows — immediate for lookups, ≤5 min for the cookie cache (the
+// same worst-case window the old v4 tokenVersion JWT check had).
 //
-// Every flow that bumps tokenVersion calls `revokeUserSessionsIfActive()`
-// right after, so BOTH stacks stay revoked in the parallel period. The
-// dynamic import keeps the Better Auth instance out of the v4-mode
-// server-action bundles; the function is a no-op while
-// NEXT_PUBLIC_AUTH_STACK=nextauth.
+// Every flow that bumps User.tokenVersion (password change, role change,
+// soft-delete, "sign out everywhere") calls `revokeUserSessionsIfActive()`
+// right after. The tokenVersion bump itself is retained as a cheap,
+// auditable intent marker — the actual kill switch is the row delete here.
 // ---------------------------------------------------------------------------
 
-import { isBetterAuthStack } from "@/lib/auth-stack";
+import { revokeUserSessions } from "@/lib/auth-better";
 
 export async function revokeUserSessionsIfActive(userId: string): Promise<void> {
-  if (!isBetterAuthStack()) return;
-  const { revokeUserSessions } = await import("@/lib/auth-better");
   await revokeUserSessions(userId);
 }

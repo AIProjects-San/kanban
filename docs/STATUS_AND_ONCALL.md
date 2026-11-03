@@ -30,19 +30,22 @@ app outage doesn't take the status page down with it.
 
 ## On-call runbooks
 
-### Runbook: secret rotation (NEXTAUTH_SECRET)
+### Runbook: secret rotation (BETTER_AUTH_SECRET)
 
-**Symptom:** after a rotation, every browser holding a pre-rotation session
-cookie hits `[next-auth][error][JWT_SESSION_ERROR]` on every request.
+**Symptom:** sessions must be invalidated wholesale (suspected key
+compromise, or routine rotation).
 
 1. Rotate the secret in the environment (`.env` / secret manager).
-2. Restart the app instances (`docker compose restart fernly-1`).
-3. The proxy (`src/proxy.ts`) self-heals: it verifies each cookie against
-   the current secret, strips the bad cookie from the forwarded request, and
-   expires it in the response — users simply see the login screen.
-4. Verify: sign in fresh, confirm `GET /` returns 200 and no JWT errors in
-   the logs after ~5 min.
-5. Post a status note if sign-in errors spiked.
+2. Clear the session table (`DELETE FROM "Session";` — the old rows are
+   signed with the old secret and fail silent anyway, but clearing them
+   keeps the table tidy).
+3. Restart the app instances (`docker compose restart fernly-1`).
+4. Better Auth's opaque DB-backed tokens fail silent on a secret mismatch:
+   users simply see the login screen — no error spam. The proxy also
+   expires obsolete pre-migration `next-auth.*` cookies on first sight.
+5. Verify: sign in fresh, confirm `GET /` returns 200 and a new
+   `fernly.session_token` cookie is set.
+6. Post a status note if sign-in errors spiked.
 
 **Cadence:** quarterly (calendar recurring event). Never reuse a secret.
 

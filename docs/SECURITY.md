@@ -10,14 +10,14 @@
 |---------|----------------|
 | Password storage | bcrypt, cost factor 12 (`lib/password.ts`) |
 | Password policy | Length = workspace setting (`Workspace.minPasswordLength`, floor 8, cap 128) |
-| Sessions | JWT, 30-day expiry, `httpOnly` + `sameSite=lax` cookies; `Secure` in production |
-| Signing secret | `NEXTAUTH_SECRET` — production refuses to boot if missing/weak |
-| Brute force | Sliding window: 5 failures / 15 min per email AND per source IP (first `x-forwarded-for` hop); success clears the email bucket |
+| Sessions | Better Auth DB-backed opaque tokens (`Session` table), 7-day expiry, `fernly.*` cookies: `httpOnly` + `sameSite=lax`, `__Secure-` prefixed + `Secure` in production. Password change / role change / soft-delete delete the user's session rows immediately |
+| Signing secret | `BETTER_AUTH_SECRET` — production refuses to boot if missing/weak |
+| Brute force | Sliding window: 5 failures / 15 min per email AND per source IP (`x-real-ip`, then the LAST `x-forwarded-for` hop — the trusted proxy's); success clears both buckets |
 | Enumeration | Unknown emails still run a bcrypt compare (constant-time behaviour); identical error surface |
-| Role freshness | JWT callback re-reads the role from the DB every 5 min; deleted accounts are treated as signed out |
-| Secret rotation | `src/proxy.ts` verifies the session cookie against the current `NEXTAUTH_SECRET` on every page request; an undecryptable (rotated/corrupt) cookie is stripped from the forwarded request and expired in the browser, so clients self-heal to a clean sign-in instead of logging `JWT_SESSION_ERROR` on every render. Never active on `/api/auth/*` (NextAuth must stay free to rotate its own cookies) |
-| Signout cookie hygiene | `app/api/auth/[...nextauth]/route.ts` wraps the NextAuth handler and — on `/api/auth/signout` — appends `Max-Age=0` `Set-Cookie` headers for all six auth-cookie name spaces (`next-auth.session-token`, `next-auth.csrf-token`, `next-auth.callback-url` + `__Secure-` variants). NextAuth itself only expires the session-token; leaving the CSRF cookie behind wedged sign-in after a secret rotation. UI logout buttons funnel through `lib/signout.ts` and hard-navigate to `/` |
-| Audit trail | `auth.signed_in` and `auth.signed_out` rows in the audit log. The sign-out entry is written by `events.signOut` (best-effort, never blocks the sign-out on a DB outage) |
+| Role freshness | 5-minute session cookie cache; role changes propagate on cache expiry; soft-deleted accounts are treated as signed out (deletedAt rides on the session payload) |
+| Secret rotation | Better Auth signs the opaque session cookie with `BETTER_AUTH_SECRET`; an unknown/tampered token fails silent (signed out, no log spam). Rotating the secret + clearing the `Session` table invalidates every session at once |
+| Signout cookie hygiene | Better Auth expires its own cookies on sign-out. The proxy additionally expires obsolete `next-auth.*` leftovers from before the PR-49 migration on first sight. UI logout buttons funnel through `appSignOut()` and hard-navigate to `/` |
+| Audit trail | `auth.signed_in` and `auth.signed_out` rows in the audit log, written by the Better Auth after-hooks with IP + user agent from the request (best-effort, never blocks the flow on a DB outage) |
 | Notification routing | `Notification.recipientUserId`: private rows are visible/mutable only by their recipient; null-recipient broadcasts are visible to all and markable only by `role:manage` (flipping them affects every viewer). `markAllNotificationsRead` touches only the caller's own rows |
 
 ## 2. Authorization
@@ -68,8 +68,9 @@ terminated at the reverse proxy (Caddy).
 
 ## 5. CSRF
 
-- NextAuth's built-in CSRF token covers the credentials flow (`next-auth.csrf-token`,
-  double-submit cookie).
+- Better Auth enforces an origin check on its endpoints (`trustedOrigins`, in
+  `src/lib/auth-better.ts` — mirrored from the Server Actions allow-list; no
+  double-submit token to keep in sync).
 - Server Actions are origin-checked by Next.js 16; `experimental.serverActions.
   allowedOrigins` lists only the known preview hosts + localhost.
 
@@ -99,11 +100,11 @@ Current inventory and handling:
   committed in the initial commit — removed from the index, but history retains it;
   see the incident log below). `.env.example` documents every variable with
   placeholders, never values.
-- `DATABASE_URL`, `NEXTAUTH_SECRET`, `RESEND_API_KEY`, `REDIS_URL`, `CRON_SECRET`,
+- `DATABASE_URL`, `BETTER_AUTH_SECRET`, `RESEND_API_KEY`, `REDIS_URL`, `CRON_SECRET`,
   `SENTRY_DSN` — runtime-injected only. The Dockerfile refuses a stray `.env` in the
   build context/output (X-06).
 - The dev fallback auth secret is a per-process random value (never a public
-  constant); production refuses to boot on a missing/weak `NEXTAUTH_SECRET`.
+  constant); production refuses to boot on a missing/weak `BETTER_AUTH_SECRET`.
 - The demo password lives **only** in `NEXT_PUBLIC_DEMO_PASSWORD` (`.env`). The
   seed, node scripts, k6 load test, and the e2e suite read it from the environment
   through `scripts/lib/demo-env.mjs` / `__ENV` / the e2e loader — each fails loudly
@@ -160,7 +161,8 @@ Current inventory and handling:
 
 ## 10. Incident response
 
-1. Revoke sessions: rotate `NEXTAUTH_SECRET` (invalidates all JWTs) and redeploy.
+1. Revoke sessions: rotate `BETTER_AUTH_SECRET` AND clear the `Session` table
+   (invalidates every session) and redeploy.
 2. Forensics: query `AuditLog` by actor/entity/timeframe; entries are append-only.
 3. Compromised account: admin resets the user's password (invalidates future logins);
    consider a `forceSignOut` flag as future work.

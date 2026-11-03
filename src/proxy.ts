@@ -1,50 +1,44 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getToken } from "next-auth/jwt";
 import { withRequestId, generateRequestId, log } from "@/lib/observability";
-import { isBetterAuthStack } from "@/lib/auth-stack";
 import { randomBytes } from "node:crypto";
 
 // ---------------------------------------------------------------------------
-// Self-healing session cookie guard + nonce-based CSP (P1 production-readiness
-// re-audit).
+// Obsolete v4 cookie cleanup + nonce-based CSP.
 // ---------------------------------------------------------------------------
-// When NEXTAUTH_SECRET changes (container rebuild, secret rotation, a cookie
-// left over from another environment) every request carrying the old cookie
-// fails JWE decryption inside `getServerSession`, which logs
-// `[next-auth][error][JWT_SESSION_ERROR] "decryption operation failed"` on
-// *every* render — for up to the cookie's 30-day lifetime — and the stale
-// CSRF cookie can make the browser appear stuck on the login screen.
+// The NextAuth v4 stack is gone (PR-49 cleanup); authentication is Better
+// Auth with DB-backed OPAQUE tokens, which fail silent — an unknown token
+// simply means signed out: no log spam, no CSRF wedge, nothing to
+// self-heal. The old JWE cookie guard (secret-rotation self-healing for
+// the v4 next-auth.* cookies) is retired with it.
 //
-// This proxy verifies the cookie against the current secret before the
-// request reaches the app. An undecryptable cookie is stripped from the
-// forwarded request (so the very first render is already clean) and expired
-// in the response (so the browser drops it). The visitor simply sees the
-// login screen and a fresh sign-in mints a valid cookie.
+// What remains cookie-wise: a browser that last authenticated BEFORE the
+// cutover may still carry obsolete next-auth.* cookies. They are stripped
+// from the forwarded request and expired in the response, once, on every
+// request that presents them — no secret needed (they are obsolete
+// regardless of how they were signed).
 //
-// getToken() swallows decode errors and returns null, so verification adds
-// no log noise of its own.
-//
-// P1 re-audit — CSP is now nonce-based. A fresh nonce is generated per
+// P1 re-audit — CSP is nonce-based. A fresh nonce is generated per
 // request and stamped into the `Content-Security-Policy` header. Next.js
 // auto-detects the nonce and applies it to its inline bootstrap scripts,
 // so we can drop `'unsafe-inline'` from `script-src`. `'unsafe-eval'` is
 // kept ONLY in development (HMR / React Refresh needs it); production
 // ships without it.
 
-// Mirrors the cookie name pinned in src/lib/auth.ts. Production uses the
-// `__Secure-` prefix (PR-27); development/sandbox keeps the classic name.
-const SESSION_COOKIE =
-  process.env.NODE_ENV === "production"
-    ? "__Secure-next-auth.session-token"
-    : "next-auth.session-token";
-const CSRF_COOKIE =
-  process.env.NODE_ENV === "production"
-    ? "__Secure-next-auth.csrf-token"
-    : "next-auth.csrf-token";
-const CALLBACK_COOKIE =
-  process.env.NODE_ENV === "production"
-    ? "__Secure-next-auth.callback-url"
-    : "next-auth.callback-url";
+// The v4 cookie names (dev + prod prefixes) — kept ONLY for the cutover
+// cleanup below. Better Auth's cookies are the fernly.* set and are never
+// touched here.
+const V4_SESSION_COOKIES = [
+  "next-auth.session-token",
+  "__Secure-next-auth.session-token",
+];
+const V4_CSRF_COOKIES = [
+  "next-auth.csrf-token",
+  "__Secure-next-auth.csrf-token",
+];
+const V4_CALLBACK_COOKIES = [
+  "next-auth.callback-url",
+  "__Secure-next-auth.callback-url",
+];
 
 /**
  * Generate a per-request nonce for CSP. 16 bytes (128 bits) base64-encoded
@@ -107,10 +101,11 @@ function buildCsp(nonce: string): string {
 }
 
 export const config = {
-  // Run on app pages and Server Actions; never on NextAuth's own endpoints
-  // (the sign-in callback must be free to rotate/overwrite the session
-  // cookie itself — racing it with a delete here could eat a fresh cookie)
-  // and never on static assets.
+  // Run on app pages and Server Actions; never on the auth endpoints
+  // (they must stay free to rotate/overwrite their own cookies — racing
+  // them with a delete here could eat a fresh cookie) and never on static
+  // assets. `api/auth` covers BOTH the retired v4 mount and the live
+  // `api/auth-better` handler (prefix match).
   matcher: [
     "/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map)$).*)",
   ],
@@ -132,17 +127,6 @@ export default async function proxy(req: NextRequest) {
   const startMs = Date.now();
 
   return withRequestId(requestId, async () => {
-    const raw = req.cookies.get(SESSION_COOKIE)?.value;
-    const secret = process.env.NEXTAUTH_SECRET;
-
-    // PR-48 (auth migration) — on the better stack the v4 JWE guard is
-    // retired: Better Auth's DB-backed opaque tokens fail silent (unknown
-    // token → signed out, no log spam, no CSRF wedge), so there is nothing
-    // to self-heal. A leftover v4 cookie from before the cutover is simply
-    // obsolete — strip and expire it once, unconditionally, without ever
-    // depending on NEXTAUTH_SECRET.
-    const betterStack = isBetterAuthStack();
-
     // Helper: stamp CSP + request-id on any response we return + emit a
     // per-request structured log line with duration + route + status.
     function stampHeaders(res: NextResponse) {
@@ -175,73 +159,35 @@ export default async function proxy(req: NextRequest) {
       return NextResponse.next({ request: { headers: requestHeaders } });
     }
 
-    // No cookie to check, or no explicit secret: pass through with CSP.
-    // (On the better stack a v4 cookie, if any, is handled below as a
-    // cutover leftover — it never gets JWE-validated.)
-    if (!raw || !secret || betterStack) {
-      if (raw && betterStack) {
-        // Cutover cleanup: expire the obsolete v4 cookie jar so the browser
-        // starts clean on the fernly.* cookie set.
-        log.info("proxy: expiring obsolete v4 session cookie (better stack)", {
-          path: req.nextUrl.pathname,
-        });
-        req.cookies.delete(SESSION_COOKIE);
-        req.cookies.delete(CSRF_COOKIE);
-        req.cookies.delete(CALLBACK_COOKIE);
-        const res = forward();
-        const expiredCookie = {
-          httpOnly: true,
-          sameSite: "lax" as const,
-          path: "/",
-          maxAge: 0,
-        };
-        res.cookies.set(SESSION_COOKIE, "", expiredCookie);
-        res.cookies.set("next-auth.csrf-token", "", expiredCookie);
-        res.cookies.set("next-auth.callback-url", "", expiredCookie);
-        return stampHeaders(res);
-      }
-      return stampHeaders(forward());
-    }
-
-    let valid = false;
-    try {
-      valid =
-        (await getToken({ req, secret, cookieName: SESSION_COOKIE })) !== null;
-    } catch (err) {
-      // Treat unexpected decode failures (malformed cookie, crypto errors) the
-      // same as a stale cookie — clearing it is always the safe recovery.
-      // L-P1-19: log the error with the request id so it's traceable.
-      log.warn("proxy: session cookie decode failed", {
+    // Cutover cleanup: a leftover v4 cookie from before the Better Auth
+    // migration is obsolete regardless of how it was signed — strip it from
+    // the forwarded request and expire it in the browser so it never comes
+    // back. The fernly.* cookie set is never touched.
+    const stale = [
+      ...V4_SESSION_COOKIES,
+      ...V4_CSRF_COOKIES,
+      ...V4_CALLBACK_COOKIES,
+    ].filter((name) => req.cookies.get(name)?.value !== undefined);
+    if (stale.length > 0) {
+      log.info("proxy: expiring obsolete v4 session cookies (better stack)", {
         path: req.nextUrl.pathname,
-        error: err instanceof Error ? err.message : String(err),
       });
-      valid = false;
+      for (const name of stale) {
+        req.cookies.delete(name);
+      }
+      const res = forward();
+      const expiredCookie = {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        maxAge: 0,
+      };
+      for (const name of stale) {
+        res.cookies.set(name, "", expiredCookie);
+      }
+      return stampHeaders(res);
     }
-    if (valid) return stampHeaders(forward());
 
-    // Stale or corrupt session cookie. Strip it from the request we forward
-    // and expire it in the browser so it never comes back.
-    // P2 (edge-case audit) — also clear the CSRF + callback-url cookies.
-    // After a NEXTAUTH_SECRET rotation, the stale CSRF cookie (signed with
-    // the old secret) mismatches the new form token → 403 on the next sign-in
-    // attempt → user is stuck. The signout wrapper clears these too, but
-    // the proxy is the first line of defence on every request.
-    log.info("proxy: clearing stale session cookie", {
-      path: req.nextUrl.pathname,
-    });
-    req.cookies.delete(SESSION_COOKIE);
-    req.cookies.delete(CSRF_COOKIE);
-    req.cookies.delete(CALLBACK_COOKIE);
-    const res = forward();
-    const expiredCookie = {
-      httpOnly: true,
-      sameSite: "lax" as const,
-      path: "/",
-      maxAge: 0,
-    };
-    res.cookies.set(SESSION_COOKIE, "", expiredCookie);
-    res.cookies.set("next-auth.csrf-token", "", expiredCookie);
-    res.cookies.set("next-auth.callback-url", "", expiredCookie);
-    return stampHeaders(res);
+    return stampHeaders(forward());
   });
 }

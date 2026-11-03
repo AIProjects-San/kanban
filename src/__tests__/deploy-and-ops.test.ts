@@ -292,7 +292,7 @@ describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
   it("PR-24: .env.example exists and documents the boot contract", () => {
     const env = readFileSync(resolve(repoRoot, ".env.example"), "utf-8");
     for (const key of [
-      "DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "SERVER_ACTIONS_ALLOWED_ORIGINS",
+      "DATABASE_URL", "BETTER_AUTH_SECRET", "APP_URL", "SERVER_ACTIONS_ALLOWED_ORIGINS",
       "REDIS_URL", "CRON_SECRET", "RESEND_API_KEY", "MAIL_FROM", "SENTRY_DSN",
     ]) {
       expect(env).toMatch(new RegExp(`^${key}=`, "m"));

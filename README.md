@@ -4,7 +4,7 @@ A focused project-management workspace: projects, Kanban board, calendar, analyt
 team messaging, and full workspace administration — in one keyboard-first app.
 
 **Stack:** Next.js 16 (App Router) · React 19 · TypeScript (strict) · Prisma 6 +
-PostgreSQL · NextAuth v4 (JWT) · Zustand · Tailwind v4 (CSS-first) + OKLCH design tokens
+PostgreSQL · Better Auth (DB sessions) · Zustand · Tailwind v4 (CSS-first) + OKLCH design tokens
 
 ## Quick start
 

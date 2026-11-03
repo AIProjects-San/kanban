@@ -129,28 +129,30 @@ Findings that adjust the Phase 1 port map (validated, not assumed):
 - ✅ Gates: typecheck/eslint clean, 1189/1189 unit tests, bundle budget OK
   with better-auth in the tree.
 
-### Phase 3 — Cutover + cleanup (1 day + 1 soak week) — FLIP DONE 2026-11-03 (PR-49)
-- ✅ **Staging cutover executed**: the sandbox preview runs
-  `NEXT_PUBLIC_AUTH_STACK=better` (`.env`), verified through the real UI —
-  stale v4 cookies cleanly retired by the proxy, sign-in mints the fernly
-  session, the dashboard renders, sidebar sign-out returns to the login
-  screen.
-- ✅ **Repo-default flip (PR-49, 2026-11-03)** — `NEXT_PUBLIC_AUTH_STACK`
-  now defaults to **better** in the repo (`src/lib/auth-stack.ts`): any
-  deployment without an explicit pin runs the Better Auth stack with no
-  env var at all. Setting `nextauth` explicitly re-selects v4 — the
-  one-release rollback path (runbook: docs/DEPLOY.md §3a). Unit parity
-  held through the flip: 1190/1190, with the session-mock seams migrated
-  to `getBetterSession()` and the guard's normalisation cases re-pinned at
-  the real seam (auth-better.test.ts). **Soak waived by owner sign-off** —
-  this workspace is a dev environment with no active users, so the ≥1-week
-  parallel soak has no surface to observe; CI keeps validating both stacks
-  on every push until the cleanup lands.
-- ⏳ **Post-soak cleanup PR** — delete the v4 stack (`src/lib/auth.ts`,
-  `signout.ts`, `next-auth.d.ts`, `/api/auth/[...nextauth]` route, the v4
-  proxy guard branch, `next-auth` from package.json), rename
-  `NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET` (same value), drop the v4-only
-  tests, update PRODUCTION_READINESS.md §6.1 / DEPLOY.md / .env.example.
+### Phase 3 — Cutover + cleanup (1 day + 1 soak week) — ✅ COMPLETE 2026-11-03 (PR-48/PR-49)
+- ✅ **Staging cutover executed**: the sandbox preview runs the Better Auth
+  stack, verified through the real UI — stale v4 cookies cleanly retired by
+  the proxy, sign-in mints the fernly session, the dashboard renders,
+  sidebar sign-out returns to the login screen.
+- ✅ **Repo-default flip (PR-49)** — `NEXT_PUBLIC_AUTH_STACK` defaulted to
+  **better** in `src/lib/auth-stack.ts`; unit parity held through the flip
+  (1190/1190). **Soak waived by owner sign-off** — this workspace is a dev
+  environment with no active users, so the ≥1-week parallel soak had no
+  surface to observe.
+- ✅ **Post-soak cleanup (PR-49, same day)** — the v4 stack is deleted:
+  `src/lib/auth.ts`, `signout.ts`, `auth-cookies.ts`, `auth-stack.ts`,
+  `types/next-auth.d.ts`, `/api/auth/[...nextauth]` (route + tests), the
+  v4 proxy guard branch, the v4-only unit suites, and `next-auth` from
+  package.json (lockfile regenerated). `NEXTAUTH_SECRET` →
+  `BETTER_AUTH_SECRET` (no fallback; same value expected) and
+  `NEXTAUTH_URL` → `APP_URL`/`BETTER_AUTH_URL`. The ALS audit bridge is
+  gone (Better Auth hooks receive the request directly); its
+  `extractClientIp` helper survives as `lib/client-ip.ts`. The two e2e
+  passes merged into one (login.feature gained the fernly-cookie and
+  sign-out scenarios; `test:e2e:better` removed; CI runs a single pass);
+  prod-smoke's credential checks now target `/api/auth-better/*`
+  exclusively; docs updated (DEPLOY §1.2/§3a, PRODUCTION_READINESS,
+  SECURITY, ARCHITECTURE, README, STATUS_AND_ONCALL, .env.example).
 
 ## 6. Port map (custom logic → Better Auth home — updated by the Phase 0 spike)
 
@@ -188,5 +190,6 @@ Findings that adjust the Phase 1 port map (validated, not assumed):
 
 ---
 
-*Plan version: PR-43. Re-verify the library landscape (release cadence, v5
-status) at execution time — this plan was written 2026-11-03.*
+*Plan version: PR-49 (migration complete). Re-verify the library landscape
+(release cadence, v5 status) before any future auth work — the migration
+described here executed 2026-11-03.*

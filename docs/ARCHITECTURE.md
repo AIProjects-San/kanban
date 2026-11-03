@@ -1,7 +1,7 @@
 # Fernly — Architecture
 
 **Stack:** Next.js 16 (App Router, Turbopack) · React 19 · TypeScript (strict) ·
-Prisma 6 + PostgreSQL (Supabase) · NextAuth v4 (JWT) · Zustand · custom CSS design system
+Prisma 6 + PostgreSQL (Supabase) · Better Auth 1.7 (DB sessions) · Zustand · custom CSS design system
 
 ---
 
@@ -16,7 +16,7 @@ Prisma 6 + PostgreSQL (Supabase) · NextAuth v4 (JWT) · Zustand · custom CSS d
                     │ Next.js standalone server (Node, :3000)    │
                     │                                            │
                     │  /                — single-page app shell  │
-                    │  /api/auth/*     — NextAuth (credentials)  │
+                    │  /api/auth-better/* — Better Auth (credentials) │
                     │  Server Actions  — ALL data mutations      │
                     └───────────────┬────────────────────────────┘
                                     │ Prisma (pooler, IPv4)
@@ -59,7 +59,7 @@ server-actions/result.ts    — toResult(): thrown Error → ActionResult mappin
 lib/                        — pure logic (rbac, config, validation, password, …)
 lib/db.ts                   — Prisma singleton
 lib/config-loader.ts        — workspace config with 60 s cache + bump invalidation
-types/                      — client-facing DTOs + next-auth augmentation
+types/                      — client-facing DTOs
 ```
 
 **Dependency rule:** views → fernly components → lib (pure) → server-actions → db.
@@ -78,7 +78,7 @@ Nothing in `lib/` imports React components except the two .tsx constant files
 3. `getSession()` (auth-guard) is the single server-side entry point; unknown roles are
    downgraded to `MEMBER` (deny-by-default).
 
-**Secrets:** production refuses to boot with a missing/weak `NEXTAUTH_SECRET`
+**Secrets:** production refuses to boot with a missing/weak `BETTER_AUTH_SECRET`
 (`NEXT_PHASE=phase-production-build` is exempt so builds succeed on secret-less CI).
 Cookies flip to `Secure` automatically in production.
 
@@ -142,7 +142,7 @@ code defaults when tables are empty, and caches for 60 s. Mutations call
 | Layer | Tooling | Location | Gate |
 |-------|---------|----------|------|
 | Pure logic (rbac, config, time, rate-limit, validation, audit-meta, greeting) | Vitest | `src/lib/__tests__/` | 90% stmts / 80% branches |
-| Server actions incl. security regressions (mocked Prisma/next-auth) | Vitest | `src/server-actions/__tests__/` | 90% stmts / 80% branches |
+| Server actions incl. security regressions (mocked Prisma/Better Auth session) | Vitest | `src/server-actions/__tests__/` | 90% stmts / 80% branches |
 | Shared components | Vitest + Testing Library | `src/components/ui/__tests__/` | — |
 | Browser E2E (login, RBAC, board, messaging) | Cucumber + Selenium | `e2e/` | run on machines with Chrome |
 
@@ -152,7 +152,7 @@ See `docs/TESTING.md` for the full strategy, coverage numbers and the manual tes
 
 - `bun run build` → standalone output (`.next/standalone`) + static assets.
 - `bun run start` → `NODE_ENV=production` Node process behind the TLS proxy.
-- Required env: `DATABASE_URL` (PostgreSQL), `NEXTAUTH_SECRET` (32-byte random).
+- Required env: `DATABASE_URL` (PostgreSQL), `BETTER_AUTH_SECRET` (32-byte random).
   The process refuses to boot without a strong secret.
 - Security headers (CSP, frame-deny, nosniff, …) are emitted by `next.config.ts`;
   HSTS should be added at the proxy.

@@ -4,9 +4,7 @@
 // actions and server components, which is fine — it runs on the server only.
 
 import { logError } from "@/lib/observability";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { isBetterAuthStack } from "@/lib/auth-stack";
+import { getBetterSession } from "@/lib/auth-better";
 import { hasPermission, isValidRole, type Permission, type Role } from "@/lib/rbac";
 import { canManageUser, getSubtreeUserIds } from "@/lib/hierarchy";
 import { hasPermissionDb } from "@/lib/config-loader";
@@ -20,28 +18,15 @@ interface AuthResult {
 }
 
 /**
- * Get the current authenticated session.
+ * Get the current authenticated session (Better Auth DB sessions).
  * Returns null if not logged in.
  *
- * PR-48 — stack-agnostic: on NEXT_PUBLIC_AUTH_STACK=better the Better Auth
- * session is resolved instead of the v4 JWT. The dynamic import keeps the
- * Better Auth instance (and its module side effects) out of the v4-mode
- * server-action bundles entirely — it only loads when the flag is on.
+ * PR-49 — the Better Auth stack is the only stack; getBetterSession()
+ * resolves the opaque session cookie against the Session table and
+ * normalises the result (unknown-role downgrade, soft-delete guard).
  */
 export async function getSession(): Promise<AuthResult | null> {
-  if (isBetterAuthStack()) {
-    const { getBetterSession } = await import("@/lib/auth-better");
-    return getBetterSession();
-  }
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) return null;
-  const role = isValidRole(session.user.role) ? session.user.role : "MEMBER";
-  return {
-    userId: session.user.id,
-    role,
-    name: session.user.name,
-    email: session.user.email,
-  };
+  return getBetterSession();
 }
 
 // ---------------------------------------------------------------------------

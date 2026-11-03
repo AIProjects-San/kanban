@@ -6,7 +6,7 @@ import { vi } from "vitest";
 const origWarn = console.warn;
 console.warn = (...args: unknown[]) => {
   const msg = String(args[0] ?? "");
-  if (msg.includes("[auth] NEXTAUTH_SECRET")) return;
+  if (msg.includes("[auth-better] secret not set")) return;
   origWarn(...args);
 };
 

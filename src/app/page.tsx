@@ -1,7 +1,4 @@
-import { getServerSession } from "next-auth";
-import type { Session } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { isBetterAuthStack } from "@/lib/auth-stack";
+import { getBetterSession } from "@/lib/auth-better";
 import { getDashboardData, getUserProfile } from "@/server-actions/data";
 import { getGreeting, getTodayDateStr } from "@/lib/greeting";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
@@ -10,34 +7,20 @@ import { Providers } from "@/components/providers";
 
 export const dynamic = "force-dynamic";
 
-// PR-48 — resolves the session on whichever auth stack the deployment runs
-// (next-auth v4 JWT by default; Better Auth DB sessions when
-// NEXT_PUBLIC_AUTH_STACK=better). Normalizes both to the Session shape the
-// Providers/AppShell contract expects. The dynamic import keeps Better Auth
-// out of the v4-mode page bundle.
-async function resolveSession(): Promise<Session | null> {
-  if (isBetterAuthStack()) {
-    const { getBetterSession } = await import("@/lib/auth-better");
-    const s = await getBetterSession();
-    if (!s) return null;
-    return {
-      user: { id: s.userId, name: s.name, email: s.email, role: s.role },
-    } as unknown as Session;
-  }
-  return getServerSession(authOptions);
-}
-
+// PR-49 — resolves the session on the Better Auth stack (the only stack
+// since the migration cleanup): the opaque fernly.session_token cookie is
+// looked up against the Session table via getBetterSession().
 export default async function Home() {
-  const session = await resolveSession();
+  const session = await getBetterSession();
   let data: DashboardData = { ...EMPTY_DASHBOARD_DATA };
   let user: Awaited<ReturnType<typeof getUserProfile>> = null;
 
-  if (session?.user?.id) {
+  if (session?.userId) {
     [data, user] = await Promise.all([
       // The loader derives role/name from the server-side session internally —
       // client-supplied values are never trusted for scoping.
       getDashboardData(),
-      getUserProfile(session.user.id),
+      getUserProfile(session.userId),
     ]);
   }
 
@@ -47,7 +30,7 @@ export default async function Home() {
   const todayDate = getTodayDateStr(user?.timezone);
 
   return (
-    <Providers session={session}>
+    <Providers>
       <AppShell data={data} user={user} greeting={greeting} todayDate={todayDate} />
     </Providers>
   );

@@ -10,18 +10,14 @@ const BASE = "http://localhost:3000";
 const db = new PrismaClient();
 
 async function login(email, password = demoPassword()) {
-  const csrfRes = await fetch(`${BASE}/api/auth/csrf`);
-  const { csrfToken } = await csrfRes.json();
-  const cookie = csrfRes.headers.get("set-cookie")?.split(";")[0] ?? "";
-  const loginRes = await fetch(`${BASE}/api/auth/callback/credentials`, {
+  const loginRes = await fetch(`${BASE}/api/auth-better/sign-in/email`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
-    body: new URLSearchParams({ csrfToken, email, password, json: "true" }),
-    redirect: "manual",
+    headers: { "Content-Type": "application/json", origin: BASE },
+    body: JSON.stringify({ email, password }),
   });
   return (loginRes.headers.get("set-cookie") ?? "")
     .split(/,\s*/)
-    .filter((c) => c.startsWith("next-auth.session-token"))
+    .filter((c) => c.startsWith("fernly.session_token"))
     .map((c) => c.split(";")[0])[0];
 }
 

@@ -16,9 +16,9 @@ const geistMono = Geist_Mono({
 
 // PR-26 (production-readiness audit) — metadataBase pins the canonical origin
 // for metadata URLs (icons, OG images) so crawlers resolve them absolutely.
-// Falls back to a placeholder when APP_URL/NEXTAUTH_URL are unset (sandbox).
+// Falls back to a placeholder when APP_URL/BETTER_AUTH_URL are unset (sandbox).
 function resolveMetadataBase(): URL {
-  const raw = process.env.APP_URL || process.env.NEXTAUTH_URL;
+  const raw = process.env.APP_URL || process.env.BETTER_AUTH_URL;
   try {
     if (raw) return new URL(raw);
   } catch {

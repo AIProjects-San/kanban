@@ -39,9 +39,9 @@ and set at minimum:
 # Managed Postgres (Supabase/Neon/RDS) — use the POOLER host:
 DATABASE_URL=postgresql://postgres:<DB_PASSWORD>@<pooler-host>:5432/postgres
 POSTGRES_PASSWORD=<DB_PASSWORD>     # only needed for the local-db profile
-NEXTAUTH_SECRET=$(openssl rand -base64 32)
-NEXTAUTH_URL=https://your-production-domain.example
+BETTER_AUTH_SECRET=$(openssl rand -base64 32)
 APP_URL=https://your-production-domain.example
+BETTER_AUTH_URL=https://your-production-domain.example
 SERVER_ACTIONS_ALLOWED_ORIGINS=https://your-production-domain.example
 
 # Email (password reset) — without this, reset emails are silently dropped.
@@ -208,36 +208,33 @@ For database-level rollback (PITR), follow
 
 ---
 
-## 3a. Auth stack cutover (PR-48/PR-49 — NextAuth v4 → Better Auth)
+## 3a. Auth stack (PR-48/PR-49 — migration COMPLETE)
 
-**Status: the repo default is the Better Auth stack since the PR-49 flip
-(2026-11-03).** The two auth stacks still run in parallel behind one flag
-(`docs/AUTH_MIGRATION_PLAN.md`): Better Auth 1.7 serves `/api/auth-better/*`
-with the `fernly.*` cookies (the DEFAULT — no env var needed), and NextAuth
-v4 remains at `/api/auth/*` as the explicit rollback selection. Both share
-the login throttle budgets, the audit rows, and the `User.passwordHash`
-credential store; Phases 0–2 are complete and gated (unit 1190/1190 incl.
-the parity suite, e2e scenarios on Postgres 16 in CI, prod-smoke against
-both stacks).
+**Better Auth 1.7 is the only auth stack** (`docs/AUTH_MIGRATION_PLAN.md`):
+credentials-only, DB-backed sessions in the `Session` table, served at
+`/api/auth-better/*` with the `fernly.*` cookies (httpOnly, SameSite=Lax,
+7-day, `__Secure-` prefixed in production). The NextAuth v4 stack — its
+route, cookies, JWE proxy guard and dependency — was removed at the PR-49
+cleanup; there is no stack flag anymore.
 
-**For deployments provisioned before the flip (per deployment — staging
-first, then production):**
+**Upgrading a deployment provisioned before the migration:**
 
 ```bash
-# 1. The flag is no longer needed to select the better stack (it is the
-#    repo default). Only a deployment that previously pinned
-#    NEXT_PUBLIC_AUTH_STACK=nextauth needs to REMOVE that pin:
-#    unset NEXT_PUBLIC_AUTH_STACK   (or set it to "better")
+# 1. Rename the secret in the deployment's .env (KEEP THE SAME VALUE —
+#    rotating it would sign everyone out an extra time):
+#    NEXTAUTH_SECRET=<old value>   →   BETTER_AUTH_SECRET=<old value>
+#    NEXTAUTH_URL=<origin>         →   APP_URL=<origin> (BETTER_AUTH_URL optional)
 
-# 2. Redeploy (a full rebuild — the flag is baked into the client bundle
-#    at compile time; a runtime env change alone is NOT enough).
-docker compose up -d --build   # or your usual rollout
+# 2. Remove any NEXT_PUBLIC_AUTH_STACK pin (the flag no longer exists —
+#    setting it is simply ignored).
 
-# 3. Run the post-deploy checklist (§7) + prod-smoke:
+# 3. Redeploy with a rebuild and run the post-deploy checklist (§7) +
+#    prod-smoke (the credential checks run against the Better Auth stack):
+docker compose up -d --build
 bun run test:prodsmoke
 ```
 
-What changes at cutover (all one-time, by design):
+What happens once, at the upgrade (by design):
 
 - Every user is signed out once — v4 JWT cookies are obsolete; the proxy
   expires them on first request and users re-authenticate. Better Auth
@@ -248,25 +245,14 @@ What changes at cutover (all one-time, by design):
 - The audit rows (`auth.signed_in` / `auth.signed_out` with IP + UA) are
   identical in shape — the compliance surface is unchanged.
 
-**Rollback (instant, for one release):** set
-`NEXT_PUBLIC_AUTH_STACK=nextauth` in the deployment environment and
-redeploy. The v4 stack, its route, its cookies and its tests are all still
-present and green; every better-auth cookie silently fails (no log spam —
-DB-backed opaque tokens) and users sign in once more. The rollback window
-is bounded by the 7-day session expiry and ends with the post-soak cleanup
-below.
+**Rollback:** the v4 stack no longer exists in the tree, so rollback is
+by release tag (redeploy the previous image), not by flag. Session
+rows minted by the newer release are ignored by the older build —
+users sign in again.
 
-**Secrets:** during the parallel period Better Auth signs with
-`BETTER_AUTH_SECRET`, falling back to `NEXTAUTH_SECRET` — one secret to
-manage. The post-soak cleanup renames the env var (keep the same VALUE:
-rotating it signs everyone out).
-
-**Post-soak cleanup (after ≥1 week on the better stack in production):**
-delete the v4 stack (`src/lib/auth.ts`, `signout.ts`, `next-auth.d.ts`,
-`/api/auth/[...nextauth]`, the v4 proxy guard branch, `next-auth` from
-package.json), rename `NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET` in every
-environment (same value), drop the v4-only tests, and update this runbook.
-Until then, BOTH stacks must stay deployable.
+**Secrets:** Better Auth signs with `BETTER_AUTH_SECRET` (renamed from
+`NEXTAUTH_SECRET` at the cleanup — same value expected). Production
+refuses to boot on a missing/weak secret.
 
 ---
 

@@ -1,29 +1,27 @@
 // ---------------------------------------------------------------------------
-// PR-48 — Better Auth parallel stack (auth migration Phase 1).
+// PR-48/PR-49 — Better Auth: THE auth stack (migration complete).
 // docs/AUTH_MIGRATION_PLAN.md §5–§6 (port map updated by the Phase 0 spike).
 //
-// This module is the Better Auth 1.7 counterpart of `src/lib/auth.ts`. It
-// serves `/api/auth-better/*` while NextAuth v4 keeps serving `/api/auth/*`;
-// production traffic is untouched until NEXT_PUBLIC_AUTH_STACK flips to
-// "better" (Phase 3 cutover). Every piece of custom logic from authorize()
-// is ported here (§6 port map):
+// This module is the app's auth server. It serves `/api/auth-better/*`
+// (mounted by src/app/api/auth-better/[...all]/route.ts) with the
+// `fernly.*` cookie set. Every piece of custom logic from the retired
+// NextAuth v4 authorize() is ported here (§6 port map):
 //
-//   • brute-force throttle (email + IP budgets, SAME limiter store as v4 —
-//     an attacker hammering both endpoints draws from one budget)
+//   • brute-force throttle (email + IP budgets, Redis-backed when
+//     REDIS_URL is set, in-memory otherwise)
 //   • timing-attack dummy bcrypt (cost 12, identical hash)
 //   • soft-deleted-user rejection (before-hook gate + session.create backstop)
 //   • sign-in / sign-out audit rows with IP + user agent
-//   • 7-day session expiry; the v4 5-minute role refresh becomes the
-//     session cookie cache (maxAge 300)
+//   • 7-day session expiry + 5-minute session cookie cache
 //   • `User.passwordHash` stays the single credential source of truth — the
-//     before-hook syncs 1.7 credential Account rows lazily (spike F3), so
-//     password changes through EITHER stack are picked up on the next
-//     sign-in with exactly one bcrypt compare per attempt.
+//     before-hook syncs the 1.7 credential Account rows lazily (spike F3),
+//     so password changes are picked up on the next sign-in with exactly
+//     one bcrypt compare per attempt.
 //
-// Revocation semantics change for the better stack: v4 bumped tokenVersion
-// and let the jwt callback notice (≤5 min). The better stack deletes the
-// user's DB session rows via `revokeUserSessions()` — immediate for DB
-// lookups, ≤5 min for the cookie cache (same worst-case window as v4).
+// Revocation: v4 bumped tokenVersion and let the jwt callback notice
+// (≤5 min). This stack deletes the user's DB session rows via
+// `revokeUserSessions()` — immediate for DB lookups, ≤5 min for the
+// cookie cache (same worst-case window as v4).
 // ---------------------------------------------------------------------------
 
 import { betterAuth } from "better-auth";
@@ -36,38 +34,27 @@ import { createLoginLimiter } from "@/lib/rate-limit-redis";
 import { logError, logWarn } from "@/lib/observability";
 import { hashPii } from "@/lib/pii";
 import { isValidRole, type Role } from "@/lib/rbac";
-import { extractClientIp } from "@/lib/auth-request-context";
-import { isBetterAuthStack } from "@/lib/auth-stack";
+import { extractClientIp } from "@/lib/client-ip";
 
 // ---------------------------------------------------------------------------
-// Stack flag — single source of truth in `src/lib/auth-stack.ts` (PR-49:
-// the repo default is "better"; "nextauth" stays selectable as the
-// one-release rollback). Re-exported here for the parity test suite.
-// ---------------------------------------------------------------------------
-
-export { isBetterAuthStack };
-
-// ---------------------------------------------------------------------------
-// Secret handling — identical contract to src/lib/auth.ts (P0-6): refuse to
-// boot in production on a missing/weak secret, allow the build phase, and
-// fall back to NEXTAUTH_SECRET during the parallel period so operators
-// manage ONE signing secret until the Phase 3 cleanup renames it.
+// Secret handling — identical contract to the old v4 stack (P0-6): refuse
+// to boot in production on a missing/weak secret and allow the build
+// phase. PR-49 cleanup: the env var is BETTER_AUTH_SECRET (renamed from
+// NEXTAUTH_SECRET, same value — see docs/DEPLOY.md §3a).
 // ---------------------------------------------------------------------------
 
 const WEAK_SECRET_PREFIX = "fernly-dev-secret";
 
 function resolveBetterSecret(): string {
-  const secret =
-    process.env.BETTER_AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "";
+  const secret = process.env.BETTER_AUTH_SECRET ?? "";
   const isWeak = !secret || secret.startsWith(WEAK_SECRET_PREFIX);
   const isBuild = process.env.NEXT_PHASE === "phase-production-build";
 
   if (isWeak && process.env.NODE_ENV === "production" && !isBuild) {
     throw new Error(
-      "BETTER_AUTH_SECRET (or NEXTAUTH_SECRET) is missing or uses the " +
-        "development default. Generate a strong secret (openssl rand " +
-        "-base64 32) and set it before starting the server — session " +
-        "tokens are forgeable otherwise.",
+      "BETTER_AUTH_SECRET is missing or uses the development default. " +
+        "Generate a strong secret (openssl rand -base64 32) and set it " +
+        "before starting the server — session tokens are forgeable otherwise.",
     );
   }
   if (isWeak) {
@@ -92,14 +79,13 @@ function adapterProvider(): "sqlite" | "postgresql" {
   return url.startsWith("file:") ? "sqlite" : "postgresql";
 }
 
-// L-P0-10 — same factory as v4: Redis-backed limiter when REDIS_URL is set,
-// in-memory otherwise. Because both stacks build from the same module state,
-// the budgets are SHARED across /api/auth/* and /api/auth-better/*.
+// L-P0-10 — Redis-backed limiter when REDIS_URL is set, in-memory
+// otherwise.
 const loginLimiter = createLoginLimiter();
 
-// P2 edge-case audit — same cost-12 dummy hash as src/lib/auth.ts: burns an
-// identical bcrypt compare when the account doesn't exist or is soft-deleted
-// so response times never reveal whether an email is registered.
+// P2 edge-case audit — cost-12 dummy hash: burns an identical bcrypt
+// compare when the account doesn't exist or is soft-deleted so response
+// times never reveal whether an email is registered.
 const DUMMY_HASH =
   "$2b$12$llbxFwXYn3xp2mUpBZUk3ec17zATv43gw0rBZq1kItXp3H11.q5UO";
 
@@ -171,9 +157,11 @@ function returnedStatus(returned: unknown): number {
 
 export const auth = betterAuth({
   appName: "Fernly",
-  // basePath/baseURL: the handler is mounted at /api/auth-better (Phase 1
-  // parallel routing). baseURL is derived per-request by Better Auth when
-  // unset; only the origin allow-list pins preview domains.
+  // basePath/baseURL: the handler is mounted at /api/auth-better (the
+  // mount point kept its parallel-period name through the PR-49 cleanup —
+  // renaming it would churn every client for zero behavioural gain).
+  // baseURL is derived per-request by Better Auth when unset; only the
+  // origin allow-list pins preview domains.
   basePath: "/api/auth-better",
   secret: resolveBetterSecret(),
   database: prismaAdapter(db, { provider: adapterProvider() }),
@@ -532,7 +520,6 @@ export async function getBetterSession(): Promise<BetterAuthSession | null> {
 // ---------------------------------------------------------------------------
 
 export async function revokeUserSessions(userId: string): Promise<void> {
-  if (!isBetterAuthStack()) return;
   try {
     await db.session.deleteMany({ where: { userId } });
   } catch (err) {
@@ -541,9 +528,9 @@ export async function revokeUserSessions(userId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Cookie names (mirrors lib/auth-cookies.ts). The proxy and the client
-// sign-out path need them; attributes are pinned by the betterAuth config
-// (httpOnly + SameSite=Lax + Path=/ + Secure in prod — spike-verified).
+// Cookie names. The proxy and the client sign-out path need them;
+// attributes are pinned by the betterAuth config (httpOnly +
+// SameSite=Lax + Path=/ + Secure in prod — spike-verified).
 // ---------------------------------------------------------------------------
 
 export const BETTER_AUTH_COOKIE_NAMES = [

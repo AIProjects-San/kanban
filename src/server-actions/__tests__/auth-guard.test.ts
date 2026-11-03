@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // pinned by src/lib/__tests__/auth-better.test.ts at the real seam.)
 // ---------------------------------------------------------------------------
 
-const getBetterSession = vi.fn();
+const { getBetterSession } = vi.hoisted(() => ({ getBetterSession: vi.fn() }));
 vi.mock("@/lib/auth-better", () => ({
   getBetterSession,
   revokeUserSessions: vi.fn(),

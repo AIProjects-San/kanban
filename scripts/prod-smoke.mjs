@@ -10,9 +10,11 @@
 //   1. server boots and /api/health turns 200 (DB wired)
 //   2. GET / renders the login page (SSR HTML intact, email input present)
 //   3. security headers ship in the production build (HSTS, XFO, CSP+nonce)
-//   4. bad credentials are REJECTED (302 → error, no session cookie)
-//   5. full credential login succeeds (CSRF + bcrypt + DB + session mint)
-//   6. the session cookie renders the authenticated shell (not the login)
+//   4. bad credentials are REJECTED (401, no session cookie)
+//   5. full credential login succeeds (Better Auth /sign-in/email + bcrypt
+//      + DB + session mint; fernly.session_token posture checked)
+//   6. the session cookie renders the authenticated shell, resolves the
+//      user on get-session, and sign-out expires it
 //   7. /api/health?detail=1 honours the CRON_SECRET gate
 //   8. /api/metrics refuses anonymous callers and serves Prometheus text
 //      to authorized ones (or reports 503-disabled when CRON_SECRET unset)
@@ -91,26 +93,19 @@ async function waitForHealth(timeoutMs) {
   return false;
 }
 
-/** Full credential login (CSRF fetch + POST callback), cookie-jar by hand. */
+/** Better Auth credential login (/api/auth-better/sign-in/email),
+ * cookie-jar by hand. Returns the response + the fernly.session_token
+ * Set-Cookie (if any). */
 async function fullLogin(email, password) {
-  const csrfRes = await fetch(`${BASE}/api/auth/csrf`);
-  const { csrfToken } = await csrfRes.json();
-  const csrfCookie = (csrfRes.headers.getSetCookie() ?? [])
-    .map((c) => c.split(";")[0])
-    .join("; ");
-  const res = await fetch(`${BASE}/api/auth/callback/credentials`, {
+  const res = await fetch(`${BASE}/api/auth-better/sign-in/email`, {
     method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      ...(csrfCookie ? { cookie: csrfCookie } : {}),
-    },
-    body: new URLSearchParams({ csrfToken, email, password }),
-    redirect: "manual",
+    headers: { "content-type": "application/json", origin: BASE },
+    body: JSON.stringify({ email, password }),
   });
   await res.arrayBuffer();
   const setCookies = res.headers.getSetCookie() ?? [];
   const sessionCookie = setCookies.find((c) =>
-    /next-auth\.session-token/.test(c.split(";")[0]),
+    /fernly\.session_token=/.test(c.split(";")[0]),
   );
   return { res, sessionCookie };
 }
@@ -135,7 +130,7 @@ const child = spawn(process.execPath, [STANDALONE], {
     HOSTNAME: "127.0.0.1",
     NODE_ENV: "production",
     // The app's boot contract requires a secret; .env normally has one.
-    NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || fileEnv.NEXTAUTH_SECRET,
+    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || fileEnv.BETTER_AUTH_SECRET,
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -201,25 +196,30 @@ try {
 
   // 4: bad credentials are rejected without minting a session.
   const bad = await fullLogin(EMAIL, "definitely-wrong-password");
-  const badLoc = bad.res.headers.get("location") ?? "";
   check(
-    "bad credentials rejected (302 → error, no session cookie)",
-    bad.res.status === 302 &&
-      /error=/i.test(badLoc) &&
-      !bad.sessionCookie,
-    `status ${bad.res.status}, location ${badLoc.slice(0, 60)}`,
+    "bad credentials rejected (401, no session cookie)",
+    bad.res.status === 401 && !bad.sessionCookie,
+    `status ${bad.res.status}`,
   );
 
   // 5: real credentials mint a session.
   const good = await fullLogin(EMAIL, PASSWORD);
-  const goodLoc = good.res.headers.get("location") ?? "";
   check(
-    "credential login succeeds (302 home + session cookie)",
-    good.res.status === 302 && !/error=|signin/i.test(goodLoc) && !!good.sessionCookie,
-    `status ${good.res.status}, location ${goodLoc.slice(0, 60)}`,
+    "credential login succeeds (200 + fernly.session_token cookie)",
+    good.res.status === 200 && !!good.sessionCookie,
+    `status ${good.res.status}`,
   );
+  if (good.sessionCookie) {
+    check(
+      "session cookie posture (httpOnly, SameSite=Lax)",
+      /httponly/i.test(good.sessionCookie) && /samesite=lax/i.test(good.sessionCookie),
+      good.sessionCookie.split(";").slice(1).join(";").trim(),
+    );
+  }
 
-  // 6: the session cookie renders the authenticated shell.
+  // 6: the session cookie renders the authenticated shell, resolves the
+  // user on get-session, and sign-out expires it (the full credential
+  // contract on the Better Auth stack — the only stack since PR-49).
   if (good.sessionCookie) {
     const authed = await fetch(`${BASE}/`, {
       headers: { cookie: good.sessionCookie.split(";")[0] },
@@ -236,76 +236,37 @@ try {
       inlineStyleViolations(authedHtml) === 0,
       `${inlineStyleViolations(authedHtml)} violation(s)`,
     );
-  }
 
-  // 5b–6b (PR-48, auth migration Phase 2): the SAME credential contract on
-  // the Better Auth parallel stack — the plan requires the login checks to
-  // run against both stacks. These endpoints are always mounted
-  // (/api/auth-better/*) regardless of NEXT_PUBLIC_AUTH_STACK, so the smoke
-  // validates the parallel stack in every build. (The flag-ON app-shell
-  // path is covered by the @auth-better e2e suite, which runs the UI with
-  // the stack flipped.)
-  {
-    const betterLogin = async (email, password) => {
-      const res = await fetch(`${BASE}/api/auth-better/sign-in/email`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: BASE },
-        body: JSON.stringify({ email, password }),
-      });
-      await res.arrayBuffer();
-      const setCookies = res.headers.getSetCookie() ?? [];
-      const sessionCookie = setCookies.find((c) =>
-        /fernly\.session_token=/.test(c.split(";")[0]),
-      );
-      return { res, sessionCookie };
-    };
-
-    const betterBad = await betterLogin(EMAIL, "definitely-wrong-password");
+    const sessionRes = await fetch(`${BASE}/api/auth-better/get-session`, {
+      headers: { cookie: good.sessionCookie.split(";")[0] },
+    });
+    const sessionBody = await sessionRes.json().catch(() => null);
     check(
-      "better stack: bad credentials rejected (401, no fernly cookie)",
-      betterBad.res.status === 401 && !betterBad.sessionCookie,
-      `status ${betterBad.res.status}`,
+      "session cookie resolves the user on get-session",
+      sessionRes.status === 200 && sessionBody?.user?.email === EMAIL,
+      `status ${sessionRes.status}`,
     );
 
-    const betterGood = await betterLogin(EMAIL, PASSWORD);
+    const outRes = await fetch(`${BASE}/api/auth-better/sign-out`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: BASE,
+        cookie: good.sessionCookie.split(";")[0],
+      },
+      body: "{}",
+    });
+    const outCookies = outRes.headers.getSetCookie() ?? [];
     check(
-      "better stack: credential login succeeds (200 + fernly.session_token)",
-      betterGood.res.status === 200 && !!betterGood.sessionCookie,
-      `status ${betterGood.res.status}`,
+      "sign-out expires the session cookie",
+      outRes.status === 200 &&
+        outCookies.some(
+          (c) =>
+            /fernly\.session_token=;/.test(c.split(";")[0] + ";") ||
+            (/fernly\.session_token=/.test(c) && /Max-Age=0/i.test(c)),
+        ),
+      `status ${outRes.status}`,
     );
-
-    if (betterGood.sessionCookie) {
-      const sessionRes = await fetch(`${BASE}/api/auth-better/get-session`, {
-        headers: { cookie: betterGood.sessionCookie.split(";")[0] },
-      });
-      const sessionBody = await sessionRes.json().catch(() => null);
-      check(
-        "better stack: session cookie resolves the user on get-session",
-        sessionRes.status === 200 && sessionBody?.user?.email === EMAIL,
-        `status ${sessionRes.status}`,
-      );
-
-      const outRes = await fetch(`${BASE}/api/auth-better/sign-out`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin: BASE,
-          cookie: betterGood.sessionCookie.split(";")[0],
-        },
-        body: "{}",
-      });
-      const outCookies = outRes.headers.getSetCookie() ?? [];
-      check(
-        "better stack: sign-out expires the session cookie",
-        outRes.status === 200 &&
-          outCookies.some(
-            (c) =>
-              /fernly\.session_token=;/.test(c.split(";")[0] + ";") ||
-              (/fernly\.session_token=/.test(c) && /Max-Age=0/i.test(c)),
-          ),
-        `status ${outRes.status}`,
-      );
-    }
   }
 
   // 7: health detail honours the CRON_SECRET gate.
