@@ -136,17 +136,22 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
     }
   }, [user?.settings, user?.settings?.accent, user?.settings?.dark, setAccent, setDark]);
 
-  // Loading state
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-      </div>
-    );
-  }
-
-  // Not authenticated → show login
-  if (status === "unauthenticated" || !session || !user) {
+  // Not authenticated → show login.
+  //
+  // SSR parity (post PR-49 flip): gate on the SERVER-resolved session first.
+  // page.tsx resolves the session via getBetterSession() at request time and
+  // passes user === null for anonymous requests, so the login screen (with
+  // the email input) lands in the server-rendered HTML instead of a spinner
+  // that waits for the client session store to settle — which had regressed
+  // SSR-only rendering during the Better Auth flip (prod-smoke caught it).
+  // The client session takes over once it settles: a server-known user
+  // renders the shell immediately, and a mid-session flip to
+  // "unauthenticated" still returns to the login screen.
+  if (
+    !user ||
+    status === "unauthenticated" ||
+    (status !== "loading" && !session)
+  ) {
     return <LoginScreen />;
   }
 

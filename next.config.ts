@@ -60,7 +60,14 @@ const fallbackCsp = fallbackCspDirectives.join("; ");
 const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
-  allowedDevOrigins: ["*.space-z.ai", "*.fcapp.run"],
+  // allowedDevOrigins — dev-server origin gate. Setting this key REPLACES the
+  // implicit localhost/127.0.0.1 allowance, so the loopback hosts must be
+  // listed explicitly or Next 16 dev origin-blocks its own HMR websocket
+  // (ERR_INVALID_HTTP_RESPONSE) and dev resources from the browser, which
+  // silently stalls client hydration — the page server-renders but never
+  // becomes interactive (found via agent-browser while verifying the post
+  // PR-49 SSR fix; bare hostnames cover any port).
+  allowedDevOrigins: ["*.space-z.ai", "*.fcapp.run", "localhost", "127.0.0.1"],
   async headers() {
     // HSTS (PR-36, production-readiness round 2 — roadmap §6.4): one year.
     // `includeSubDomains` and `preload` are OPT-IN via env because they are
