@@ -173,10 +173,10 @@ export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }:
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard icon={CheckCircle2} label="Tasks completed" value={tasksCompleted} delta="+12%" color="text-success" bg="bg-success/10" />
+        <MetricCard icon={CheckCircle2} label="Tasks completed" value={tasksCompleted} delta="+12%" color="text-emerald-700" bg="bg-success/10" />
         <MetricCard icon={Clock} label="Hours tracked" value={`${hoursTracked}h`} delta="+8%" color="text-primary" bg="bg-primary/10" />
-        <MetricCard icon={TrendingUp} label="On-time delivery" value={`${onTimeDelivery}%`} delta="+3%" color="text-blue-500" bg="bg-blue-500/10" />
-        <MetricCard icon={Gauge} label="Avg. cycle time" value={`${avgCycleTime}d`} delta="-0.3d" color="text-amber-500" bg="bg-amber-500/10" />
+        <MetricCard icon={TrendingUp} label="On-time delivery" value={`${onTimeDelivery}%`} delta="+3%" color="text-blue-600" bg="bg-blue-500/10" />
+        <MetricCard icon={Gauge} label="Avg. cycle time" value={`${avgCycleTime}d`} delta="-0.3d" color="text-amber-700" bg="bg-amber-500/10" />
       </div>
 
       {/* Throughput chart */}
@@ -340,7 +340,7 @@ function MetricCard({
         <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", bg)}>
           <Icon size={18} className={color} />
         </div>
-        <span className={cn("text-[0.625rem] font-semibold", color.startsWith("text-") ? color : "text-success")}>
+        <span className={cn("text-[0.625rem] font-semibold", color.startsWith("text-") ? color : "text-emerald-700")}>
           {delta}
         </span>
       </div>

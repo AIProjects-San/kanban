@@ -219,7 +219,9 @@ export function AuditView({ currentUser }: AuditViewProps) {
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {group.label}
                 </span>
-                <span className="text-[0.625rem] text-muted-foreground/60">
+                {/* PR-41 — /60 alpha on muted-foreground fails AA (≈2.6:1); the
+                    full token clears 4.5:1 (PR-39 measured 6.5:1). */}
+                <span className="text-[0.625rem] text-muted-foreground">
                   {group.entries.length} {group.entries.length === 1 ? "action" : "actions"}
                 </span>
                 <div className="flex-1 h-px bg-border" />

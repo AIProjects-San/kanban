@@ -204,19 +204,19 @@ export interface EntityBadgeMeta {
 }
 
 export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
-  TASK: { label: "Task", cls: "bg-blue-500/10 text-blue-500" },
+  TASK: { label: "Task", cls: "bg-blue-500/10 text-blue-700" },
   PROJECT: { label: "Project", cls: "bg-primary/10 text-primary" },
-  MEMBER: { label: "Member", cls: "bg-purple-500/10 text-purple-500" },
-  USER: { label: "User", cls: "bg-emerald-500/10 text-emerald-500" },
-  ROLE: { label: "Role", cls: "bg-amber-500/10 text-amber-500" },
-  EVENT: { label: "Event", cls: "bg-pink-500/10 text-pink-500" },
-  MESSAGE: { label: "Message", cls: "bg-cyan-500/10 text-cyan-500" },
-  REMINDER: { label: "Reminder", cls: "bg-orange-500/10 text-orange-500" },
-  TIME: { label: "Time", cls: "bg-indigo-500/10 text-indigo-500" },
+  MEMBER: { label: "Member", cls: "bg-purple-500/10 text-purple-700" },
+  USER: { label: "User", cls: "bg-emerald-500/10 text-emerald-700" },
+  ROLE: { label: "Role", cls: "bg-amber-500/10 text-amber-700" },
+  EVENT: { label: "Event", cls: "bg-pink-500/10 text-pink-700" },
+  MESSAGE: { label: "Message", cls: "bg-cyan-500/10 text-cyan-700" },
+  REMINDER: { label: "Reminder", cls: "bg-orange-500/10 text-orange-700" },
+  TIME: { label: "Time", cls: "bg-indigo-500/10 text-indigo-700" },
   AUTH: { label: "Auth", cls: "bg-muted text-muted-foreground" },
-  WORKSPACE: { label: "Workspace", cls: "bg-purple-500/10 text-purple-500" },
-  CONFIG: { label: "Config", cls: "bg-violet-500/10 text-violet-500" },
-  BUG: { label: "Bug", cls: "bg-red-500/10 text-red-500" },
+  WORKSPACE: { label: "Workspace", cls: "bg-purple-500/10 text-purple-700" },
+  CONFIG: { label: "Config", cls: "bg-violet-500/10 text-violet-700" },
+  BUG: { label: "Bug", cls: "bg-red-500/10 text-red-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {

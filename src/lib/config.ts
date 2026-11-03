@@ -143,10 +143,10 @@ export interface BugSeverityDef {
 }
 
 export const BUG_SEVERITIES: BugSeverityDef[] = [
-  { key: "CRITICAL", label: "Critical", badge: "bg-red-500/10 text-red-600 dark:text-red-400", dot: "bg-red-500" },
-  { key: "MAJOR", label: "Major", badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400", dot: "bg-orange-500" },
-  { key: "MINOR", label: "Minor", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
-  { key: "TRIVIAL", label: "Trivial", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", dot: "bg-zinc-400" },
+  { key: "CRITICAL", label: "Critical", badge: "bg-red-500/10 text-red-700 dark:text-red-400", dot: "bg-red-500" },
+  { key: "MAJOR", label: "Major", badge: "bg-orange-500/10 text-orange-700 dark:text-orange-400", dot: "bg-orange-500" },
+  { key: "MINOR", label: "Minor", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "TRIVIAL", label: "Trivial", badge: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-400", dot: "bg-zinc-400" },
 ];
 
 export const BUG_SEVERITY_LABELS: Record<BugSeverity, string> = Object.fromEntries(
@@ -164,10 +164,10 @@ export interface BugPriorityDef {
 }
 
 export const BUG_PRIORITIES: BugPriorityDef[] = [
-  { key: "P0", label: "P0 — Urgent", badge: "bg-red-500/10 text-red-600 dark:text-red-400" },
-  { key: "P1", label: "P1 — High", badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
-  { key: "P2", label: "P2 — Medium", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  { key: "P3", label: "P3 — Low", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" },
+  { key: "P0", label: "P0 — Urgent", badge: "bg-red-500/10 text-red-700 dark:text-red-400" },
+  { key: "P1", label: "P1 — High", badge: "bg-orange-500/10 text-orange-700 dark:text-orange-400" },
+  { key: "P2", label: "P2 — Medium", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-400" },
+  { key: "P3", label: "P3 — Low", badge: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-400" },
 ];
 
 export const BUG_PRIORITY_LABELS: Record<BugPriority, string> = Object.fromEntries(
@@ -182,13 +182,13 @@ export interface BugStatusDef {
 }
 
 export const BUG_STATUSES: BugStatusDef[] = [
-  { key: "NEW", label: "New", badge: "bg-blue-500/10 text-blue-600 dark:text-blue-400", dot: "bg-blue-500" },
-  { key: "TRIAGED", label: "Triaged", badge: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400", dot: "bg-indigo-500" },
-  { key: "IN_PROGRESS", label: "In Progress", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
-  { key: "IN_REVIEW", label: "In Review", badge: "bg-purple-500/10 text-purple-600 dark:text-purple-400", dot: "bg-purple-500" },
-  { key: "RESOLVED", label: "Resolved", badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
-  { key: "CLOSED", label: "Closed", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", dot: "bg-zinc-400" },
-  { key: "REOPENED", label: "Reopened", badge: "bg-red-500/10 text-red-600 dark:text-red-400", dot: "bg-red-500" },
+  { key: "NEW", label: "New", badge: "bg-blue-500/10 text-blue-700 dark:text-blue-400", dot: "bg-blue-500" },
+  { key: "TRIAGED", label: "Triaged", badge: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-400", dot: "bg-indigo-500" },
+  { key: "IN_PROGRESS", label: "In Progress", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "IN_REVIEW", label: "In Review", badge: "bg-purple-500/10 text-purple-700 dark:text-purple-400", dot: "bg-purple-500" },
+  { key: "RESOLVED", label: "Resolved", badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { key: "CLOSED", label: "Closed", badge: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-400", dot: "bg-zinc-400" },
+  { key: "REOPENED", label: "Reopened", badge: "bg-red-500/10 text-red-700 dark:text-red-400", dot: "bg-red-500" },
 ];
 
 export const BUG_STATUS_LABELS: Record<BugStatus, string> = Object.fromEntries(
@@ -239,10 +239,10 @@ export interface LeaveStatusDef {
 }
 
 export const LEAVE_STATUSES: LeaveStatusDef[] = [
-  { key: "PENDING", label: "Pending", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
-  { key: "APPROVED", label: "Approved", badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
-  { key: "REJECTED", label: "Rejected", badge: "bg-red-500/10 text-red-600 dark:text-red-400", dot: "bg-red-500" },
-  { key: "CANCELLED", label: "Cancelled", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", dot: "bg-zinc-400" },
+  { key: "PENDING", label: "Pending", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "APPROVED", label: "Approved", badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { key: "REJECTED", label: "Rejected", badge: "bg-red-500/10 text-red-700 dark:text-red-400", dot: "bg-red-500" },
+  { key: "CANCELLED", label: "Cancelled", badge: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-400", dot: "bg-zinc-400" },
 ];
 
 export const LEAVE_STATUS_LABELS: Record<LeaveStatus, string> = Object.fromEntries(
@@ -273,10 +273,10 @@ export interface ReviewStatusDef {
 }
 
 export const REVIEW_STATUSES: ReviewStatusDef[] = [
-  { key: "DRAFT", label: "Draft", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", dot: "bg-zinc-500" },
-  { key: "SUBMITTED", label: "Submitted", badge: "bg-blue-500/10 text-blue-600 dark:text-blue-400", dot: "bg-blue-500" },
-  { key: "REVIEWED", label: "Reviewed", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
-  { key: "ACKNOWLEDGED", label: "Acknowledged", badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { key: "DRAFT", label: "Draft", badge: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-400", dot: "bg-zinc-500" },
+  { key: "SUBMITTED", label: "Submitted", badge: "bg-blue-500/10 text-blue-700 dark:text-blue-400", dot: "bg-blue-500" },
+  { key: "REVIEWED", label: "Reviewed", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "ACKNOWLEDGED", label: "Acknowledged", badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
 ];
 
 export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = Object.fromEntries(

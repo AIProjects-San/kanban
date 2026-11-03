@@ -202,6 +202,7 @@ export function SettingsView({ user }: SettingsViewProps) {
                 checked={notif[item.key]}
                 onChange={(v) => toggleNotif(item.key, v)}
                 disabled={item.comingSoon}
+                label={item.label}
               />
             </div>
           ))}
@@ -241,7 +242,7 @@ export function SettingsView({ user }: SettingsViewProps) {
               <div className="text-sm font-medium text-foreground">Dark mode</div>
               <div className="text-xs text-muted-foreground">Use dark theme across the app</div>
             </div>
-            <Toggle checked={dark} onChange={(v) => { handleDarkChange(v); toast.success(v ? "Dark mode on" : "Light mode on"); }} />
+            <Toggle checked={dark} onChange={(v) => { handleDarkChange(v); toast.success(v ? "Dark mode on" : "Light mode on"); }} label="Dark mode" />
           </div>
         </div>
       </Section>
@@ -494,8 +495,7 @@ function SignOutAllDevicesButton() {
       <button
         type="button"
         onClick={() => setConfirm(true)}
-        className="f-btn f-btn-sm"
-        style={{ background: "var(--destructive)", color: "var(--destructive-foreground)" }}
+        className="f-btn f-btn-sm text-destructive border-destructive hover:bg-destructive/10"
       >
         Sign out all devices
       </button>
@@ -508,8 +508,7 @@ function SignOutAllDevicesButton() {
         type="button"
         onClick={revoke}
         disabled={revoking}
-        className="f-btn f-btn-sm"
-        style={{ background: "var(--destructive)", color: "var(--destructive-foreground)" }}
+        className="f-btn f-btn-sm text-destructive border-destructive hover:bg-destructive/10"
       >
         {revoking ? <><Loader2 size={14} className="animate-spin" /> Revoking…</> : "Yes, sign out everywhere"}
       </button>
