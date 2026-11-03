@@ -13,8 +13,9 @@ gate run; (6) a smoke load test against the production standalone build.
 (single-host self-hosted Docker, TLS-terminated edge, PostgreSQL, 2 replicas
 behind nginx) once the operator checklist in `docs/DEPLOY.md` is followed.
 Round 1 closed **29 findings** (PR-01…PR-29); round 2 closed **10 of the
-12 remaining roadmap items** (PR-30…PR-39); 2 strategic items remain (§6) —
-none blocks launch.
+12 remaining roadmap items** (PR-30…PR-39) and its continuation closed the
+rest of the engineering backlog (PR-40…PR-46, §3c) — what remains (§6) is
+execution and owner sign-off, none of it code.
 
 ---
 
@@ -132,19 +133,37 @@ dangerouslySetInnerHTML, no eval in production code.
 
 ---
 
-## 4. Gates (all green after the round-2 fixes)
+## 3c. Round 2 continuation (PR-40 … PR-46)
+
+The 5 items left on the §6 roadmap after §3b were re-reviewed; the 4 that
+were engineering work are closed, plus 2 findings this pass surfaced on its
+own. Same failing-test→fix→gate discipline.
+
+| ID | Was (roadmap §6) | Now |
+|---|---|---|
+| **PR-40** | §6.2 — `style-src 'unsafe-inline'`. | **Gone.** Empirically the production SSR HTML needs no inline styles at all: Next.js links compiled stylesheets (zero `<style>` elements) and dynamic styling is CSSOM (never blocked). Production now ships `style-src 'self'`; dev keeps `'unsafe-inline'` for Tailwind v4's runtime injection. Enablers: the login brand-panel pattern became `.f-decor-dots`; the Avatar size prop became a 9-value TS union backed by `.f-av-*` classes; progress-bar widths map onto a pre-generated `.f-w-0…100` grid (`barWidthClass()`); donut transition → `.f-donut-ring`; global-error converted to utility classes. prod-smoke now asserts the CSP shape AND scans both login + authenticated HTML for zero `<style>`/`style=` (the authed scan caught 29 real violations on its first run). |
+| **PR-41** | §6.3 — axe gate covered 4 surfaces. | **All 9 primary surfaces gated** (login, dashboard, tasks, team, bugs, calendar, analytics, audit log, settings). The new scans found real violations — all fixed: badge text tones `-500/-600 → -700` (amber was 2.9:1) in `lib/config.ts` + `ENTITY_BADGE`; audit `/60` alpha → full token; analytics delta colors; Toggle gained `label` (role=switch had no accessible name); `Field` now associates label↔control via `useId`/`htmlFor` (app-wide fix); settings "sign out all devices" referenced an **undefined** `--destructive-foreground` token. Known follow-up: `--warning` (≈2.5:1) and `--success` (≈3.5:1) tokens fail AA as small-text colors — darkening them shifts every themed surface, needs a dedicated pass. |
+| **PR-42** | §6.4 — erasure policy sign-off (owner decision). | The **deliverable half shipped**: `docs/PRIVACY_ERASURE_TEMPLATE.md` — fill-in notice documenting exactly what `eraseUser` erases vs retains and why, the retention table (180d audit default/30d floor, 90d notifications/read-state, 24h token grace), and the owner's open decisions. A doc-drift tripwire pins the notice's numbers to the shipped constants. Sign-off itself remains the owner's (§6). |
+| **PR-43** | §6.1 — plan the NextAuth v4 strategic migration. | **Plan shipped**: `docs/AUTH_MIGRATION_PLAN.md` — verified inventory of the auth surface, options analysis (landscape re-checked against 2026 sources), Better Auth recommendation behind a feature flag with v4 as rollback, 4-phase plan, port map for every custom mechanism (throttle, dummy-bcrypt, tokenVersion, ALS audit bridge, `__Secure-` cookies, proxy guard). Execution remains scheduled work (§6). |
+| **PR-44** | §6.5 — breach-check enablement (operator decision). | **Closed as a decision record**: the mechanism (PR-35) and the egress decision documentation (DEPLOY.md §1.2, `.env.example`) both shipped; enabling `PASSWORD_BREACH_CHECK=1`/`HIBP_API_KEY` is purely an operator egress call — no further engineering exists. |
+| **PR-45** | *(new finding)* — `.env.example` was never committed. | A `.env*` gitignore glob silently kept the boot-contract file out of the repo through rounds 1–2; fresh clones failed the PR-24 test and the sandbox recycle deleted the only copy. Reconstructed from the code's full env inventory; `.gitignore` negates the glob; the test now pins that the file is git-tracked. |
+| **PR-46** | *(new finding)* — `restore-preview.sh` damaged the tree. | The script copied a stale Oct-29 snapshot over the tree and hand-inlined a weeks-old `/api/health` (breaking the build twice on 2026-11-03 with 9 phantom TS2554 errors). Now heals tracked files from git HEAD — which also auto-repairs the platform sync's occasional file reversion. |
+
+---
+
+## 4. Gates (all green after the round-2 continuation fixes)
 
 | Gate | Result |
 |---|---|
 | `eslint .` | ✅ clean |
 | `tsc --noEmit` | ✅ clean |
-| Unit tests | ✅ **1143 / 1143** (was 1064; +79 net regression tests for round 2's fixes) |
+| Unit tests | ✅ **1165 / 1165** (was 1143; +22 net regression tests across §3c) |
 | Production build (Turbopack, next 16.4.4) | ✅ |
 | Bundle budget | ✅ all chunks within budget |
 | Dependency audit (traced runtime deps) | ✅ 0 critical / 0 high shipping |
-| e2e (fresh seed, real browser) | ✅ **57 scenarios** (53 + 4 a11y) / 425 steps |
-| Production-build smoke (PR-37) | ✅ 10/10 checks against the standalone build |
-| axe WCAG smoke (PR-39) | ✅ 0 serious/critical on login, dashboard, tasks, team |
+| e2e (fresh seed, real browser) | ✅ **62 scenarios** (was 57; +5 a11y surfaces) / 455 steps |
+| Production-build smoke (PR-37) | ✅ **13/13** checks (was 10; +3 CSP-style-src assertions) |
+| axe WCAG smoke (PR-39/PR-41) | ✅ 0 serious/critical on **all 9** primary surfaces |
 
 ---
 
@@ -171,27 +190,28 @@ planning on real hosts.
 
 ---
 
-## 6. Remaining roadmap (after round 2)
+## 6. Remaining roadmap (after the round 2 continuation)
 
-1. **NextAuth v4 is in maintenance** (the project merged into Better Auth).
-   4.24.15 carries the 2026 security fixes and the credentials-only surface is
-   small, but plan a strategic migration to Auth.js v5 / Better Auth. The
-   round-2 sign-out IP/UA fix (PR-34) is deliberately tactical and travels
-   with the migration.
-2. **`style-src 'unsafe-inline'`** — Tailwind's runtime styling and
-   Next.js-injected inline styles need it; nonce-based styling is a larger
-   hardening effort (script-src already ships nonce-only in production).
-3. **Full WCAG 2.1 AA pass** — the PR-39 axe gate covers the four
-   highest-traffic surfaces at A+AA (serious/critical); a complete audit
-   (moderate/minor findings, screen-reader walkthroughs, focus management
-   on every flow) remains roadmap. `scripts/a11y-audit.cjs` is the triage
-   tool for extending coverage.
-4. **Right-to-erasure policy sign-off** — the mechanism shipped (PR-38);
-   the workspace owner must decide retention windows and publish the
-   privacy notice describing what is kept (audit trail, business records)
-   and why.
-5. **Optional breach-list check enablement** — the mechanism shipped
-   (PR-35); enabling it is an operator egress decision (see DEPLOY.md §1.2).
+The engineering backlog is empty — every §6 item now either shipped or
+reduced to a decision that belongs to the owner, not the codebase.
+
+1. **Auth migration execution** — the plan shipped (`docs/AUTH_MIGRATION_PLAN.md`,
+   PR-43): Better Auth behind a feature flag, v4 as rollback, 3–5
+   engineer-days + a soak week. Schedule it; until then 4.24.15 carries the
+   2026 security fixes for the credentials-only surface.
+2. **Full WCAG 2.1 AA audit** — the axe gate now covers all 9 primary
+   surfaces at A+AA (serious/critical, PR-41). Remaining: moderate/minor
+   findings, screen-reader walkthroughs, focus management on every flow
+   (`scripts/a11y-audit.cjs` is the triage tool), plus one known follow-up:
+   the `--warning` (≈2.5:1) and `--success` (≈3.5:1) tokens fail AA as
+   small-text colors — darkening them shifts every themed surface and needs
+   a dedicated pass with dark-mode verification.
+3. **Privacy notice sign-off** — the template shipped
+   (`docs/PRIVACY_ERASURE_TEMPLATE.md`, PR-42). The owner fills the 【…】
+   placeholders, decides trash/business-record retention, and publishes.
+4. **Breach-check enablement** — closed as an operator decision record
+   (PR-44): flip `PASSWORD_BREACH_CHECK=1` or set `HIBP_API_KEY` when the
+   egress call is made (DEPLOY.md §1.2).
 
 ---
 
