@@ -6,6 +6,10 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
+import {
+  DEFAULT_AUDIT_RETENTION_DAYS,
+  MIN_AUDIT_RETENTION_DAYS,
+} from "../lib/audit-retention-config";
 
 const repoRoot = resolve(__dirname, "../..");
 
@@ -325,6 +329,29 @@ describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
     // committed files during recycles).
     expect(sh).toMatch(/git checkout -- \./);
     expect(sh).toMatch(/git status --porcelain/);
+  });
+
+  it("PR-42: the right-to-erasure privacy template exists and its retention numbers match the code", () => {
+    // The owner signs off and publishes this notice; if the constants change
+    // without the notice following, the published policy silently lies.
+    const doc = readFileSync(
+      resolve(repoRoot, "docs", "PRIVACY_ERASURE_TEMPLATE.md"),
+      "utf-8",
+    );
+    // Every placeholder must be resolved before publishing — this test only
+    // checks they are clearly MARKED (owner fills them in), not that they
+    // are gone.
+    expect(doc).toMatch(/【/);
+    expect(doc).toMatch(/eraseUser/);
+    expect(doc).toMatch(/two-step/);
+    // Retention numbers pinned to the shipped constants.
+    expect(doc).toMatch(new RegExp(`\\*\\*${DEFAULT_AUDIT_RETENTION_DAYS} days?\\*\\* by default`));
+    expect(doc).toMatch(new RegExp(`floor \\*\\*${MIN_AUDIT_RETENTION_DAYS} days?\\*\\*`));
+    // 90-day notification / read-state windows and the 24h token grace are
+    // module-private constants in audit-prune-core.ts — literal tripwires.
+    expect(doc).toMatch(/\*\*90 days\*\* after being read/);
+    expect(doc).toMatch(/\*\*24 hours\*\* after use/);
+    expect(doc).toMatch(/Erased user/);
   });
 });
 
