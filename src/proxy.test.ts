@@ -2,7 +2,7 @@
 // ^ jose's Node build does `plaintext instanceof Uint8Array`, which fails
 // across the jsdom/Node realm boundary. No DOM is needed here, so run this
 // file in a plain Node environment.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { encode, getToken } from "next-auth/jwt";
 
@@ -144,5 +144,48 @@ describe("proxy: getToken verification semantics", () => {
     expect(staleToken).toBeNull();
     expect(validToken).not.toBeNull();
     expect((validToken as Record<string, unknown>).email).toBe("demo@fernly.app");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-40 — style-src hardening. Production ships `style-src 'self'` with NO
+// 'unsafe-inline': Next.js injects zero inline <style> elements in the prod
+// build (verified against the standalone server), and the one SSR'd style
+// attribute (the login brand panel) became the f-decor-dots class. Client-side
+// style updates go through the CSSOM, which CSP never blocks. Development
+// keeps 'unsafe-inline' — Tailwind v4 injects styles at runtime for HMR.
+// The end-to-end guard (SSR HTML contains no <style> / style=" at all) lives
+// in scripts/prod-smoke.mjs.
+// ---------------------------------------------------------------------------
+
+describe("PR-40: CSP style-src — no unsafe-inline in production", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function cspForRequest() {
+    const res = await proxy(makeRequest(null));
+    return res.headers.get("content-security-policy") ?? "";
+  }
+
+  it("production ships style-src 'self' — no unsafe-inline", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const csp = await cspForRequest();
+    expect(csp).toMatch(/style-src 'self';/);
+    expect(csp).not.toMatch(/style-src[^;]*unsafe-inline/);
+  });
+
+  it("development keeps style-src 'unsafe-inline' (Tailwind v4 runtime injection)", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const csp = await cspForRequest();
+    expect(csp).toMatch(/style-src 'self' 'unsafe-inline'/);
+  });
+
+  it("production script-src stays nonce-only (no unsafe-eval / unsafe-inline)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const csp = await cspForRequest();
+    const scriptSrc = csp.match(/script-src[^;]*/)?.[0] ?? "";
+    expect(scriptSrc).toMatch(/nonce-/);
+    expect(scriptSrc).not.toMatch(/unsafe-(eval|inline)/);
   });
 });

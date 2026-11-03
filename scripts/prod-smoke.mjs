@@ -175,6 +175,30 @@ try {
     csp.includes("nonce-") && !csp.includes("unsafe-eval"),
   );
 
+  // PR-40 — style-src is hardened to 'self' (no unsafe-inline), and the SSR
+  // HTML proves it is safe: zero inline <style> elements and zero style=
+  // attributes outside <script> payloads on both the login page and the
+  // authenticated shell. Client-side dynamic styling goes through the CSSOM,
+  // which CSP never blocks.
+  const styleSrc = csp.match(/style-src[^;]*/)?.[0] ?? "";
+  check(
+    "CSP style-src has no unsafe-inline (PR-40)",
+    /^style-src 'self'$/.test(styleSrc),
+    styleSrc,
+  );
+  const stripScripts = (html) => html.replace(/<script[\s\S]*?<\/script>/g, "");
+  const inlineStyleViolations = (html) => {
+    const bare = stripScripts(html);
+    const tags = bare.match(/<style[\s>]/gi) ?? [];
+    const attrs = bare.match(/\sstyle="/g) ?? [];
+    return tags.length + attrs.length;
+  };
+  check(
+    "login SSR HTML: no inline <style> elements, no style= attributes (PR-40)",
+    inlineStyleViolations(homeHtml) === 0,
+    `${inlineStyleViolations(homeHtml)} violation(s)`,
+  );
+
   // 4: bad credentials are rejected without minting a session.
   const bad = await fullLogin(EMAIL, "definitely-wrong-password");
   const badLoc = bad.res.headers.get("location") ?? "";
@@ -206,6 +230,11 @@ try {
       "session cookie renders the app shell (no login form)",
       authed.status === 200 && !/type="email"/i.test(authedHtml),
       `status ${authed.status}`,
+    );
+    check(
+      "authed SSR HTML: no inline <style> elements, no style= attributes (PR-40)",
+      inlineStyleViolations(authedHtml) === 0,
+      `${inlineStyleViolations(authedHtml)} violation(s)`,
     );
   }
 

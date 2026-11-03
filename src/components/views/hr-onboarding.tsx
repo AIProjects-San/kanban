@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Section } from "../ui/section";
 import { Field } from "../ui/field";
 import { Modal } from "../ui/modal";
-import { cn } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/utils";
 import type { OnboardingChecklistT } from "@/lib/types";
 import {
   getOnboarding,
@@ -127,7 +127,7 @@ export function OnboardingTab() {
                 )}
               </div>
               <div className="h-1.5 rounded-full bg-muted overflow-hidden my-3" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-                <div className={cn("h-full rounded-full transition-all", pct >= 100 ? "bg-success" : "bg-primary")} style={{ width: `${pct}%` }} />
+                <div className={cn("h-full rounded-full transition-all", pct >= 100 ? "bg-success" : "bg-primary", barWidthClass(pct))} />
               </div>
               <div className="space-y-1.5">
                 {c.tasks.map((t) => (

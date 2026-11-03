@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import {
   FolderKanban, Plus, Edit3, Trash2, Calendar as CalIcon,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -169,8 +169,7 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
                   </div>
                   <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full bg-primary rounded-full transition-all"
-                      style={{ width: `${p.progress}%` }}
+                      className={cn("h-full bg-primary rounded-full transition-all", barWidthClass(p.progress))}
                     />
                   </div>
                 </div>
@@ -194,8 +193,7 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
                       {canEdit && (
                         <button
                           onClick={() => openProjectModal(p.id)}
-                          className="f-btn f-btn-ghost f-btn-icon"
-                          style={{ height: 28, width: 28 }}
+                          className="f-btn f-btn-ghost f-btn-icon h-7 w-7"
                           title="Edit project"
                           aria-label="Edit"
                         >
@@ -205,8 +203,7 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
                       {canDelete && (
                         <button
                           onClick={() => handleDelete(p)}
-                          className="f-btn f-btn-ghost f-btn-icon text-destructive"
-                          style={{ height: 28, width: 28 }}
+                          className="f-btn f-btn-ghost f-btn-icon h-7 w-7 text-destructive"
                           title="Delete project"
                           aria-label="Delete"
                         >

@@ -53,13 +53,11 @@ export default function GlobalError({
 
   return (
     <html lang="en" data-accent="forest">
-      <body
-        className="antialiased bg-background text-foreground"
-        style={{
-          fontFamily:
-            "var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif",
-        }}
-      >
+      {/* PR-40 — no inline style attributes: globals.css (imported above) sets
+          body { font-family: … } with a system fallback chain, so the crash
+          page stays styled under the hardened production CSP
+          (style-src 'self', no unsafe-inline). */}
+      <body className="antialiased bg-background text-foreground">
         <div
           role="alert"
           className="min-h-screen flex items-center justify-center p-6"
@@ -80,18 +78,11 @@ export default function GlobalError({
               </p>
             )}
             <div className="pt-2">
+              {/* PR-40 — utility classes instead of inline styles (CSP). */}
               <button
                 type="button"
                 onClick={() => reset()}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: "6px",
-                  background: "var(--primary)",
-                  color: "var(--primary-foreground)",
-                  border: "1px solid var(--border)",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                }}
+                className="px-4 py-2 rounded-md bg-primary text-primary-foreground border border-border cursor-pointer text-sm"
               >
                 Try again
               </button>

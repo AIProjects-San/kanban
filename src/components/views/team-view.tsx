@@ -6,7 +6,7 @@ import {
   CheckCircle2, Loader2, Calendar, TrendingUp, Send,
 } from "lucide-react";
 import { Avatar } from "../ui/avatar";
-import { cn } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/utils";
 import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
 import { sendMessage } from "@/server-actions/data";
@@ -139,9 +139,10 @@ function MemberCard({
   onProfile: () => void;
   onMessage: () => void;
 }) {
-  const workloadColor = member.workload >= 80 ? "var(--destructive)" :
-    member.workload >= 50 ? "var(--warning)" :
-    "var(--success)";
+  // PR-40 — closed tone set instead of var() strings (static classes, CSP).
+  const workloadTone = member.workload >= 80 ? "bg-destructive" :
+    member.workload >= 50 ? "bg-warning" :
+    "bg-success";
 
   return (
     <div className="f-card f-card-hover p-5">
@@ -172,8 +173,7 @@ function MemberCard({
         </div>
         <div className="h-1.5 rounded-full bg-muted overflow-hidden">
           <div
-            className="h-full rounded-full transition-all"
-            style={{ width: `${member.workload}%`, background: workloadColor }}
+            className={cn("h-full rounded-full transition-all", workloadTone, barWidthClass(member.workload))}
           />
         </div>
       </div>
@@ -246,8 +246,8 @@ function ProfileDrawer({
     .sort((a, b) => b.hours - a.hours)
     .slice(0, 5);
 
-  const workloadColor = member.workload >= 80 ? "var(--destructive)" :
-    member.workload >= 50 ? "var(--warning)" : "var(--success)";
+  const workloadTone = member.workload >= 80 ? "bg-destructive" :
+    member.workload >= 50 ? "bg-warning" : "bg-success";
 
   const deptLabel = member.department.charAt(0) + member.department.slice(1).toLowerCase();
 
@@ -329,8 +329,7 @@ function ProfileDrawer({
               </div>
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div
-                  className="h-full rounded-full transition-all"
-                  style={{ width: `${member.workload}%`, background: workloadColor }}
+                  className={cn("h-full rounded-full transition-all", workloadTone, barWidthClass(member.workload))}
                 />
               </div>
               <p className="text-[0.625rem] text-muted-foreground mt-1">
@@ -413,7 +412,7 @@ function ProfileDrawer({
                           <span className="text-muted-foreground tabular-nums shrink-0">{p.hours}h · {pct}%</span>
                         </div>
                         <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                          <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                          <div className={cn("h-full bg-primary rounded-full", barWidthClass(pct))} />
                         </div>
                       </div>
                     );

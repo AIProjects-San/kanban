@@ -22,6 +22,15 @@ describe("L-P0-3 error boundary / loading / not-found files exist", () => {
     expect(typeof mod.default).toBe("function");
   });
 
+  it("PR-40: global-error renders without inline style attributes (CSP style-src 'self')", () => {
+    // global-error replaces the ENTIRE document, so it cannot lean on layout
+    // classes alone — but it imports globals.css, so utility classes resolve.
+    // Inline style attributes would be blocked by the hardened production CSP
+    // (style-src 'self', no unsafe-inline) and render the crash page unstyled.
+    const src = readFileSync(resolve(__dirname, "..", "global-error.tsx"), "utf-8");
+    expect(src).not.toMatch(/style=\{\{/);
+  });
+
   it("src/app/global-error.tsx exists, is a client component, and has a default export", () => {
     // Read on disk — importing pulls in globals.css which jsdom can't parse.
     const filePath = resolve(__dirname, "..", "global-error.tsx");

@@ -159,8 +159,7 @@ export function CalendarView({ events }: CalendarViewProps) {
                     {dayEvents.slice(0, 3).map((e) => (
                       <div
                         key={e.id}
-                        className={cn("text-[0.625rem] px-1 py-0.5 rounded truncate", EVENT_TYPE_MAP[e.type as EventType].bg)}
-                        style={{ color: "var(--foreground)" }}
+                        className={cn("text-[0.625rem] px-1 py-0.5 rounded truncate text-foreground", EVENT_TYPE_MAP[e.type as EventType].bg)}
                       >
                         <span className={cn("inline-block w-1.5 h-1.5 rounded-full mr-1", EVENT_TYPE_MAP[e.type as EventType].dot)} />
                         {e.title}

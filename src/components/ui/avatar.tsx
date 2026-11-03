@@ -2,10 +2,17 @@
 
 import { cn } from "@/lib/utils";
 
+// PR-40 — the size set is closed on purpose: every size renders as a static
+// `.f-av-<size>` class (globals.css) instead of an inline style attribute,
+// so the production CSP can ship `style-src 'self'` without 'unsafe-inline'.
+// Adding a size = add the class trio in globals.css, then extend this union.
+export const AVATAR_SIZES = [18, 20, 24, 28, 32, 36, 40, 48, 64] as const;
+export type AvatarSize = (typeof AVATAR_SIZES)[number];
+
 interface AvatarProps {
   name: string;
   color?: string;
-  size?: number;
+  size?: AvatarSize;
   className?: string;
   online?: boolean;
 }
@@ -18,20 +25,14 @@ export function Avatar({ name, color = "forest", size = 32, className, online }:
     .slice(0, 2)
     .toUpperCase();
   return (
-    <span className={cn("relative inline-flex", className)} style={{ width: size, height: size }}>
-      <span
-        className={cn("f-avatar", `f-avatar-${color}`)}
-        style={{ width: size, height: size, fontSize: size * 0.36 }}
-      >
-        {initials}
-      </span>
+    <span className={cn("relative inline-flex", `f-av-${size}`, className)}>
+      <span className={cn("f-avatar", `f-avatar-${color}`)}>{initials}</span>
       {online !== undefined && (
         <span
           className={cn(
-            "absolute bottom-0 right-0 rounded-full border-2 border-white",
-            online ? "bg-emerald-500" : "bg-zinc-400"
+            "f-av-dot absolute bottom-0 right-0 rounded-full border-2 border-white",
+            online ? "bg-emerald-500" : "bg-zinc-400",
           )}
-          style={{ width: size * 0.28, height: size * 0.28 }}
         />
       )}
     </span>

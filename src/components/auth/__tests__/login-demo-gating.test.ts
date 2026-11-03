@@ -100,6 +100,18 @@ describe("L-P0-12 login screen demo gating (src/components/auth/login-screen.tsx
     expect(src).toMatch(/\{SEED_DEMO && DEMO_ACCOUNTS\.length > 0 && \(/);
   });
 
+  it("PR-40: brand panel pattern is a class, not an inline style (CSP style-src 'self')", () => {
+    // login-screen is the ONLY SSR surface that ever shipped a style=
+    // attribute (the decorative dot pattern on the right panel). With the
+    // hardened production CSP (style-src 'self', no unsafe-inline) it must
+    // stay a utility class (f-decor-dots) — the end-to-end guard is the
+    // prod-smoke HTML scan; this tripwire catches regressions at the source.
+    expect(src).not.toMatch(/style=\{\{/);
+    expect(src).toMatch(/f-decor-dots/);
+    const globals = readFileSync(resolve(__dirname, "../../../app/globals.css"), "utf-8");
+    expect(globals).toMatch(/\.f-decor-dots\s*\{/);
+  });
+
   it("does not leak demo credentials in the error toast when SEED_DEMO is off", () => {
     expect(src).toMatch(/Invalid email or password\./);
     expect(src).toMatch(/SEED_DEMO\s*\?\s*["`].*Try a demo account below/);

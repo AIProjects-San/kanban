@@ -224,6 +224,158 @@
   .f-avatar-plum { background: var(--avatar-plum); }
   .f-avatar-ember { background: var(--avatar-ember); }
   .f-avatar-slate { background: var(--avatar-slate); }
+
+  /* PR-40 — decorative dot pattern for the login brand panel. Extracted
+     from an inline style attribute so the production CSP can ship
+     `style-src 'self'` without 'unsafe-inline' (CSP blocks SSR'd style
+     attributes; the class is the static, hashable form). */
+  .f-decor-dots {
+    background-image:
+      radial-gradient(circle at 25% 30%, white 1px, transparent 1px),
+      radial-gradient(circle at 75% 70%, white 1px, transparent 1px);
+    background-size: 60px 60px, 40px 40px;
+  }
+
+  /* PR-40 — avatar size classes. The Avatar component constrains its size
+     prop to this exact set (TS union), so every size is static CSS. Child
+     rules derive the initials font (0.36x) and presence-dot (0.28x) sizes
+     that used to be inline style attributes. */
+  .f-av-18 { width: 18px; height: 18px; }
+  .f-av-18 > .f-avatar { width: 100%; height: 100%; font-size: 6.48px; }
+  .f-av-18 > .f-av-dot { width: 5.04px; height: 5.04px; }
+  .f-av-20 { width: 20px; height: 20px; }
+  .f-av-20 > .f-avatar { width: 100%; height: 100%; font-size: 7.2px; }
+  .f-av-20 > .f-av-dot { width: 5.6px; height: 5.6px; }
+  .f-av-24 { width: 24px; height: 24px; }
+  .f-av-24 > .f-avatar { width: 100%; height: 100%; font-size: 8.64px; }
+  .f-av-24 > .f-av-dot { width: 6.72px; height: 6.72px; }
+  .f-av-28 { width: 28px; height: 28px; }
+  .f-av-28 > .f-avatar { width: 100%; height: 100%; font-size: 10.08px; }
+  .f-av-28 > .f-av-dot { width: 7.84px; height: 7.84px; }
+  .f-av-32 { width: 32px; height: 32px; }
+  .f-av-32 > .f-avatar { width: 100%; height: 100%; font-size: 11.52px; }
+  .f-av-32 > .f-av-dot { width: 8.96px; height: 8.96px; }
+  .f-av-36 { width: 36px; height: 36px; }
+  .f-av-36 > .f-avatar { width: 100%; height: 100%; font-size: 12.96px; }
+  .f-av-36 > .f-av-dot { width: 10.08px; height: 10.08px; }
+  .f-av-40 { width: 40px; height: 40px; }
+  .f-av-40 > .f-avatar { width: 100%; height: 100%; font-size: 14.4px; }
+  .f-av-40 > .f-av-dot { width: 11.2px; height: 11.2px; }
+  .f-av-48 { width: 48px; height: 48px; }
+  .f-av-48 > .f-avatar { width: 100%; height: 100%; font-size: 17.28px; }
+  .f-av-48 > .f-av-dot { width: 13.44px; height: 13.44px; }
+  .f-av-64 { width: 64px; height: 64px; }
+  .f-av-64 > .f-avatar { width: 100%; height: 100%; font-size: 23.04px; }
+  .f-av-64 > .f-av-dot { width: 17.92px; height: 17.92px; }
+  /* PR-40 — donut ring transition (was an inline style on <circle>). */
+  .f-donut-ring { transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+
+  /* PR-40 — 1%-step width grid for progress bars. Bar widths are data
+     (0-100%), which cannot be a static class — but a pre-generated grid
+     CAN: barWidthClass() in src/lib/utils.ts rounds to the nearest step,
+     so SSR HTML carries only class names and the hardened CSP
+     (style-src 'self', no unsafe-inline) holds without FOUC. */
+  .f-w-0 { width: 0%; }
+  .f-w-1 { width: 1%; }
+  .f-w-2 { width: 2%; }
+  .f-w-3 { width: 3%; }
+  .f-w-4 { width: 4%; }
+  .f-w-5 { width: 5%; }
+  .f-w-6 { width: 6%; }
+  .f-w-7 { width: 7%; }
+  .f-w-8 { width: 8%; }
+  .f-w-9 { width: 9%; }
+  .f-w-10 { width: 10%; }
+  .f-w-11 { width: 11%; }
+  .f-w-12 { width: 12%; }
+  .f-w-13 { width: 13%; }
+  .f-w-14 { width: 14%; }
+  .f-w-15 { width: 15%; }
+  .f-w-16 { width: 16%; }
+  .f-w-17 { width: 17%; }
+  .f-w-18 { width: 18%; }
+  .f-w-19 { width: 19%; }
+  .f-w-20 { width: 20%; }
+  .f-w-21 { width: 21%; }
+  .f-w-22 { width: 22%; }
+  .f-w-23 { width: 23%; }
+  .f-w-24 { width: 24%; }
+  .f-w-25 { width: 25%; }
+  .f-w-26 { width: 26%; }
+  .f-w-27 { width: 27%; }
+  .f-w-28 { width: 28%; }
+  .f-w-29 { width: 29%; }
+  .f-w-30 { width: 30%; }
+  .f-w-31 { width: 31%; }
+  .f-w-32 { width: 32%; }
+  .f-w-33 { width: 33%; }
+  .f-w-34 { width: 34%; }
+  .f-w-35 { width: 35%; }
+  .f-w-36 { width: 36%; }
+  .f-w-37 { width: 37%; }
+  .f-w-38 { width: 38%; }
+  .f-w-39 { width: 39%; }
+  .f-w-40 { width: 40%; }
+  .f-w-41 { width: 41%; }
+  .f-w-42 { width: 42%; }
+  .f-w-43 { width: 43%; }
+  .f-w-44 { width: 44%; }
+  .f-w-45 { width: 45%; }
+  .f-w-46 { width: 46%; }
+  .f-w-47 { width: 47%; }
+  .f-w-48 { width: 48%; }
+  .f-w-49 { width: 49%; }
+  .f-w-50 { width: 50%; }
+  .f-w-51 { width: 51%; }
+  .f-w-52 { width: 52%; }
+  .f-w-53 { width: 53%; }
+  .f-w-54 { width: 54%; }
+  .f-w-55 { width: 55%; }
+  .f-w-56 { width: 56%; }
+  .f-w-57 { width: 57%; }
+  .f-w-58 { width: 58%; }
+  .f-w-59 { width: 59%; }
+  .f-w-60 { width: 60%; }
+  .f-w-61 { width: 61%; }
+  .f-w-62 { width: 62%; }
+  .f-w-63 { width: 63%; }
+  .f-w-64 { width: 64%; }
+  .f-w-65 { width: 65%; }
+  .f-w-66 { width: 66%; }
+  .f-w-67 { width: 67%; }
+  .f-w-68 { width: 68%; }
+  .f-w-69 { width: 69%; }
+  .f-w-70 { width: 70%; }
+  .f-w-71 { width: 71%; }
+  .f-w-72 { width: 72%; }
+  .f-w-73 { width: 73%; }
+  .f-w-74 { width: 74%; }
+  .f-w-75 { width: 75%; }
+  .f-w-76 { width: 76%; }
+  .f-w-77 { width: 77%; }
+  .f-w-78 { width: 78%; }
+  .f-w-79 { width: 79%; }
+  .f-w-80 { width: 80%; }
+  .f-w-81 { width: 81%; }
+  .f-w-82 { width: 82%; }
+  .f-w-83 { width: 83%; }
+  .f-w-84 { width: 84%; }
+  .f-w-85 { width: 85%; }
+  .f-w-86 { width: 86%; }
+  .f-w-87 { width: 87%; }
+  .f-w-88 { width: 88%; }
+  .f-w-89 { width: 89%; }
+  .f-w-90 { width: 90%; }
+  .f-w-91 { width: 91%; }
+  .f-w-92 { width: 92%; }
+  .f-w-93 { width: 93%; }
+  .f-w-94 { width: 94%; }
+  .f-w-95 { width: 95%; }
+  .f-w-96 { width: 96%; }
+  .f-w-97 { width: 97%; }
+  .f-w-98 { width: 98%; }
+  .f-w-99 { width: 99%; }
+  .f-w-100 { width: 100%; }
 }
 
 /* Smooth view transitions */

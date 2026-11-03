@@ -169,10 +169,10 @@ export function LoginScreen() {
 
       {/* Right — brand panel */}
       <div className="hidden lg:flex flex-1 relative overflow-hidden bg-primary">
-        <div className="absolute inset-0 opacity-20" style={{
-          backgroundImage: `radial-gradient(circle at 25% 30%, white 1px, transparent 1px), radial-gradient(circle at 75% 70%, white 1px, transparent 1px)`,
-          backgroundSize: "60px 60px, 40px 40px",
-        }} />
+        {/* PR-40 — decorative dot pattern lives in tokens.css (.f-decor-dots)
+            so the production CSP can ship style-src 'self' without
+            'unsafe-inline'. */}
+        <div className="absolute inset-0 opacity-20 f-decor-dots" />
         <div className="relative flex flex-col justify-center px-12 text-primary-foreground">
           <Leaf size={48} className="mb-6" />
           <h2 className="text-4xl font-bold tracking-tight leading-tight max-w-md">

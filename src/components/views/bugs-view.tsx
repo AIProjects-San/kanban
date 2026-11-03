@@ -403,14 +403,13 @@ function BugColumn({
         </div>
         <button
           onClick={onAdd}
-          className="f-btn f-btn-ghost f-btn-icon"
-          style={{ height: 28, width: 28 }}
+          className="f-btn f-btn-ghost f-btn-icon h-7 w-7"
           aria-label={`Add to ${column.label}`}
         >
           <Plus size={14} />
         </button>
       </div>
-      <div className="flex-1 p-2 space-y-2 overflow-y-auto f-scroll" style={{ maxHeight: "calc(100vh - 320px)" }}>
+      <div className="flex-1 p-2 space-y-2 overflow-y-auto f-scroll max-h-[calc(100vh-320px)]">
         {bugs.map((bug) => (
           <BugCard key={bug.id} bug={bug} onOpen={() => onOpen(bug.id)} />
         ))}

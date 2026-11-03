@@ -14,11 +14,11 @@ import {
   Square,
   Timer,
 } from "lucide-react";
+import { cn, barWidthClass } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { Avatar } from "../ui/avatar";
 import { StatCard } from "../ui/stat-card";
 import { useApp } from "@/store/app-store";
-import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/use-permissions";
 import type { ProjectT, TeamMemberT, ReminderT, TaskT, NotificationT } from "@/lib/types";
@@ -122,9 +122,9 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
             <div className="flex items-center gap-6">
               <ProgressRing value={stats.weeklyCompletion} label="Weekly Completion" />
               <div className="flex-1 space-y-3">
-                <ProgressBar label="Project Ended" value={stats.projectEndedPct} color="var(--success)" />
-                <ProgressBar label="In Progress" value={Math.round((stats.running / Math.max(stats.total, 1)) * 100)} color="var(--primary)" />
-                <ProgressBar label="Pending" value={Math.round((stats.pending / Math.max(stats.total, 1)) * 100)} color="var(--warning)" />
+                <ProgressBar label="Project Ended" value={stats.projectEndedPct} tone="success" />
+                <ProgressBar label="In Progress" value={Math.round((stats.running / Math.max(stats.total, 1)) * 100)} tone="primary" />
+                <ProgressBar label="Pending" value={Math.round((stats.pending / Math.max(stats.total, 1)) * 100)} tone="warning" />
               </div>
             </div>
           </div>
@@ -162,8 +162,7 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
                     </div>
                     <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                       <div
-                        className="h-full bg-primary rounded-full transition-all"
-                        style={{ width: `${p.progress}%` }}
+                        className={cn("h-full bg-primary rounded-full transition-all", barWidthClass(p.progress))}
                       />
                     </div>
                   </div>
@@ -275,11 +274,11 @@ function ProgressRing({ value, label }: { value: number; label: string }) {
         <circle cx="60" cy="60" r={r} stroke="var(--muted)" strokeWidth="10" fill="none" />
         <circle
           cx="60" cy="60" r={r}
+          className="f-donut-ring"
           stroke="var(--primary)" strokeWidth="10" fill="none"
           strokeLinecap="round"
           strokeDasharray={c}
           strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1)" }}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -290,7 +289,15 @@ function ProgressRing({ value, label }: { value: number; label: string }) {
   );
 }
 
-function ProgressBar({ label, value, color }: { label: string; value: number; color: string }) {
+// PR-40 — tone is a closed set (backgrounds are static utility classes) and
+// the width maps onto the .f-w-0…100 grid; no inline style attributes, so the
+// hardened production CSP (style-src 'self') holds on the SSR'd dashboard.
+function ProgressBar({ label, value, tone }: { label: string; value: number; tone: "success" | "primary" | "warning" }) {
+  const toneClass = {
+    success: "bg-success",
+    primary: "bg-primary",
+    warning: "bg-warning",
+  }[tone];
   return (
     <div>
       <div className="flex items-center justify-between text-xs mb-1.5">
@@ -299,8 +306,7 @@ function ProgressBar({ label, value, color }: { label: string; value: number; co
       </div>
       <div className="h-2 rounded-full bg-muted overflow-hidden">
         <div
-          className="h-full rounded-full transition-all duration-700"
-          style={{ width: `${value}%`, background: color }}
+          className={cn("h-full rounded-full transition-all duration-700", toneClass, barWidthClass(value))}
         />
       </div>
     </div>

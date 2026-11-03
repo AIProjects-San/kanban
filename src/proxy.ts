@@ -74,10 +74,22 @@ function buildCsp(nonce: string): string {
   const connectSrc = isDev
     ? "connect-src 'self' ws:"
     : "connect-src 'self'";
+  // PR-40 — style-src hardened: production ships 'self' with NO
+  // 'unsafe-inline'. Verified empirically against the standalone build: the
+  // production SSR HTML contains zero inline <style> elements (Next.js links
+  // compiled stylesheets; Tailwind v4's runtime injection is dev-only) and
+  // the one historical style= attribute (the login brand panel) became the
+  // f-decor-dots class. Data-driven styling (progress widths, avatar colors)
+  // happens client-side via the CSSOM, which CSP never blocks — enforced
+  // end-to-end by the prod-smoke HTML scan. Development keeps
+  // 'unsafe-inline' because Tailwind v4 injects styles at runtime for HMR.
+  const styleSrc = isDev
+    ? "style-src 'self' 'unsafe-inline'"
+    : "style-src 'self'";
   const directives = [
     "default-src 'self'",
     scriptSrc,
-    "style-src 'self' 'unsafe-inline'",
+    styleSrc,
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     connectSrc,
