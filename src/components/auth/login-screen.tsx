@@ -103,10 +103,13 @@ export function LoginScreen() {
 
           <form onSubmit={submit} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-foreground mb-1.5">Email</label>
+              {/* PR-39 (a11y): htmlFor/id association — the labels existed but
+                  were never wired to the inputs (axe "label" critical). */}
+              <label htmlFor="login-email" className="block text-xs font-medium text-foreground mb-1.5">Email</label>
               <div className="relative">
                 <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input
+                  id="login-email"
                   type="email"
                   className="f-input pl-9"
                   value={email}
@@ -116,10 +119,11 @@ export function LoginScreen() {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground mb-1.5">Password</label>
+              <label htmlFor="login-password" className="block text-xs font-medium text-foreground mb-1.5">Password</label>
               <div className="relative">
                 <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input
+                  id="login-password"
                   type="password"
                   className="f-input pl-9"
                   value={password}

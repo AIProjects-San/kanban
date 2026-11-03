@@ -14,7 +14,7 @@ import {
 } from "@dnd-kit/core";
 import {
   Bug as BugIcon, Plus, Filter, Loader2,
-  ArrowRightLeft, UserPlus, MessageSquare, Trash2, Link2, FolderKanban,
+  ArrowRightLeft, UserPlus, MessageSquare, Trash2, Link2, FolderKanban, GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "next-auth/react";
@@ -438,10 +438,12 @@ function BugCard({ bug, dragging, onOpen }: { bug: BugCardData; dragging?: boole
   });
 
   return (
+    // PR-39 (a11y): same restructure as the task card — the card keeps
+    // pointer-drag but is no longer itself a role=button control; the title
+    // becomes the keyboard-open path and a grip handle carries keyboard-drag.
     <div
       ref={setNodeRef}
-      {...listeners}
-      {...attributes}
+      onPointerDown={listeners?.onPointerDown as unknown as React.PointerEventHandler}
       onClick={(e) => {
         // Only fire click if not dragging.
         if (!isDragging) {
@@ -450,7 +452,7 @@ function BugCard({ bug, dragging, onOpen }: { bug: BugCardData; dragging?: boole
         }
       }}
       className={cn(
-        "bg-card border border-border rounded-lg p-3 cursor-grab active:cursor-grabbing transition-shadow hover:shadow-md",
+        "group relative bg-card border border-border rounded-lg p-3 cursor-grab active:cursor-grabbing transition-shadow hover:shadow-md",
         (isDragging || dragging) && "opacity-40"
       )}
     >
@@ -465,9 +467,17 @@ function BugCard({ bug, dragging, onOpen }: { bug: BugCardData; dragging?: boole
           {bug.projectName}
         </div>
       )}
-      <div className="text-sm font-medium text-foreground leading-snug mb-2 line-clamp-2">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen?.();
+        }}
+        disabled={!onOpen}
+        className="block w-full text-left text-sm font-medium text-foreground leading-snug mb-2 line-clamp-2 enabled:hover:underline focus-visible:underline"
+      >
         {bug.title}
-      </div>
+      </button>
       {bug.taskTitle && (
         <div className="flex items-center gap-1 text-[0.625rem] text-muted-foreground mb-2 truncate">
           <Link2 size={10} className="shrink-0 text-primary/70" />
@@ -487,9 +497,20 @@ function BugCard({ bug, dragging, onOpen }: { bug: BugCardData; dragging?: boole
             <span className="text-[0.625rem] text-muted-foreground">Unassigned</span>
           )}
         </div>
-        <span className="text-[0.625rem] text-muted-foreground tabular-nums">
-          {new Date(bug.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short" })}
-        </span>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            {...attributes}
+            onKeyDown={listeners?.onKeyDown as unknown as React.KeyboardEventHandler}
+            aria-label={`Drag bug ${bug.title}`}
+            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-muted rounded p-0.5 cursor-grab"
+          >
+            <GripVertical size={14} className="text-muted-foreground" />
+          </button>
+          <span className="text-[0.625rem] text-muted-foreground tabular-nums">
+            {new Date(bug.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short" })}
+          </span>
+        </div>
       </div>
     </div>
   );

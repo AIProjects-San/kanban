@@ -47,7 +47,7 @@ export function Topbar({ notifs, messages, user, onMarkAllRead }: TopbarProps) {
       {/* Search */}
       <button
         onClick={() => setCmdkOpen(true)}
-        className="hidden md:flex items-center gap-2 h-9 px-3 w-72 bg-muted/60 border border-border rounded-lg text-sm text-muted-foreground hover:bg-muted transition-colors"
+        className="hidden md:flex items-center gap-2 h-9 px-3 w-72 bg-muted border border-border rounded-lg text-sm text-muted-foreground hover:bg-muted/80 transition-colors"
       >
         <Search size={15} />
         <span className="flex-1 text-left">Search or jump to…</span>
@@ -272,7 +272,7 @@ function NotificationsDropdown({
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.message}</div>
-                    <div className="text-[0.625rem] text-muted-foreground/70 mt-1">
+                    <div className="text-[0.625rem] text-muted-foreground mt-1">
                       {timeAgo(n.createdAt)}
                     </div>
                   </div>

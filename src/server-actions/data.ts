@@ -92,12 +92,13 @@ export {
   type SearchResults,
   type SearchHit,
 } from "./search";
-// L-P2-33 — trash / restore.
+// L-P2-33 — trash / restore. PR-38 adds the right-to-erasure hard erase.
 export {
   getTrash,
   restoreProject,
   restoreUser,
   restoreMessage,
+  eraseUser,
   type TrashItem,
 } from "./trash";
 // L-P2-35 — GDPR data export.

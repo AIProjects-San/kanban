@@ -27,6 +27,9 @@ vi.mock("@/server-actions/shared", () => ({
 
 vi.mock("@/lib/observability", () => ({
   captureError: vi.fn(),
+  logWarn: vi.fn(),
+  logInfo: vi.fn(),
+  log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 const SECRET = "x".repeat(32); // meets the ≥16-char minimum
@@ -39,9 +42,13 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CRON_SECRET = SECRET;
+    // PR-30 — force the in-memory lock backend so the overlap-guard tests
+    // are deterministic (no REDIS_URL → no shared-client construction).
+    delete process.env.REDIS_URL;
   });
   afterEach(() => {
     delete process.env.CRON_SECRET;
+    delete process.env.REDIS_URL;
     vi.resetModules();
   });
 
@@ -86,6 +93,8 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
     expect(body.purgedStaleMessageReads).toBe(0);
     // The prune result only carries counters — never audit contents.
     expect(JSON.stringify(body)).not.toMatch(/actorName|detail/);
+    // PR-30 — the response reports which lock backend guarded the run.
+    expect(body.lockBackend).toBe("memory");
     expect(res.headers.get("cache-control")).toMatch(/no-store/i);
   });
 
@@ -103,6 +112,9 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
     expect(second.status).toBe(200);
     const body = await second.json();
     expect(body.skipped).toBe(true);
+    expect(body.lockBackend).toBe("memory");
+    // PR-30 — the skip reason names the window for operators reading logs.
+    expect(body.reason).toMatch(/less than 60 minutes ago/);
   });
 
   it("returns 500 and captures the error when the prune throws", async () => {

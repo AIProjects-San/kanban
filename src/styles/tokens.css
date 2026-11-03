@@ -100,7 +100,12 @@
   --secondary: oklch(0.96 0.005 120);
   --secondary-foreground: oklch(0.30 0.02 150);
   --muted: oklch(0.96 0.005 120);
-  --muted-foreground: oklch(0.55 0.015 150);
+  /* PR-39 (a11y): 0.55 → 0.46. The old value measured ~4.4–4.6:1 on the
+     light surfaces — right at/below the WCAG AA 4.5:1 floor, and axe-core
+     flagged every muted label (weekday headers, filter pills, timestamps).
+     0.46 measures ≈ 6.5:1 on --background and ≈ 6:1 on --muted, with the
+     visual weight staying clearly "muted" against --foreground (0.21). */
+  --muted-foreground: oklch(0.46 0.015 150);
   --accent: oklch(var(--accent-l-soft) 0.06 var(--accent-h));
   --accent-foreground: oklch(var(--accent-l-base) var(--accent-s) var(--accent-h));
   --destructive: oklch(0.58 0.23 27);
@@ -201,11 +206,15 @@
    §7 Avatar palette — solid fills, shared by avatars and accent swatches.
    The TS mirror (src/styles/tokens.ts AVATAR_COLORS) MUST stay identical —
    tokens-sync.test.ts enforces it.
+   PR-39 (a11y): every fill darkened so the white initials (f-avatar uses
+   color: white) clear WCAG AA 4.5:1 — avatar initials are informative
+   text, not decoration. Old → new measured contrast vs white: forest
+   4.6→7.0, ocean 4.5→6.8, plum 5.2→8.0, ember 4.2→7.3, slate 6.0→8.4.
    --------------------------------------------------------------------------- */
 :root {
-  --avatar-forest: oklch(0.55 0.13 152);
-  --avatar-ocean: oklch(0.55 0.13 220);
-  --avatar-plum: oklch(0.55 0.15 320);
-  --avatar-ember: oklch(0.60 0.15 35);
-  --avatar-slate: oklch(0.50 0.02 250);
+  --avatar-forest: oklch(0.45 0.12 152);
+  --avatar-ocean: oklch(0.45 0.12 220);
+  --avatar-plum: oklch(0.45 0.13 320);
+  --avatar-ember: oklch(0.47 0.13 35);
+  --avatar-slate: oklch(0.42 0.02 250);
 }

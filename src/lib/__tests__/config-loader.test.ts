@@ -1,6 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
+// PR-31 (production-readiness round 2) — mock the Redis surface so the
+// pub/sub invalidation tests can capture the subscriber callback and
+// observe publishes. Defaults keep the existing suites on the pure
+// in-memory path (publisher undefined, subscriber disabled).
+// ---------------------------------------------------------------------------
+
+const redisMocks = vi.hoisted(() => {
+  const state = {
+    publish: vi.fn(async () => 1),
+    publisherEnabled: false,
+    subscriberEnabled: false,
+    onMessage: null as null | ((m: string) => void),
+    subscribeCalls: 0,
+  };
+  return state;
+});
+
+vi.mock("@/lib/redis-client", () => ({
+  getSharedRedisClient: vi.fn(() => undefined),
+  redisKeyPrefix: () => "app:",
+  configInvalidationChannel: () => "app:config:invalidate",
+  getSharedRedisPublisher: () =>
+    redisMocks.publisherEnabled ? { publish: redisMocks.publish } : undefined,
+  subscribeToConfigInvalidation: (cb: (m: string) => void) => {
+    redisMocks.subscribeCalls += 1;
+    if (!redisMocks.subscriberEnabled) return undefined;
+    redisMocks.onMessage = cb;
+    return { unsubscribe: () => undefined };
+  },
+}));
+
+// ---------------------------------------------------------------------------
 // Mock the Prisma client BEFORE importing the module under test.
 // ---------------------------------------------------------------------------
 
@@ -28,6 +60,7 @@ import {
   getWorkspaceConfig,
   hasPermissionDb,
   bumpConfigCache,
+  _resetConfigCacheForTests,
 } from "@/lib/config-loader";
 
 function stubEmptyTables() {
@@ -224,5 +257,82 @@ describe("hasPermissionDb", () => {
 
   it("returns false for unknown roles", async () => {
     expect(await hasPermissionDb("SUPERUSER", "task:create")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-31 (production-readiness round 2) — cross-instance cache invalidation
+// over Redis pub/sub. Roadmap §6.10: with 2 replicas, instance B only saw
+// instance A's config mutation after the 10 s TTL. Now bumpConfigCache
+// publishes on a channel and every instance's subscriber clears its local
+// cache on the message.
+// ---------------------------------------------------------------------------
+
+describe("cross-instance config invalidation (PR-31)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetConfigCacheForTests();
+    stubEmptyTables();
+    redisMocks.publish.mockClear();
+    redisMocks.publisherEnabled = false;
+    redisMocks.subscriberEnabled = false;
+    redisMocks.onMessage = null;
+    redisMocks.subscribeCalls = 0;
+  });
+
+  it("bumpConfigCache publishes an invalidation message when Redis is configured", async () => {
+    redisMocks.publisherEnabled = true;
+    bumpConfigCache();
+    // The publish rides along asynchronously (bump stays sync for callers).
+    await new Promise((r) => setTimeout(r, 0));
+    expect(redisMocks.publish).toHaveBeenCalledWith(
+      "app:config:invalidate",
+      expect.stringMatching(/^bump:/),
+    );
+  });
+
+  it("bumpConfigCache stays a local-only clear when Redis is not configured", async () => {
+    bumpConfigCache();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(redisMocks.publish).not.toHaveBeenCalled();
+  });
+
+  it("a publish failure never breaks the mutating server action", async () => {
+    redisMocks.publisherEnabled = true;
+    redisMocks.publish.mockRejectedValue(new Error("redis gone"));
+    expect(() => bumpConfigCache()).not.toThrow();
+    // Flush the rejected promise — the catch inside must swallow it.
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it("a pub/sub message from another instance clears the cached config", async () => {
+    redisMocks.subscriberEnabled = true;
+    await getWorkspaceConfig(); // starts the subscriber + caches
+    expect(redisMocks.subscribeCalls).toBe(1);
+    expect(redisMocks.onMessage).toBeTypeOf("function");
+
+    await getWorkspaceConfig(); // served from cache — no new DB read
+    expect(findFirst).toHaveBeenCalledTimes(1);
+
+    // Instance A mutated config and published — our cache must drop now.
+    redisMocks.onMessage!("bump:other-instance:1");
+    await getWorkspaceConfig();
+    expect(findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts the subscriber exactly once per process", async () => {
+    redisMocks.subscriberEnabled = true;
+    await getWorkspaceConfig();
+    await getWorkspaceConfig();
+    await getWorkspaceConfig();
+    expect(redisMocks.subscribeCalls).toBe(1);
+  });
+
+  it("without a subscriber handle (Redis unavailable) the TTL still governs", async () => {
+    await getWorkspaceConfig();
+    await getWorkspaceConfig();
+    expect(findFirst).toHaveBeenCalledTimes(1);
+    // No pub/sub message can arrive; nothing throws, cache holds.
+    expect(redisMocks.onMessage).toBeNull();
   });
 });

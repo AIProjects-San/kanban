@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { runMaintenancePurge } from "@/lib/audit-prune-core";
 import { captureError } from "@/lib/observability";
+import {
+  tryAcquireMaintenanceLock,
+  recordMaintenanceRun,
+} from "@/lib/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // Audit-log retention cron endpoint — closes launch gate 12 ("audit
@@ -19,20 +23,17 @@ import { captureError } from "@/lib/observability";
 //   • Requires a Bearer token that must match CRON_SECRET exactly
 //     (constant-time comparison).
 //   • Never returns audit contents — only the prune counters.
-//   • One-shot guard: a run is skipped when another prune ran within the
-//     last hour, so overlapping cron triggers cannot churn the table.
-//     ⚠️ P2 (production-readiness re-audit) — the lastRunAt guard is
-//     per-INSTANCE (module memory). With docker-compose replicas: 2 and
-//     the cron calling through nginx (which load-balances), the second
-//     replica won't see the first's lastRunAt. Practical impact is low
-//     (the prune is idempotent + batched + takes ~seconds), but the
-//     comment previously over-stated the guarantee. For true cross-
-//     instance dedup, move lastRunAt to Redis (`SET nx EX 3600`).
+//   • Overlap guard (PR-30, production-readiness round 2): a run is
+//     skipped when a maintenance pass ran within the last hour. The lock
+//     is a Redis `SET NX PX` key shared by ALL instances (the roadmap
+//     §6.3 item — previously the guard was per-instance module memory, so
+//     with 2 replicas behind nginx the cron could trigger one run per
+//     replica). Single-instance deployments (no REDIS_URL) keep the
+//     in-memory guard; a Redis outage fails open to it (a duplicated run
+//     beats silently stopping maintenance).
 // ---------------------------------------------------------------------------
 
 const MIN_INTERVAL_MS = 60 * 60 * 1_000; // 1 hour
-// P2 re-audit — per-instance. See header comment.
-let lastRunAt = 0;
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -66,22 +67,31 @@ async function handle(req: Request): Promise<NextResponse> {
     );
   }
 
-  const now = Date.now();
-  if (now - lastRunAt < MIN_INTERVAL_MS) {
+  // PR-30 — cross-instance overlap guard (Redis SET NX PX when REDIS_URL
+  // is set; in-memory per-instance guard otherwise). See maintenance-lock.
+  const lock = await tryAcquireMaintenanceLock({ minIntervalMs: MIN_INTERVAL_MS });
+  if (!lock.acquired) {
     return NextResponse.json(
-      { ok: true, skipped: true, reason: "a prune ran less than an hour ago" },
+      {
+        ok: true,
+        skipped: true,
+        reason: `a maintenance pass ran less than ${Math.round(MIN_INTERVAL_MS / 60000)} minutes ago`,
+        lockBackend: lock.backend,
+      },
       { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }
-  lastRunAt = now;
 
   try {
     // PR-17 — the daily pass is now full maintenance: audit retention PLUS
     // purges of expired password-reset tokens, read notifications and stale
     // message-read state (see audit-prune-core.ts).
     const data = await runMaintenancePurge();
+    // PR-30 — publish the last-run timestamp for /api/metrics (best-effort;
+    // omitted from metrics while Redis is down).
+    await recordMaintenanceRun();
     return NextResponse.json(
-      { ok: true, ...data },
+      { ok: true, lockBackend: lock.backend, ...data },
       { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {

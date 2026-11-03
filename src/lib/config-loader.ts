@@ -8,6 +8,12 @@ import {
 import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
 import { ROLE_PERMISSIONS, ROLE_LABELS, ROLE_DESCRIPTIONS } from "@/lib/rbac";
 import { DEFAULT_WORKSPACE_NAME } from "@/config/app";
+import {
+  getSharedRedisPublisher,
+  subscribeToConfigInvalidation,
+  configInvalidationChannel,
+} from "@/lib/redis-client";
+import { logWarn, logInfo } from "@/lib/observability";
 
 // ---------------------------------------------------------------------------
 // Types — the shape of the config object passed to the client.
@@ -106,25 +112,80 @@ export interface WorkspaceConfig {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory cache — the config rarely changes, so we cache it for 60s.
+// In-memory cache — the config rarely changes, so we cache it for 10s.
 // Calling `bumpConfigCache()` (after a config mutation) invalidates it.
+//
+// PR-31 (production-readiness round 2, roadmap §6.10) — instant
+// cross-instance invalidation. The 10 s TTL was the only way instance B
+// learned about instance A's config mutation (an admin's permission
+// revocation, a renamed status, …). bumpConfigCache() now ALSO publishes on
+// a Redis pub/sub channel; every instance's subscriber clears its local
+// cache on the message, shrinking the staleness window from ≤10 s to the
+// pub/sub round-trip. The TTL stays as a backstop (a lost message, a dead
+// subscriber, a Redis outage) — pub/sub is delivery-not-guaranteed, the
+// TTL is.
 // ---------------------------------------------------------------------------
 
 let cachedConfig: WorkspaceConfig | null = null;
 let cacheTime = 0;
-// P2 (production-readiness re-audit) — shortened from 60s to 10s. With 2
-// replicas, an admin's permission revocation is visible on instance A
-// immediately (via bumpConfigCache) but only on instance B after the TTL
-// expires. 60s was too long for a security-relevant cache (the RBAC ceiling
-// reads through this). 10s is a better tradeoff: still avoids hammering the
-// DB on every request, but caps the staleness window at a tolerable level.
-// For instant cross-instance invalidation, move bumpConfigCache to Redis
-// pub/sub (future work).
-const CACHE_TTL = 10_000; // 10 seconds
+const CACHE_TTL = 10_000; // 10 seconds (pub/sub backstop — see above)
 
-export function bumpConfigCache() {
+function clearLocalCache(): void {
   cachedConfig = null;
   cacheTime = 0;
+}
+
+/** Fire-and-forget: tell every instance (including future ones) to drop the cache. */
+async function publishConfigInvalidation(): Promise<void> {
+  try {
+    const publisher = getSharedRedisPublisher();
+    if (!publisher) return; // no Redis → single-instance, local clear suffices
+    await publisher.publish(
+      configInvalidationChannel(),
+      `bump:${process.pid}:${Date.now()}`,
+    );
+  } catch (err) {
+    // Delivery is best-effort; the TTL backstop covers a lost message.
+    logWarn("[config] cross-instance invalidation publish failed (TTL backstop applies)", {
+      metric: "config_invalidation_publish_failed",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+let invalidationSubscriberStarted = false;
+
+/** Lazily start the pub/sub listener — once per process, when Redis is configured. */
+function ensureInvalidationSubscriber(): void {
+  if (invalidationSubscriberStarted) return;
+  invalidationSubscriberStarted = true;
+  try {
+    const handle = subscribeToConfigInvalidation(() => {
+      // Another instance mutated config — drop our copy immediately.
+      clearLocalCache();
+    });
+    if (handle) {
+      logInfo("[config] cross-instance cache invalidation active (Redis pub/sub)");
+    }
+  } catch (err) {
+    logWarn("[config] failed to start the invalidation subscriber (TTL backstop applies)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** Invalidate the in-process config cache and notify every other instance. */
+export function bumpConfigCache() {
+  clearLocalCache();
+  // Void-intentional: bumpConfigCache stays synchronous for its server-action
+  // callers; the publish rides along asynchronously and never blocks them.
+  void publishConfigInvalidation();
+}
+
+/** Test-only: reset subscriber bookkeeping + the cache between cases. */
+export function _resetConfigCacheForTests(): void {
+  clearLocalCache();
+  invalidationSubscriberStarted = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +194,10 @@ export function bumpConfigCache() {
 // ---------------------------------------------------------------------------
 
 export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
+  // PR-31 — start the cross-instance invalidation listener on first use.
+  // No-op without REDIS_URL; a once-per-process guard makes this cheap.
+  ensureInvalidationSubscriber();
+
   if (cachedConfig && Date.now() - cacheTime < CACHE_TTL) {
     return cachedConfig;
   }

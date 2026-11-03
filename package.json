@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "cucumber-js -c e2e/cucumber.cjs",
+    "test:prodsmoke": "node scripts/prod-smoke.mjs",
     "bundle:check": "node scripts/check-bundle-budget.mjs",
     "audit:check": "node scripts/check-audit.mjs",
     "db:push": "bash scripts/run-with-env.sh bunx prisma db push",
@@ -61,5 +62,5 @@
     "typescript": "^5.9.3",
     "vitest": "^5.0.5"
   },
-  "description": "Fernly — project management workspace (Next.js 16 App Router, Prisma, NextAuth)"
+  "description": "Fernly \u2014 project management workspace (Next.js 16 App Router, Prisma, NextAuth)"
 }

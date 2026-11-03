@@ -137,12 +137,21 @@ export function CalendarView({ events }: CalendarViewProps) {
                     "min-h-[64px] sm:min-h-[80px] p-1.5 rounded-lg border text-left transition-colors",
                     "hover:border-primary/30 hover:bg-muted/40",
                     isSelected ? "border-primary bg-primary/5" : "border-border",
-                    !inMonth && "opacity-40"
+                    // PR-39 (a11y): out-of-month days used to get opacity-40
+                    // on the whole CELL, which dropped the day number and event
+                    // chips below WCAG contrast (axe color-contrast). The cell
+                    // stays clickable (it selects the date); only the TEXT is
+                    // muted now, and muted-foreground itself passes 4.5:1.
+                    !inMonth && "border-transparent"
                   )}
                 >
                   <div className={cn(
                     "inline-flex items-center justify-center text-xs font-medium w-6 h-6 rounded-full",
-                    isToday ? "bg-primary text-primary-foreground" : "text-foreground"
+                    isToday
+                      ? "bg-primary text-primary-foreground"
+                      : inMonth
+                        ? "text-foreground"
+                        : "text-muted-foreground"
                   )}>
                     {day.getDate()}
                   </div>

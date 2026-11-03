@@ -157,7 +157,7 @@ export function EntityHistorySection({
                   <div className="text-xs text-foreground mt-0.5 leading-snug">{log.detail}</div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <CircleDot size={9} className="text-muted-foreground/60" />
-                    <span className="text-[0.625rem] text-muted-foreground/70 font-mono">{log.action}</span>
+                    <span className="text-[0.625rem] text-muted-foreground font-mono">{log.action}</span>
                   </div>
                 </li>
               ))}

@@ -150,7 +150,7 @@ function MemberCard({
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold text-foreground truncate">{member.name}</div>
           <div className="text-xs text-muted-foreground truncate">{member.role}</div>
-          <div className="text-[0.625rem] text-muted-foreground/70 mt-0.5">{member.department}</div>
+          <div className="text-[0.625rem] text-muted-foreground mt-0.5">{member.department}</div>
         </div>
       </div>
 

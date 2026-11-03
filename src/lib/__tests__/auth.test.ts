@@ -451,6 +451,51 @@ describe("events.signOut", () => {
     await fn({ token: { id: "ghost" } } as never);
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
+
+  // PR-34 (production-readiness round 2) — the sign-out row records the
+  // source IP + user agent via the AsyncLocalStorage bridge set by the
+  // NextAuth route handler. Roadmap §6.6 closed.
+  it("includes ipAddress/userAgent when a request context is active (PR-34)", async () => {
+    const { runWithAuthRequestContext } = await import("@/lib/auth-request-context");
+    db.user.findUnique.mockResolvedValue({
+      id: "u-1",
+      name: "Ada",
+      role: "ADMIN",
+      email: "ada@fernly.dev",
+    });
+    db.auditLog.create.mockClear();
+    const fn = authOptions.events!.signOut!;
+
+    await runWithAuthRequestContext(
+      { ip: "203.0.113.7", userAgent: "Mozilla/5.0 (vitest)" },
+      () => fn({ token: { id: "u-1" } } as never),
+    );
+
+    expect(db.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "auth.signed_out",
+          ipAddress: "203.0.113.7",
+          userAgent: "Mozilla/5.0 (vitest)",
+        }),
+      }),
+    );
+  });
+
+  it("omits ipAddress/userAgent outside a request context (legacy row shape)", async () => {
+    db.user.findUnique.mockResolvedValue({
+      id: "u-1",
+      name: "Ada",
+      role: "ADMIN",
+      email: "ada@fernly.dev",
+    });
+    db.auditLog.create.mockClear();
+    const fn = authOptions.events!.signOut!;
+    await fn({ token: { id: "u-1" } } as never);
+    const call = db.auditLog.create.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(call.data.ipAddress).toBeUndefined();
+    expect(call.data.userAgent).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

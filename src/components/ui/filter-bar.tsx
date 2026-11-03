@@ -65,7 +65,7 @@ export function FilterBar({
           >
             {f.label}
             {f.count !== undefined && (
-              <span className="text-muted-foreground/70 ml-1">({f.count})</span>
+              <span className="text-muted-foreground ml-1">({f.count})</span>
             )}
           </button>
         ))}

@@ -45,11 +45,24 @@ services:
     # the eviction safety of allkeys-lru without ever dropping non-TTL state.
     # 64 MB is far beyond limiter needs; if Redis ever reports evictions
     # (INFO stats, evicted_keys > 0) something besides the limiter is using it.
-    command: redis-server --maxmemory 64mb --maxmemory-policy volatile-lru
+    #
+    # PR-33 (production-readiness round 2, roadmap §6.2) — optional
+    # requirepass: set REDIS_PASSWORD in .env to require AUTH on this
+    # Redis. Unset/empty keeps the current network-scoped, auth-free mode
+    # (redis-server treats an empty requirepass as disabled). ioredis (the
+    # app side) reads the password straight out of REDIS_URL — see the
+    # fernly-1 service below.
+    command: redis-server --maxmemory 64mb --maxmemory-policy volatile-lru --requirepass "${REDIS_PASSWORD:-}"
+    environment:
+      # Exposed to the container so the healthcheck can authenticate.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # PING must pass AUTH when a password is set; redis-cli prints a
+      # warning for -a which --no-auth-warning silences. With no password
+      # the plain `redis-cli ping` path is used.
+      test: ["CMD-SHELL", 'if [ -n "$REDIS_PASSWORD" ]; then redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi']
       interval: 10s
       timeout: 3s
       retries: 5
@@ -77,7 +90,13 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      REDIS_URL: "redis://redis:6379"
+      # PR-33 — the default URL embeds the (optional) REDIS_PASSWORD slot.
+      # Unset → redis://:@redis:6379 → ioredis sees a falsy password and
+      # never sends AUTH (verified against ioredis's URL parser). Set →
+      # redis://:<password>@redis:6379 → AUTH on connect. Operators can
+      # always override REDIS_URL wholesale from .env (e.g. an external
+      # managed Redis with TLS: rediss://...).
+      REDIS_URL: "${REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379}"
       SEED_DEMO: ""
       NODE_ENV: "production"
     depends_on:

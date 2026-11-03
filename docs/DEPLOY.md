@@ -51,14 +51,24 @@ MAIL_FROM="Fernly <onboarding@your-domain.example>"
 # Shared rate limiting across the 2 replicas.
 REDIS_URL=redis://redis:6379
 REDIS_KEY_PREFIX=fernly:
+# Optional (PR-33): require AUTH on the compose Redis. Setting this one
+# variable wires BOTH sides (redis-server --requirepass + the app URL).
+# REDIS_PASSWORD=$(openssl rand -base64 24)
 
-# Cron (daily maintenance at 03:00 UTC: audit retention + expired-token,
-# read-notification and stale read-state purges).
+# Cron + metrics (daily maintenance at 03:00 UTC: audit retention +
+# expired-token, read-notification and stale read-state purges; also the
+# bearer token for the /api/metrics Prometheus endpoint).
 CRON_SECRET=$(openssl rand -base64 32)
 
 # Optional but recommended.
 SENTRY_DSN=https://xxx@sentry.io/xxx
 SENTRY_ENVIRONMENT=production
+
+# Optional hardening — see .env.example for the full contract:
+#   PASSWORD_BREACH_CHECK=1 / HIBP_API_KEY  (breach-list password checks;
+#     egress to api.pwnedpasswords.com:443 required, PR-35)
+#   HSTS_INCLUDE_SUBDOMAINS=1 / HSTS_PRELOAD=1  (irreversible — only when
+#     every subdomain serves HTTPS, PR-36)
 ```
 
 ### 1.3 Build + start
@@ -133,6 +143,11 @@ values needed. Every other column has a default too.)
 - Sign in as the admin.
 - Verify the dashboard loads, the API discovery at `/api` works, and
   `/api/health` returns 200.
+- **Production-build smoke (PR-37):** from a machine with the repo checked
+  out, `bun run build && bun run test:prodsmoke` boots the standalone
+  build on a scratch port and verifies boot, login-page SSR, security
+  headers, credential login (good + bad), the authenticated shell, and the
+  health/metrics auth gates — 10 checks, zero browser dependency.
 
 ---
 
@@ -224,7 +239,27 @@ staging deploy → smoke test → production deploy`.
   forward automatically.
 - **Maintenance cron:** the `audit-cron` service calls
   `/api/cron/prune-audit` daily at 03:00 UTC (audit retention + the PR-17
-  purges); check its logs with `docker compose logs audit-cron`.
+  purges); check its logs with `docker compose logs audit-cron`. Since
+  PR-30 the overlap guard is a Redis `SET NX PX` lock shared by both
+  replicas, so a doubled cron trigger runs the pass exactly once; the
+  response's `lockBackend` field says which backend guarded the run
+  (`redis` / `memory`).
+- **Prometheus metrics (PR-32):** `GET /api/metrics` serves the standard
+  text exposition format — per-instance gauges for app/DB/Redis up-ness,
+  process uptime + memory, event-loop lag, and the last successful
+  maintenance run (`fernly_maintenance_last_run_timestamp_seconds` — alert
+  when it goes stale > 36 h). Auth is the same `CRON_SECRET` bearer token;
+  unset = 503. Request-level signals stay in the structured logs
+  (`metric=http_request` lines). Example scrape job:
+
+  ```yaml
+  scrape_configs:
+    - job_name: fernly
+      scheme: https
+      authorization: { credentials: "<CRON_SECRET>" }
+      metrics_path: /api/metrics
+      static_configs: [{ targets: ["app.example.com"] }]
+  ```
 
 ## 5a. TLS
 

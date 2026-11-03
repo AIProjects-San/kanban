@@ -12,6 +12,7 @@ import { getSession, getSessionOrThrow, requirePermission, requirePermissionForT
 import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/rbac";
 import { assertNoCycle } from "@/lib/hierarchy";
 import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/password";
+import { assertPasswordNotBreached } from "@/lib/breach-check";
 import { emailSchema, updateProfileSchema, updateUserSettingsSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
@@ -229,6 +230,10 @@ export async function changePassword(input: {
       throw new AuthorizationError("Current password is incorrect.");
     }
 
+    // PR-35 — reject breach-listed passwords on set (opt-in via
+    // PASSWORD_BREACH_CHECK / HIBP_API_KEY; fail-open when unavailable).
+    await assertPasswordNotBreached(input.newPassword);
+
     const newHash = await hashPassword(input.newPassword);
     // P1 (edge-case audit) — invalidate all pending password-reset tokens
     // when the password changes. Without this, an attacker who requested a
@@ -371,6 +376,8 @@ export async function createUser(input: {
       // self-reference (defensive — the new user has no id yet anyway).
     }
 
+    // PR-35 — reject breach-listed passwords on admin user creation.
+    await assertPasswordNotBreached(input.password);
     const passwordHash = await hashPassword(input.password);
     const avatarColor = input.avatarColor ?? "forest";
     const timezone = input.timezone ?? "Pacific/Auckland";
@@ -511,6 +518,8 @@ export async function updateUser(userId: string, input: {
       if (input.resetPassword.length < minPasswordLength) {
         throw new AuthorizationError(`Password must be at least ${minPasswordLength} characters.`);
       }
+      // PR-35 — reject breach-listed passwords on admin-forced reset.
+      await assertPasswordNotBreached(input.resetPassword);
       data.passwordHash = await hashPassword(input.resetPassword);
     }
 

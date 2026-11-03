@@ -1,6 +1,10 @@
 import NextAuth from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { clearCookieHeaders } from "@/lib/auth-cookies";
+import {
+  runWithAuthRequestContext,
+  extractClientIp,
+} from "@/lib/auth-request-context";
 
 // ---------------------------------------------------------------------------
 // Wrap NextAuth so a successful sign-out also expires the CSRF and
@@ -19,6 +23,13 @@ import { clearCookieHeaders } from "@/lib/auth-cookies";
 // Note: Next 16 made route-handler params a `Promise<…>`; NextAuth v4
 // expects the older synchronous shape, so we `await` the params and pass
 // the resolved object through.
+//
+// PR-34 (production-readiness round 2) — every request is wrapped in an
+// AsyncLocalStorage auth-request context (source IP + user agent). NextAuth
+// v4's signOut event exposes no request object, so without this bridge the
+// `auth.signed_out` audit row cannot record WHERE the sign-out came from
+// (unlike auth.signed_in). The event handler reads the context; sign-outs
+// triggered outside an HTTP request (tests) simply omit the fields.
 // ---------------------------------------------------------------------------
 
 const authHandler = NextAuth(authOptions);
@@ -27,7 +38,13 @@ type Ctx = { params: Promise<{ nextauth: string[] }> };
 
 async function handle(req: Request, ctx: Ctx): Promise<Response> {
   const params = await ctx.params;
-  const res = await authHandler(req, { params });
+  const authCtx = {
+    ip: extractClientIp((name) => req.headers.get(name)),
+    userAgent: req.headers.get("user-agent") ?? "unknown",
+  };
+  const res = await runWithAuthRequestContext(authCtx, () =>
+    authHandler(req, { params }),
+  );
 
   const segments = params.nextauth ?? [];
   const path = segments.join("/");

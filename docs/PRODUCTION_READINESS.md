@@ -12,8 +12,9 @@ gate run; (6) a smoke load test against the production standalone build.
 **Verdict:** the application is production-ready for its intended target
 (single-host self-hosted Docker, TLS-terminated edge, PostgreSQL, 2 replicas
 behind nginx) once the operator checklist in `docs/DEPLOY.md` is followed.
-This review closed **29 findings** (PR-01…PR-29); 12 accepted-risk items
-remain on the roadmap (§6) — none blocks launch.
+Round 1 closed **29 findings** (PR-01…PR-29); round 2 closed **10 of the
+12 remaining roadmap items** (PR-30…PR-39); 2 strategic items remain (§6) —
+none blocks launch.
 
 ---
 
@@ -45,9 +46,9 @@ remain on the roadmap (§6) — none blocks launch.
 | Query hygiene / performance | ✅ Good after fixes | Every dashboard query take-capped; 15+ additional caps (PR-21); 6 hot-path indexes added (PR-16); 2 true N+1s eliminated (PR-19, PR-20); smoke load: 0 errors under both profiles (§5). |
 | Data retention & hygiene | ✅ Good after fixes | Audit retention (180 d, batched, cron) + new daily purges: expired reset tokens, read notifications >90 d, stale message-read state (PR-17). |
 | Error handling & resilience | ✅ Strong | Route + global error boundaries with client bridge, INTERNAL masking (no stack leakage), fail-open limiter, NoopMailer fail-safe, graceful shutdown handlers. |
-| Observability | ✅ Good | Structured JSON logs with request ids + `durationMs`, Sentry reporter with PII/secret redaction, `/api/health` (DB + Redis probes, detail gated by CRON_SECRET), audit trail on every mutation. |
-| Deployment & config | ✅ Good after fixes | Standalone Docker image (non-root, no secrets in layers, healthcheck), migration gate (PR-24), TLS story + real LB health endpoint (PR-25), complete `.env.example` with boot-contract documentation. |
-| Testing | ✅ Strong | 1064 unit tests (95%+ coverage gate in CI), 53 e2e scenarios / 403 steps on real Postgres + real browser, bundle budget + secret-leak grep in CI, SHA-pinned actions. |
+| Observability | ✅ Good | Structured JSON logs with request ids + `durationMs`, Sentry reporter with PII/secret redaction, `/api/health` (DB + Redis probes, detail gated by CRON_SECRET), audit trail on every mutation, **Prometheus `/api/metrics` (PR-32)**. |
+| Deployment & config | ✅ Good after fixes | Standalone Docker image (non-root, no secrets in layers, healthcheck), migration gate (PR-24), TLS story + real LB health endpoint (PR-25), complete `.env.example` with boot-contract documentation, **optional Redis AUTH (PR-33)**. |
+| Testing | ✅ Strong | 1143 unit tests (95%+ coverage gate in CI), 57 e2e scenarios / 425 steps on a fresh seed + real browser (incl. a WCAG axe-core smoke gate — PR-39), **production-build smoke suite** (PR-37), bundle budget + secret-leak grep in CI, SHA-pinned actions. |
 | Backup / recovery | ✅ Documented | `docs/BACKUP_RECOVERY.md` (pg_dump + PITR + restore drill procedure). |
 
 ---
@@ -105,18 +106,45 @@ Severity: **P1** = would break/betray production, **P2** = meaningful risk/cost,
 
 ---
 
-## 4. Gates (all green after the fixes)
+## 3b. Round 2 — roadmap closure (PR-30 … PR-39)
+
+The 12 accepted-risk items from round 1 (§6) were re-reviewed; **10 are now
+closed**, each with the failing-test→fix→gate discipline of round 1.
+
+| ID | Was (roadmap §6) | Now |
+|---|---|---|
+| **PR-30** | §6.3 — cron overlap guard was per-instance; 2 replicas = the daily maintenance could run twice. | `SET NX PX` lock in Redis shared by every instance (`src/lib/maintenance-lock.ts`); the key's TTL *is* the min-interval, so a crashed runner self-heals at expiry. Fails open to the old in-memory guard when Redis is down (a skipped maintenance would be strictly worse). The cron response now reports `lockBackend`, and `recordMaintenanceRun()` stamps `fernly_maintenance_last_run` for the metrics endpoint. |
+| **PR-31** | §6.10 — config-cache staleness across replicas was ≤10 s (TTL only). | Instant cross-instance invalidation: `bumpConfigCache()` publishes on a Redis pub/sub channel; each instance's dedicated subscriber connection clears its local cache. The 10 s TTL stays as the backstop (pub/sub is delivery-not-guaranteed). No-op without REDIS_URL. |
+| **PR-32** | §6.8 — no Prometheus `/metrics` endpoint. | `/api/metrics` in the standard text format: app/DB/Redis up-ness, process uptime + RSS/heap, event-loop lag, maintenance freshness. Gated by the same CRON_SECRET bearer (503 when unset, 401 wrong token); scrape config documented in DEPLOY.md §5. Request counters deliberately stay in the structured logs — per-instance in-memory counters are wrong under multi-replica scraping. |
+| **PR-33** | §6.2 — Redis without auth inside the compose network. | Opt-in `REDIS_PASSWORD`: compose runs redis-server with `--requirepass` and the app's default REDIS_URL embeds the password slot (`redis://:<pw>@redis:6379`). ioredis's URL parser was verified (test-pinned) to treat the empty slot as no-AUTH, so the default behaviour is unchanged. Healthcheck authenticates when a password is set. |
+| **PR-34** | §6.6 — sign-out audit rows lacked IP/UA (NextAuth v4's signOut event exposes no request). | AsyncLocalStorage request-context bridge: the route handler wraps every NextAuth request with `{ip, userAgent}`; the signOut event reads it when writing `auth.signed_out`. Race-free under concurrent sign-outs (ALS isolation is test-pinned). The trusted-proxy IP extraction moved to one shared helper used by both sign-in and sign-out. |
+| **PR-35** | §6.7 — password breach-list check was a recommended add-on. | Opt-in HIBP k-anonymity check (`PASSWORD_BREACH_CHECK=1` or `HIBP_API_KEY`): only a 5-char SHA-1 prefix ever leaves the server; padded + keyed request; 3 s abort; **fail-open** on any error (a third-party outage must never lock users out of setting passwords). Wired into all four password-SET flows (self change, admin create, admin reset, self reset); login is deliberately unchecked. |
+| **PR-36** | §6.4 — HSTS without includeSubDomains (operator decision, undocumented knob). | `HSTS_INCLUDE_SUBDOMAINS=1` / `HSTS_PRELOAD=1` env knobs (preload implies includeSubDomains); documented as irreversible commitments in `.env.example` + DEPLOY.md. Composition test-pinned in deploy-and-ops. |
+| **PR-37** | §6.9 — e2e only ever ran against the dev server; the prod build had no functional suite. | `bun run test:prodsmoke` (`scripts/prod-smoke.mjs`): boots the REAL standalone build on a scratch port and verifies boot, login SSR, security headers (HSTS/XFO/nonce-CSP), bad-credential rejection, full credential login, the authenticated shell, and the health/metrics auth gates — 10 checks, green. |
+| **PR-38** | §6.12 — right-to-erasure had soft-delete + export but no hard-erase workflow. | `eraseUser()` (admin-only, never yourself, **trash-first two-step safety**): one transaction writes the `user.erased` audit row (inside the tx — no misleading row on failure, no lost evidence on success), deletes the TeamMember roster row (the remaining PII surface), anonymises the erased person's display names on shared messages, and deletes the account row (schema cascades clean up settings/notifications/read-state/reset-tokens/assignments; SetNull promotes reports and clears project ownership). Audit + business records retained by design and documented for the privacy notice. |
+| **PR-39** | §6.11 — accessibility in place but no automated WCAG gate. | axe-core smoke gate in the e2e suite (4 scenarios: login, dashboard, tasks, team — WCAG 2.0/2.1 A+AA, zero serious/critical). **Real findings fixed**: unassociated login-form labels (critical), `--muted-foreground` below AA on light surfaces (token darkened 0.55→0.46, ≈6.5:1), avatar palette below AA for white initials (all five fills darkened, 6.8–8.4:1), `text-muted-foreground/70` ≈3.3:1 usages replaced, calendar out-of-month `opacity-40` cells, `nested-interactive` ×41 — dnd-kit task/bug cards restructured: card keeps pointer-drag, a grip handle carries keyboard-drag, the title is now a real button (keyboard users could drag but not OPEN cards before). |
+
+**Also en route:** e2e-serve.sh now auto-detects the sandbox Chrome binary
+(the pinned path rotted on every sandbox recycle); `scripts/a11y-audit.cjs`
+deep-dive scanner kept for triage; a fresh second-pass hygiene sweep found
+no console.log/debug, no `as any`, no TODO/FIXME markers, no
+dangerouslySetInnerHTML, no eval in production code.
+
+---
+
+## 4. Gates (all green after the round-2 fixes)
 
 | Gate | Result |
 |---|---|
 | `eslint .` | ✅ clean |
 | `tsc --noEmit` | ✅ clean |
-| Unit tests | ✅ **1064 / 1064** (was 1051; +13 net regression tests for this round's fixes) |
+| Unit tests | ✅ **1143 / 1143** (was 1064; +79 net regression tests for round 2's fixes) |
 | Production build (Turbopack, next 16.4.4) | ✅ |
-| Bundle budget | ✅ all chunks within budget (main 129 KB gz, lazy 242 KB gz) |
-| Dependency audit (traced runtime deps) | ✅ 0 critical / 0 high |
-| e2e (fresh seed, real browser) | ✅ **53 scenarios / 403 steps** |
-| Smoke load (production standalone build) | ✅ 0 errors — see §5 |
+| Bundle budget | ✅ all chunks within budget |
+| Dependency audit (traced runtime deps) | ✅ 0 critical / 0 high shipping |
+| e2e (fresh seed, real browser) | ✅ **57 scenarios** (53 + 4 a11y) / 425 steps |
+| Production-build smoke (PR-37) | ✅ 10/10 checks against the standalone build |
+| axe WCAG smoke (PR-39) | ✅ 0 serious/critical on login, dashboard, tasks, team |
 
 ---
 
@@ -143,35 +171,27 @@ planning on real hosts.
 
 ---
 
-## 6. Accepted risks & roadmap (not launch-blocking)
+## 6. Remaining roadmap (after round 2)
 
 1. **NextAuth v4 is in maintenance** (the project merged into Better Auth).
    4.24.15 carries the 2026 security fixes and the credentials-only surface is
-   small, but plan a strategic migration to Auth.js v5 / Better Auth.
-2. **Redis without auth/TLS** inside the compose network — acceptable for a
-   single-host deployment (network-scoped); revisit when the topology grows.
-3. **Cron overlap guard is per-instance** (module memory) — with 2 replicas the
-   daily maintenance can run twice; the job is idempotent and batched, so the
-   cost is one extra pass. Move to `SET nx EX` on Redis when convenient.
-4. **HSTS without `includeSubDomains`** — deliberate until the whole host is
-   HTTPS-only (operator decision; documented in next.config.ts).
-5. **`style-src 'unsafe-inline'`** — Tailwind's runtime styling needs it;
-   nonce-based styling is a larger hardening effort.
-6. **Sign-out audit rows lack IP/UA** — NextAuth v4's `signOut` event exposes
-   no request object; revisit with the auth migration.
-7. **Password breach-list check** (k-anonymity API) — recommended add-on;
-   requires an external dependency the operator should opt into.
-8. **No Prometheus `/metrics` endpoint** — structured `metric=` log fields +
-   Sentry cover alerting today; export to a metrics stack is incremental.
-9. **e2e runs against the dev server** — a production-build e2e smoke suite is
-   a CI improvement worth adding (the standalone build is exercised by the
-   load smoke and the build gates).
-10. **Config-cache staleness across replicas is 10 s** (bump + TTL); instant
-    cross-instance invalidation needs Redis pub/sub (noted in config-loader).
-11. **Accessibility**: focus-trap, ARIA roles, contrast tokens and keyboard
-    shortcuts are in place and tested; a full WCAG 2.1 AA pass is roadmap.
-12. **Right-to-erasure**: soft-delete + GDPR self-export exist; a hard-erase
-    workflow (beyond retention purges) is a policy decision for the owner.
+   small, but plan a strategic migration to Auth.js v5 / Better Auth. The
+   round-2 sign-out IP/UA fix (PR-34) is deliberately tactical and travels
+   with the migration.
+2. **`style-src 'unsafe-inline'`** — Tailwind's runtime styling and
+   Next.js-injected inline styles need it; nonce-based styling is a larger
+   hardening effort (script-src already ships nonce-only in production).
+3. **Full WCAG 2.1 AA pass** — the PR-39 axe gate covers the four
+   highest-traffic surfaces at A+AA (serious/critical); a complete audit
+   (moderate/minor findings, screen-reader walkthroughs, focus management
+   on every flow) remains roadmap. `scripts/a11y-audit.cjs` is the triage
+   tool for extending coverage.
+4. **Right-to-erasure policy sign-off** — the mechanism shipped (PR-38);
+   the workspace owner must decide retention windows and publish the
+   privacy notice describing what is kept (audit trail, business records)
+   and why.
+5. **Optional breach-list check enablement** — the mechanism shipped
+   (PR-35); enabling it is an operator egress decision (see DEPLOY.md §1.2).
 
 ---
 

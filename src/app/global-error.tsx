@@ -75,7 +75,7 @@ export default function GlobalError({
               {t("errors.applicationErrorBody")}
             </p>
             {error.digest && (
-              <p className="text-xs text-muted-foreground/70 font-mono break-all">
+              <p className="text-xs text-muted-foreground font-mono break-all">
                 Error ID: {error.digest}
               </p>
             )}

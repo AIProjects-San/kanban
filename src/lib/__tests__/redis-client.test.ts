@@ -225,3 +225,36 @@ describe("redis-client (_resetSharedRedisClientForTests)", () => {
     expect(client).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR-33 (production-readiness round 2) — Redis AUTH via REDIS_URL.
+//
+// docker-compose now defaults the app's REDIS_URL to
+// `redis://:${REDIS_PASSWORD:-}@redis:6379`. With no password that renders
+// as `redis://:@redis:6379` — these tests pin ioredis's ACTUAL URL-parser
+// behaviour so the compose default can never silently start sending AUTH
+// with an empty string (which a passwordless redis-server rejects):
+//   • empty password → falsy → ioredis never issues AUTH
+//   • real password  → parsed and used
+// Uses the real parser (ioredis/built/utils), not the constructor mock.
+// ---------------------------------------------------------------------------
+
+describe("PR-33 REDIS_URL password parsing (real ioredis parseURL)", () => {
+  it("an empty password slot (redis://:@host) stays falsy — no AUTH is sent", async () => {
+    const utils = (await import("ioredis/built/utils")) as unknown as {
+      parseURL: (url: string) => { password?: string; port: number | string; host: string };
+    };
+    const parsed = utils.parseURL("redis://:@redis:6379");
+    expect(parsed.password ? parsed.password.length : 0).toBe(0);
+    expect(parsed.host).toBe("redis");
+    expect(String(parsed.port)).toBe("6379");
+  });
+
+  it("a set password slot (redis://:secret@host) is extracted verbatim", async () => {
+    const utils = (await import("ioredis/built/utils")) as unknown as {
+      parseURL: (url: string) => { password?: string };
+    };
+    const parsed = utils.parseURL("redis://:s3cret-pw@redis:6379");
+    expect(parsed.password).toBe("s3cret-pw");
+  });
+});

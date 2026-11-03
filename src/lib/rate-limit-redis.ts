@@ -20,24 +20,9 @@
 
 import { logInfo, logWarn, log } from "@/lib/observability";
 import { SlidingWindowLimiter, type RateLimitState } from "./rate-limit";
-import { getSharedRedisClient } from "./redis-client";
+import { getSharedRedisClient, redisKeyPrefix } from "./redis-client";
 
-/**
- * Redis key namespace prefix for all rate-limit keys. Read from
- * `REDIS_KEY_PREFIX` (env) so multiple apps — or multiple environments —
- * can share one Redis instance without colliding. Defaults to `app:` when
- * unset. Changing it in production resets in-flight rate-limit counters
- * (acceptable during a maintenance window).
- *
- * Always ends with `:` so the limiter-specific segment (e.g. `login:`,
- * `pwreset:`) reads as `app:login:k1` rather than `applogin:k1`.
- */
-function redisKeyPrefix(): string {
-  const raw = process.env.REDIS_KEY_PREFIX;
-  if (!raw) return "app:";
-  return raw.endsWith(":") ? raw : `${raw}:`;
-}
-
+// ---------------------------------------------------------------------------
 // Minimal Redis client interface — satisfied by ioredis and node-redis
 // (with adapter wrappers).
 export interface RedisLike {

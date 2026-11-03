@@ -207,3 +207,109 @@ export async function restoreMessage(id: string): Promise<ActionResult<void>> {
 }
 
 
+
+// ---------------------------------------------------------------------------
+// PR-38 (production-readiness round 2) — right-to-erasure hard erase.
+//
+// Roadmap §6.12: soft-delete + GDPR self-export existed, but the only way
+// to truly remove a person's data was direct DB access. This action gives
+// the workspace owner an auditable, safeguarded erasure path:
+//
+//   • ADMIN-only, and never yourself — irreversible actions are restricted
+//     to the role that owns the privacy posture.
+//   • Two-step safety: the user must ALREADY be soft-deleted (in the
+//     trash). Erasing is therefore always a deliberate second decision,
+//     never a mis-click on the live user list.
+//   • One transaction, evidence-first ordering inside it:
+//       1. the `user.erased` audit row is created INSIDE the transaction —
+//          a failed erase leaves no misleading row, a successful erase can
+//          never lose it (unlike logAudit, which is best-effort by design);
+//       2. the TeamMember roster row(s) are deleted (name, email, avatar =
+//          the remaining PII surface; Task/TimeEntry FKs SetNull so
+//          business data survives, unlinked);
+//       3. Message sender/recipient display names authored by the user are
+//          anonymised to "Erased user" — message bodies are two-party
+//          conversations, so the counterpart keeps their copy without
+//          retaining the erased person's identity;
+//       4. the User row is deleted. Cascades (schema-level) remove
+//          UserSettings, personal Notifications, MessageReads,
+//          PasswordResetTokens and ProjectAssignments; SetNull promotes
+//          direct reports to roots and clears owned projects' ownerUserId.
+//   • Retained BY DESIGN and documented for the privacy notice: the audit
+//     trail (accountability — GDPR Art. 17(3)(b)), and tasks/time entries
+//     (workspace business records, now identity-free).
+//
+// The audit row deliberately does NOT repeat the email — entityLabel is the
+// user's id prefix, so the erasure evidence cannot itself be a PII leak.
+// ---------------------------------------------------------------------------
+
+export async function eraseUser(userId: string): Promise<ActionResult<void>> {
+  return toResult(async () => {
+    const auth = await requirePermission("role:manage");
+    if (auth.role !== "ADMIN") {
+      throw new AuthorizationError(
+        "Only administrators can permanently erase users (right-to-erasure).",
+      );
+    }
+    if (userId === auth.userId) {
+      throw new AuthorizationError(
+        "You cannot erase your own account. Ask another admin to do it.",
+      );
+    }
+    const target = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, deletedAt: true },
+    });
+    if (!target) throw new AuthorizationError("User not found.");
+    if (!target.deletedAt) {
+      throw new AuthorizationError(
+        "Only users already in the trash can be permanently erased. " +
+          "Soft-delete them first, then erase from the trash.",
+      );
+    }
+
+    await db.$transaction(async (tx) => {
+      // 1. Evidence-first — inside the tx (see header).
+      await tx.auditLog.create({
+        data: {
+          actorId: auth.userId,
+          actorName: auth.name,
+          actorRole: auth.role,
+          action: "user.erased",
+          entityType: "USER",
+          entityId: userId,
+          entityLabel: target.id.slice(0, 10),
+          detail:
+            `Permanently erased the account of a soft-deleted user ` +
+            `(id ${target.id.slice(0, 10)}). Roster row deleted, message ` +
+            `display names anonymised, account row removed.`,
+        },
+      });
+
+      // 2. Scrub the roster profile (PII: name, email, avatar). Rows are
+      // matched by the stable userId link AND by email (legacy rows may
+      // predate the link).
+      await tx.teamMember.deleteMany({
+        where: {
+          OR: [{ userId }, { email: target.email.toLowerCase() }],
+        },
+      });
+
+      // 3. Anonymise the erased person's display identity on shared
+      // conversations (bodies stay — they are also the counterpart's data).
+      await tx.message.updateMany({
+        where: { senderUserId: userId },
+        data: { senderName: "Erased user", senderRole: "" },
+      });
+      await tx.message.updateMany({
+        where: { recipientUserId: userId },
+        data: { recipientName: "Erased user" },
+      });
+
+      // 4. Delete the account row (cascades/SetNulls per the schema).
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    revalidatePath("/");
+  });
+}

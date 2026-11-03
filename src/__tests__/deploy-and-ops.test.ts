@@ -2,7 +2,7 @@
 // contract tests (bundle budget script, eslint rules, Dockerfile/compose/
 // nginx, ops runbooks). Disk inspection is deterministic.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -99,6 +99,48 @@ describe("L-P1-21 docker-compose.yml", () => {
   });
   it("the app service does NOT set SEED_DEMO=1 (L-P0-12)", () => {
     expect(compose).toMatch(/SEED_DEMO:\s*""/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-33 (production-readiness round 2) — optional Redis AUTH in compose.
+// Roadmap §6.2: "Redis without auth/TLS inside the compose network".
+// Setting REDIS_PASSWORD in .env must flip Redis into requirepass mode AND
+// propagate the password to the app's REDIS_URL in one step.
+// ---------------------------------------------------------------------------
+
+describe("PR-33 optional Redis authentication", () => {
+  const compose = readFileSync(resolve(repoRoot, "docker-compose.yml"), "utf-8");
+
+  it("redis-server runs with requirepass bound to ${REDIS_PASSWORD} (empty = disabled)", () => {
+    expect(compose).toMatch(
+      /redis-server --maxmemory 64mb --maxmemory-policy volatile-lru --requirepass "\$\{REDIS_PASSWORD:-\}"/,
+    );
+  });
+
+  it("the redis healthcheck authenticates only when a password is set", () => {
+    expect(compose).toMatch(/-n "\$REDIS_PASSWORD"/);
+    expect(compose).toMatch(/--no-auth-warning/);
+  });
+
+  it("the app's default REDIS_URL embeds the password slot", () => {
+    expect(compose).toMatch(
+      /REDIS_URL: "\$\{REDIS_URL:-redis:\/\/:\$\{REDIS_PASSWORD:-\}@redis:6379\}"/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-32 (production-readiness round 2) — the metrics endpoint must be
+// referenced by the deployment docs so operators actually scrape it.
+// ---------------------------------------------------------------------------
+
+describe("PR-32 metrics endpoint is documented", () => {
+  const deployDoc = readFileSync(resolve(repoRoot, "docs", "DEPLOY.md"), "utf-8");
+
+  it("DEPLOY.md documents /api/metrics with the bearer-token scrape config", () => {
+    expect(deployDoc).toMatch(/\/api\/metrics/);
+    expect(deployDoc).toMatch(/CRON_SECRET/);
   });
 });
 
@@ -251,5 +293,54 @@ describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
       expect(env).toMatch(new RegExp(`^${key}=`, "m"));
     }
     expect(env).toMatch(/REFUSES to boot/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-36 (production-readiness round 2) — HSTS includeSubDomains / preload
+// are env-gated, opt-in, irreversible commitments. The header value must
+// compose exactly from HSTS_INCLUDE_SUBDOMAINS / HSTS_PRELOAD, and preload
+// must imply includeSubDomains (an invalid preload header would be rejected
+// by the preload list).
+// ---------------------------------------------------------------------------
+
+describe("PR-36 HSTS env knobs (next.config headers)", () => {
+  async function loadConfig() {
+    vi.resetModules();
+    const mod = await import("../../next.config");
+    const cfg = (mod.default ?? mod) as { headers(): Promise<{ headers: { key: string; value: string }[] }[]> };
+    const applied = await cfg.headers();
+    return applied[0].headers.find((h) => h.key === "Strict-Transport-Security")!.value;
+  }
+
+  it("defaults to max-age only (no irreversible commitments by default)", async () => {
+    delete process.env.HSTS_INCLUDE_SUBDOMAINS;
+    delete process.env.HSTS_PRELOAD;
+    expect(await loadConfig()).toBe("max-age=31536000");
+  });
+
+  it("HSTS_INCLUDE_SUBDOMAINS=1 adds includeSubDomains", async () => {
+    process.env.HSTS_INCLUDE_SUBDOMAINS = "1";
+    delete process.env.HSTS_PRELOAD;
+    expect(await loadConfig()).toBe("max-age=31536000; includeSubDomains");
+  });
+
+  it("HSTS_PRELOAD=1 implies includeSubDomains + preload", async () => {
+    delete process.env.HSTS_INCLUDE_SUBDOMAINS;
+    process.env.HSTS_PRELOAD = "1";
+    expect(await loadConfig()).toBe("max-age=31536000; includeSubDomains; preload");
+  });
+
+  it("both knobs compose to the full preload directive", async () => {
+    process.env.HSTS_INCLUDE_SUBDOMAINS = "1";
+    process.env.HSTS_PRELOAD = "1";
+    expect(await loadConfig()).toBe("max-age=31536000; includeSubDomains; preload");
+  });
+
+  it("opt-out values (not exactly '1') keep the conservative default", async () => {
+    process.env.HSTS_INCLUDE_SUBDOMAINS = "true";
+    delete process.env.HSTS_PRELOAD;
+    expect(await loadConfig()).toBe("max-age=31536000");
+    delete process.env.HSTS_INCLUDE_SUBDOMAINS;
   });
 });

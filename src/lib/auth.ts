@@ -5,6 +5,10 @@ import { db } from "@/lib/db";
 import { createLoginLimiter } from "@/lib/rate-limit-redis";
 import { logError, logWarn } from "@/lib/observability";
 import { hashPii } from "@/lib/pii";
+import {
+  getAuthRequestContext,
+  extractClientIp,
+} from "@/lib/auth-request-context";
 
 // L-P0-10 — pick the Redis-backed limiter when REDIS_URL + a Redis client
 // are configured, fall back to the in-memory limiter otherwise.
@@ -122,13 +126,14 @@ export const authOptions: NextAuthOptions = {
         // bypass the per-IP rate-limit bucket. Now prefer `X-Real-IP` (set
         // unconditionally by nginx/caddy) and fall back to the LAST XFF hop
         // (the closest trusted proxy). If neither is present, "unknown".
+        // PR-34 — the logic now lives in lib/auth-request-context.ts
+        // (extractClientIp) so the sign-out audit path shares it exactly.
         const headers = req?.headers ?? {};
-        const realIp =
-          (typeof headers["x-real-ip"] === "string" && headers["x-real-ip"].trim()) || "";
-        const xff =
-          (typeof headers["x-forwarded-for"] === "string" && headers["x-forwarded-for"]) || "";
-        const xffLast = xff ? xff.split(",").pop()?.trim() || "" : "";
-        const ip = realIp || xffLast || "unknown";
+        const headerGet = (name: string): string | undefined => {
+          const v = (headers as Record<string, unknown>)[name.toLowerCase()];
+          return typeof v === "string" ? v : undefined;
+        };
+        const ip = extractClientIp(headerGet);
         // P1 (production-readiness re-audit) — capture the user agent for the
         // audit log so post-incident forensics can tie a sign-in to a browser.
         const userAgent =
@@ -334,6 +339,13 @@ export const authOptions: NextAuthOptions = {
           select: { id: true, name: true, role: true, email: true },
         });
         if (!user) return;
+        // PR-34 (production-readiness round 2) — the sign-out row now
+        // records the source IP + user agent, like auth.signed_in. NextAuth
+        // v4's event exposes no request object, so the value comes from the
+        // AsyncLocalStorage bridge set by the route handler; outside an HTTP
+        // request (unit tests, programmatic sign-outs) the fields are simply
+        // omitted, preserving the historical row shape.
+        const ctx = getAuthRequestContext();
         await db.auditLog.create({
           data: {
             actorId: user.id,
@@ -343,6 +355,9 @@ export const authOptions: NextAuthOptions = {
             entityType: "AUTH",
             entityLabel: user.email,
             detail: `${user.name} signed out of the workspace`,
+            ...(ctx
+              ? { ipAddress: ctx.ip, userAgent: ctx.userAgent.slice(0, 500) }
+              : {}),
           },
         });
       } catch (err) {

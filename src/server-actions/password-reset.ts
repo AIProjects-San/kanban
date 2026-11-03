@@ -29,6 +29,7 @@
 import { logError,logWarn } from "@/lib/observability";
 import { db } from "@/lib/db";
 import { hashPassword, getMinPasswordLength } from "@/lib/password";
+import { assertPasswordNotBreached } from "@/lib/breach-check";
 import { createMailer } from "@/lib/mailer";
 import { createPasswordResetLimiter } from "@/lib/rate-limit-redis";
 import { validationError } from "@/lib/validation";
@@ -261,6 +262,8 @@ export async function resetPassword(input: {
     // token to race the victim + set the password to the attacker's choice.
     // Now: the second request's updateMany matches 0 rows → we throw + the
     // transaction rolls back the password change.
+    // PR-35 — reject breach-listed passwords on self-service reset.
+    await assertPasswordNotBreached(input.newPassword);
     const newHash = await hashPassword(input.newPassword);
     const result = await db.$transaction([
       db.user.update({

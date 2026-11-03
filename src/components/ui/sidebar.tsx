@@ -164,7 +164,7 @@ function NavButton({
     >
       <Icon size={18} />
       <span className="flex-1 text-left">{item.label}</span>
-      <kbd className="hidden lg:inline text-[0.625rem] text-muted-foreground/70 font-mono">
+      <kbd className="hidden lg:inline text-[0.625rem] text-muted-foreground font-mono">
         {item.shortcut}
       </kbd>
     </button>

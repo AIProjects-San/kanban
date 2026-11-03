@@ -21,11 +21,13 @@
  * `avatarColor` values used by the Avatar component and seed data.
  */
 export const AVATAR_COLORS = {
-  forest: "oklch(0.55 0.13 152)",
-  ocean: "oklch(0.55 0.13 220)",
-  plum: "oklch(0.55 0.15 320)",
-  ember: "oklch(0.60 0.15 35)",
-  slate: "oklch(0.50 0.02 250)",
+  // PR-39 (a11y): darkened alongside tokens.css §7 so white avatar initials
+  // clear WCAG AA 4.5:1 (measured 6.8-8.4:1). Keep in sync with tokens.css.
+  forest: "oklch(0.45 0.12 152)",
+  ocean: "oklch(0.45 0.12 220)",
+  plum: "oklch(0.45 0.13 320)",
+  ember: "oklch(0.47 0.13 35)",
+  slate: "oklch(0.42 0.02 250)",
 } as const;
 
 export type AvatarColorKey = keyof typeof AVATAR_COLORS;

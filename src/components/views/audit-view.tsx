@@ -235,7 +235,7 @@ export function AuditView({ currentUser }: AuditViewProps) {
       )}
 
       {/* Footer note */}
-      <p className="text-[0.6875rem] text-muted-foreground/70 px-1">
+      <p className="text-[0.6875rem] text-muted-foreground px-1">
         Showing the {logs.length} most recent recorded actions. Read receipts (opening messages,
         marking notifications read) are intentionally not audited.
       </p>
@@ -282,7 +282,7 @@ function AuditRow({ log, last }: { log: AuditEntryT; last: boolean }) {
           <Avatar name={log.actorName} color={avatarColorForRole(log.actorRole)} size={18} />
           <span className="text-xs font-semibold text-foreground">{log.actorName}</span>
           {log.actorRole && (
-            <span className="text-[0.5625rem] uppercase tracking-wide text-muted-foreground/70 font-medium">
+            <span className="text-[0.5625rem] uppercase tracking-wide text-muted-foreground font-medium">
               {ROLE_LABELS[log.actorRole as Role] ?? log.actorRole}
             </span>
           )}

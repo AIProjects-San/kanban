@@ -25,6 +25,31 @@ let sharedClient: Redis | null = null;
 let constructionFailed = false;
 
 /**
+ * Redis key namespace prefix for ALL app keys (rate-limit buckets, the
+ * maintenance lock, config-invalidation pub/sub). Read from
+ * `REDIS_KEY_PREFIX` (env) so multiple apps — or multiple environments —
+ * can share one Redis instance without colliding. Defaults to `app:`.
+ *
+ * PR-31 (production-readiness round 2) — moved here from rate-limit-redis
+ * so every Redis consumer shares one namespacing rule. Always ends with `:`
+ * so key segments read `app:login:k1` rather than `applogin:k1`.
+ */
+export function redisKeyPrefix(): string {
+  const raw = process.env.REDIS_KEY_PREFIX;
+  if (!raw) return "app:";
+  return raw.endsWith(":") ? raw : `${raw}:`;
+}
+
+/**
+ * Pub/sub channel used for instant cross-instance config-cache
+ * invalidation (PR-31). Namespaced like every other key so shared Redis
+ * instances don't cross-talk.
+ */
+export function configInvalidationChannel(): string {
+  return `${redisKeyPrefix()}config:invalidate`;
+}
+
+/**
  * Get (or lazily create) the process-wide Redis client for rate limiting.
  * Returns `undefined` when construction previously failed — callers fall
  * back to the in-memory limiter rather than retrying on every request.
@@ -71,4 +96,127 @@ export function _resetSharedRedisClientForTests(): void {
   }
   sharedClient = null;
   constructionFailed = false;
+}
+
+// ---------------------------------------------------------------------------
+// PR-31 (production-readiness round 2) — config-cache invalidation pub/sub.
+//
+// Roadmap §6.10: an admin's config mutation is visible on instance A
+// immediately (bumpConfigCache) but only on instance B after the 10 s TTL.
+// For a security-relevant cache (the RBAC ceiling reads through it) that
+// window was acceptable but not great. These helpers give config-loader
+// instant cross-instance invalidation over Redis pub/sub:
+//
+//   • getSharedRedisPublisher() — PUBLISH on the shared command client.
+//   • subscribeToConfigInvalidation() — a DEDICATED subscriber connection
+//     (a connection in subscribe mode may not issue regular commands, so
+//     it can never be the shared client) that invokes the callback on every
+//     message and keeps its own error handling: a dead subscriber never
+//     crashes the app, the 10 s TTL remains the backstop.
+//
+// Both are no-ops (undefined) when REDIS_URL is unset — single-instance
+// deployments keep the pure in-memory behaviour.
+// ---------------------------------------------------------------------------
+
+/** Minimal PUBLISH surface — satisfied by ioredis. */
+export interface PublishRedis {
+  publish(channel: string, message: string): Promise<number>;
+}
+
+/**
+ * Get a publisher for the config-invalidation channel (the shared command
+ * client), or undefined when Redis is not configured / construction failed.
+ */
+export function getSharedRedisPublisher(): PublishRedis | undefined {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) return undefined;
+  const client = getSharedRedisClient(redisUrl);
+  if (!client) return undefined;
+  return {
+    publish: (channel: string, message: string) =>
+      (client as unknown as PublishRedis).publish(channel, message),
+  };
+}
+
+let configSubscriber: Redis | null = null;
+let configSubscriberStarting = false;
+
+/**
+ * Subscribe to the config-invalidation channel on a dedicated connection.
+ * Returns an unsubscribe handle, or undefined when Redis is not configured.
+ * Safe to call repeatedly — only the first call creates the connection.
+ */
+export function subscribeToConfigInvalidation(
+  onMessage: (message: string) => void,
+): { unsubscribe(): void } | undefined {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) return undefined;
+  if (configSubscriber) {
+    // Already subscribed — rebind the callback by storing it on the handle.
+    return { unsubscribe: () => void configSubscriber?.unsubscribe(configInvalidationChannel()) };
+  }
+  if (configSubscriberStarting) return undefined;
+  configSubscriberStarting = true;
+  try {
+    const sub = new Redis(redisUrl, {
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 2_000,
+      keepAlive: 30_000,
+      retryStrategy: (times) => Math.min(times * 200, 5_000),
+      lazyConnect: false,
+    });
+    sub.on("error", (err: Error) => {
+      // A dead subscriber is not fatal: the 10 s config TTL remains the
+      // invalidation backstop. Log (observability throttles noise upstream).
+      logError("[redis] config-invalidation subscriber error:", err.message);
+    });
+    sub.on("message", (channel: string, message: string) => {
+      if (channel === configInvalidationChannel()) {
+        try {
+          onMessage(message);
+        } catch (err) {
+          logError(
+            "[redis] config-invalidation handler threw:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+    });
+    // ioredis queues SUBSCRIBE once connected; failures surface via "error".
+    void sub.subscribe(configInvalidationChannel()).catch(() => {
+      /* retried by the reconnect strategy */
+    });
+    configSubscriber = sub;
+    return {
+      unsubscribe: () => {
+        try {
+          void configSubscriber?.unsubscribe(configInvalidationChannel());
+        } catch {
+          /* best-effort */
+        }
+      },
+    };
+  } catch (err) {
+    logError(
+      "[redis] failed to construct the config-invalidation subscriber:",
+      err instanceof Error ? err.message : err,
+    );
+    return undefined;
+  } finally {
+    configSubscriberStarting = false;
+  }
+}
+
+/** Test-only: drop the subscriber so a fresh one is created on next call. */
+export function _resetConfigSubscriberForTests(): void {
+  if (configSubscriber) {
+    try {
+      configSubscriber.disconnect();
+    } catch {
+      /* already closed */
+    }
+  }
+  configSubscriber = null;
+  configSubscriberStarting = false;
 }

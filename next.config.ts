@@ -62,11 +62,24 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["*.space-z.ai", "*.fcapp.run"],
   async headers() {
+    // HSTS (PR-36, production-readiness round 2 — roadmap §6.4): one year.
+    // `includeSubDomains` and `preload` are OPT-IN via env because they are
+    // irreversible commitments: flipping them on before every subdomain of
+    // the host serves HTTPS breaks those subdomains for visitors who
+    // received the header (and preload removal takes months). Operators
+    // confirm readiness by setting:
+    //   HSTS_INCLUDE_SUBDOMAINS=1
+    //   HSTS_PRELOAD=1        (implies includeSubDomains; also submit the
+    //                           site to hstspreload.org afterwards)
+    const hsts = ["max-age=31536000"];
+    if (process.env.HSTS_INCLUDE_SUBDOMAINS === "1" || process.env.HSTS_PRELOAD === "1") {
+      hsts.push("includeSubDomains");
+    }
+    if (process.env.HSTS_PRELOAD === "1") {
+      hsts.push("preload");
+    }
     const securityHeaders = [
-      // HSTS: only meaningful over HTTPS; the preview/production proxy
-      // terminates TLS in front of this app. One year, no subdomains —
-      // tighten to includeSubDomains once the whole host is HTTPS-only.
-      { key: "Strict-Transport-Security", value: "max-age=31536000" },
+      { key: "Strict-Transport-Security", value: hsts.join("; ") },
       { key: "X-Frame-Options", value: "DENY" },
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

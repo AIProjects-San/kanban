@@ -13,7 +13,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { useRefresh } from "@/hooks/use-refresh";
-import { Plus, MoreHorizontal, Calendar as CalIcon, FolderKanban, Clock, Bug as BugIcon } from "lucide-react";
+import { Plus, MoreHorizontal, Calendar as CalIcon, FolderKanban, Clock, Bug as BugIcon, GripVertical } from "lucide-react";
 import { useApp } from "@/store/app-store";
 import { Avatar } from "../ui/avatar";
 import { FilterBar } from "../ui/filter-bar";
@@ -320,10 +320,17 @@ function TaskCard({ task, onEdit, dragging }: { task: TaskT; onEdit: () => void;
   const bugCount = task.bugCount ?? 0;
 
   return (
+    // PR-39 (a11y): the card itself is NO LONGER a role=button control.
+    // Spreading dnd-kit's `attributes` here made every card an interactive
+    // element CONTAINING interactive elements (the More button, the title
+    // button) — axe "nested-interactive" × 41, and screen readers announced
+    // a confusing double control. Pointer-drag stays on the card (mouse
+    // users drag anywhere, exactly as before); keyboard-drag moved to the
+    // explicit grip handle below, which carries the dnd attributes +
+    // keyboard listeners. Opening a task by keyboard: the title button.
     <div
       ref={setNodeRef}
-      {...listeners}
-      {...attributes}
+      onPointerDown={listeners?.onPointerDown as unknown as React.PointerEventHandler}
       onClick={(e) => {
         // Only fire click if not dragging
         if (!isDragging) {
@@ -332,7 +339,7 @@ function TaskCard({ task, onEdit, dragging }: { task: TaskT; onEdit: () => void;
         }
       }}
       className={cn(
-        "bg-card border border-border rounded-lg p-3 cursor-grab active:cursor-grabbing transition-shadow hover:shadow-md",
+        "group relative bg-card border border-border rounded-lg p-3 cursor-grab active:cursor-grabbing transition-shadow hover:shadow-md",
         (isDragging || dragging) && "opacity-40",
         overdue && "border-destructive/40"
       )}
@@ -350,9 +357,16 @@ function TaskCard({ task, onEdit, dragging }: { task: TaskT; onEdit: () => void;
           {task.project.name}
         </div>
       )}
-      <div className="text-sm font-medium text-foreground leading-snug mb-3 line-clamp-2">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+        className="block w-full text-left text-sm font-medium text-foreground leading-snug mb-3 line-clamp-2 hover:underline focus-visible:underline"
+      >
         {task.title}
-      </div>
+      </button>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           {task.assignee && (
@@ -389,13 +403,26 @@ function TaskCard({ task, onEdit, dragging }: { task: TaskT; onEdit: () => void;
             </span>
           )}
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onEdit(); }}
-          className="opacity-0 group-hover:opacity-100 hover:bg-muted rounded p-0.5"
-          aria-label="More"
-        >
-          <MoreHorizontal size={14} className="text-muted-foreground" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          {/* PR-39 — the keyboard-drag handle (carries the dnd attributes +
+              keyboard activator; pointer drag already bubbles to the card). */}
+          <button
+            type="button"
+            {...attributes}
+            onKeyDown={listeners?.onKeyDown as unknown as React.KeyboardEventHandler}
+            aria-label={`Drag task ${task.title}`}
+            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-muted rounded p-0.5 cursor-grab"
+          >
+            <GripVertical size={14} className="text-muted-foreground" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-muted rounded p-0.5"
+            aria-label="More"
+          >
+            <MoreHorizontal size={14} className="text-muted-foreground" />
+          </button>
+        </div>
       </div>
     </div>
   );

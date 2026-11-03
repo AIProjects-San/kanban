@@ -1,6 +1,5 @@
-import { logError,logWarn } from "@/lib/observability";
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { probeDb, probeRedis } from "@/lib/health-probes";
 
 // ---------------------------------------------------------------------------
 // Health & readiness endpoint — closes L-P0-4.
@@ -21,49 +20,11 @@ import { db } from "@/lib/db";
 // Redis does NOT fail the healthcheck — the rate limiter fails open, so the
 // app still serves traffic — but operators need the signal that brute-force
 // protection is degraded. The on-call runbook alerts on `redis: "down"`.
+//
+// PR-32 (production-readiness round 2) — the probe implementations moved to
+// lib/health-probes.ts so /api/metrics can share them; behaviour here is
+// unchanged. Prometheus scraping uses /api/metrics, NOT this endpoint.
 // ---------------------------------------------------------------------------
-
-const DB_PROBE_TIMEOUT_MS = 2_000;
-const REDIS_PROBE_TIMEOUT_MS = 1_000;
-
-async function probeDb(): Promise<boolean> {
-  try {
-    await Promise.race([
-      db.$queryRaw`SELECT 1`,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("db probe timeout")), DB_PROBE_TIMEOUT_MS),
-      ),
-    ]);
-    return true;
-  } catch (err) {
-    logError("[health] DB probe failed:", err);
-    return false;
-  }
-}
-
-async function probeRedis(): Promise<"up" | "down" | "unconfigured"> {
-  const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) return "unconfigured";
-  try {
-    // Lazy-import so the health route never pulls ioredis into the bundle
-    // when REDIS_URL is unset (e.g. dev environments, single-instance deploys).
-    const { getSharedRedisClient } = await import("@/lib/redis-client");
-    const client = getSharedRedisClient(redisUrl);
-    if (!client) return "down";
-    // ioredis exposes .ping(); the RedisLike minimal interface doesn't, so
-    // cast — the shared client is always a real ioredis instance here.
-    const result = await Promise.race([
-      (client as unknown as { ping: () => Promise<string> }).ping(),
-      new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error("redis probe timeout")), REDIS_PROBE_TIMEOUT_MS),
-      ),
-    ]);
-    return result === "PONG" ? "up" : "down";
-  } catch (err) {
-    logWarn("[health] Redis probe failed (rate limiter is fail-open):", err);
-    return "down";
-  }
-}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
