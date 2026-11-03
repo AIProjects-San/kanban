@@ -34,6 +34,16 @@ describe("extractMentionedNames (L-P2-29)", () => {
     expect(extractMentionedNames("@Ada did you see @ada again?")).toEqual(["Ada did", "ada again"]);
   });
 
+  it("PR-56: collapses an EXACT repeat of the same candidate (case-insensitive)", () => {
+    // "Ada Lovelace" and "ada lovelace" normalise to the same key — the
+    // second mention must not produce a second entry (one notification per
+    // person, not per mention).
+    expect(extractMentionedNames("@Ada Lovelace will present; @ada lovelace take notes")).toEqual(["Ada Lovelace"]);
+    // Single-word exact repeat: the comma stops the first candidate at
+    // "Ada", and the trailing mention is also bare "Ada" — same key.
+    expect(extractMentionedNames("hi @Ada, welcome @Ada")).toEqual(["Ada"]);
+  });
+
   it("matches a mention at the start of the text", () => {
     expect(extractMentionedNames("@Ada can you review")).toEqual(["Ada can"]);
   });

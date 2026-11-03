@@ -172,4 +172,38 @@ describe("maintenance lock (PR-30)", () => {
     };
     expect(await getMaintenanceLastRun({ redisClient: broken })).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // PR-56 — the no-injected-client resolution branches. Production callers
+  // (the cron route) never pass redisClient; the functions must resolve the
+  // shared client from REDIS_URL themselves, and degrade cleanly when the
+  // shared-client factory returns undefined (construction failed).
+  // -------------------------------------------------------------------------
+
+  it("tryAcquireMaintenanceLock resolves the shared client from REDIS_URL (undefined → memory path)", async () => {
+    process.env.REDIS_URL = "redis://localhost:6379";
+    // The mocked getSharedRedisClient returns undefined → client null →
+    // the in-memory one-hour guard applies (single-instance semantics).
+    const now = Date.now();
+    const first = await tryAcquireMaintenanceLock({ now });
+    expect(first).toEqual({ acquired: true, backend: "memory" });
+    const second = await tryAcquireMaintenanceLock({ now: now + 1_000 });
+    expect(second).toEqual({ acquired: false, backend: "memory" });
+  });
+
+  it("recordMaintenanceRun without a client is a silent no-op (best-effort by design)", async () => {
+    process.env.REDIS_URL = "redis://localhost:6379";
+    await expect(recordMaintenanceRun()).resolves.toBeUndefined();
+  });
+
+  it("getMaintenanceLastRun returns null when no client can be resolved (no REDIS_URL)", async () => {
+    delete process.env.REDIS_URL;
+    expect(await getMaintenanceLastRun()).toBeNull();
+  });
+
+  it("getMaintenanceLastRun returns null when the shared client fails to construct", async () => {
+    process.env.REDIS_URL = "redis://localhost:6379";
+    // Mocked factory → undefined → null → metrics omit the field.
+    expect(await getMaintenanceLastRun()).toBeNull();
+  });
 });

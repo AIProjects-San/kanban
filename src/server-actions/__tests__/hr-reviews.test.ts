@@ -36,6 +36,15 @@ vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
 }));
 
+// PR-56 — partial mock so the best-effort notification catch blocks can be
+// asserted (and so they don't spam the console). Everything but logError
+// stays real, matching the __tests__/shared.test.ts convention.
+const logErrorSpy = vi.fn();
+vi.mock("@/lib/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/observability")>();
+  return { ...actual, logError: (...args: unknown[]) => logErrorSpy(...args) };
+});
+
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
@@ -387,5 +396,109 @@ describe("additional transition denials + queue fallbacks", () => {
     const res = await getMyReviews();
     expect(res.ok).toBe(true);
     expect(res.ok && res.data).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-56 — remaining branch coverage: the not-found guards on every
+// transition and the best-effort notification catch blocks.
+// ---------------------------------------------------------------------------
+
+describe("PR-56 — remaining branch coverage", () => {
+  it("pins hr-reviews.ts:163 — an unknown subject cannot get a review cycle", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue(null);
+
+    const res = await createReview({ userId: "u-ghost", title: "2026 Mid-year", periodStart: "2026-01-01", periodEnd: "2026-12-31" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe("AUTH");
+    expect(res.ok === false && res.error).toMatch(/employee not found/i);
+    expect(db.performanceReview.create).not.toHaveBeenCalled();
+  });
+
+  it("pins hr-reviews.ts:163 — a soft-deleted subject cannot get a review cycle either", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: new Date("2026-01-01T00:00:00.000Z") });
+
+    const res = await createReview({ userId: "u-theo", title: "2026 Mid-year", periodStart: "2026-01-01", periodEnd: "2026-12-31" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/employee not found/i);
+    expect(db.performanceReview.create).not.toHaveBeenCalled();
+  });
+
+  it("pins hr-reviews.ts:199 — a notification failure never breaks cycle creation", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    db.notification.create.mockRejectedValue(new Error("mail queue down"));
+
+    const res = await createReview({ userId: "u-theo", title: "2026 Mid-year", periodStart: "2026-01-01", periodEnd: "2026-12-31" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data).toEqual({ id: "pr-new" });
+    expect(logErrorSpy).toHaveBeenCalledWith("[hr-reviews] notification create failed:", expect.any(Error));
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "review.created" }));
+  });
+
+  it("pins hr-reviews.ts:229 — saving a self-assessment on an unknown cycle fails", async () => {
+    db.performanceReview.findUnique.mockResolvedValue(null);
+
+    const res = await saveSelfAssessment({ reviewId: "pr-ghost", selfAssessment: "x" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe("AUTH");
+    expect(res.ok === false && res.error).toMatch(/review not found/i);
+    expect(db.performanceReview.update).not.toHaveBeenCalled();
+  });
+
+  it("pins hr-reviews.ts:263 — submitting an unknown cycle fails", async () => {
+    db.performanceReview.findUnique.mockResolvedValue(null);
+
+    const res = await submitReview({ reviewId: "pr-ghost" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/review not found/i);
+    expect(db.performanceReview.update).not.toHaveBeenCalled();
+  });
+
+  it("pins hr-reviews.ts:291 — a notification failure never breaks submission", async () => {
+    db.performanceReview.findUnique.mockResolvedValue(DRAFT_REVIEW);
+    // The reviewer must resolve so createMany is actually reached.
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.notification.createMany.mockRejectedValue(new Error("broker down"));
+
+    const res = await submitReview({ reviewId: "pr-1" });
+    expect(res.ok).toBe(true);
+    expect(logErrorSpy).toHaveBeenCalledWith("[hr-reviews] notification createMany failed:", expect.any(Error));
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "review.submitted" }));
+  });
+
+  it("pins hr-reviews.ts:312 — acknowledging an unknown cycle fails", async () => {
+    db.performanceReview.findUnique.mockResolvedValue(null);
+
+    const res = await acknowledgeReview({ reviewId: "pr-ghost" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/review not found/i);
+    expect(db.performanceReview.update).not.toHaveBeenCalled();
+  });
+
+  it("pins hr-reviews.ts:351 — deciding an unknown cycle fails", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.performanceReview.findUnique.mockResolvedValue(null);
+
+    const res = await decideReview({ reviewId: "pr-ghost", managerComment: "x", managerRating: 3 });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/review not found/i);
+    expect(db.performanceReview.update).not.toHaveBeenCalled();
+  });
+
+  it("pins hr-reviews.ts:388 — a notification failure never breaks the manager review", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH); // Ingrid
+    db.performanceReview.findUnique.mockResolvedValue({ ...DRAFT_REVIEW, status: "SUBMITTED" });
+    // Keyed on where.id so the chain walk terminates: Theo → Ingrid → root.
+    db.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === "u-theo" ? { managerId: "u-mgr" } : { managerId: null });
+    db.notification.create.mockRejectedValue(new Error("dead letter"));
+
+    const res = await decideReview({ reviewId: "pr-1", managerComment: "Strong half.", managerRating: 4 });
+    expect(res.ok).toBe(true);
+    expect(logErrorSpy).toHaveBeenCalledWith("[hr-reviews] notification createMany failed:", expect.any(Error));
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "review.reviewed" }));
   });
 });

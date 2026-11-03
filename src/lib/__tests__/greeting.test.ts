@@ -11,6 +11,27 @@ describe("getGreeting", () => {
     expect(getGreeting("Not/ARealZone")).toBe("Hello");
   });
 
+  it("PR-56: returns Hello when the formatted hour is not parseable (isNaN guard)", () => {
+    // Defensive guard for an Intl implementation that formats the hour with
+    // non-Latin digits or an unexpected glyph — parseInt yields NaN and the
+    // greeting must degrade to the neutral "Hello" rather than crash.
+    // NOTE: a vi.spyOn mock can't be used here — `new` on a vitest spy
+    // discards the implementation's explicit object return, so .format
+    // would be missing and the catch path (not the isNaN path) would
+    // answer. A plain constructable function whose `new` result carries a
+    // working format() pins the isNaN branch itself.
+    const Original = Intl.DateTimeFormat;
+    const Stub = function () {
+      return { format: () => "twenty-four" };
+    } as unknown as typeof Intl.DateTimeFormat;
+    Intl.DateTimeFormat = Stub;
+    try {
+      expect(getGreeting("UTC")).toBe("Hello");
+    } finally {
+      Intl.DateTimeFormat = Original;
+    }
+  });
+
   it("treats empty/undefined timezone as UTC instead of throwing", () => {
     expect(["Good morning", "Good afternoon", "Good evening"]).toContain(getGreeting(""));
     expect(["Good morning", "Good afternoon", "Good evening"]).toContain(getGreeting(undefined));

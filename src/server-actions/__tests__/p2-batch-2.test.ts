@@ -276,6 +276,63 @@ describe("L-P2-38 exportCalendarIcs", () => {
     expect(res.data.ics).toContain("SUMMARY:Commas\\, semicolons\\; and backslashes \\\\");
   });
 
+  it("PR-56: folds lines longer than 75 octets with a leading space (RFC 5545 §3.1)", async () => {
+    // A summary long enough that "SUMMARY:<title>" exceeds the 74-char
+    // single-line budget — csFoldLine must split it into CRLF-joined
+    // continuations, each continuation starting with a single space.
+    const longTitle = "A very long sprint planning session to review the quarterly roadmap and every workstream in flight".slice(0, 90);
+    db.calendarEvent.findMany.mockResolvedValue([
+      {
+        id: "evt-fold",
+        title: longTitle,
+        description: "",
+        location: "",
+        type: "MEETING",
+        date: new Date(Date.UTC(2026, 9, 30)),
+        time: "09:00",
+        durationMin: 30,
+        createdAt: new Date(Date.UTC(2026, 9, 1)),
+      },
+    ]);
+    const res = await exportCalendarIcs();
+    if (!res.ok) throw new Error("expected ok");
+    const lines = res.data.ics.split("\r\n");
+    // Find the SUMMARY start + its continuation lines (leading space).
+    const summaryIdx = lines.findIndex((l) => l.startsWith("SUMMARY:"));
+    expect(summaryIdx).toBeGreaterThanOrEqual(0);
+    const first = lines[summaryIdx];
+    const second = lines[summaryIdx + 1];
+    // First segment is exactly 74 chars; the continuation starts with " ".
+    expect(first.length).toBe(74);
+    expect(second.startsWith(" ")).toBe(true);
+    // Reassembling (strip continuation spaces) recovers the full title.
+    const reassembled = (first + second).replace(/^SUMMARY:/, "").replace(/^ |^ /g, (m) => (m === " " ? "" : m));
+    expect(reassembled.startsWith("A very long sprint planning session")).toBe(true);
+    // No physical line exceeds the 75-octet limit anywhere in the document.
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(75);
+  });
+
+  it("PR-56: tolerates a malformed HH:MM time by defaulting to 09:00", async () => {
+    db.calendarEvent.findMany.mockResolvedValue([
+      {
+        id: "evt-badtime",
+        title: "Bad time event",
+        description: "",
+        location: "",
+        type: "FOCUS",
+        date: new Date(Date.UTC(2026, 9, 30)),
+        time: "not-a-time",
+        durationMin: 60,
+        createdAt: new Date(Date.UTC(2026, 9, 1)),
+      },
+    ]);
+    const res = await exportCalendarIcs();
+    if (!res.ok) throw new Error("expected ok");
+    // isNaN(hh) → 9, isNaN(mm) → 0 → 09:00.
+    expect(res.data.ics).toContain("DTSTART:20261030T090000Z");
+    expect(res.data.ics).toContain("DTEND:20261030T100000Z");
+  });
+
   it("returns an empty (but valid) calendar when there are no events", async () => {
     const res = await exportCalendarIcs();
     if (!res.ok) throw new Error("expected ok");

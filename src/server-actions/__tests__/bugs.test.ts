@@ -975,3 +975,300 @@ describe("getTaskLinkedBugs / getLinkableBugs", () => {
     expect(db.bug.findMany).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR-56 — remaining branch coverage. Each test below pins a specific
+// statement in bugs.ts that the suites above never executed (verified via
+// the v8 JSON statement map before writing them).
+// ---------------------------------------------------------------------------
+
+describe("PR-56 — remaining branch coverage", () => {
+  // bugs.ts:98 — createBug with a taskId whose task row does not exist
+  // (the "different project" fixture always found the task first).
+  it("createBug rejects a non-existent linked task", async () => {
+    db.task.findUnique.mockResolvedValue(null);
+    const res = await createBug({ title: "Bad link", projectId: "p-1", taskId: "t-missing" });
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "Task not found." });
+    expect(db.bug.create).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:219-225 — getBug comments projection: the map callback never ran
+  // before because every fixture used an empty comments array.
+  it("getBug projects comments (id/author/body/ISO createdAt)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Test", description: "desc",
+      stepsToReproduce: "steps", expectedBehavior: "exp", actualBehavior: "act",
+      severity: "MAJOR", priority: "P2", status: "NEW", resolution: null,
+      reporterUserId: "u-qa", assigneeUserId: "u-dev",
+      projectId: null, taskId: null, environment: "prod",
+      createdAt: new Date(), updatedAt: new Date(),
+      triagedAt: null, resolvedAt: null, closedAt: null,
+      comments: [
+        {
+          id: "c-1", authorId: "u-qa", authorName: "Quinn",
+          body: "Reproduced on staging", createdAt: new Date("2026-01-02T03:04:05.678Z"),
+        },
+      ],
+    });
+    db.user.findMany.mockResolvedValue([
+      { id: "u-qa", name: "Quinn" },
+      { id: "u-dev", name: "Deva" },
+    ]);
+    const res = await getBug("b-1");
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.comments).toEqual([
+      {
+        id: "c-1", authorId: "u-qa", authorName: "Quinn",
+        body: "Reproduced on staging", createdAt: "2026-01-02T03:04:05.678Z",
+      },
+    ]);
+  });
+
+  // bugs.ts:262 — getBugsPage with no signed-in session.
+  it("getBugsPage requires a signed-in session", async () => {
+    getSessionMock.mockResolvedValue(null);
+    const res = await getBugsPage();
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "You must be signed in." });
+    expect(db.bug.findMany).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:277-280 — getBugsPage: the priority / assignee / reporter /
+  // project filters (only status + severity were exercised before).
+  it("getBugsPage applies priority/assignee/reporter/project filters", async () => {
+    await getBugsPage({
+      priority: "P1", assigneeUserId: "u-dev", reporterUserId: "u-qa", projectId: "p-1",
+    });
+    expect(db.bug.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          priority: "P1",
+          assigneeUserId: "u-dev",
+          reporterUserId: "u-qa",
+          projectId: "p-1",
+        }),
+      }),
+    );
+  });
+
+  // bugs.ts:308-309 + 320 — getBugsPage: rows carrying an assignee and a
+  // project, so the bulk id-sets are populated AND the projectMap projection
+  // runs against a non-empty project lookup (fixtures used null ids before).
+  it("getBugsPage resolves assignee + project names in bulk", async () => {
+    db.bug.findMany.mockResolvedValue([
+      {
+        id: "b-1", title: "Bug 1", severity: "MAJOR", priority: "P2", status: "NEW",
+        reporterUserId: "u-qa", assigneeUserId: "u-dev", projectId: "p-1",
+        createdAt: new Date(), updatedAt: new Date(),
+      },
+    ]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-qa", name: "Quinn" },
+      { id: "u-dev", name: "Deva" },
+    ]);
+    db.project.findMany.mockResolvedValue([{ id: "p-1", name: "Apollo" }]);
+    const res = await getBugsPage({ limit: 10 });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.items[0]).toMatchObject({
+      reporterName: "Quinn",
+      assigneeName: "Deva",
+      projectName: "Apollo",
+    });
+  });
+
+  // bugs.ts:375 — updateBug: moving the bug to a project that does not exist
+  // (getProjectAssociatedUserIds returns null on the NEW project id).
+  it("updateBug rejects a project move to a non-existent project", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Old", reporterUserId: "u-mia", assigneeUserId: null, projectId: "p-1",
+    });
+    getProjectAssociatedUserIdsMock.mockResolvedValue(null);
+    const res = await updateBug("b-1", { projectId: "p-ghost" });
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "Project not found." });
+    expect(getProjectAssociatedUserIdsMock).toHaveBeenCalledWith("p-ghost");
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:394-400 — updateBug: every editable field assignment except
+  // title/severity (only title + severity were patched before).
+  it("updateBug patches description/steps/expected/actual/priority/environment", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Old title", description: "old desc", stepsToReproduce: "old steps",
+      expectedBehavior: "old expected", actualBehavior: "old actual", severity: "MINOR",
+      priority: "P3", environment: "dev", reporterUserId: "u-mia", assigneeUserId: null,
+      projectId: "p-1",
+    });
+    const res = await updateBug("b-1", {
+      description: "new desc",
+      stepsToReproduce: "new steps",
+      expectedBehavior: "new expected",
+      actualBehavior: "new actual",
+      priority: "P0",
+      environment: "staging",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "b-1" },
+        data: expect.objectContaining({
+          description: "new desc",
+          stepsToReproduce: "new steps",
+          expectedBehavior: "new expected",
+          actualBehavior: "new actual",
+          priority: "P0",
+          environment: "staging",
+        }),
+      }),
+    );
+  });
+
+  // bugs.ts:408-409 — updateBug audit trail: priority + description land in
+  // the "changes" list (only title/severity entries were built before).
+  it("updateBug lists priority + description in the audit change set", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Old title", description: "old desc", severity: "MINOR",
+      priority: "P3", reporterUserId: "u-mia", assigneeUserId: null, projectId: "p-1",
+    });
+    const res = await updateBug("b-1", {
+      title: "New title",
+      description: "new desc",
+      severity: "CRITICAL",
+      priority: "P0",
+    });
+    expect(res.ok).toBe(true);
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "bug.updated",
+        detail: "Updated bug (title, severity, priority, description)",
+      }),
+    );
+  });
+
+  // bugs.ts:432 — assignBug: the target bug does not exist.
+  it("assignBug throws for a non-existent bug", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.bug.findUnique.mockResolvedValue(null);
+    const res = await assignBug("b-missing", "u-dev");
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "Bug not found." });
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:484 — changeBugStatus: the target bug does not exist.
+  it("changeBugStatus throws for a non-existent bug", async () => {
+    db.bug.findUnique.mockResolvedValue(null);
+    const res = await changeBugStatus("b-missing", { status: "TRIAGED" });
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "Bug not found." });
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:510 — changeBugStatus: first transition INTO CLOSED stamps
+  // closedAt (no prior test ever moved a bug to CLOSED).
+  it("changeBugStatus NEW → CLOSED stamps closedAt and audits bug.closed", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Test", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null,
+      closedAt: null,
+    });
+    const res = await changeBugStatus("b-1", { status: "CLOSED" });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CLOSED",
+          resolution: null,
+          closedAt: expect.any(Date),
+        }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "bug.closed" }),
+    );
+  });
+
+  // bugs.ts:574 — addBugComment with no signed-in session.
+  it("addBugComment requires a signed-in session", async () => {
+    getSessionMock.mockResolvedValue(null);
+    const res = await addBugComment({ bugId: "b-1", body: "hello" });
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "You must be signed in." });
+    expect(db.bugComment.create).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:642 — moveBug: the target bug does not exist.
+  it("moveBug throws for a non-existent bug", async () => {
+    db.bug.findUnique.mockResolvedValue(null);
+    const res = await moveBug("b-missing", { status: "TRIAGED", order: 0 });
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "Bug not found." });
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:674 — moveBug: drag into CLOSED stamps closedAt (no prior test
+  // dragged a bug into the CLOSED column).
+  it("moveBug drag NEW → CLOSED stamps closedAt", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Board bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null,
+      closedAt: null, resolution: null,
+    });
+    const res = await moveBug("b-1", { status: "CLOSED", order: 2 });
+    expect(res.ok).toBe(true);
+    expect(db.bug.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CLOSED",
+          boardOrder: 2,
+          resolution: null,
+          closedAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  // bugs.ts:732 — linkBugToTask: the target bug does not exist.
+  it("linkBugToTask throws for a non-existent bug", async () => {
+    db.bug.findUnique.mockResolvedValue(null);
+    const res = await linkBugToTask("b-missing", { taskId: "t-1" });
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "Bug not found." });
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:744 — linkBugToTask: the task lookup misses. The bug's reporter
+  // matches the session so the earlier edit-permission check passes — the
+  // pre-existing "non-existent task" fixture used a bug reported by u-qa and
+  // therefore died at assertBugEditPermission before reaching this branch.
+  it("linkBugToTask rejects a non-existent task (editable bug)", async () => {
+    db.bug.findUnique.mockResolvedValue({
+      id: "b-1", title: "Linkable bug", status: "NEW", reporterUserId: "u-mia", assigneeUserId: null,
+      taskId: null, projectId: "p-1",
+    });
+    db.task.findUnique.mockResolvedValue(null);
+    const res = await linkBugToTask("b-1", { taskId: "t-missing" });
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "Task not found." });
+    expect(db.bug.update).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:892 — getTaskLinkedBugs with no signed-in session.
+  it("getTaskLinkedBugs requires a signed-in session", async () => {
+    getSessionMock.mockResolvedValue(null);
+    const res = await getTaskLinkedBugs("t-1");
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "You must be signed in." });
+    expect(db.bug.findMany).not.toHaveBeenCalled();
+  });
+
+  // bugs.ts:912 — getLinkableBugs with no signed-in session.
+  it("getLinkableBugs requires a signed-in session", async () => {
+    getSessionMock.mockResolvedValue(null);
+    const res = await getLinkableBugs("t-1", "");
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ code: "AUTH", error: "You must be signed in." });
+    expect(db.task.findUnique).not.toHaveBeenCalled();
+  });
+});

@@ -5,6 +5,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   RedisSlidingWindowLimiter,
   createLoginLimiter,
+  createPasswordResetLimiter,
+  createClientErrorLimiter,
   _resetLoginLimiterCacheForTests,
   type RedisLike,
 } from "@/lib/rate-limit-redis";
@@ -306,6 +308,175 @@ describe("fail-open behaviour when Redis errors (F-12 closure)", () => {
       expect(state.count).toBe(2);
     } finally {
       failing.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-56 — the other two factory-built limiters had zero direct coverage:
+//   • createPasswordResetLimiter (F-05) — 5/email/hour anti-bombing budget
+//   • createClientErrorLimiter (PR-13) — 20/IP/5min ingestion budget
+// Both share the login limiter's shape (Redis when wired, in-memory
+// fallback, process-lifetime cache, fail-open) but distinct key namespaces.
+// ---------------------------------------------------------------------------
+
+describe("createPasswordResetLimiter factory (F-05)", () => {
+  beforeEach(() => {
+    _resetLoginLimiterCacheForTests();
+    vi.clearAllMocks();
+    delete process.env.REDIS_KEY_PREFIX;
+  });
+
+  it("returns the in-memory limiter when no Redis client is provided", async () => {
+    const limiter = createPasswordResetLimiter({});
+    await limiter.hit("victim@x.co");
+    await limiter.hit("victim@x.co");
+    const state = await limiter.check("victim@x.co");
+    expect(state.count).toBe(2);
+    expect(state.blocked).toBe(false);
+  });
+
+  it("wires the Redis limiter under the pwreset: namespace when a client is provided", async () => {
+    const fakeRedis = new FakeRedis();
+    const limiter = createPasswordResetLimiter({
+      redisClient: fakeRedis,
+      redisUrl: "redis://localhost:6379",
+      maxHits: 5,
+      windowMs: 1000,
+    });
+    for (let i = 0; i < 5; i++) await limiter.hit("victim@x.co");
+    const state = await limiter.check("victim@x.co");
+    expect(state.count).toBe(5);
+    expect(state.blocked).toBe(true);
+    // Namespaced under the app prefix + pwreset:, isolated from login keys.
+    expect(fakeRedis._inspect("app:pwreset:victim@x.co").length).toBe(5);
+    expect(fakeRedis._inspect("app:login:victim@x.co").length).toBe(0);
+    // F-05 explicitly disables progressive delay (plain window).
+    expect(state.retryAfterSec).toBeLessThanOrEqual(1);
+  });
+
+  it("caches the limiter for the process lifetime (independent of the login cache)", () => {
+    const a = createPasswordResetLimiter({});
+    const b = createPasswordResetLimiter({});
+    expect(a).toBe(b);
+    // And the login cache holds a DIFFERENT limiter instance.
+    expect(createLoginLimiter({})).not.toBe(a);
+  });
+});
+
+describe("createClientErrorLimiter factory (PR-13)", () => {
+  beforeEach(() => {
+    _resetLoginLimiterCacheForTests();
+    vi.clearAllMocks();
+    delete process.env.REDIS_KEY_PREFIX;
+    delete process.env.REDIS_URL;
+  });
+
+  it("returns the in-memory limiter when no Redis client is provided", async () => {
+    const limiter = createClientErrorLimiter({});
+    await limiter.hit("203.0.113.9");
+    const state = await limiter.check("203.0.113.9");
+    expect(state.count).toBe(1);
+    expect(state.blocked).toBe(false);
+  });
+
+  it("wires the Redis limiter under the clienterr: namespace when a client is provided", async () => {
+    const fakeRedis = new FakeRedis();
+    const limiter = createClientErrorLimiter({
+      redisClient: fakeRedis,
+      redisUrl: "redis://localhost:6379",
+      maxHits: 20,
+      windowMs: 1000,
+    });
+    for (let i = 0; i < 20; i++) await limiter.hit("203.0.113.9");
+    const state = await limiter.check("203.0.113.9");
+    expect(state.count).toBe(20);
+    expect(state.blocked).toBe(true);
+    expect(fakeRedis._inspect("app:clienterr:203.0.113.9").length).toBe(20);
+  });
+
+  it("fails open when Redis errors mid-flight (error reports are never 500s)", async () => {
+    const brokenRedis: RedisLike = {
+      zadd: async () => { throw new Error("ECONNREFUSED"); },
+      zremrangebyscore: async () => { throw new Error("ECONNREFUSED"); },
+      zcard: async () => { throw new Error("ECONNREFUSED"); },
+      zrangebyscore: async () => { throw new Error("ECONNREFUSED"); },
+      del: async () => { throw new Error("ECONNREFUSED"); },
+      expire: async () => { throw new Error("ECONNREFUSED"); },
+    };
+    const limiter = createClientErrorLimiter({
+      redisClient: brokenRedis,
+      redisUrl: "redis://broken:6379",
+    });
+    const checked = await limiter.check("203.0.113.9");
+    expect(checked.blocked).toBe(false);
+    const hit = await limiter.hit("203.0.113.9");
+    expect(hit.blocked).toBe(false);
+  });
+
+  it("caches the limiter for the process lifetime (independent of the other caches)", () => {
+    const a = createClientErrorLimiter({});
+    const b = createClientErrorLimiter({});
+    expect(a).toBe(b);
+    expect(createPasswordResetLimiter({})).not.toBe(a);
+    expect(createLoginLimiter({})).not.toBe(a);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-56 — remaining adapter/warning branches:
+//   • InMemoryLimiterAdapter.reset (L151) — never called by the factory tests
+//   • the production no-REDIS_URL warning (L245-249) — only fires when
+//     NODE_ENV=production, which the test env never is
+// ---------------------------------------------------------------------------
+
+describe("in-memory adapter + production warning (PR-56)", () => {
+  beforeEach(() => {
+    _resetLoginLimiterCacheForTests();
+    vi.clearAllMocks();
+    delete process.env.REDIS_URL;
+    delete process.env.REDIS_KEY_PREFIX;
+  });
+
+  it("the in-memory limiter's reset clears the window (L151)", async () => {
+    const limiter = createLoginLimiter({ maxHits: 2, windowMs: 60_000 });
+    await limiter.hit("k");
+    await limiter.hit("k");
+    expect((await limiter.check("k")).count).toBe(2);
+    await limiter.reset("k");
+    expect((await limiter.check("k")).count).toBe(0);
+  });
+
+  it("warns (loudly, once) when production runs without REDIS_URL (L245-249)", () => {
+    // The multi-instance gap warning must be visible to operators. logWarn
+    // emits a JSON line via console.error — see structuredLog.
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const prevNodeEnv = process.env.NODE_ENV;
+    // @ts-expect-error — deliberately override the read-only env for the test
+    process.env.NODE_ENV = "production";
+    try {
+      const limiter = createLoginLimiter({});
+      // Still functional (single-instance semantics).
+      expect(limiter).toBeDefined();
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain("REDIS_URL not set");
+      expect(logged).toContain("L-P0-10");
+    } finally {
+      // @ts-expect-error — restore
+      process.env.NODE_ENV = prevNodeEnv;
+      errSpy.mockRestore();
+      _resetLoginLimiterCacheForTests();
+    }
+  });
+
+  it("does NOT warn outside production when REDIS_URL is unset (dev default)", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      createLoginLimiter({});
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).not.toContain("REDIS_URL not set");
+    } finally {
+      errSpy.mockRestore();
     }
   });
 });

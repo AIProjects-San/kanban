@@ -264,3 +264,94 @@ describe("reads", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR-56 — remaining branch coverage: the task sort/map arrows (which only
+// execute with 2+ tasks), the namesFor empty-ids short-circuit, the
+// not-found guards, and the former-user fallback.
+// ---------------------------------------------------------------------------
+
+describe("PR-56 — remaining branch coverage", () => {
+  // hr-onboarding.ts:63-64 — the sort comparator and map arrows never run
+  // for 0- or 1-task checklists (Array#sort skips the comparator). Feed a
+  // checklist with two tasks stored OUT of order and assert the serialized
+  // order; also pins the null-assignee (line 69) and doneBy-name (line 73)
+  // arms of the serializer.
+  it("pins hr-onboarding.ts:63-64 — tasks serialize sorted by order, with assignee/doneBy names", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    const taskRow = (over: Record<string, unknown>) => ({
+      ...TASK, done: false, dueOffsetDays: 2, doneAt: null, doneById: null,
+      notes: "", createdAt: new Date(), updatedAt: new Date(), ...over,
+    });
+    db.onboardingChecklist.findMany.mockResolvedValue([
+      {
+        ...CHECKLIST, completedAt: null, createdAt: new Date(), updatedAt: new Date(),
+        tasks: [
+          taskRow({ id: "t-second", order: 1, assigneeId: null }), // null assignee → assigneeName null
+          taskRow({ id: "t-first", order: 0, assigneeId: "u-mgr", done: true, doneAt: new Date(), doneById: "u-diego" }),
+        ],
+      },
+    ]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-diego", name: "Diego Morales" },
+      { id: "u-mgr", name: "Ingrid Solberg" },
+    ]);
+    const res = await getOnboarding();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data[0].tasks.map((t) => t.id)).toEqual(["t-first", "t-second"]); // sort actually ran
+      expect(res.data[0].tasks[0]).toMatchObject({
+        assigneeName: "Ingrid Solberg",
+        doneBy: "Diego Morales",
+      });
+      expect(res.data[0].tasks[1].assigneeName).toBeNull();
+    }
+  });
+
+  // hr-onboarding.ts:82 — namesFor short-circuits when the id set is empty
+  // (zero checklists → no hire, assignee or doneBy ids at all): no user
+  // query is issued and the read resolves to an empty list.
+  it("pins hr-onboarding.ts:82 — namesFor skips the user query entirely for an empty id set", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findMany.mockResolvedValue([]);
+    const res = await getOnboarding();
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data).toEqual([]);
+    expect(db.user.findMany).not.toHaveBeenCalled();
+  });
+
+  // hr-onboarding.ts:104 — a checklist whose hire's user row no longer
+  // resolves renders the "(former user)" fallback instead of a blank name.
+  it("pins hr-onboarding.ts:104 — an unresolvable hire renders '(former user)'", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findMany.mockResolvedValue([
+      { ...CHECKLIST, newHireId: "u-gone", completedAt: null, createdAt: new Date(), updatedAt: new Date(), tasks: [] },
+    ]);
+    db.user.findMany.mockResolvedValue([]); // nobody resolves
+    const res = await getOnboarding();
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data[0].hireName).toBe("(former user)");
+  });
+
+  // hr-onboarding.ts:223 — addTask against a checklist id that matches
+  // nothing fails with a clear not-found error before any task write.
+  it("pins hr-onboarding.ts:223 — addTask on an unknown checklist fails with not-found", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findUnique.mockResolvedValue(null);
+    const res = await addTask({ checklistId: "c-ghost", title: "Ghost task" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/checklist not found/i);
+    expect(db.onboardingTask.create).not.toHaveBeenCalled();
+  });
+
+  // hr-onboarding.ts:282 — assertCanTick (via setTaskDone) rejects an
+  // unknown task id before any permission logic or write happens.
+  it("pins hr-onboarding.ts:282 — setTaskDone on an unknown task fails with not-found", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.onboardingTask.findUnique.mockResolvedValue(null);
+    const res = await setTaskDone({ taskId: "t-ghost", done: true });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/task not found/i);
+    expect(db.onboardingTask.update).not.toHaveBeenCalled();
+  });
+});

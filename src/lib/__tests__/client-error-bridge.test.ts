@@ -88,11 +88,38 @@ describe("client error bridge (src/lib/client-error-bridge.ts)", () => {
     expect((window as unknown as Record<string, unknown>)[KEY]).toBe(first);
   });
 
+  it("PR-56: a re-evaluated module short-circuits at the idempotent guard (L42)", async () => {
+    // The previous test re-imports the CACHED module, so installBridge never
+    // runs twice. Force a fresh evaluation (resetModules) with the bridge
+    // already installed: the guard must return early and keep the FIRST
+    // capture function — a second, differently-scoped closure would leak
+    // the first one's fetch wiring.
+    await importBridge();
+    const first = (window as unknown as Record<string, unknown>)[KEY];
+    vi.resetModules();
+    await import("@/lib/client-error-bridge");
+    expect((window as unknown as Record<string, unknown>)[KEY]).toBe(first);
+  });
+
   it("uses the shared ERROR_BRIDGE_KEY constant (matches error.tsx)", async () => {
     const errorTsx = readFileSync(resolve(__dirname, "../../app/error.tsx"), "utf-8");
     expect(errorTsx).toMatch(/ERROR_BRIDGE_KEY/);
     await importBridge();
     expect((window as unknown as Record<string, unknown>)[KEY]).toBeDefined();
+  });
+
+  it("PR-56: is a no-op on the server (window undefined) — never installs a bridge", async () => {
+    // The module is imported from server components too (it sits in the
+    // client bundle graph); with no window the installer must bail before
+    // touching globals instead of crashing SSR.
+    vi.stubGlobal("window", undefined);
+    try {
+      await import("@/lib/client-error-bridge");
+      // typeof window === "undefined" → no bridge function was created.
+      expect((globalThis as unknown as Record<string, unknown>)[KEY]).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

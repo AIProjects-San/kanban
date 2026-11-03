@@ -45,6 +45,15 @@ vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
 }));
 
+// PR-56 — partial mock so the best-effort notification catch blocks can be
+// asserted (and so they don't spam the console). Everything but logError
+// stays real, matching the __tests__/shared.test.ts convention.
+const logErrorSpy = vi.fn();
+vi.mock("@/lib/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/observability")>();
+  return { ...actual, logError: (...args: unknown[]) => logErrorSpy(...args) };
+});
+
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
@@ -63,6 +72,7 @@ import {
   getApproverIdsFor,
   assertLeaveDecider,
   getOrCreateBalance,
+  getOrCreateBalancesBatch,
   findOverlappingActiveRequest,
 } from "../hr-shared";
 
@@ -907,5 +917,192 @@ describe("read mapping with data", () => {
       expect(res.data.requests[0].decidedBy).toBe("Ingrid");
       expect(res.data.requests[0].decisionNote).toBe("No");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-56 — remaining branch coverage: the best-effort notification catch
+// blocks, the unique-trio race winner re-read inside the approve transaction,
+// the not-found guards, and the non-unique createLeaveType rethrow.
+// ---------------------------------------------------------------------------
+
+describe("PR-56 — remaining branch coverage", () => {
+  it("pins hr-leave.ts:332 — a notification createMany failure never breaks the leave request", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // The approver must resolve so createMany is actually reached.
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.notification.createMany.mockRejectedValue(new Error("broker down"));
+
+    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data).toEqual({ id: "lr-1", days: 2 });
+    expect(logErrorSpy).toHaveBeenCalledWith("[hr-leave] notification createMany failed:", expect.any(Error));
+    // The request itself still lands — audit and all.
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "leave.requested" }));
+  });
+
+  it("pins hr-leave.ts:428-435 — a unique-trio race on materialize re-reads the winner's balance row", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    // Same where.id serves both the chain walk and the requester-name lookup.
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr", name: "Theo" });
+    // 1st read: no row → materialize from the policy; the create then LOSES
+    // the unique-trio race; the 2nd read returns the concurrent winner's row.
+    db.leaveBalance.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ entitled: 20, carriedOver: 2, used: 3 });
+    // Policy default of 1 day would NOT cover the 2-day request — only the
+    // winner's numbers (20 + 2 − 3 = 19 available) let the approval through,
+    // so res.ok === true proves the winner re-read (432-434) actually ran.
+    db.leavePolicy.findUnique.mockResolvedValue({ annualDays: 1 });
+    db.leaveBalance.create.mockRejectedValue({ code: "P2002" });
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveBalance.findUnique).toHaveBeenCalledTimes(2); // initial read + winner re-read
+    expect(db.leaveBalance.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ entitled: 1 }) }),
+    );
+    expect(db.leaveBalance.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { used: { increment: 2 } } }),
+    );
+  });
+
+  it("pins hr-leave.ts:481 — a notification create failure never breaks the decision", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr", name: "Theo" });
+    db.notification.create.mockRejectedValue(new Error("SMTP down"));
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE", note: "Enjoy" });
+    expect(res.ok).toBe(true);
+    expect(logErrorSpy).toHaveBeenCalledWith("[hr-leave] notification create failed:", expect.any(Error));
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "leave.approved" }));
+  });
+
+  it("pins hr-leave.ts:507 — cancelling an unknown leave request fails with not-found", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(null);
+
+    const res = await cancelLeaveRequest({ requestId: "lr-ghost" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe("AUTH");
+    expect(res.ok === false && res.error).toMatch(/leave request not found/i);
+    expect(db.leaveRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("pins hr-leave.ts:620 — a non-unique createLeaveType failure is rethrown as generic INTERNAL", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.leaveType.create.mockRejectedValue(new Error("database unavailable"));
+
+    const res = await createLeaveType({
+      name: "Sabbatical",
+      code: "SABBATICAL",
+      policy: { annualDays: 30, maxCarryOver: 0, minNoticeDays: 30, maxConsecutiveDays: 90 },
+    });
+    expect(res.ok).toBe(false);
+    // NOT the P2002 friendly message — the rethrown error reaches the
+    // generic INTERNAL arm of toResult.
+    expect(res.ok === false && res.code).toBe("INTERNAL");
+    expect(res.ok === false && res.error).toMatch(/something went wrong/i);
+    expect(res.ok === false && res.error).not.toMatch(/already exists/i);
+    expect(logErrorSpy).toHaveBeenCalledWith("[action] unexpected failure:", expect.any(Error));
+  });
+
+  it("pins hr-leave.ts:654 — updating an unknown leave type fails with not-found", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(null);
+
+    const res = await updateLeaveType("lt-ghost", { name: "Ghost Leave" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe("AUTH");
+    expect(res.ok === false && res.error).toMatch(/leave type not found/i);
+    expect(db.leaveType.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-56 — remaining hr-shared branch coverage (suffixed to stay distinct
+// from the hr-leave.ts PR-56 block above): the calendar-invalid date guard
+// in parseDay, and the two unique-trio race catches that log the conflict
+// and re-read the concurrent winner's row instead of failing the read path.
+// ---------------------------------------------------------------------------
+
+describe("PR-56 — remaining branch coverage (hr-shared)", () => {
+  // hr-shared.ts:25 — the SECOND guard in parseDay: a string that matches
+  // ^\d{4}-\d{2}-\d{2}$ yet still parses to Invalid Date. NOTE: V8 rolls
+  // "2026-02-31" over to 2026-03-03 (it is NOT NaN), so the reachable
+  // inputs here are out-of-range months, day 00, and day 32+ — those DO
+  // produce NaN and must throw rather than flow into day arithmetic.
+  it("pins hr-shared.ts:25 — a regex-shaped but calendar-invalid date throws instead of NaN arithmetic", () => {
+    expect(() => parseDay("2026-13-01")).toThrow("Invalid date: 2026-13-01");
+    expect(() => parseDay("2026-00-10")).toThrow("Invalid date: 2026-00-10");
+    expect(() => parseDay("2026-02-32")).toThrow("Invalid date: 2026-02-32");
+    expect(() => parseDay("2026-02-00")).toThrow("Invalid date: 2026-02-00");
+  });
+
+  // hr-shared.ts:117-122 — getOrCreateBalance loses the unique-trio race on
+  // the lazy materialize: PR-22 makes the previously-silent catch LOG the
+  // conflict, and the re-read returns the concurrent winner's numbers.
+  it("pins hr-shared.ts:121 — a materialize race logs the conflict and re-reads the winner's row", async () => {
+    // Both findUnique calls share the same where clause, so the values are
+    // sequenced: 1st read finds no row → materialize; the create LOSES the
+    // race; 2nd read returns the concurrent winner's row.
+    db.leaveBalance.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ entitled: 20, carriedOver: 2, used: 3 });
+    db.leaveBalance.create.mockRejectedValueOnce(new Error("P2002 unique constraint failed"));
+
+    const b = await getOrCreateBalance("u-theo", "lt-annual", 2026, 20);
+    // The winner's numbers, not the policy default (20/0/0).
+    expect(b).toEqual({ entitled: 20, carriedOver: 2, used: 3 });
+    expect(db.leaveBalance.create).toHaveBeenCalledTimes(1);
+    expect(logErrorSpy).toHaveBeenCalledTimes(1);
+    expect(logErrorSpy).toHaveBeenCalledWith(
+      "[hr-shared] leave balance materialize raced with a concurrent create:",
+      expect.any(Error),
+    );
+  });
+
+  // hr-shared.ts:161-168 — the batched variant's race catch: createMany
+  // rejects (skipDuplicates is unsupported on SQLite), PR-22 logs it, and
+  // the retry findMany + fold-in loop recover the winner's rows.
+  it("pins hr-shared.ts:162+168 — a batch materialize race logs, re-reads, and folds in the winner's rows", async () => {
+    // leaveBalance.findMany serves BOTH the initial batched read (annual +
+    // sick) and the post-race retry (sick only) — key the mock on the where
+    // clause instead of sequencing.
+    db.leaveBalance.findMany.mockImplementation(
+      async (args: { where: { leaveTypeId: { in: string[] } } }) => {
+        if (args.where.leaveTypeId.in.includes("lt-annual")) {
+          // Initial read: only the annual row exists — sick is missing.
+          return [{ leaveTypeId: "lt-annual", entitled: 20, carriedOver: 0, used: 0 }];
+        }
+        // Retry read after the raced createMany: the concurrent winner's row.
+        return [{ leaveTypeId: "lt-sick", entitled: 10, carriedOver: 1, used: 2 }];
+      },
+    );
+    db.leaveBalance.createMany.mockRejectedValueOnce(new Error("P2002 unique constraint failed"));
+
+    const balances = await getOrCreateBalancesBatch("u-theo", [
+      { id: "lt-annual", entitled: 20 },
+      { id: "lt-sick", entitled: 10 },
+    ], 2026);
+
+    // Only the missing type was queued for materialization.
+    expect(db.leaveBalance.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [expect.objectContaining({ leaveTypeId: "lt-sick" })] }),
+    );
+    expect(db.leaveBalance.findMany).toHaveBeenCalledTimes(2); // initial + retry
+    expect(logErrorSpy).toHaveBeenCalledTimes(1);
+    expect(logErrorSpy).toHaveBeenCalledWith(
+      "[hr-shared] balance batch materialize raced with a concurrent create:",
+      expect.any(Error),
+    );
+    // The already-present annual row passes through untouched; the sick row
+    // comes from the retry loop (line 168), not the createMany default.
+    // (Batch rows keep their leaveTypeId — the fold-in stores the whole row.)
+    expect(balances.get("lt-annual")).toMatchObject({ entitled: 20, carriedOver: 0, used: 0 });
+    expect(balances.get("lt-sick")).toMatchObject({ entitled: 10, carriedOver: 1, used: 2 });
   });
 });

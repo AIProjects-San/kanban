@@ -163,6 +163,35 @@ describe("L-P1-19 structuredLog", () => {
     const entry = JSON.parse(line);
     expect(entry.requestId).toBeNull();
   });
+
+  it("PR-56: honours a valid LOG_LEVEL and suppresses below-threshold lines (L322+L333)", () => {
+    // LOG_LEVEL=error → warn/info/debug are suppressed by the priority
+    // gate; error still passes. minLevel() reads the env on EVERY call, so
+    // stubEnv is enough (no module reset needed).
+    vi.stubEnv("LOG_LEVEL", "error");
+    try {
+      structuredLog("warn", "should be suppressed");
+      structuredLog("info", "also suppressed");
+      structuredLog("debug", "suppressed too");
+      structuredLog("error", "must pass");
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      expect(stdoutSpy).not.toHaveBeenCalled();
+      const entry = JSON.parse(stderrSpy.mock.calls[0][0] as string);
+      expect(entry.msg).toBe("must pass");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("PR-56: an invalid LOG_LEVEL falls back to the NODE_ENV default (debug outside production)", () => {
+    vi.stubEnv("LOG_LEVEL", "not-a-level");
+    try {
+      structuredLog("debug", "still passes — invalid level is ignored");
+      expect(stdoutSpy).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("L-P1-19 captureError / captureMessage", () => {
@@ -275,6 +304,60 @@ describe("SentryReporter (launch gate 10)", () => {
     errSpy.mockRestore();
   });
 
+  it("PR-56: drops events that lose the sampling roll (sampleRate < 1, L132)", async () => {
+    // sampleRate 0.5 with Math.random pinned at 0.9 (> 0.5) → the event is
+    // dropped BEFORE any fetch is made.
+    const fakeFetch = vi.fn(async () => new Response("{}", { status: 200 }));
+    const reporter = new SentryReporter("https://abc123@o42.ingest.sentry.io/999888", {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      sampleRate: 0.5,
+    });
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.9);
+    try {
+      reporter.captureMessage("sampled-out");
+      await new Promise((r) => setTimeout(r, 10));
+      expect(fakeFetch).not.toHaveBeenCalled();
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("PR-56: sends events that win the sampling roll", async () => {
+    const fakeFetch = vi.fn(async () => new Response("{}", { status: 200 }));
+    const reporter = new SentryReporter("https://abc123@o42.ingest.sentry.io/999888", {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      sampleRate: 0.5,
+    });
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.1);
+    try {
+      reporter.captureMessage("sampled-in");
+      await new Promise((r) => setTimeout(r, 10));
+      expect(fakeFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("PR-56: an error without a stack yields an empty frames array (L230)", async () => {
+    // stackFrames' `if (!stack) return []` — a stripped/absent stack must
+    // not crash the payload build; the report is still delivered.
+    const calls: Array<Record<string, unknown>> = [];
+    const fakeFetch = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body)));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const reporter = new SentryReporter("https://abc123@o42.ingest.sentry.io/999888", {
+      fetchImpl: fakeFetch,
+    });
+    const stackless = new Error("no stack");
+    stackless.stack = undefined;
+    reporter.captureException(stackless);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls.length).toBe(1);
+    const values = (calls[0].exception as { values: Array<{ stacktrace?: { frames: unknown[] } }> }).values;
+    expect(values[0].stacktrace?.frames ?? []).toEqual([]);
+  });
+
   it("is selected by createErrorReporter when SENTRY_DSN is set", () => {
     _resetErrorReporterCacheForTests();
     process.env.SENTRY_DSN = "https://abc123@o42.ingest.sentry.io/999888";
@@ -283,6 +366,33 @@ describe("SentryReporter (launch gate 10)", () => {
       expect(reporter).toBeInstanceOf(SentryReporter);
     } finally {
       delete process.env.SENTRY_DSN;
+      _resetErrorReporterCacheForTests();
+    }
+  });
+
+  it("PR-56: warns loudly when production runs without SENTRY_DSN (launch gate 10)", () => {
+    // The factory must make the missing-aggregation gap VISIBLE: a
+    // production deploy without SENTRY_DSN logs a warning naming the gate
+    // and still falls back to the console reporter (never crashes).
+    _resetErrorReporterCacheForTests();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const prevNodeEnv = process.env.NODE_ENV;
+    delete process.env.SENTRY_DSN;
+    // @ts-expect-error — deliberately override the read-only env for the test
+    process.env.NODE_ENV = "production";
+    try {
+      const reporter = createErrorReporter();
+      expect(reporter).toBeInstanceOf(ConsoleErrorReporter);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("SENTRY_DSN not set"),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("launch gate 10"),
+      );
+    } finally {
+      // @ts-expect-error — restore the original NODE_ENV
+      process.env.NODE_ENV = prevNodeEnv;
+      warnSpy.mockRestore();
       _resetErrorReporterCacheForTests();
     }
   });
@@ -363,6 +473,20 @@ describe("redactSecrets", () => {
     expect(out.nested.deep).toBe("Bearer [redacted]");
     // request_id is preserved (it's a UUID, not a secret).
     expect(out.request_id).toBe("550e8400-e29b-41d4-a716-446655440000");
+  });
+
+  it("PR-56: passes primitives and null through untouched", () => {
+    // The recursive walk terminates at non-string/array/object leaves —
+    // numbers, booleans and null must return as-is, never coerced.
+    expect(redactSecrets(42)).toBe(42);
+    expect(redactSecrets(0)).toBe(0);
+    expect(redactSecrets(true)).toBe(true);
+    expect(redactSecrets(false)).toBe(false);
+    expect(redactSecrets(null)).toBeNull();
+    expect(redactSecrets(undefined)).toBeUndefined();
+    // A sentinel symbol-like object shape also round-trips as an object.
+    const empty = redactSecrets({});
+    expect(typeof empty).toBe("object");
   });
 
   it("SentryReporter scrubs secrets before sending", () => {

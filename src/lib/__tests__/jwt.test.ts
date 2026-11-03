@@ -68,10 +68,20 @@ describe("PR-54 signJwt / verifyJwt", () => {
   it("rejects a tampered signature", () => {
     const token = signJwt(PAYLOAD);
     const [headerB64, payloadB64, signatureB64] = token.split(".");
-    // Flip a character in the signature.
+    // Flip a character in the MIDDLE of the signature. (The old version
+    // flipped the LAST base64 char, which occasionally lands in the
+    // ignored padding bits — the decoded 32 bytes stay identical and the
+    // test flakes. A mid-string flip always changes the decoded bytes.)
+    const MID = Math.floor(signatureB64.length / 2);
+    const orig = signatureB64[MID];
+    const flipped = orig === "A" ? "B" : "A";
     const flippedSig =
-      signatureB64.slice(0, -1) +
-      (signatureB64.endsWith("A") ? "B" : "A");
+      signatureB64.slice(0, MID) + flipped + signatureB64.slice(MID + 1);
+    expect(flippedSig).not.toBe(signatureB64); // guard against no-op flips
+    // Decode both and confirm the tampered bytes actually differ.
+    const origBytes = Buffer.from(signatureB64, "base64url");
+    const flippedBytes = Buffer.from(flippedSig, "base64url");
+    expect(flippedBytes.equals(origBytes)).toBe(false);
     expect(verifyJwt(`${headerB64}.${payloadB64}.${flippedSig}`)).toBeNull();
   });
 
@@ -147,5 +157,61 @@ describe("PR-54 signJwt / verifyJwt", () => {
     delete process.env.BETTER_AUTH_SECRET;
     const token = signJwt(PAYLOAD);
     expect(verifyJwt(token)).not.toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR-56 — the per-claim type guards at the tail of verifyJwt. Each test
+  // builds a VALIDLY-SIGNED token whose payload deliberately violates one
+  // claim's type, so the rejection is attributable to the guard itself and
+  // not to the signature check earlier in the function.
+  // -------------------------------------------------------------------------
+
+  /** Re-sign an arbitrary payload object with the correct header + secret. */
+  function signRawPayload(payload: Record<string, unknown>): string {
+    const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    const input = `${header}.${payloadB64}`;
+    const sig = createHmac("sha256", resolveJwtSecret()).update(input).digest();
+    return `${input}.${Buffer.from(sig).toString("base64url")}`;
+  }
+
+  const VALID_CLAIMS = {
+    sub: "u-mia",
+    role: "MEMBER",
+    name: "Mia Member",
+    email: "mia@fernly.dev",
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+
+  it("rejects a signature of the wrong byte length (length check before timing-safe compare)", () => {
+    // Valid header + payload, but a truncated signature: the length guard
+    // (L135) must reject rather than hand mismatched buffers to
+    // timingSafeEqual, which throws on length mismatch.
+    const token = signJwt(PAYLOAD);
+    const [headerB64, payloadB64, sigB64] = token.split(".");
+    const shortSig = Buffer.from(sigB64, "base64url").subarray(0, 10).toString("base64url");
+    expect(verifyJwt(`${headerB64}.${payloadB64}.${shortSig}`)).toBeNull();
+  });
+
+  it("rejects a payload whose exp is not a number (L146)", () => {
+    expect(verifyJwt(signRawPayload({ ...VALID_CLAIMS, exp: "9999999999" }))).toBeNull();
+    expect(verifyJwt(signRawPayload({ ...VALID_CLAIMS, exp: undefined }))).toBeNull();
+  });
+
+  it("rejects a payload whose iat is not a number (L151)", () => {
+    expect(verifyJwt(signRawPayload({ ...VALID_CLAIMS, iat: "now" }))).toBeNull();
+  });
+
+  it("rejects a payload whose role is not a string (L152)", () => {
+    expect(verifyJwt(signRawPayload({ ...VALID_CLAIMS, role: 42 }))).toBeNull();
+  });
+
+  it("rejects a payload whose name is not a string (L153)", () => {
+    expect(verifyJwt(signRawPayload({ ...VALID_CLAIMS, name: null }))).toBeNull();
+  });
+
+  it("rejects a payload whose email is not a string (L154)", () => {
+    expect(verifyJwt(signRawPayload({ ...VALID_CLAIMS, email: { s: "x" } }))).toBeNull();
   });
 });

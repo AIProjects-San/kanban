@@ -45,14 +45,24 @@ vi.mock("@/lib/rate-limit-redis", () => {
   };
 });
 
-// F-05 — the action reads the caller's IP from request headers.
+// F-05 — the action reads the caller's IP from request headers. The
+// factory consults a hoisted state bag so a single test can make headers()
+// throw (the clientIp catch path) without disturbing the shared default.
+const headerState = vi.hoisted(() => ({
+  impl: null as null | (() => Headers),
+}));
 vi.mock("next/headers", () => ({
-  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.9" }),
+  headers: async () =>
+    headerState.impl
+      ? headerState.impl()
+      : new Headers({ "x-forwarded-for": "203.0.113.9" }),
 }));
 
-const { FakeMailer, _resetMailerCacheForTests } = await import("@/lib/mailer");
+const { FakeMailer, NoopMailer, _resetMailerCacheForTests } = await import("@/lib/mailer");
 const fakeMailer = new FakeMailer();
-const createMailerMock = vi.fn(() => fakeMailer);
+// Typed against the Mailer interface so a single test can swap in a
+// NoopMailer (the degraded-production branch) without a cast.
+const createMailerMock = vi.fn((): import("@/lib/mailer").Mailer => fakeMailer);
 vi.mock("@/lib/mailer", async () => {
   const actual = await vi.importActual<typeof import("@/lib/mailer")>("@/lib/mailer");
   return {
@@ -74,6 +84,7 @@ beforeEach(() => {
   limiterState.blocked = false;
   limiterState.count = 0;
   limiterState.hits = 0;
+  headerState.impl = null;
   getMinPasswordLengthMock.mockResolvedValue(8);
   db.user.findUnique.mockResolvedValue(null);
   db.passwordResetToken.findUnique.mockResolvedValue(null);
@@ -180,6 +191,44 @@ describe("L-P0-11 requestPasswordReset", () => {
     expect(fakeMailer.sent.length).toBe(1);
     expect(fakeMailer.sent[0].html).not.toContain("<img src=x");
     expect(fakeMailer.sent[0].html).toContain("&lt;img src=x");
+  });
+
+  it("PR-56: logs DEGRADED when NoopMailer runs in production (L169-173)", async () => {
+    // NoopMailer + production = the reset token is written but NO email is
+    // sent. Operators must see a loud structured warning (logError →
+    // console.error JSON) so they can wire RESEND_API_KEY before users lock
+    // themselves out.
+    createMailerMock.mockReturnValueOnce(new NoopMailer());
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const prevNodeEnv = process.env.NODE_ENV;
+    // @ts-expect-error — deliberate override of the read-only env
+    process.env.NODE_ENV = "production";
+    try {
+      db.user.findUnique.mockResolvedValue(USER);
+      const res = await requestPasswordReset("ada@fernly.app");
+      expect(res.ok).toBe(true);
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain("DEGRADED");
+      expect(logged).toContain("NoopMailer");
+      expect(logged).toContain("RESEND_API_KEY");
+    } finally {
+      // @ts-expect-error — restore
+      process.env.NODE_ENV = prevNodeEnv;
+      errSpy.mockRestore();
+    }
+  });
+
+  it("PR-56: survives a throwing headers() — the clientIp catch answers 'unknown' (L94)", async () => {
+    // Outside a request context (background job) headers() throws; the
+    // reset request must still succeed (clientIp degrades to "unknown").
+    headerState.impl = () => {
+      throw new Error("no request context");
+    };
+    db.user.findUnique.mockResolvedValue(USER);
+    const res = await requestPasswordReset("ada@fernly.app");
+    expect(res.ok).toBe(true);
+    // The mail still went out (the flow completed end-to-end).
+    expect(fakeMailer.sent.length).toBe(1);
   });
 });
 
@@ -299,6 +348,38 @@ describe("L-P0-11 resetPassword", () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/at least 12/i);
     expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("PR-56: rejects a missing token or password up front (L225)", async () => {
+    const res = await resetPassword({ token: "", newPassword: "" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe("VALIDATION");
+      expect(res.error).toContain("Token and new password are required");
+    }
+    expect(db.passwordResetToken.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("PR-56: rejects a password over the 1024-char ceiling (L236)", async () => {
+    db.passwordResetToken.findUnique.mockResolvedValue(VALID_TOKEN_RECORD);
+    const res = await resetPassword({ token: "good-token", newPassword: "x".repeat(1025) });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("at most 1024");
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("PR-56: detects a token consumed between the check and the transaction (L289)", async () => {
+    // Two concurrent requests raced past the usedAt read; the conditional
+    // updateMany matched 0 rows for the second one → clean VALIDATION
+    // failure instead of a silent double reset.
+    db.passwordResetToken.findUnique.mockResolvedValue(VALID_TOKEN_RECORD);
+    db.$transaction.mockResolvedValueOnce([{}, { count: 0 }]);
+    const res = await resetPassword({ token: "good-token", newPassword: "brand-new-pass" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe("VALIDATION");
+      expect(res.error).toContain("just used");
+    }
   });
 });
 

@@ -18,6 +18,10 @@ vi.mock("@/lib/db", () => ({
     passwordResetToken: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     notification: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     messageRead: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    // PR-48 — the expired-Better-Auth-session sweep (previously missing
+    // from the mock, so the session purge always took its catch path and
+    // the success path was uncovered).
+    session: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
   },
 }));
 
@@ -91,11 +95,45 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
     expect(body.purgedResetTokens).toBe(0);
     expect(body.purgedReadNotifications).toBe(0);
     expect(body.purgedStaleMessageReads).toBe(0);
+    // PR-48 — the expired-session sweep counter is present too.
+    expect(body.purgedExpiredSessions).toBe(0);
     // The prune result only carries counters — never audit contents.
     expect(JSON.stringify(body)).not.toMatch(/actorName|detail/);
     // PR-30 — the response reports which lock backend guarded the run.
     expect(body.lockBackend).toBe("memory");
     expect(res.headers.get("cache-control")).toMatch(/no-store/i);
+  });
+
+  it("PR-56: sweeps expired Better Auth sessions (PR-48) on the success path", async () => {
+    // The session deleteMany counts: give it a non-zero count and verify
+    // it flows through to the response (the sweep actually ran, not just
+    // silently failed into its catch).
+    const { db } = await import("@/lib/db");
+    (db.session.deleteMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 7 });
+    const { GET } = await import("../route");
+    const res = await GET(mockRequest({ authorization: `Bearer ${SECRET}` }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.purgedExpiredSessions).toBe(7);
+    // Live sessions untouched: the where clause is expiresAt < now only.
+    expect(db.session.deleteMany).toHaveBeenCalledWith({
+      where: { expiresAt: { lt: expect.any(Date) } },
+    });
+  });
+
+  it("PR-56: a failing session sweep never blocks the other purges", async () => {
+    // Sessions table absent (pre-Phase-1 environments) → deleteMany throws
+    // → the counter is 0 and the run still reports success.
+    const { db } = await import("@/lib/db");
+    (db.session.deleteMany as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("table does not exist"),
+    );
+    const { GET } = await import("../route");
+    const res = await GET(mockRequest({ authorization: `Bearer ${SECRET}` }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.purgedExpiredSessions).toBe(0);
+    expect(body.purgedResetTokens).toBe(0);
   });
 
   it("supports POST as well as GET (system crontabs)", async () => {

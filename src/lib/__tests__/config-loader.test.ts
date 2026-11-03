@@ -12,6 +12,7 @@ const redisMocks = vi.hoisted(() => {
     publish: vi.fn(async () => 1),
     publisherEnabled: false,
     subscriberEnabled: false,
+    subscriberThrows: false,
     onMessage: null as null | ((m: string) => void),
     subscribeCalls: 0,
   };
@@ -26,6 +27,9 @@ vi.mock("@/lib/redis-client", () => ({
     redisMocks.publisherEnabled ? { publish: redisMocks.publish } : undefined,
   subscribeToConfigInvalidation: (cb: (m: string) => void) => {
     redisMocks.subscribeCalls += 1;
+    if (redisMocks.subscriberThrows) {
+      throw new Error("subscriber construction failed");
+    }
     if (!redisMocks.subscriberEnabled) return undefined;
     redisMocks.onMessage = cb;
     return { unsubscribe: () => undefined };
@@ -334,5 +338,28 @@ describe("cross-instance config invalidation (PR-31)", () => {
     expect(findFirst).toHaveBeenCalledTimes(1);
     // No pub/sub message can arrive; nothing throws, cache holds.
     expect(redisMocks.onMessage).toBeNull();
+  });
+
+  it("PR-56: a throwing subscriber start degrades to the TTL backstop (never 500s)", async () => {
+    // The invalidation subscriber's constructor throwing must be swallowed:
+    // config reads still succeed and the 10s TTL remains the backstop.
+    // (logWarn emits a JSON line via console.error — see structuredLog.)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    redisMocks.subscriberThrows = true;
+    try {
+      const config = await getWorkspaceConfig();
+      expect(config.workspace.name).toBe("Fernly Workspace");
+      // The failure was visible in the log with the TTL note.
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain("failed to start the invalidation subscriber");
+      expect(logged).toContain("TTL backstop applies");
+      expect(logged).toContain("subscriber construction failed");
+      // And the next read still works (cache, no crash loop).
+      await getWorkspaceConfig();
+      expect(findFirst).toHaveBeenCalledTimes(1);
+    } finally {
+      redisMocks.subscriberThrows = false;
+      errSpy.mockRestore();
+    }
   });
 });

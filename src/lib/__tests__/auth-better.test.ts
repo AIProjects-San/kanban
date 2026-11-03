@@ -443,6 +443,79 @@ describe("revocation (tokenVersion counterpart)", () => {
     expect(res.res.status).toBe(401);
     expect(store.sessions).toHaveLength(0);
   });
+
+  it("PR-56: blocks session creation when the backstop sees a soft-deleted user (gate/backstop race)", async () => {
+    // The before-hook gate normally rejects soft-deleted users at the email
+    // lookup; the session.create backstop exists for the window where the
+    // gate passes but the row is (soft-)deleted before the session write.
+    // Key the mock on the query shape: email-keyed gate lookups see a
+    // healthy user, the id+deletedAt backstop lookup sees deletedAt set.
+    seedUser();
+    const original = db.user.findUnique.getMockImplementation();
+    db.user.findUnique.mockImplementation(async (args: {
+      where?: Record<string, unknown>;
+      select?: Record<string, unknown>;
+    }) => {
+      if (args?.where?.id === "u-1" && args?.select?.deletedAt) {
+        return { deletedAt: new Date() }; // the backstop's view
+      }
+      return original?.(args as never) ?? null;
+    });
+    try {
+      const res = await signIn("ada@fernly.dev", "correct-horse-1");
+      expect(res.res.status).toBeGreaterThanOrEqual(400);
+      expect(store.sessions).toHaveLength(0);
+    } finally {
+      db.user.findUnique.mockImplementation(original!);
+    }
+  });
+
+  it("PR-56: blocks session creation when the backstop's own DB lookup fails (fail-closed)", async () => {
+    // Same keyed-mock trick, but the backstop lookup REJECTS: the catch
+    // must return false (block) — a fail-open backstop would let a
+    // soft-deleted user through exactly when the DB misbehaves.
+    seedUser();
+    const original = db.user.findUnique.getMockImplementation();
+    db.user.findUnique.mockImplementation(async (args: {
+      where?: Record<string, unknown>;
+      select?: Record<string, unknown>;
+    }) => {
+      if (args?.where?.id === "u-1" && args?.select?.deletedAt) {
+        throw new Error("backstop DB down");
+      }
+      return original?.(args as never) ?? null;
+    });
+    try {
+      const res = await signIn("ada@fernly.dev", "correct-horse-1");
+      expect(res.res.status).toBeGreaterThanOrEqual(400);
+      expect(store.sessions).toHaveLength(0);
+    } finally {
+      db.user.findUnique.mockImplementation(original!);
+    }
+  });
+
+  it("PR-56: a credential-bridge DB failure is a failed sign-in, never a bypass (L356-357)", async () => {
+    // The bridge syncs the credential account row before Better Auth's
+    // verify. If the bridge's DB read fails, the sign-in must be rejected
+    // (UNAUTHORIZED) — the failure must not fall through to a session.
+    seedUser();
+    db.account.findUnique.mockRejectedValueOnce(new Error("bridge DB down"));
+    const res = await signIn("ada@fernly.dev", "correct-horse-1");
+    expect(res.res.status).toBe(401);
+    expect(store.sessions).toHaveLength(0);
+  });
+
+  it("PR-56: an audit-log failure never blocks a successful sign-out (L439)", async () => {
+    seedUser();
+    const signedIn = await signIn("ada@fernly.dev", "correct-horse-1");
+    const cookie = cookieJar(signedIn.setCookies);
+    // The sign-out after-hook's audit write rejects — best-effort parity
+    // with the sign-in path: the session row must still be revoked.
+    db.auditLog.create.mockRejectedValueOnce(new Error("audit db down"));
+    const out = await call("POST", "/sign-out", { body: {}, cookie });
+    expect(out.res.status).toBe(200);
+    expect(store.sessions).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -620,6 +693,18 @@ describe("getBetterSession — PR-54 bearer-token path", () => {
     mockHeaderBag.current = new Headers({ authorization: "Basic dXNlcjpwYXNz" });
     expect(await getBetterSession()).toBeNull();
   });
+
+  it("PR-56: returns null (never throws) when the header bag itself is broken", async () => {
+    // getBetterSession is called from every server action; an unexpected
+    // failure while reading the request context must degrade to "signed
+    // out" (→ 401/redirect), never propagate a 500. Setting the bag to a
+    // non-Headers value makes the .get() call throw inside the try block.
+    seedUser();
+    // @ts-expect-error — deliberately poison the bag for one call
+    mockHeaderBag.current = null;
+    await expect(getBetterSession()).resolves.toBeNull();
+    mockHeaderBag.current = new Headers();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -644,6 +729,41 @@ describe("config posture", () => {
     try {
       vi.resetModules();
       await expect(import("@/lib/auth-better")).rejects.toThrow(/secret/i);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it("PR-56: outside production, a weak secret degrades to an ephemeral UUID (L63-68)", async () => {
+    // The dev fallback: no throw, a warning, and a random UUID secret (the
+    // session signature changes on every restart — acceptable in dev only).
+    // (logWarn emits a JSON line via console.error — see structuredLog.)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("BETTER_AUTH_SECRET", "fernly-dev-secret-legacy");
+    try {
+      vi.resetModules();
+      await expect(import("@/lib/auth-better")).resolves.toBeDefined();
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain("ephemeral secret");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("PR-56: parses SERVER_ACTIONS_ALLOWED_ORIGINS with mixed entries (L104-110)", async () => {
+    // Bare host(:port) entries are normalized onto the dev scheme; full
+    // origins pass through; empty entries are filtered. The module must
+    // still construct with a mixed list.
+    vi.stubEnv(
+      "SERVER_ACTIONS_ALLOWED_ORIGINS",
+      "localhost:3000, https://app.example.com, , 10.0.0.1:8080 ,",
+    );
+    try {
+      vi.resetModules();
+      await expect(import("@/lib/auth-better")).resolves.toBeDefined();
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();
