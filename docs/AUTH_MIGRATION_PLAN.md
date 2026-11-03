@@ -188,8 +188,49 @@ Findings that adjust the Phase 1 port map (validated, not assumed):
 3. Pick the cutover window (low traffic; users will be signed out once).
 4. Confirm the audit-row parity requirement with whoever owns compliance.
 
+## 9. Post-migration addition — JWT bearer tokens (PR-54, 2026-11-03)
+
+After the migration completed (PR-49), external/programmatic clients still had no
+clean credential: cookie sessions require a browser-grade cookie jar, and Server
+Actions are awkward to invoke from curl/CI. PR-54 adds bearer-token auth **alongside**
+the cookie flow — no replacement, no migration:
+
+| Concern | Implementation |
+|---|---|
+| Token format | HS256 JWT, dependency-free (`src/lib/jwt.ts`, Node crypto) |
+| Signing secret | `BETTER_AUTH_SECRET` (same env var as the cookie stack — one secret to manage) |
+| Expiry | 1 hour (shorter than the 7-day cookie: automated clients re-mint easily) |
+| Minting | `POST /api/auth/token` (plain HTTP, for curl/CI) · `issueAuthToken()` (server action, browser). Both require an existing session; a still-valid bearer also works (refresh-before-expiry) |
+| Audit | Every issuance writes `auth.token_issued` with IP + user agent |
+| Validation | `getBetterSession()` checks `Authorization: Bearer` **before** the cookie path → every server action / API route accepts either credential transparently. Signature + expiry verified, then one indexed DB lookup: soft-deleted users rejected immediately; the DB's current role/name/email are authoritative (role changes apply on the next request, not on token expiry) |
+| No silent fallback | An invalid/expired bearer returns 401 — it never falls through to an unrelated cookie session |
+| Revocation | Soft-delete kills outstanding JWTs immediately (DB lookup). Password/role changes delete DB session rows but not JWTs — the 1h expiry is the revocation window. A Redis JTI blocklist is the documented future enhancement if immediate revocation is needed |
+| Scoping | Tokens are personal, never workspace API keys: bearer requests funnel through the same `getSession()` → `AuthResult`, so `getScopedProjectIds`, member visibility and permission gates all apply identically |
+
+**Usage:**
+
+```bash
+# 1 — sign in (cookie flow), keep the session cookie:
+curl -c jar -X POST https://app/api/auth-better/sign-in/email \
+     -H 'content-type: application/json' \
+     -d '{"email":"…","password":"…"}'
+
+# 2 — exchange for a 1-hour bearer token:
+curl -b jar -X POST https://app/api/auth/token
+# → { "ok": true, "token": "…", "expiresAt": …, "expiresIn": 3600, "tokenType": "Bearer" }
+
+# 3 — call any endpoint with the bearer token:
+curl -H "Authorization: Bearer $TOKEN" https://app/…
+```
+
+**Tests:** `src/lib/__tests__/jwt.test.ts` (12 crypto cases — tamper/expiry/wrong-secret/
+alg-none rejection), `src/lib/__tests__/auth-better.test.ts` bearer describe (8 resolution
+cases — soft-delete guard, DB-role authority, no-cookie-fallback), and
+`src/app/api/auth/token/__tests__/route.test.ts` (7 route cases — 401, mint + verify
+round-trip, audit row, audit-failure resilience, 405 GET, refresh).
+
 ---
 
-*Plan version: PR-49 (migration complete). Re-verify the library landscape
-(release cadence, v5 status) before any future auth work — the migration
-described here executed 2026-11-03.*
+*Plan version: PR-54 (migration complete + bearer-token addition). Re-verify the
+library landscape (release cadence, v5 status) before any future auth work — the
+migration described here executed 2026-11-03; bearer tokens added the same day.*

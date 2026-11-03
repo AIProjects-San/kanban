@@ -10,7 +10,7 @@ PostgreSQL · Better Auth (DB sessions) · Zustand · Tailwind v4 (CSS-first) + 
 
 ```bash
 bun install                 # install dependencies
-cp .env.example .env        # then fill in DATABASE_URL + NEXTAUTH_SECRET
+cp .env.example .env        # then fill in DATABASE_URL + BETTER_AUTH_SECRET
                             # (+ NEXT_PUBLIC_DEMO_PASSWORD for the demo accounts)
 bunx prisma db push         # create the schema
 bunx prisma generate        # generate the client
@@ -35,7 +35,7 @@ contains **no credential literals**):
 | `bun run build` / `bun run start` | Standalone production build / serve |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | `tsc --noEmit` (strict — part of the gate) |
-| `bun run test` | Vitest unit/integration suite (730+ tests) |
+| `bun run test` | Vitest unit/integration suite (1160+ tests) |
 | `bun run test:coverage` | Coverage report + threshold gates |
 | `bun run test:e2e` | Selenium + Cucumber browser suite (needs Chrome; see `e2e/README.md`) |
 | `bun run bundle:check` | Client JS budget gate (L-P1-17) |
@@ -56,17 +56,40 @@ contains **no credential literals**):
   with local primitives, no component kit. Rationale and alternatives:
   [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+## API access (bearer tokens — PR-54)
+
+Programmatic clients (curl, CI, integrations) authenticate with a 1-hour JWT:
+
+```bash
+# 1 — sign in via the cookie flow, keeping the session cookie:
+curl -c jar -X POST http://localhost:3000/api/auth-better/sign-in/email \
+     -H 'content-type: application/json' \
+     -d '{"email":"demo@fernly.app","password":"…"}'
+
+# 2 — exchange the session for a bearer token:
+curl -b jar -X POST http://localhost:3000/api/auth/token
+# → { "ok": true, "token": "…", "expiresIn": 3600, "tokenType": "Bearer" }
+
+# 3 — call any endpoint with the bearer token:
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/…
+```
+
+Tokens are personal (never workspace API keys): the same permission gates and data
+scoping apply as for browser sessions. Every issuance is audit-logged
+(`auth.token_issued`). Details: [`docs/AUTH_MIGRATION_PLAN.md`](docs/AUTH_MIGRATION_PLAN.md) §9.
+
 ## Documentation
 
 | Doc | Contents |
 |-----|----------|
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements, roles, acceptance criteria |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System, layering, auth/authz flows, data model |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADRs: axios, UI library, Tailwind v4, tokens, secrets |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADRs: axios, UI library, Tailwind v4, tokens, secrets, data scoping, bearer tokens |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, controls, incident response |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test strategy + full manual test plan |
 | [`docs/CODING_STANDARDS.md`](docs/CODING_STANDARDS.md) | Rules for tokens, config, server actions, tests |
 | [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) | The full audit: findings, fixes, open risks |
+| [`docs/AUTH_MIGRATION_PLAN.md`](docs/AUTH_MIGRATION_PLAN.md) | NextAuth→Better Auth migration (complete) + bearer tokens |
 
 ## Keyboard shortcuts
 
@@ -79,6 +102,8 @@ contains **no credential literals**):
 All authorization is enforced server-side; client gating is cosmetic. Every mutation is
 permission-checked, ownership-checked where relevant, and audit-logged. Login is
 rate-limited (5 failures / 15 min per email and IP) with timing-attack mitigation.
-Production refuses to boot without a strong `NEXTAUTH_SECRET`. See
+Personal data (reminders, time entries, greeting counts, project staff) is scoped to
+the signed-in user — for every role including admins. Production refuses to boot
+without a strong `BETTER_AUTH_SECRET`. See
 [`docs/SECURITY.md`](docs/SECURITY.md) for the complete model and the honest list of
 accepted risks.

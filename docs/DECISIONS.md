@@ -310,3 +310,91 @@ rejection scenarios assert structural outcomes (form stays open, no row created)
 instead. The e2e `.env` parser now strips quotes like dotenv/shell do (a quoted
 `NEXT_PUBLIC_DEMO_PASSWORD` previously caused bcrypt-mismatch 401s and drained the
 login-rate-limit budget).
+
+---
+
+## ADR-010 — Personal-data scoping: personal items are owner-scoped; shared logs follow member visibility
+
+**Date:** 2026-11-03 · **Status:** ACCEPTED · **Type:** security
+
+**Context.** The PR-51→54 data-leak audit (every server action + API route) found
+four places where "what the sentence claims" and "what the query returns" disagreed:
+the dashboard greeting counted workspace-wide tasks for admins (PR-51); reminders
+surfaced legacy null-owner rows to every user (PR-52); `getTimeEntriesPage` used a
+project-centric scope while the dashboard uses a member-visibility rule — letting a
+MEMBER read non-visible members' time logs, with the caller's `memberId` filter
+overwriting the scope entirely (PR-53); and `getProjectAssignments` /
+`getProjectAssignableUsers` returned any project's staff roster (with emails) to any
+signed-in user (PR-54).
+
+**Analysis.** The app's resources split into three visibility classes:
+
+| Class | Rule | Examples |
+|---|---|---|
+| Personal | owner-only, **everyone including admins** sees only their own | reminders, greeting counts, settings, password |
+| Shared, member-visible | visible if the *viewer can see the member* (members of their projects + self) | time entries |
+| Shared, project-visible | visible if the *viewer can see the project* (`getScopedProjectIds`) | tasks, projects, project staff |
+| Workspace-wide by design | everyone sees them | calendar events, bug board, notification broadcasts |
+
+The bugs were all class-confusion: reminders treated as workspace-wide, time entries
+treated as project-visible, project staff treated as workspace-wide.
+
+**Decision.**
+
+1. Reminders are personal-only (`ownerId = me`); the nullable column stays for
+   back-compat but null-owner rows are never rendered.
+2. Time entries (dashboard + pagination) follow the dashboard's member-visibility
+   rule, funnelled through `getVisibleMemberIds` (`shared.ts`) so the read paths
+   cannot drift apart. Caller-supplied filters (`memberId`) are **intersected**
+   with the server-derived scope, never allowed to replace it.
+3. Project staff reads (`getProjectAssignments`, `getProjectAssignableUsers`,
+   `getProjectMembers`) all gate on `getScopedProjectIds` — ADMIN unscoped,
+   MANAGER/MEMBER scoped identically (pinned per-role with `describe.each`).
+4. Broadcast patterns are legitimate **only** for Notification (`recipientUserId =
+   null`) — documented in the schema and `notifications.ts`; a new `OR: [{ …me },
+   { …null }]` on any other model is a review flag.
+
+**Consequences.** Legacy null-owner reminders become invisible but stay in the DB
+(no data loss on migrate). The time-entries pagination loses its "entries on my
+projects by members I can't see" rows — strictly less data, matching the dashboard.
+Every rule is regression-tested per role (MANAGER and MEMBER both, so a future
+divergence fails in CI first); the cross-referencing comments in
+`dashboard.ts`/`shared.ts`/`pagination.ts` keep the scopes documented at the code.
+
+---
+
+## ADR-011 — JWT bearer tokens alongside cookie sessions (no replacement)
+
+**Date:** 2026-11-03 · **Status:** ACCEPTED · **Type:** security
+
+**Context.** After the Better Auth migration (PR-49), every credential was a cookie
+session. External/programmatic clients (curl, CI, integrations) had no clean auth
+path: cookies require a browser-grade jar and Server Actions are awkward to invoke
+over plain HTTP.
+
+**Decision.** Add HS256 JWT bearer tokens as a **second** credential, not a
+replacement: `getBetterSession()` checks `Authorization: Bearer <jwt>` before the
+cookie path, so every server action and API route accepts either transparently via
+the same `getSession()` → `AuthResult`. Dependency-free implementation
+(`lib/jwt.ts`, Node crypto) signing with the existing `BETTER_AUTH_SECRET` (one
+secret to manage, same rotation story). 1-hour expiry; minting requires an existing
+session (cookie or still-valid bearer → refresh-before-expiry) and writes an
+`auth.token_issued` audit row; `/api/auth/token` (plain HTTP) serves non-server-action
+clients. Validation = signature + expiry (constant-time, `alg: none` rejected) then
+one indexed DB lookup: soft-deleted users rejected immediately, and the DB's current
+role/name/email are authoritative (role changes apply next request, not at token
+expiry). An invalid bearer returns 401 — never a silent cookie fallback.
+
+Rejected alternatives: a third-party JWT library (`jose`) — the HS256 use case is
+~90 lines and dependency-free wins; a `tokenVersion` claim check — vestigial in the
+Better Auth stack (revocation = deleting Session rows), and the DB lookup already
+covers the security-relevant case; a Redis JTI blocklist — deferred until immediate
+revocation is actually required (documented as the future enhancement).
+
+**Consequences.** Tokens are personal, never workspace API keys — every scoping
+rule (ADR-010) applies identically to bearer-authenticated requests. Password/role
+changes do not invalidate outstanding JWTs: the 1h expiry is the revocation window
+(soft-delete IS immediate). One extra indexed DB lookup per bearer-authenticated
+request (the cookie path has the same cost behind its 5-minute cache). Docs live in
+`AUTH_MIGRATION_PLAN.md` §9; tests pin the crypto (12), the session resolution (8)
+and the route (7).

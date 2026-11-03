@@ -17,6 +17,7 @@ Prisma 6 + PostgreSQL (Supabase) · Better Auth 1.7 (DB sessions) · Zustand · 
                     │                                            │
                     │  /                — single-page app shell  │
                     │  /api/auth-better/* — Better Auth (credentials) │
+                    │  /api/auth/token  — JWT bearer-token minting (PR-54) │
                     │  Server Actions  — ALL data mutations      │
                     └───────────────┬────────────────────────────┘
                                     │ Prisma (pooler, IPv4)
@@ -68,15 +69,49 @@ Nothing in `lib/` imports React components except the two .tsx constant files
 
 ## 3. Authentication & session flow
 
-1. `authorize()` (lib/auth.ts): normalises email → rate-limit check (email + IP buckets,
-   5/15 min) → user lookup → **constant-time** bcrypt compare (dummy hash when the user
-   doesn't exist) → audit sign-in → return `{id, email, name, role}`.
-2. JWT callback stamps `id`, `role`, `roleCheckedAt`. Every request where
-   `roleCheckedAt` is older than 5 minutes re-reads the role from the DB (demotions
-   apply without re-login; deleted accounts are neutered to an empty id, which the app
-   treats as signed-out).
-3. `getSession()` (auth-guard) is the single server-side entry point; unknown roles are
-   downgraded to `MEMBER` (deny-by-default).
+Two supported credentials, both resolving to the same `AuthResult` (`userId,
+role, name, email`) via `getSession()` (`server-actions/auth-guard.ts`):
+
+**A. Better Auth cookie sessions (browser).** `src/lib/auth-better.ts`
+serves `/api/auth-better/*`: the sign-in before-hook normalises email →
+rate-limit check (email + IP buckets, 5/15 min, Redis-backed when
+configured) → user lookup with soft-delete filter → credential-row sync
+(`User.passwordHash` stays the single source of truth) → Better Auth's
+single bcrypt compare → DB-backed opaque session (`fernly.session_token`
+cookie, httpOnly, SameSite=Lax, 7-day expiry, 5-minute `session_data` cookie
+cache). `getBetterSession()` resolves the cookie against the `Session`
+table and downgrades unknown roles to MEMBER (deny-by-default). A
+soft-deleted account is treated as signed out even mid-session (`deletedAt`
+rides on the session payload). Sign-in/out after-hooks write `auth.signed_in`
+/ `auth.signed_out` audit rows with IP + user agent.
+
+**B. JWT bearer tokens (external/programmatic clients — PR-54).**
+`getBetterSession()` checks `Authorization: Bearer <jwt>` **before** the
+cookie path, so every server action and API route transparently accepts
+either credential. `src/lib/jwt.ts` is a dependency-free HS256
+implementation (Node crypto) signing with `BETTER_AUTH_SECRET`:
+
+1. **Minting** — `POST /api/auth/token` (plain HTTP, for curl/CI clients) or
+   the `issueAuthToken()` server action (browser). Both require an existing
+   session (cookie or still-valid bearer — the latter enables
+   refresh-before-expiry). Returns `{ token, expiresAt, expiresIn,
+   tokenType: "Bearer" }` and writes an `auth.token_issued` audit row with
+   IP + UA.
+2. **Validation** — `verifyJwt()` checks signature (constant-time) +
+   expiry + alg (rejects `alg: none`); then one indexed DB lookup confirms
+   the user exists and isn't soft-deleted, and returns the **current** DB
+   role/name/email (role changes take effect immediately, not on token
+   expiry). An invalid/expired bearer returns null (→ 401) — it never
+   silently falls through to an unrelated cookie session.
+3. **Revocation** — soft-deleting a user kills their outstanding JWTs
+   immediately (the DB lookup rejects). Password/role changes delete DB
+   session rows but do **not** invalidate outstanding JWTs — the 1-hour
+   expiry is the revocation window; clients re-mint before expiry.
+
+Tokens are personal, never workspace API keys: bearer-authenticated requests
+funnel through the same `getSession()` → `AuthResult`, so every scoping rule
+(`getScopedProjectIds`, member visibility, permission gates) applies
+identically.
 
 **Secrets:** production refuses to boot with a missing/weak `BETTER_AUTH_SECRET`
 (`NEXT_PHASE=phase-production-build` is exempt so builds succeed on secret-less CI).
@@ -90,12 +125,23 @@ Cookies flip to `Secure` automatically in production.
 - **Layer 2 — row-level scoping**: `getDashboardData()` computes a scoped project-id set
   (owned ∪ assigned-tasks ∪ explicit assignments) from the **server session** and pushes
   it into every query. MEMBER and MANAGER are both scoped; ADMIN is not.
+  The same scope is shared by the paginated reads (`pagination.ts`) and the project
+  staff reads (`assignments.ts`, `dashboard.ts::getProjectMembers`) via
+  `getScopedProjectIds` — see ADR-010.
+- **Personal-data scoping (PR-51–54):** reminders are owner-only (the legacy
+  `ownerId: null` rows are no longer surfaced); dashboard time entries are filtered to
+  **members the viewer can see** (`getVisibleMemberIds` — the same rule governs
+  `getTimeEntriesPage`, where the caller's `memberId` filter is intersected with the
+  visible set rather than overwriting the scope); dashboard greeting counts are
+  personal (own tasks, own reminders-due-today), not workspace-wide.
 - **Ownership assertions**: task edits (`task:edit:own` without `:any`), message
   deletion (sender/recipient), reminder toggling (owner/admin), profile/settings reads
   and writes (self or `role:manage`).
 
 **Critical invariant (regression-tested):** caller-supplied arguments are never used for
-authorization decisions. Identity always comes from `getSession()`.
+authorization decisions. Identity always comes from `getSession()`. Caller-supplied
+**filters** (e.g. `memberId` on `getTimeEntriesPage`) are intersected with the server-
+derived scope — never allowed to replace it.
 
 ## 5. Data model (22 models, key ones)
 
@@ -107,9 +153,9 @@ authorization decisions. Identity always comes from `getSession()`.
 | `Task` | Kanban card with `order` per column | project/assignee (SetNull) |
 | `ProjectAssignment` | explicit user↔project membership | unique (projectId, userId) |
 | `Message` | threaded DMs with `senderUserId`/`recipientUserId` | privacy enforced in queries |
-| `Reminder` | dashboard to-do, `ownerId` nullable (null = workspace-wide) | — |
-| `Notification` | workspace activity feed | global by design |
-| `AuditLog` | append-only trail (28 typed actions) | written by every mutation |
+| `Reminder` | dashboard to-do — personal (`ownerId` = creator); legacy null-owner rows retained in DB but not surfaced (PR-52) | — |
+| `Notification` | per-user routing; null-recipient rows are intentional workspace-wide broadcasts | — |
+| `AuditLog` | append-only trail (66 typed actions) | written by every mutation |
 | `Workspace` + 6 config tables + `Role/Permission/RolePermission` | runtime-configurable vocabulary and RBAC | cached by config-loader |
 
 Cascade policy: deleting a **Project** keeps its tasks (SetNull projectId) but removes

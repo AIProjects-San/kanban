@@ -1,6 +1,6 @@
 # Fernly — Security Policy & Threat Model
 
-**Last audited:** 2026-10-29 (full audit report: `CODE_REVIEW.md`)
+**Last audited:** 2026-11-03 (PR-51–54 data-scoping audit + JWT bearer-token auth; full audit report: `CODE_REVIEW.md`)
 
 ---
 
@@ -13,6 +13,7 @@
 | Sessions | Better Auth DB-backed opaque tokens (`Session` table), 7-day expiry, `fernly.*` cookies: `httpOnly` + `sameSite=lax`, `__Secure-` prefixed + `Secure` in production. Password change / role change / soft-delete delete the user's session rows immediately |
 | Signing secret | `BETTER_AUTH_SECRET` — production refuses to boot if missing/weak |
 | Brute force | Sliding window: 5 failures / 15 min per email AND per source IP (`x-real-ip`, then the LAST `x-forwarded-for` hop — the trusted proxy's); success clears both buckets |
+| Bearer tokens (API access — PR-54) | HS256 JWTs (`lib/jwt.ts`, dependency-free Node crypto) signed with `BETTER_AUTH_SECRET`, **1-hour expiry**, constant-time signature comparison, `alg: none` rejected. Minted via `POST /api/auth/token` (plain HTTP for curl/CI) or `issueAuthToken()` (server action), both requiring an existing session; every issuance writes an `auth.token_issued` audit row with IP + UA. Validation (`getBetterSession`) verifies signature + expiry, then does one indexed DB lookup so a **soft-deleted user's tokens are immediately inert**; the DB's current role/name/email are authoritative (role changes apply on the next request). An invalid/expired bearer returns 401 — never a silent fallback to an unrelated cookie session. Revocation window for password/role changes = the 1h expiry (clients re-mint); a Redis-backed JTI blocklist is the documented future enhancement if immediate revocation is ever required |
 | Enumeration | Unknown emails still run a bcrypt compare (constant-time behaviour); identical error surface |
 | Role freshness | 5-minute session cookie cache; role changes propagate on cache expiry; soft-deleted accounts are treated as signed out (deletedAt rides on the session payload) |
 | Secret rotation | Better Auth signs the opaque session cookie with `BETTER_AUTH_SECRET`; an unknown/tampered token fails silent (signed out, no log spam). Rotating the secret + clearing the `Session` table invalidates every session at once |
@@ -31,11 +32,25 @@ Two mandatory layers, both server-side:
 
    - `getDashboardData()` scopes projects/tasks/members to the caller's project set
      (MANAGER and MEMBER both scoped).
+   - **Personal-data scoping (PR-51–54, regression-tested per role):**
+     - Reminders are **owner-only** — every signed-in user sees exactly their own
+       (`ownerId = me`), including admins. Legacy null-owner rows are retained in the
+       DB for back-compat but never surfaced.
+     - Dashboard **time entries** are filtered to members the viewer can see
+       (`getVisibleMemberIds` in `shared.ts`: members of their projects + self).
+     - `getTimeEntriesPage` applies the same member-visibility rule; the caller's
+       `memberId` filter is **intersected** with the visible set (out-of-scope member
+       → empty page, not that member's entries).
+     - `getProjectAssignments` / `getProjectAssignableUsers` gate on the caller's
+       project scope (`getScopedProjectIds`) — a scoped user passing an arbitrary
+       projectId gets `[]`, never that project's staff roster with emails.
+     - Dashboard greeting counts are personal (own open tasks, own reminders due
+       today), even for admins who see workspace-wide board data.
    - Task edits require assignment to the caller unless they hold `task:edit:any`.
    - Messages: read/unread/delete restricted to sender/recipient; mailbox queries filter
      by `recipientUserId`/`senderUserId`.
-   - Reminders: personal ones visible/toggleable by owner (+admin); `ownerId: null` =
-     workspace-wide.
+   - Reminders: toggle allowed for the owner (+admin); null-owner legacy rows
+     toggleable but never rendered.
    - Profiles & settings: self-only, or `role:manage`.
    - Self-protection: admins cannot demote/delete themselves; system roles cannot be
      deleted; roles in use cannot be removed.

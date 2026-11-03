@@ -11,6 +11,7 @@ import {
   Plus, Pencil, Trash2, ArrowRightLeft, FolderPlus, UserPlus, UserMinus,
   UserCog, CalendarPlus, CalendarX, Send, ShieldCheck, Settings, BellPlus,
   CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
+  KeyRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -53,6 +54,7 @@ export type AuditAction =
   | "auth.signed_in"
   | "auth.signed_out"
   | "auth.password_changed"
+  | "auth.token_issued" // PR-54 — JWT bearer-token minted (/api/auth/token or issueAuthToken)
   | "audit.pruned" // L-P1-20 — records when the audit log was pruned
   | "project.restored" // L-P2-33 — restored from the trash
   | "user.restored" // L-P2-33
@@ -144,6 +146,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "auth.signed_in": { icon: LogIn, cls: "text-muted-foreground bg-muted" },
   "auth.signed_out": { icon: LogIn, cls: "text-muted-foreground bg-muted" },
   "auth.password_changed": { icon: ShieldCheck, cls: "text-success bg-success/10" },
+  "auth.token_issued": { icon: KeyRound, cls: "text-muted-foreground bg-muted" },
   "audit.pruned": { icon: Clock, cls: "text-muted-foreground bg-muted" },
   "project.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
   "user.restored": { icon: RotateCcw, cls: "text-success bg-success/10" },
