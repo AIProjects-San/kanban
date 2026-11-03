@@ -40,6 +40,8 @@ export { createMember, updateMember, deleteMember } from "./members";
 export { createEvent, deleteEvent } from "./events";
 export { markNotificationRead, markAllNotificationsRead } from "./notifications";
 export { toggleReminder, createReminder } from "./reminders";
+// PR-54 — JWT bearer-token issuance for external/programmatic clients.
+export { issueAuthToken, type IssuedToken } from "./auth-tokens";
 export {
   getUserProfile,
   getUserSettings,

@@ -1136,6 +1136,86 @@ describe("read helpers", () => {
     const res = await getProjectAssignableUsers("p-1");
     expectErr(res, "AUTH");
   });
+
+  // PR-54 — scope gate regression. getProjectAssignments + getProjectAssignableUsers
+  // must mirror getProjectMembers' getScopedProjectIds check: a MEMBER requesting
+  // a project they can't see gets [] (not the staffed users' PII).
+  describe("PR-54 scope gate (MEMBER)", () => {
+    beforeEach(() => {
+      signIn(MEMBER);
+      // getScopedProjectIds calls db.project.findMany with ownerUserId.
+      // MEMBER "u-mia" owns only "p-owned".
+      db.project.findMany.mockImplementation(({ where }: { where?: { ownerUserId?: string } }) =>
+        Promise.resolve(where?.ownerUserId ? [{ id: "p-owned" }] : []));
+    });
+
+    it("getProjectAssignments returns [] for an out-of-scope project (no PII leak)", async () => {
+      // The project exists (not soft-deleted), but the MEMBER doesn't own it,
+      // isn't assigned to it, and has no tasks in it.
+      // Use mockImplementation so the scope lookup (where.userId) returns []
+      // — a blanket mockResolvedValue would feed the assignment data into
+      // getScopedProjectIds, making p-other appear in-scope via the
+      // explicitAssignments source.
+      db.projectAssignment.findMany.mockImplementation(({ where }: { where?: { userId?: string; projectId?: string } }) => {
+        if (where?.userId) return []; // scope lookup — MEMBER has no explicit assignments
+        // Data lookup — should never be reached (scope gate short-circuits).
+        return [
+          { id: "a-1", projectId: "p-other", userId: "u-oli", role: "MEMBER", createdAt: now,
+            user: { id: "u-oli", name: "Oli", email: "oli@fernly.dev", role: "MEMBER", avatarColor: "ocean" } },
+        ];
+      });
+      const result = await getProjectAssignments("p-other");
+      expect(result).toEqual({ ok: true, data: [] });
+      // Crucially, the staffed-user data query (with emails) was never run —
+      // the scope gate short-circuited before it.
+      expect(db.projectAssignment.findMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { projectId: "p-other" } }),
+      );
+    });
+
+    it("getProjectAssignments returns data for the MEMBER's own project", async () => {
+      db.projectAssignment.findMany.mockImplementation(({ where }: { where?: { projectId?: string; userId?: string } }) => {
+        if (where?.userId) return []; // scope lookup (getScopedProjectIds)
+        if (where?.projectId === "p-owned") return [
+          { id: "a-1", projectId: "p-owned", userId: "u-mia", role: "MEMBER", createdAt: now,
+            user: { id: "u-mia", name: "Mia", email: "mia@fernly.dev", role: "MEMBER", avatarColor: "plum" } },
+        ];
+        return [];
+      });
+      const list = expectOk(await getProjectAssignments("p-owned"));
+      expect(list).toHaveLength(1);
+      expect(list[0].user.email).toBe("mia@fernly.dev");
+    });
+
+    it("getProjectAssignableUsers returns [] for an out-of-scope project (no PII leak)", async () => {
+      // Project exists and isn't deleted, but the MEMBER can't see it.
+      db.project.findUnique.mockResolvedValue({ id: "p-other", ownerUserId: "u-ada", deletedAt: null });
+      db.projectAssignment.findMany.mockResolvedValue([
+        { user: { id: "u-ada", name: "Ada", email: "ada@fernly.dev", role: "ADMIN", avatarColor: "forest", deletedAt: null } },
+      ]);
+      const result = await getProjectAssignableUsers("p-other");
+      expect(result).toEqual({ ok: true, data: [] });
+      // The staffed-user query was never run — scope gate short-circuited.
+      expect(db.projectAssignment.findMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ projectId: "p-other" }) }),
+      );
+    });
+
+    it("getProjectAssignableUsers returns data for the MEMBER's own project", async () => {
+      db.project.findUnique.mockResolvedValue({ id: "p-owned", ownerUserId: "u-mia", deletedAt: null });
+      db.projectAssignment.findMany.mockImplementation(({ where }: { where?: { projectId?: string; userId?: string } }) => {
+        if (where?.userId) return []; // scope lookup
+        if (where?.projectId === "p-owned") return [
+          { user: { id: "u-mia", name: "Mia", email: "mia@fernly.dev", role: "MEMBER", avatarColor: "plum", deletedAt: null } },
+        ];
+        return [];
+      });
+      const users = expectOk(await getProjectAssignableUsers("p-owned"));
+      expect(users).toHaveLength(1);
+      expect(users[0].name).toBe("Mia");
+      expect(users[0].isOwner).toBe(true);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ import { logError, logWarn } from "@/lib/observability";
 import { hashPii } from "@/lib/pii";
 import { isValidRole, type Role } from "@/lib/rbac";
 import { extractClientIp } from "@/lib/client-ip";
+import { verifyJwt } from "@/lib/jwt";
 
 // ---------------------------------------------------------------------------
 // Secret handling — identical contract to the old v4 stack (P0-6): refuse
@@ -482,8 +483,21 @@ export interface BetterAuthSession {
 
 export async function getBetterSession(): Promise<BetterAuthSession | null> {
   try {
+    const h = await headers();
+    // PR-54 — bearer-token auth. Check the Authorization header BEFORE the
+    // cookie-based session so external/programmatic clients (passing
+    // `Authorization: Bearer <jwt>`) are authenticated by every server
+    // action and API route that calls getSession(). A client explicitly
+    // passing a bearer token does NOT fall through to the cookie path —
+    // an invalid/expired bearer token returns null (→ 401) rather than
+    // silently authenticating via an unrelated browser cookie.
+    const authHeader = h.get("authorization") ?? "";
+    if (authHeader.startsWith("Bearer ")) {
+      return getBetterSessionFromJwt(authHeader.slice(7).trim());
+    }
+    // Cookie-based session (existing Better Auth flow).
     const session = await auth.api.getSession({
-      headers: new Headers(await headers()),
+      headers: new Headers(h),
     });
     if (!session?.user?.id) return null;
     // Soft-deleted mid-session — treat as signed out even if a session row
@@ -506,6 +520,43 @@ export async function getBetterSession(): Promise<BetterAuthSession | null> {
     };
   } catch (err) {
     logError("[auth-better] getSession failed:", err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PR-54 — JWT bearer-token session resolution.
+//
+// verifyJwt does the cryptographic check (signature + expiry); this helper
+// does the DB lookup that makes the token immediately revocable on account
+// disable. The DB's role/name/email are AUTHORITATIVE — a role change since
+// issuance takes effect on the next request, not on JWT expiry. This matches
+// the cookie path's 5-minute cache window but without the cache (the JWT
+// path is for API clients where a per-request DB lookup is acceptable).
+// ---------------------------------------------------------------------------
+
+async function getBetterSessionFromJwt(token: string): Promise<BetterAuthSession | null> {
+  const payload = verifyJwt(token);
+  if (!payload) return null;
+  try {
+    // One indexed lookup: confirms the user exists + isn't soft-deleted +
+    // returns the current role/name/email. deletedAt: null rejects
+    // disabled accounts immediately (their JWT is inert even before the
+    // 1h expiry).
+    const user = await db.user.findUnique({
+      where: { id: payload.sub, deletedAt: null },
+      select: { id: true, role: true, name: true, email: true },
+    });
+    if (!user) return null;
+    const role: Role = isValidRole(user.role) ? user.role : "MEMBER";
+    return {
+      userId: user.id,
+      role,
+      name: user.name,
+      email: user.email,
+    };
+  } catch (err) {
+    logError("[auth-better] JWT session DB lookup failed:", err);
     return null;
   }
 }

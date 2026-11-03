@@ -6,7 +6,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
-import { logAudit } from "./shared";
+import { getScopedProjectIds, logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -110,6 +110,13 @@ export async function getProjectAssignments(projectId: string): Promise<ActionRe
   return toResult(async () => {
     const auth = await getSession();
     if (!auth) throw new AuthorizationError("You must be signed in.");
+    // PR-54 — scope gate (mirrors getProjectMembers in dashboard.ts).
+    // Without this, any signed-in MEMBER could pass an arbitrary projectId
+    // and receive that project's full staff roster (including emails +
+    // roles) — data the dashboard's memberWhere rule deliberately hides.
+    // ADMIN is unscoped (sees every project's staff, as on the dashboard).
+    const scopedIds = await getScopedProjectIds(auth);
+    if (scopedIds && !scopedIds.has(projectId)) return [];
     const assignments = await db.projectAssignment.findMany({
       where: { projectId },
       include: { user: true },
@@ -162,6 +169,12 @@ export async function getProjectAssignableUsers(projectId: string): Promise<Acti
       select: { ownerUserId: true, deletedAt: true },
     });
     if (!project || project.deletedAt) return [];
+    // PR-54 — scope gate (same as getProjectAssignments above +
+    // getProjectMembers in dashboard.ts). Without this, a MEMBER opening
+    // the bug-detail assign panel on a bug whose project they can't see
+    // would receive that project's full staff list with emails.
+    const scopedIds = await getScopedProjectIds(auth);
+    if (scopedIds && !scopedIds.has(projectId)) return [];
 
     const assignments = await db.projectAssignment.findMany({
       where: { projectId, user: { deletedAt: null } },

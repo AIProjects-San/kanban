@@ -492,6 +492,122 @@ describe("getBetterSession (server-side helper)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// PR-54 — bearer-token session resolution (Authorization: Bearer <jwt>).
+// getBetterSession() checks that header BEFORE the cookie path so external
+// clients are authenticated by every server action / API route.
+// ---------------------------------------------------------------------------
+
+describe("getBetterSession — PR-54 bearer-token path", () => {
+  beforeEach(() => {
+    // Each test starts with a clean headers bag.
+    mockHeaderBag.current = new Headers();
+  });
+
+  it("resolves a session from a valid Bearer JWT", async () => {
+    seedUser({ role: "MEMBER" });
+    const { signJwt } = await import("@/lib/jwt");
+    const token = signJwt({
+      sub: "u-1", role: "MEMBER", name: "Ada", email: "ada@fernly.dev",
+    });
+    mockHeaderBag.current = new Headers({ authorization: `Bearer ${token}` });
+    const session = await getBetterSession();
+    expect(session).toEqual({
+      userId: "u-1",
+      role: "MEMBER",
+      name: "Ada",
+      email: "ada@fernly.dev",
+    });
+  });
+
+  it("does NOT fall through to the cookie path when a bearer token is invalid", async () => {
+    // A valid cookie session exists AND an invalid bearer token is present.
+    // The bearer path must return null (→ 401) — a client explicitly passing
+    // a bearer token expects auth failure, not a silent cookie fallback.
+    seedUser();
+    const signedIn = await signIn("ada@fernly.dev", "correct-horse-1");
+    const cookieJar = signedIn.setCookies
+      .filter((c: string) => c.startsWith("fernly.session_token="))
+      .map((c: string) => c.split(";")[0])
+      .join("; ");
+    mockHeaderBag.current = new Headers({
+      cookie: cookieJar,
+      authorization: "Bearer not-a-real-jwt",
+    });
+    expect(await getBetterSession()).toBeNull();
+  });
+
+  it("rejects a soft-deleted user's JWT immediately (DB lookup guard)", async () => {
+    seedUser();
+    const { signJwt } = await import("@/lib/jwt");
+    const token = signJwt({
+      sub: "u-1", role: "ADMIN", name: "Ada", email: "ada@fernly.dev",
+    });
+    // Soft-delete the user AFTER the JWT was minted.
+    const row = store.users.find((u) => u.id === "u-1");
+    row!.deletedAt = new Date();
+    mockHeaderBag.current = new Headers({ authorization: `Bearer ${token}` });
+    expect(await getBetterSession()).toBeNull();
+  });
+
+  it("rejects an expired JWT", async () => {
+    seedUser();
+    const { signJwt } = await import("@/lib/jwt");
+    const token = signJwt(
+      { sub: "u-1", role: "ADMIN", name: "Ada", email: "ada@fernly.dev" },
+      -10, // expired 10s ago
+    );
+    mockHeaderBag.current = new Headers({ authorization: `Bearer ${token}` });
+    expect(await getBetterSession()).toBeNull();
+  });
+
+  it("uses the DB's current role, not the JWT's role claim (role change takes effect immediately)", async () => {
+    // Mint a JWT with role MEMBER, then promote the user to ADMIN in the DB.
+    // The session should resolve with ADMIN (the DB is authoritative).
+    seedUser({ role: "MEMBER" });
+    const { signJwt } = await import("@/lib/jwt");
+    const token = signJwt({
+      sub: "u-1", role: "MEMBER", name: "Ada", email: "ada@fernly.dev",
+    });
+    const row = store.users.find((u) => u.id === "u-1");
+    row!.role = "ADMIN";
+    mockHeaderBag.current = new Headers({ authorization: `Bearer ${token}` });
+    const session = await getBetterSession();
+    expect(session?.role).toBe("ADMIN");
+  });
+
+  it("rejects a JWT whose subject user does not exist", async () => {
+    // No user seeded — the JWT's sub points to a non-existent id.
+    const { signJwt } = await import("@/lib/jwt");
+    const token = signJwt({
+      sub: "u-nonexistent", role: "MEMBER", name: "Ghost", email: "ghost@fernly.dev",
+    });
+    mockHeaderBag.current = new Headers({ authorization: `Bearer ${token}` });
+    expect(await getBetterSession()).toBeNull();
+  });
+
+  it("falls through to the cookie path when no Authorization header is present", async () => {
+    // No bearer token → the existing cookie-based resolution runs.
+    seedUser();
+    const signedIn = await signIn("ada@fernly.dev", "correct-horse-1");
+    const cookieJar = signedIn.setCookies
+      .filter((c: string) => c.startsWith("fernly.session_token="))
+      .map((c: string) => c.split(";")[0])
+      .join("; ");
+    mockHeaderBag.current = new Headers({ cookie: cookieJar });
+    const session = await getBetterSession();
+    expect(session?.userId).toBe("u-1");
+  });
+
+  it("ignores a non-Bearer Authorization header (basic auth, etc.)", async () => {
+    // A Basic auth header should not trigger the JWT path — it falls
+    // through to the cookie path (which returns null if no cookie).
+    seedUser();
+    mockHeaderBag.current = new Headers({ authorization: "Basic dXNlcjpwYXNz" });
+    expect(await getBetterSession()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Config posture (secret boot contract)
 // ---------------------------------------------------------------------------
 
