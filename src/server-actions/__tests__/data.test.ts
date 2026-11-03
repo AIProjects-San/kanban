@@ -1124,7 +1124,11 @@ describe("reminder ownership (P2-17)", () => {
     );
   });
 
-  it("getDashboardData scopes reminders to own + workspace-wide", async () => {
+  // PR-52 — reminders are personal-only. The dashboard previously also
+  // surfaced legacy workspace-wide rows (ownerId = null) to every signed-in
+  // user; a reminder is a personal todo, never a broadcast, so the query
+  // now matches ONLY the signed-in user's rows.
+  it("getDashboardData scopes reminders to the signed-in user only (no workspace-wide)", async () => {
     signIn(MEMBER);
     const empty: unknown[] = [];
     db.project.findMany.mockResolvedValue(empty);
@@ -1139,11 +1143,66 @@ describe("reminder ownership (P2-17)", () => {
 
     await getDashboardData();
     const reminderCall = db.reminder.findMany.mock.calls[0][0];
-    expect(reminderCall.where.OR).toEqual(
-      expect.arrayContaining([
-        { ownerId: MEMBER.userId },
-        { ownerId: null },
-      ]),
-    );
+    // Exact match — the where clause is a flat { ownerId } filter, NOT an
+    // OR that would also pull in null-owner (workspace-wide) rows.
+    expect(reminderCall.where).toEqual({ ownerId: MEMBER.userId });
+    // Belt-and-braces: assert no OR clause sneaks the null scope back in.
+    expect(reminderCall.where).not.toHaveProperty("OR");
+    expect(reminderCall.where).not.toMatchObject({ ownerId: null });
+  });
+
+  it("getDashboardData does NOT surface another member's reminders (PR-52 regression)", async () => {
+    // The DB mock returns a reminder owned by a DIFFERENT user plus a
+    // legacy workspace-wide (ownerId = null) row. Neither should appear in
+    // the payload — the where-clause filters at the DB, but assert the
+    // loader doesn't re-introduce them client-side either.
+    signIn(MEMBER);
+    db.project.findMany.mockResolvedValue([]);
+    db.task.findMany.mockResolvedValue([]);
+    db.teamMember.findMany.mockResolvedValue([]);
+    db.reminder.findMany.mockResolvedValue([
+      { id: "r-other", title: "Not mine", dueDate: new Date(), completed: false, createdAt: new Date(), ownerId: OTHER_MEMBER.userId },
+      { id: "r-shared", title: "Legacy shared", dueDate: new Date(), completed: false, createdAt: new Date(), ownerId: null },
+    ]);
+    db.notification.findMany.mockResolvedValue([]);
+    db.timeEntry.findMany.mockResolvedValue([]);
+    db.calendarEvent.findMany.mockResolvedValue([]);
+    db.message.findMany.mockResolvedValue([]);
+    db.projectAssignment.findMany.mockResolvedValue([]);
+    db.leaveRequest.findMany.mockResolvedValue([]);
+    db.bug.findMany.mockResolvedValue([]);
+
+    const data = await getDashboardData();
+    // The where clause must ask for ONLY the signed-in user's reminders.
+    const reminderCall = db.reminder.findMany.mock.calls[0][0];
+    expect(reminderCall.where).toEqual({ ownerId: MEMBER.userId });
+    // And the returned payload (whatever the mock yielded) is what the
+    // client renders — assert the loader passes it through unchanged so a
+    // future client-side filter can't accidentally widen the scope.
+    expect(data.reminders).toHaveLength(2);
+    // The mock is dumb (returns whatever it was told), but the contract
+    // under test is the where-clause, proven above.
+  });
+
+  it("getDashboardData reminders scope is the same for ADMIN (personal even for admins)", async () => {
+    // Reminders are personal for everyone — an admin should see their OWN
+    // reminders, not every reminder in the workspace. (Admins do see
+    // workspace-wide tasks/projects/members, but reminders were never a
+    // shared resource.)
+    signIn(ADMIN);
+    const empty: unknown[] = [];
+    db.project.findMany.mockResolvedValue(empty);
+    db.task.findMany.mockResolvedValue(empty);
+    db.teamMember.findMany.mockResolvedValue(empty);
+    db.reminder.findMany.mockResolvedValue(empty);
+    db.notification.findMany.mockResolvedValue(empty);
+    db.timeEntry.findMany.mockResolvedValue(empty);
+    db.calendarEvent.findMany.mockResolvedValue(empty);
+    db.message.findMany.mockResolvedValue(empty);
+    db.projectAssignment.findMany.mockResolvedValue(empty);
+
+    await getDashboardData();
+    const reminderCall = db.reminder.findMany.mock.calls[0][0];
+    expect(reminderCall.where).toEqual({ ownerId: ADMIN.userId });
   });
 });

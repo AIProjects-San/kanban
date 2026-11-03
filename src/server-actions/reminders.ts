@@ -1,7 +1,17 @@
 "use server";
 
-// Reminders — personal by default (ownerId = creator), with legacy
-// workspace-wide rows (ownerId = null) still visible to everyone.
+// Reminders — personal only (ownerId = the signed-in creator).
+//
+// PR-52: the dashboard query previously also surfaced legacy
+// workspace-wide rows (ownerId = null) to every signed-in user. A
+// reminder is a personal todo item, never a broadcast, so those rows
+// are no longer rendered on the dashboard (see dashboard.ts). The
+// ownerId column keeps its null-allowing type for back-compat with
+// legacy data; the toggle path below still permits null-owner rows
+// to be flipped as a harmless safety net, but the UI never surfaces
+// them. Broadcasts still exist for NOTIFICATIONS (notifications.ts)
+// where recipientUserId = null is an intentional admin-announcement
+// feature.
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";

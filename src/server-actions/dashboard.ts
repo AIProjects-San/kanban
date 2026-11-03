@@ -156,9 +156,20 @@ export async function getDashboardData(): Promise<DashboardData> {
       take: 200,
     }),
     db.teamMember.findMany({ where: memberWhere, orderBy: { name: "asc" }, take: 200 }),
-    // Reminders: personal (ownerId = me) + workspace-wide (ownerId = null).
+    // PR-52 — reminders are personal-only. The dashboard previously
+    // also surfaced legacy workspace-wide rows (ownerId = null), which
+    // meant every signed-in user saw the same shared reminders regardless
+    // of who created them. A reminder is a personal todo item (you set it
+    // for yourself), never a broadcast — so the query now matches ONLY the
+    // signed-in user's rows. Broadcasts still exist for NOTIFICATIONS
+    // (see notifications.ts) where the recipientUserId = null pattern is
+    // an intentional admin-announcement feature; reminders were never meant
+    // to be shared. The ownerId column retains its null-allowing type for
+    // back-compat with legacy rows, but those rows are no longer rendered.
+    // Guard the userId so Prisma never receives an undefined filter (which
+    // would unscope the query and return every reminder in the workspace).
     db.reminder.findMany({
-      where: { OR: [{ ownerId: currentUserId }, { ownerId: null }] },
+      where: { ownerId: currentUserId ?? "__no_user__" },
       orderBy: { dueDate: "asc" },
       take: 100,
     }),

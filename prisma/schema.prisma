@@ -349,8 +349,11 @@ model Reminder {
   dueDate   DateTime
   completed Boolean  @default(false)
   createdAt DateTime @default(now())
-  // Owner of the reminder. Null = workspace-wide reminder (visible to
-  // everyone); set = personal reminder visible only to that user.
+  // Owner of the reminder. Set = personal reminder visible only to that
+  // user. Null = legacy workspace-wide row (retained for back-compat);
+  // PR-52 stopped surfacing null-owner rows on the dashboard — reminders
+  // are personal todos, never broadcasts — but the column stays nullable
+  // so old data isn't lost on migrate. See dashboard.ts + reminders.ts.
   ownerId   String?
 
   // PR-16 — the dashboard widget filters on ownerId (personal vs broadcast);
