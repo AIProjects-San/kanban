@@ -129,21 +129,23 @@ Findings that adjust the Phase 1 port map (validated, not assumed):
 - ✅ Gates: typecheck/eslint clean, 1189/1189 unit tests, bundle budget OK
   with better-auth in the tree.
 
-### Phase 3 — Cutover + cleanup (1 day + 1 soak week) — STAGING DONE 2026-11-03
+### Phase 3 — Cutover + cleanup (1 day + 1 soak week) — FLIP DONE 2026-11-03 (PR-49)
 - ✅ **Staging cutover executed**: the sandbox preview runs
   `NEXT_PUBLIC_AUTH_STACK=better` (`.env`), verified through the real UI —
   stale v4 cookies cleanly retired by the proxy, sign-in mints the fernly
   session, the dashboard renders, sidebar sign-out returns to the login
-  screen. The repo default stays `nextauth`: production flips
-  per-deployment per the runbook (docs/DEPLOY.md §3a) — rebuild with the
-  flag set, expect one global sign-out, instant rollback by removing the
-  flag (v4 stack + tests retained for one release, exactly as planned).
-- ⏳ **Production flip** — operator action (owner sign-off per §8): set
-  `NEXT_PUBLIC_AUTH_STACK=better` in the deployment environment, redeploy
-  with a rebuild, run prod-smoke (17/17 covers both stacks).
-- ⏳ **Soak (≥1 week)** — CI keeps validating both stacks on every push
-  (the e2e job runs the 62 v4 scenarios AND the 5 @auth-better scenarios
-  on Postgres 16; the unit suite keeps the parity contract at 1189 tests).
+  screen.
+- ✅ **Repo-default flip (PR-49, 2026-11-03)** — `NEXT_PUBLIC_AUTH_STACK`
+  now defaults to **better** in the repo (`src/lib/auth-stack.ts`): any
+  deployment without an explicit pin runs the Better Auth stack with no
+  env var at all. Setting `nextauth` explicitly re-selects v4 — the
+  one-release rollback path (runbook: docs/DEPLOY.md §3a). Unit parity
+  held through the flip: 1190/1190, with the session-mock seams migrated
+  to `getBetterSession()` and the guard's normalisation cases re-pinned at
+  the real seam (auth-better.test.ts). **Soak waived by owner sign-off** —
+  this workspace is a dev environment with no active users, so the ≥1-week
+  parallel soak has no surface to observe; CI keeps validating both stacks
+  on every push until the cleanup lands.
 - ⏳ **Post-soak cleanup PR** — delete the v4 stack (`src/lib/auth.ts`,
   `signout.ts`, `next-auth.d.ts`, `/api/auth/[...nextauth]` route, the v4
   proxy guard branch, `next-auth` from package.json), rename

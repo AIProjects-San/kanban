@@ -133,8 +133,13 @@ vi.mock("@/lib/rate-limit-redis", () => ({
   }),
 }));
 
+const { mockHeaderBag } = vi.hoisted(() => ({
+  // Stateful headers bag — getBetterSession() reads next/headers; tests
+  // install the session cookie before calling it directly.
+  mockHeaderBag: { current: new Headers() },
+}));
 vi.mock("next/headers", () => ({
-  headers: async () => new Headers(),
+  headers: async () => mockHeaderBag.current,
 }));
 
 process.env.NEXTAUTH_SECRET = "unit-test-secret-0123456789abcdef-456789";
@@ -142,7 +147,7 @@ delete process.env.BETTER_AUTH_SECRET;
 delete process.env.NEXT_PUBLIC_AUTH_STACK;
 process.env.DATABASE_URL = "file:./unit-test.db";
 
-import { auth, revokeUserSessions, isBetterAuthStack } from "@/lib/auth-better";
+import { auth, revokeUserSessions, isBetterAuthStack, getBetterSession } from "@/lib/auth-better";
 import { authOptions } from "@/lib/auth";
 import { loginLimiter } from "@/lib/rate-limit";
 import bcrypt from "bcryptjs";
@@ -205,6 +210,7 @@ const auditRowsFor = (action: string) => store.auditRows.filter((r) => r.action 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockHeaderBag.current = new Headers();
   store.users = [];
   store.accounts = [];
   store.sessions = [];
@@ -439,40 +445,36 @@ describe("session cookies + posture", () => {
 // ---------------------------------------------------------------------------
 
 describe("revocation (tokenVersion counterpart)", () => {
-  it("deleteUserSessions removes every session row for the user when the better stack is active", async () => {
-    process.env.NEXT_PUBLIC_AUTH_STACK = "better";
+  it("deleteUserSessions removes every session row for the user (repo default = better since PR-49)", async () => {
     store.sessions.push(
       { id: "s-1", token: "t1", userId: "u-1", expiresAt: new Date(Date.now() + 1000) },
       { id: "s-2", token: "t2", userId: "u-9", expiresAt: new Date(Date.now() + 1000) },
     );
-    try {
-      await revokeUserSessions("u-1");
-      expect(store.sessions.map((s) => s.id)).toEqual(["s-2"]);
-    } finally {
-      delete process.env.NEXT_PUBLIC_AUTH_STACK;
-    }
+    await revokeUserSessions("u-1");
+    expect(store.sessions.map((s) => s.id)).toEqual(["s-2"]);
   });
 
-  it("revokeUserSessions is inert while the v4 stack is the default", async () => {
-    expect(isBetterAuthStack()).toBe(false);
-    store.sessions.push({
-      id: "s-1", token: "t1", userId: "u-1", expiresAt: new Date(Date.now() + 1000),
-    });
-    // The flag-aware wrapper (what the app actions call) must no-op, and so
-    // must the raw export — revocation only fires once the better stack
-    // serves traffic (v4 revocation is the tokenVersion JWT check).
-    const { revokeUserSessionsIfActive } = await import("@/lib/auth-revoke");
-    await revokeUserSessionsIfActive("u-1");
-    await revokeUserSessions("u-1");
-    expect(store.sessions).toHaveLength(1);
-    // With the flag on, the raw export deletes.
-    process.env.NEXT_PUBLIC_AUTH_STACK = "better";
+  it("revokeUserSessions is inert while the v4 stack is explicitly selected (rollback path)", async () => {
+    process.env.NEXT_PUBLIC_AUTH_STACK = "nextauth";
     try {
+      expect(isBetterAuthStack()).toBe(false);
+      store.sessions.push({
+        id: "s-1", token: "t1", userId: "u-1", expiresAt: new Date(Date.now() + 1000),
+      });
+      // The flag-aware wrapper (what the app actions call) must no-op, and
+      // so must the raw export — on the v4 stack revocation is the
+      // tokenVersion JWT check, not a session-row delete.
+      const { revokeUserSessionsIfActive } = await import("@/lib/auth-revoke");
+      await revokeUserSessionsIfActive("u-1");
       await revokeUserSessions("u-1");
-      expect(store.sessions).toHaveLength(0);
+      expect(store.sessions).toHaveLength(1);
     } finally {
       delete process.env.NEXT_PUBLIC_AUTH_STACK;
     }
+    // Repo default (flag unset) is "better" since the PR-49 flip: deletes.
+    expect(isBetterAuthStack()).toBe(true);
+    await revokeUserSessions("u-1");
+    expect(store.sessions).toHaveLength(0);
   });
 
   it("a soft-deleted user cannot mint a session (session.create backstop)", async () => {
@@ -483,6 +485,52 @@ describe("revocation (tokenVersion counterpart)", () => {
     const res = await signIn("soft@fernly.dev", "correct-horse-1");
     expect(res.res.status).toBe(401);
     expect(store.sessions).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getBetterSession — the server-side helper auth-guard delegates to
+// (the normalisation cases that lived in auth-guard.test.ts before the
+// PR-49 flip, pinned here at the real seam).
+// ---------------------------------------------------------------------------
+
+describe("getBetterSession (server-side helper)", () => {
+  /** Cookie jar with ONLY the opaque session token — skips the 5-minute
+   * session_data cookie cache so every lookup exercises the DB path. */
+  function tokenOnlyJar(setCookies: string[]): string {
+    return setCookies
+      .filter((c) => c.startsWith("fernly.session_token="))
+      .map((c) => c.split(";")[0])
+      .join("; ");
+  }
+
+  it("returns null when there is no session cookie", async () => {
+    seedUser();
+    expect(await getBetterSession()).toBeNull();
+  });
+
+  it("resolves the flat AuthResult and downgrades an unknown role to MEMBER", async () => {
+    seedUser({ role: "SUPERUSER" });
+    const signedIn = await signIn("ada@fernly.dev", "correct-horse-1");
+    mockHeaderBag.current = new Headers({ cookie: tokenOnlyJar(signedIn.setCookies) });
+    const session = await getBetterSession();
+    expect(session).toEqual({
+      userId: "u-1",
+      role: "MEMBER",
+      name: "Ada",
+      email: "ada@fernly.dev",
+    });
+  });
+
+  it("returns null for a user soft-deleted mid-session (deletedAt guard)", async () => {
+    seedUser();
+    const signedIn = await signIn("ada@fernly.dev", "correct-horse-1");
+    // Soft-delete AFTER the session was minted — the additionalField rides
+    // on the session payload and the guard treats it as signed out.
+    const row = store.users.find((u) => u.id === "u-1");
+    row!.deletedAt = new Date();
+    mockHeaderBag.current = new Headers({ cookie: tokenOnlyJar(signedIn.setCookies) });
+    expect(await getBetterSession()).toBeNull();
   });
 });
 

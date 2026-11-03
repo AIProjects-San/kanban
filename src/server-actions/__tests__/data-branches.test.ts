@@ -4,8 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // conditional chains in updateTask / updateUser / updateMember and the
 // no-op / validation branches not exercised by the main suites.
 
-const { db, getServerSession } = vi.hoisted(() => {
-  const getServerSession = vi.fn();
+const { db, getBetterSession } = vi.hoisted(() => {
+  const getBetterSession = vi.fn();
   const models = [
     "auditLog", "project", "task", "teamMember", "reminder", "notification",
     "timeEntry", "calendarEvent", "message", "bug", "user", "userSettings",
@@ -29,10 +29,16 @@ const { db, getServerSession } = vi.hoisted(() => {
     async (fn: (tx: unknown) => Promise<unknown>) =>
       typeof fn === "function" ? fn(db) : Promise.resolve(fn),
   );
-  return { db, getServerSession };
+  return { db, getBetterSession };
 });
 
-vi.mock("next-auth", () => ({ getServerSession }));
+vi.mock("@/lib/auth-better", () => ({
+  // The Better Auth session seam (PR-49 default stack). revokeUserSessions
+  // is stubbed so password-change flows that call the revocation bridge
+  // never touch a real instance.
+  getBetterSession,
+  revokeUserSessions: vi.fn(),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db }));
 
@@ -70,8 +76,8 @@ const ADMIN = { userId: "u-admin", name: "Ada", email: "ada@fernly.dev", role: "
 const MANAGER = { userId: "u-mgr", name: "Max", email: "max@fernly.dev", role: "MANAGER" as const };
 
 function signIn(user: typeof ADMIN | typeof MANAGER | null) {
-  getServerSession.mockResolvedValue(
-    user ? { user: { id: user.userId, name: user.name, email: user.email, role: user.role } } : null,
+  getBetterSession.mockResolvedValue(
+    user ? { userId: user.userId, name: user.name, email: user.email, role: user.role } : null,
   );
 }
 

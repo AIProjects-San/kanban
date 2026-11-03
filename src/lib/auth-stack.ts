@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
-// PR-48 — auth stack flag (client-safe; no "server-only").
+// PR-48/PR-49 — auth stack flag (client-safe; no "server-only").
 //
 // NEXT_PUBLIC_AUTH_STACK is the single switch for the auth migration
-// (docs/AUTH_MIGRATION_PLAN.md §5): "nextauth" (default — v4 serves
-// /api/auth/*) or "better" (the parallel stack at /api/auth-better/* takes
-// over). It is readable by BOTH server and client code, and baked at build
-// time for the client — flipping it is a deployment action (Phase 3), not a
-// runtime toggle.
+// (docs/AUTH_MIGRATION_PLAN.md §5). Since the Phase 3 flip (PR-49) the
+// DEFAULT is "better": Better Auth 1.7 serves /api/auth-better/* and the
+// fernly.* cookies. Setting "nextauth" explicitly re-selects the v4 stack
+// — the one-release rollback path — until the post-soak cleanup removes it.
+// It is readable by BOTH server and client code, and baked at build time
+// for the client.
 //
 // Client components must import the flag from HERE, never from
 // `src/lib/auth-better.ts` (which pulls the whole server stack).
@@ -15,7 +16,7 @@
 export type AuthStack = "nextauth" | "better";
 
 export function currentAuthStack(): AuthStack {
-  return process.env.NEXT_PUBLIC_AUTH_STACK === "better" ? "better" : "nextauth";
+  return process.env.NEXT_PUBLIC_AUTH_STACK === "nextauth" ? "nextauth" : "better";
 }
 
 export const IS_BETTER_AUTH = currentAuthStack() === "better";

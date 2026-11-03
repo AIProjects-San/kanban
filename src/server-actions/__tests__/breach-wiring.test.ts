@@ -15,8 +15,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // updateUser resetPassword, completePasswordReset) share the call shape.
 // ---------------------------------------------------------------------------
 
-const { db, getServerSession, assertSpy } = vi.hoisted(() => {
-  const getServerSession = vi.fn();
+const { db, getBetterSession, assertSpy } = vi.hoisted(() => {
+  const getBetterSession = vi.fn();
   const models = ["user", "auditLog", "passwordResetToken", "teamMember"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -31,10 +31,16 @@ const { db, getServerSession, assertSpy } = vi.hoisted(() => {
     async (fn: (tx: unknown) => Promise<unknown> | unknown[]) =>
       typeof fn === "function" ? fn(db) : Promise.all(fn as unknown[]),
   );
-  return { db, getServerSession, assertSpy: vi.fn(async (_pw: string) => undefined) };
+  return { db, getBetterSession, assertSpy: vi.fn(async (_pw: string) => undefined) };
 });
 
-vi.mock("next-auth", () => ({ getServerSession }));
+vi.mock("@/lib/auth-better", () => ({
+  // The Better Auth session seam (PR-49 default stack). revokeUserSessions
+  // is stubbed so password-change flows that call the revocation bridge
+  // never touch a real instance.
+  getBetterSession,
+  revokeUserSessions: vi.fn(),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db }));
 vi.mock("@/lib/breach-check", () => ({
@@ -47,7 +53,7 @@ vi.mock("@/lib/breach-check", () => ({
 import { changePassword, createUser, updateUser } from "@/server-actions/users";
 
 const ADMIN_SESSION = {
-  user: { id: "admin-1", email: "mira@fernly.app", name: "Mira Hale", role: "ADMIN" },
+  userId: "admin-1", email: "mira@fernly.app", name: "Mira Hale", role: "ADMIN",
 };
 
 async function realHashFor(password: string): Promise<string> {
@@ -58,7 +64,7 @@ async function realHashFor(password: string): Promise<string> {
 describe("PR-35 wiring — password-SET flows consult the breach guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    getBetterSession.mockResolvedValue(ADMIN_SESSION);
   });
 
   it("changePassword guards the NEW password before hashing", async () => {

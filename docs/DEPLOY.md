@@ -208,21 +208,26 @@ For database-level rollback (PITR), follow
 
 ---
 
-## 3a. Auth stack cutover (PR-48 — NextAuth v4 → Better Auth)
+## 3a. Auth stack cutover (PR-48/PR-49 — NextAuth v4 → Better Auth)
 
-The two auth stacks run in parallel behind one flag
-(`docs/AUTH_MIGRATION_PLAN.md`): NextAuth v4 serves `/api/auth/*` (the
-default) and Better Auth 1.7 serves `/api/auth-better/*`. Both share the
-login throttle budgets, the audit rows, and the `User.passwordHash`
-credential store; Phases 0–2 are complete and gated (unit 1189/1189 incl.
-the 20-case parity suite, e2e 62 scenarios on v4 + 5 flag-on scenarios on
-Postgres 16 in CI, prod-smoke 17/17 against both stacks).
+**Status: the repo default is the Better Auth stack since the PR-49 flip
+(2026-11-03).** The two auth stacks still run in parallel behind one flag
+(`docs/AUTH_MIGRATION_PLAN.md`): Better Auth 1.7 serves `/api/auth-better/*`
+with the `fernly.*` cookies (the DEFAULT — no env var needed), and NextAuth
+v4 remains at `/api/auth/*` as the explicit rollback selection. Both share
+the login throttle budgets, the audit rows, and the `User.passwordHash`
+credential store; Phases 0–2 are complete and gated (unit 1190/1190 incl.
+the parity suite, e2e scenarios on Postgres 16 in CI, prod-smoke against
+both stacks).
 
-**Cutover (per deployment — staging first, then production):**
+**For deployments provisioned before the flip (per deployment — staging
+first, then production):**
 
 ```bash
-# 1. Set the flag in the deployment's environment (NOT the repo default):
-NEXT_PUBLIC_AUTH_STACK=better
+# 1. The flag is no longer needed to select the better stack (it is the
+#    repo default). Only a deployment that previously pinned
+#    NEXT_PUBLIC_AUTH_STACK=nextauth needs to REMOVE that pin:
+#    unset NEXT_PUBLIC_AUTH_STACK   (or set it to "better")
 
 # 2. Redeploy (a full rebuild — the flag is baked into the client bundle
 #    at compile time; a runtime env change alone is NOT enough).
@@ -243,12 +248,13 @@ What changes at cutover (all one-time, by design):
 - The audit rows (`auth.signed_in` / `auth.signed_out` with IP + UA) are
   identical in shape — the compliance surface is unchanged.
 
-**Rollback (instant, for one release):** remove `NEXT_PUBLIC_AUTH_STACK`
-from the environment (or set `nextauth`) and redeploy. The v4 stack, its
-route, its cookies and its tests are all still present and green; every
-better-auth cookie silently fails (no log spam — DB-backed opaque tokens)
-and users sign in once more. The rollback window is bounded by the 7-day
-session expiry.
+**Rollback (instant, for one release):** set
+`NEXT_PUBLIC_AUTH_STACK=nextauth` in the deployment environment and
+redeploy. The v4 stack, its route, its cookies and its tests are all still
+present and green; every better-auth cookie silently fails (no log spam —
+DB-backed opaque tokens) and users sign in once more. The rollback window
+is bounded by the 7-day session expiry and ends with the post-soak cleanup
+below.
 
 **Secrets:** during the parallel period Better Auth signs with
 `BETTER_AUTH_SECRET`, falling back to `NEXTAUTH_SECRET` — one secret to

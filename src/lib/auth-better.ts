@@ -37,15 +37,15 @@ import { logError, logWarn } from "@/lib/observability";
 import { hashPii } from "@/lib/pii";
 import { isValidRole, type Role } from "@/lib/rbac";
 import { extractClientIp } from "@/lib/auth-request-context";
+import { isBetterAuthStack } from "@/lib/auth-stack";
 
 // ---------------------------------------------------------------------------
-// Stack flag — single env var readable by BOTH server and client (client
-// code imports the value through `src/lib/auth-stack.ts`, never this file).
+// Stack flag — single source of truth in `src/lib/auth-stack.ts` (PR-49:
+// the repo default is "better"; "nextauth" stays selectable as the
+// one-release rollback). Re-exported here for the parity test suite.
 // ---------------------------------------------------------------------------
 
-export function isBetterAuthStack(): boolean {
-  return process.env.NEXT_PUBLIC_AUTH_STACK === "better";
-}
+export { isBetterAuthStack };
 
 // ---------------------------------------------------------------------------
 // Secret handling — identical contract to src/lib/auth.ts (P0-6): refuse to

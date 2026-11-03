@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
-// Mock next-auth's getServerSession BEFORE importing the module under test.
+// Mock the Better Auth session helper BEFORE importing the module under
+// test. Since the PR-49 flip the repo default stack is "better", so
+// auth-guard's getSession() resolves through getBetterSession().
+// (Session normalisation — unknown-role downgrade, soft-delete guard — is
+// pinned by src/lib/__tests__/auth-better.test.ts at the real seam.)
 // ---------------------------------------------------------------------------
 
-const getServerSession = vi.fn();
-vi.mock("next-auth", () => ({
-  getServerSession: (...args: unknown[]) => getServerSession(...args),
+const getBetterSession = vi.fn();
+vi.mock("@/lib/auth-better", () => ({
+  getBetterSession,
+  revokeUserSessions: vi.fn(),
 }));
 
 // Mock the Prisma client so `requirePermissionForTarget`'s DB reads
@@ -39,30 +44,25 @@ import {
 } from "@/server-actions/auth-guard";
 
 const ADMIN_SESSION = {
-  user: { id: "u-admin", role: "ADMIN", name: "Ada", email: "ada@example.com" },
+  userId: "u-admin", role: "ADMIN", name: "Ada", email: "ada@example.com",
 };
 const MANAGER_SESSION = {
-  user: { id: "u-mgr", role: "MANAGER", name: "Mia Manager", email: "mia@example.com" },
+  userId: "u-mgr", role: "MANAGER", name: "Mia Manager", email: "mia@example.com",
 };
 const MEMBER_SESSION = {
-  user: { id: "u-member", role: "MEMBER", name: "Mia", email: "mia@example.com" },
+  userId: "u-member", role: "MEMBER", name: "Mia", email: "mia@example.com",
 };
 
 describe("getSession", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("returns null when there is no session", async () => {
-    getServerSession.mockResolvedValue(null);
+    getBetterSession.mockResolvedValue(null);
     expect(await getSession()).toBeNull();
   });
 
-  it("returns null when the session has no user id", async () => {
-    getServerSession.mockResolvedValue({ user: { name: "Ghost" } });
-    expect(await getSession()).toBeNull();
-  });
-
-  it("normalises a valid session", async () => {
-    getServerSession.mockResolvedValue(ADMIN_SESSION);
+  it("delegates to getBetterSession and returns the resolved AuthResult unchanged", async () => {
+    getBetterSession.mockResolvedValue(ADMIN_SESSION);
     const auth = await getSession();
     expect(auth).toEqual({
       userId: "u-admin",
@@ -70,14 +70,7 @@ describe("getSession", () => {
       name: "Ada",
       email: "ada@example.com",
     });
-  });
-
-  it("downgrades an unknown role string to MEMBER (deny-by-default)", async () => {
-    getServerSession.mockResolvedValue({
-      user: { id: "u-x", role: "SUPERUSER", name: "X", email: "x@example.com" },
-    });
-    const auth = await getSession();
-    expect(auth?.role).toBe("MEMBER");
+    expect(getBetterSession).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -89,19 +82,19 @@ describe("requirePermission", () => {
   });
 
   it("throws AuthorizationError when not signed in", async () => {
-    getServerSession.mockResolvedValue(null);
+    getBetterSession.mockResolvedValue(null);
     await expect(requirePermission("task:create")).rejects.toThrow(AuthorizationError);
     await expect(requirePermission("task:create")).rejects.toThrow(/signed in/i);
   });
 
   it("throws when the role lacks the permission", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     await expect(requirePermission("role:manage")).rejects.toThrow(AuthorizationError);
     await expect(requirePermission("role:manage")).rejects.toThrow(/MEMBER/);
   });
 
   it("returns the auth context when the permission is granted", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     const auth = await requirePermission("task:edit:own");
     expect(auth.userId).toBe("u-member");
   });
@@ -111,7 +104,7 @@ describe("requirePermission", () => {
   // -------------------------------------------------------------------------
 
   it("L-P0-7: floor holds — static permission is granted even if DB revokes it", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     hasPermissionDbMock.mockResolvedValue(false);
     const auth = await requirePermission("task:edit:own");
     expect(auth.userId).toBe("u-member");
@@ -121,7 +114,7 @@ describe("requirePermission", () => {
   });
 
   it("L-P0-7: DB grants extra — a permission the static matrix denies is granted via DB", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     hasPermissionDbMock.mockResolvedValue(true);
     const auth = await requirePermission("audit:view");
     expect(auth.userId).toBe("u-member");
@@ -129,20 +122,20 @@ describe("requirePermission", () => {
   });
 
   it("L-P0-7: DB revocation no-op for floor perms — ADMIN keeps role:manage regardless of DB", async () => {
-    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    getBetterSession.mockResolvedValue(ADMIN_SESSION);
     hasPermissionDbMock.mockResolvedValue(false);
     const auth = await requirePermission("role:manage");
     expect(auth.userId).toBe("u-admin");
   });
 
   it("L-P0-7: DB failure falls back to static-only (deny-by-default)", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     hasPermissionDbMock.mockRejectedValue(new Error("DB connection lost"));
     await expect(requirePermission("audit:view")).rejects.toThrow(AuthorizationError);
   });
 
   it("L-P0-7: DB failure does NOT revoke floor perms (static floor still holds)", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     hasPermissionDbMock.mockRejectedValue(new Error("DB connection lost"));
     const auth = await requirePermission("task:edit:own");
     expect(auth.userId).toBe("u-member");
@@ -153,12 +146,12 @@ describe("getSessionOrThrow", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("throws for anonymous callers", async () => {
-    getServerSession.mockResolvedValue(null);
+    getBetterSession.mockResolvedValue(null);
     await expect(getSessionOrThrow()).rejects.toThrow(AuthorizationError);
   });
 
   it("returns the session for signed-in callers of any role", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     const auth = await getSessionOrThrow();
     expect(auth.userId).toBe("u-member");
   });
@@ -183,7 +176,7 @@ describe("requirePermissionForTarget", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("throws if the role lacks the permission (skips hierarchy check)", async () => {
-    getServerSession.mockResolvedValue(MEMBER_SESSION);
+    getBetterSession.mockResolvedValue(MEMBER_SESSION);
     // MEMBER doesn't have role:manage — should reject before any DB read.
     await expect(
       requirePermissionForTarget("role:manage", "u-other"),
@@ -197,7 +190,7 @@ describe("requirePermissionForTarget", () => {
     // intentional: the hierarchy foundation is in place for any future
     // permission that expands MANAGERs' scope (see lib/hierarchy.ts →
     // canManageUser for the predicate that would apply).
-    getServerSession.mockResolvedValue(MANAGER_SESSION);
+    getBetterSession.mockResolvedValue(MANAGER_SESSION);
     await expect(
       requirePermissionForTarget("role:manage", "u-other"),
     ).rejects.toThrow(/does not have permission/);
@@ -205,7 +198,7 @@ describe("requirePermissionForTarget", () => {
   });
 
   it("passes for self-targeted calls (self-management, no DB lookup)", async () => {
-    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    getBetterSession.mockResolvedValue(ADMIN_SESSION);
     // Target == actor → no DB lookup needed.
     const auth = await requirePermissionForTarget("role:manage", "u-admin");
     expect(auth.userId).toBe("u-admin");
@@ -213,7 +206,7 @@ describe("requirePermissionForTarget", () => {
   });
 
   it("throws when the target user does not exist", async () => {
-    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    getBetterSession.mockResolvedValue(ADMIN_SESSION);
     userFindUnique.mockResolvedValue(null);
     await expect(
       requirePermissionForTarget("role:manage", "u-ghost"),
@@ -221,7 +214,7 @@ describe("requirePermissionForTarget", () => {
   });
 
   it("ADMIN passes for any target (subtree is not consulted)", async () => {
-    getServerSession.mockResolvedValue(ADMIN_SESSION);
+    getBetterSession.mockResolvedValue(ADMIN_SESSION);
     userFindUnique.mockResolvedValue({
       id: "u-other", role: "MEMBER", managerId: "u-someone-else",
     });
@@ -236,7 +229,7 @@ describe("requirePermissionForTarget", () => {
     // Use `analytics:view` (which MANAGERs DO have) to drive the
     // hierarchy check end-to-end. The target is in the manager's
     // subtree → the call should pass.
-    getServerSession.mockResolvedValue(MANAGER_SESSION);
+    getBetterSession.mockResolvedValue(MANAGER_SESSION);
     userFindUnique.mockResolvedValueOnce({
       id: "u-report", role: "MEMBER", managerId: "u-mgr",
     });
@@ -252,7 +245,7 @@ describe("requirePermissionForTarget", () => {
   });
 
   it("rejects at the hierarchy layer when a permitted MANAGER targets a non-report", async () => {
-    getServerSession.mockResolvedValue(MANAGER_SESSION);
+    getBetterSession.mockResolvedValue(MANAGER_SESSION);
     userFindUnique.mockResolvedValueOnce({
       id: "u-peer-rep", role: "MEMBER", managerId: "u-mgr-2",
     });

@@ -16,11 +16,11 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 //     old MemberModal "Create new" flow).
 // ---------------------------------------------------------------------------
 
-// Stub next-auth/react's useSession so we can drive role-gating.
+// Stub the Better Auth client's useSession so we can drive role-gating
+// (the default stack since PR-49 — useAppSession resolves through it).
 const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
-vi.mock("next-auth/react", () => ({
-  useSession,
-  SessionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+vi.mock("@/lib/auth-client-better", () => ({
+  authClient: { useSession },
 }));
 
 // Stub the server-actions/data barrel so MemberModal's getAllUsers call (if
@@ -42,7 +42,7 @@ function closePalette() {
 }
 
 beforeEach(() => {
-  useSession.mockReturnValue({ data: { user: { role: "ADMIN" } } });
+  useSession.mockReturnValue({ data: { user: { id: "u-admin", role: "ADMIN" } }, isPending: false, error: null });
   openPalette();
 });
 
@@ -131,7 +131,7 @@ describe("command palette: create-group drift contract", () => {
 
 describe("command palette: role gating", () => {
   it("hides Users / Workspace Config / Create user from non-admins", async () => {
-    useSession.mockReturnValue({ data: { user: { role: "MEMBER" } } });
+    useSession.mockReturnValue({ data: { user: { id: "u-member", role: "MEMBER" } }, isPending: false, error: null });
     render(<CommandPalette />);
     await waitFor(() => {
       const labels = paletteLabels();
@@ -142,7 +142,7 @@ describe("command palette: role gating", () => {
   });
 
   it("hides Go to Audit Log from non-audit viewers (MEMBER role)", async () => {
-    useSession.mockReturnValue({ data: { user: { role: "MEMBER" } } });
+    useSession.mockReturnValue({ data: { user: { id: "u-member", role: "MEMBER" } }, isPending: false, error: null });
     render(<CommandPalette />);
     await waitFor(() => {
       expect(paletteLabels()).not.toContain("Go to Audit Log");

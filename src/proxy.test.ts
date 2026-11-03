@@ -49,10 +49,15 @@ async function mintCookie(secret: string) {
 
 beforeEach(() => {
   process.env.NEXTAUTH_SECRET = SECRET;
+  // PR-49 — the repo default stack is "better"; these suites pin the v4
+  // JWE guard explicitly (the one-release rollback path). The PR-48
+  // better-stack describe below overrides this to "better" per-test.
+  process.env.NEXT_PUBLIC_AUTH_STACK = "nextauth";
 });
 
 afterEach(() => {
   delete process.env.NEXTAUTH_SECRET;
+  delete process.env.NEXT_PUBLIC_AUTH_STACK;
 });
 
 describe("proxy: stale session cookie self-healing", () => {

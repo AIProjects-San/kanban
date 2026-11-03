@@ -17,8 +17,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // store read state in a per-recipient MessageRead join table, and have
 // markThreadRead match on `recipientUserId === me` instead of `direction: "IN"`.
 
-const { db, getServerSession } = vi.hoisted(() => {
-  const getServerSession = vi.fn();
+const { db, getBetterSession } = vi.hoisted(() => {
+  const getBetterSession = vi.fn();
   const models = [
     "auditLog", "project", "task", "teamMember", "reminder", "notification",
     "timeEntry", "calendarEvent", "message", "messageRead", "bug", "user", "userSettings",
@@ -40,10 +40,16 @@ const { db, getServerSession } = vi.hoisted(() => {
     async (fn: (tx: unknown) => Promise<unknown>) =>
       typeof fn === "function" ? fn(db) : Promise.resolve(fn),
   );
-  return { db, getServerSession };
+  return { db, getBetterSession };
 });
 
-vi.mock("next-auth", () => ({ getServerSession }));
+vi.mock("@/lib/auth-better", () => ({
+  // The Better Auth session seam (PR-49 default stack). revokeUserSessions
+  // is stubbed so password-change flows that call the revocation bridge
+  // never touch a real instance.
+  getBetterSession,
+  revokeUserSessions: vi.fn(),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db }));
 
@@ -54,9 +60,9 @@ const SENDER = { userId: "u-sender", role: "ADMIN", name: "Sender", email: "s@x"
 const RECIPIENT = { userId: "u-recipient", role: "ADMIN", name: "Recipient", email: "r@x" };
 
 function signInAs(user: typeof SENDER | null) {
-  getServerSession.mockResolvedValue(
+  getBetterSession.mockResolvedValue(
     user
-      ? { user: { id: user.userId, role: user.role, name: user.name, email: user.email } }
+      ? { userId: user.userId, role: user.role, name: user.name, email: user.email }
       : null,
   );
 }
