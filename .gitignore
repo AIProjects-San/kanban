@@ -30,8 +30,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — never commit real credentials.
+# PR-45: `.env.example` documents the boot contract and IS committed;
+# the negation must stay directly below the glob.
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -55,11 +58,6 @@ server.log
 # database artifacts
 *.db
 *.db-journal
-
-# env files — never commit real credentials
-.env
-.env.local
-.env.production
 
 # session artifacts
 tool-results/

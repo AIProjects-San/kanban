@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const repoRoot = resolve(__dirname, "../..");
@@ -293,6 +294,23 @@ describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
       expect(env).toMatch(new RegExp(`^${key}=`, "m"));
     }
     expect(env).toMatch(/REFUSES to boot/);
+  });
+
+  it("PR-45: .env.example is committed — the `.env*` ignore glob must not swallow it", () => {
+    // Regression pin (round 2): `.env*` in .gitignore kept the example out of
+    // the repo through rounds 1–2, so fresh clones failed the boot contract
+    // and a sandbox recycle silently deleted it. It must be negated (`!
+    // .env.example`) AND actually tracked. Skipped gracefully outside git.
+    const ignore = readFileSync(resolve(repoRoot, ".gitignore"), "utf-8");
+    expect(ignore).toMatch(/^\.env\*$/m);
+    expect(ignore).toMatch(/^!\.env\.example$/m);
+    if (existsSync(resolve(repoRoot, ".git"))) {
+      const tracked = execSync("git ls-files .env.example", {
+        cwd: repoRoot,
+        encoding: "utf-8",
+      }).trim();
+      expect(tracked).toBe(".env.example");
+    }
   });
 });
 
