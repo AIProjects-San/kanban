@@ -65,13 +65,37 @@ escape.
 
 ## 5. Phased plan
 
-### Phase 0 — Spike (½ day, throwaway branch)
-Install `better-auth` against a scratch database; port the credentials flow
-end-to-end (email/password + bcrypt compare only). Validate: login, logout,
-session fetch, `__Secure-` cookie behaviour behind the HTTPS proxy, and the
-Prisma adapter against **both** the PostgreSQL and the SQLite sandbox schema
-variants (ADR-008 — the adapter must accept the local datasource or the
-sandbox preview breaks).
+### Phase 0 — Spike (½ day, throwaway branch) — ✅ DONE 2026-11-03
+
+Executed as `scripts/spike-better-auth/` (spike.schema.prisma + spike.mjs +
+run-spike.sh; scratch SQLite DB + scratch Prisma client, both gitignored).
+Every check passed against **better-auth@1.7.15**:
+
+- ✅ credentials sign-in → session cookie (`fernly.session_token`,
+  httpOnly, SameSite=Lax, Path=/, Max-Age=7d) → get-session → sign-out
+  revokes DB rows + expires the cookie — all through the REAL HTTP handler.
+- ✅ `hooks.before` / `hooks.after` fire on `/sign-in/email` with the
+  request, body and path available; `databaseHooks.session.create.after`
+  fires on session mint.
+- ✅ Unknown email burns a bcrypt cost-12 compare (timing-equalizer parity
+  with the v4 dummy hash — Better Auth calls our own `password.hash`).
+- ✅ Soft-deleted users rejected by the before-hook gate;
+  `session.create.before` is a second, DB-level guard.
+- ✅ SQLite validated end-to-end (sandbox). **PostgreSQL**: the adapter
+  `provider` is a config string only; the real Postgres run is covered by
+  the CI e2e job (Postgres 16 service container) in Phase 2. The sandbox
+  has no Postgres binary.
+
+Findings that adjust the Phase 1 port map (validated, not assumed):
+
+| # | Finding |
+|---|---|
+| F1 | A bare `PrismaClient` fails init — the explicit `prismaAdapter(prisma, { provider: "sqlite" \| "postgresql" })` wrapper is required. The provider is picked from the effective `DATABASE_URL` (same ADR-008 rule as the rest of the app). |
+| F2 | **`advanced.database.validateSchema: false` is required** for our brownfield `User`: the runtime schema check throws `SchemaMismatchError` on required app-only columns Better Auth never writes (`passwordHash`). Our own migrations + CI cover the auth tables instead. |
+| F3 | **1.7 stores credentials on the `Account` table** (`providerId: "credential"`, `accountId: userId`, `password`), not on `User`. The port adds a one-way sync bridge (§6, updated): the sign-in before-hook upserts the credential row from the current `User.passwordHash` before Better Auth's own verify — one bcrypt compare total, and `User.passwordHash` stays the single source of truth during the parallel period. |
+| F4 | Hooks must throw `APIError` (from `better-auth/api`) to control status codes — a plain `Error` becomes 500 `SERVER_ERROR`. |
+| F5 | The after-hook reads the endpoint result from `ctx.context.returned`; an `APIError` there exposes the numeric code as `.statusCode` (its `.status` is the string code, e.g. `"UNAUTHORIZED"`). |
+| F6 | Hooks receive `ctx.request` directly — the sign-out audit row gets IP/UA without the ALS bridge (which stays for the v4 stack only). |
 
 ### Phase 1 — Schema + parallel stack (1–2 days)
 - Prisma migration adding Better Auth's `session`/`account`/`verification`
@@ -100,20 +124,22 @@ sandbox preview breaks).
   (`NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET`; keep the same value — rotating
   it invalidates sessions, which is acceptable at cutover).
 
-## 6. Port map (custom logic → Better Auth home)
+## 6. Port map (custom logic → Better Auth home — updated by the Phase 0 spike)
 
-| Today (NextAuth v4) | Tomorrow (Better Auth) |
+| Today (NextAuth v4) | Tomorrow (Better Auth 1.7) |
 |---|---|
-| `authorize()` throttle (email/IP budgets) | `emailAndPassword.signIn.before` hook (same budget store: Redis when `REDIS_URL`, in-memory otherwise) |
-| Dummy-bcrypt timing equaliser | same hook (logic is ours, not the framework's) |
-| HIBP breach check on password SET | `emailAndPassword.password.*` / `databaseHooks.user.update` — unchanged semantics (fail-open) |
-| `tokenVersion` JWT invalidation | DB-backed sessions: delete the user's sessions on password/role change (`databaseHooks`) — invalidation becomes immediate, not on-next-request; the 5-minute role refresh becomes a session `expiresAt` of ≤5 min or an explicit refetch |
-| `events.signIn` audit row | `databaseHooks.session.create` or the sign-in hook |
-| `events.signOut` + ALS IP/UA | `signOut` hook — the ALS bridge (`auth-request-context.ts`) is framework-agnostic and stays as-is |
-| `__Secure-` cookie config | `advanced.useSecureCookies` + cookie prefixes in the Better Auth config |
-| Proxy `getToken()` stale-cookie guard | decode the Better Auth session cookie (signed JWT or DB lookup) — same strip-and-expire recovery |
-| `pages.signIn: "/"` | `advanced.redirectCallbacks` / client config |
-| Custom `signout.ts` wrapper | delete — the v4 keepalive races it works around do not exist |
+| `authorize()` throttle (email/IP budgets) | `hooks.before` on `/sign-in/email` (same budget store: Redis when `REDIS_URL`, in-memory otherwise); failures hit both buckets in `hooks.after` (reads `ctx.context.returned.statusCode`, spike F5) |
+| Dummy-bcrypt timing equaliser | built-in — Better Auth burns our own `password.hash` (bcrypt cost 12) when the user/credential row is missing; the before-hook does the same for soft-deleted users (spike-verified ≥150 ms) |
+| Credential storage on `User.passwordHash` | stays on `User.passwordHash` (single source of truth); the before-hook upserts the 1.7 `Account` credential row (`providerId: "credential"`, `password: User.passwordHash`) right before Better Auth's verify — exactly one bcrypt compare per attempt (spike F3) |
+| Soft-deleted-user sign-in rejection | `hooks.before` lookup gate (`deletedAt` filter) + `databaseHooks.session.create.before` as the DB-level backstop |
+| HIBP breach check on password SET | unchanged — the check lives in the app's password-change/reset actions (`lib/breach-check.ts`), which the framework swap never touches (fail-open semantics preserved) |
+| `tokenVersion` JWT invalidation | DB-backed sessions: password change / role change / soft-delete flows call `deleteUserSessions(userId)` (flag-gated helper); invalidation becomes immediate instead of on-next-request. The 5-minute role refresh becomes `session.cookieCache: { maxAge: 300 }` |
+| `events.signIn` audit row | `hooks.after` on `/sign-in/email` (success branch) — writes `auth.signed_in` with IP/UA from `ctx.request` |
+| `events.signOut` + ALS IP/UA | `hooks.after` on `/sign-out` — IP/UA from `ctx.request` directly; the ALS bridge (`auth-request-context.ts`) remains for the v4 stack only |
+| `__Secure-` cookie config | `advanced.useSecureCookies` + `advanced.cookiePrefix: "fernly"` (dev: `fernly.session_token`, prod: `__Secure-fernly.session_token` — spike-verified attributes) |
+| Proxy `getToken()` stale-cookie guard | flag-gated: on the better stack the proxy skips the v4 JWE check (DB-backed opaque tokens fail silent — no log spam, no wedge); v4 guard unchanged for rollback |
+| `pages.signIn: "/"` | the app shell keeps rendering the login screen when unauthenticated — no framework redirect config needed |
+| Custom `signout.ts` wrapper | delete at cleanup — the v4 keepalive races it works around do not exist (`authClient.signOut()` + hard navigation) |
 
 ## 7. Risks & mitigations
 
