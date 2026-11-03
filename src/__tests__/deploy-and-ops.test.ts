@@ -312,6 +312,20 @@ describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
       expect(tracked).toBe(".env.example");
     }
   });
+
+  it("PR-46: restore-preview.sh heals from git — never from a stale snapshot or inlined routes", () => {
+    // Regression pin (round 2 continuation): the script used to copy a
+    // stale /tmp/ws-extract snapshot over the tree and hand-inline a
+    // weeks-old /api/health route (whose GET() had no request parameter —
+    // it broke the build with 9 TS2554 errors on 2026-11-03, twice).
+    const sh = readFileSync(resolve(repoRoot, "scripts", "restore-preview.sh"), "utf-8");
+    expect(sh).not.toMatch(/ws-extract/);
+    expect(sh).not.toMatch(/cat > src\/app\/api\/health/);
+    // The self-heal: tracked files reset to HEAD (platform sync has reverted
+    // committed files during recycles).
+    expect(sh).toMatch(/git checkout -- \./);
+    expect(sh).toMatch(/git status --porcelain/);
+  });
 });
 
 // ---------------------------------------------------------------------------

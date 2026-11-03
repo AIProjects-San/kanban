@@ -1,45 +1,40 @@
 #!/usr/bin/env bash
 # Restore the Fernly preview after a full sandbox recycle.
-# Source of truth: the Oct 29 workspace snapshot tar (extracted at /tmp/ws-extract).
-# The project tree under /home/z/my-project was wiped except upload/ and download/.
+#
+# PR-46 — the script used to (1) copy a stale Oct-29 workspace snapshot over
+# the tree and (2) hand-inline a weeks-old /api/health route. Both are GONE:
+# the snapshot tar left /tmp on recycle (making step 1 a no-op at best), and
+# the inlined route broke the build against the current test suite twice on
+# 2026-11-03 (GET() had no request parameter -> 9 TS2554 phantom errors).
+#
+# Source of truth is GIT now: everything lands on main through the
+# commit-per-item + push workflow. Step 1 self-heals tracked files from HEAD,
+# which also repairs the platform-sync's occasional file reversion
+# (it silently reverted src/app/api/health/route.ts and deleted the
+# gitignored-then-committed .env.example during the 2026-11-03 recycle).
+#
+# WARNING: step 1 resets TRACKED files to HEAD. Commit your work first —
+# untracked files (db/, .env) are never touched.
 set -u
 cd /home/z/my-project
 
-echo "== 1. restore source tree (excluding upload/ and download/) =="
-shopt -s dotglob nullglob
-for item in /tmp/ws-extract/*; do
-  base=$(basename "$item")
-  if [ "$base" = "upload" ] || [ "$base" = "download" ]; then continue; fi
-  cp -a "$item" ./
-done
-shopt -u dotglob
+echo "== 1. self-heal tracked source from git (HEAD = last push) =="
+if command -v git >/dev/null 2>&1 && [ -d .git ]; then
+  # Modified (includes platform-sync reversions) and deleted tracked files.
+  dirty=$(git status --porcelain --untracked-files=no 2>/dev/null)
+  if [ -n "$dirty" ]; then
+    echo "$dirty" | sed 's/^/     /'
+    git checkout -- .
+    echo "   -> restored tracked files to HEAD"
+  else
+    echo "   tree matches HEAD"
+  fi
+else
+  echo "   WARNING: no git metadata — skipping self-heal" >&2
+fi
 ls -d src prisma e2e .git 2>/dev/null
 
-echo "== 2. recreate /api/health route (added after the snapshot was taken) =="
-mkdir -p src/app/api/health
-cat > src/app/api/health/route.ts <<'EOF'
-import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-
-export const dynamic = "force-dynamic";
-
-/**
- * Liveness/readiness probe used by the preview keepalive loop and uptime checks.
- * Verifies not only that the server responds but that the database is reachable.
- */
-export async function GET() {
-  try {
-    await db.$queryRaw`SELECT 1`;
-    return NextResponse.json({ status: "ok", db: "up" });
-  } catch {
-    // Server itself is alive even if the DB is unreachable — still a 200 so
-    // the keepalive loop does not churn-restart a healthy process.
-    return NextResponse.json({ status: "ok", db: "down" });
-  }
-}
-EOF
-
-echo "== 3. env: ensure demo password + stable NEXTAUTH_SECRET =="
+echo "== 2. env: ensure demo password + stable NEXTAUTH_SECRET =="
 # NEXT_PUBLIC_DEMO_PASSWORD — the value the seed hashes and the login form expects.
 grep -q NEXT_PUBLIC_DEMO_PASSWORD .env || echo 'NEXT_PUBLIC_DEMO_PASSWORD=fernly123' >> .env
 # NEXTAUTH_SECRET — must be STABLE across recycles. The auth.ts resolver falls back
@@ -48,17 +43,19 @@ grep -q NEXT_PUBLIC_DEMO_PASSWORD .env || echo 'NEXT_PUBLIC_DEMO_PASSWORD=fernly
 # Use a fixed non-weak value (the WEAK_SECRET_PREFIX guard in src/lib/auth.ts rejects
 # "fernly-dev-secret*" — this value doesn't match, so it's accepted as a real secret).
 grep -q '^NEXTAUTH_SECRET=' .env || echo 'NEXTAUTH_SECRET=fernly-preview-stable-secret-v1-do-not-use-in-production-32+' >> .env
+# .env.example is committed (PR-45) — heal it too if the platform deleted it.
+[ -f .env.example ] || git show HEAD:.env.example > .env.example
 wc -c .env
 
-echo "== 4. bun install =="
+echo "== 3. bun install =="
 bun install --frozen-lockfile 2>&1 | tail -4
 
-echo "== 5. prisma generate =="
+echo "== 4. prisma generate =="
 # Route through run-with-env.sh so the provider is resolved from the restored
 # .env (file: URL -> gitignored prisma/schema.local.prisma variant, ADR-008).
 bash scripts/run-with-env.sh ./node_modules/.bin/prisma generate 2>&1 | tail -3
 
-echo "== 5b. push schema + seed (the recycle may have wiped custom.db) =="
+echo "== 5. push schema + seed (the recycle may have wiped custom.db) =="
 bash scripts/run-with-env.sh ./node_modules/.bin/prisma db push --skip-generate 2>&1 | tail -3
 SEED_DEMO=1 bash scripts/run-with-env.sh node scripts/seed.js 2>&1 | tail -3
 
