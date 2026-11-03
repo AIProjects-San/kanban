@@ -18,7 +18,7 @@ import { ROLE_LABELS, type Role } from "@/lib/rbac";
 import { Avatar } from "./avatar";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time";
-import { appSignOut } from "@/lib/signout";
+import { appSignOut } from "@/hooks/use-app-session"; // PR-48 — flag-aware (v4 wrapper or Better Auth)
 import type { NotificationT, MessageT } from "@/lib/types";
 
 interface TopbarProps {

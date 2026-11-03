@@ -121,6 +121,8 @@ export interface MaintenanceResult extends PruneResult {
   purgedReadNotifications: number;
   /** Read-state rows of long-soft-deleted messages deleted. */
   purgedStaleMessageReads: number;
+  /** Expired Better Auth session rows deleted (PR-48). */
+  purgedExpiredSessions: number;
 }
 
 /**
@@ -140,6 +142,7 @@ export async function runMaintenancePurge(
   let purgedResetTokens = 0;
   let purgedReadNotifications = 0;
   let purgedStaleMessageReads = 0;
+  let purgedExpiredSessions = 0;
   try {
     const r = await db.passwordResetToken.deleteMany({
       where: {
@@ -152,6 +155,19 @@ export async function runMaintenancePurge(
     purgedResetTokens = r.count;
   } catch {
     // Counted as 0 — the next run retries. Never block the other purges.
+  }
+  try {
+    // PR-48 — Better Auth sessions that expired without an explicit
+    // sign-out (browser closed, cookie lost) linger as rows; sweep them so
+    // the table stays bounded. Live sessions are untouched (expiresAt is
+    // only in the past once the 7-day window elapsed).
+    const r = await db.session.deleteMany({
+      where: { expiresAt: { lt: new Date(now) } },
+    });
+    purgedExpiredSessions = r.count;
+  } catch {
+    // see above — also 0 while the v4 stack runs (tables may be absent in
+    // environments that never ran the Phase 1 migration).
   }
   try {
     const r = await db.notification.deleteMany({
@@ -175,5 +191,6 @@ export async function runMaintenancePurge(
     purgedResetTokens,
     purgedReadNotifications,
     purgedStaleMessageReads,
+    purgedExpiredSessions,
   };
 }

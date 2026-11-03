@@ -17,7 +17,6 @@ import {
   ArrowRightLeft, UserPlus, MessageSquare, Trash2, Link2, FolderKanban, GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useSession } from "next-auth/react";
 import { hasPermission, type Role } from "@/lib/rbac";
 import {
   BUG_STATUSES, BUG_SEVERITIES, BUG_PRIORITIES,
@@ -36,6 +35,7 @@ import {
   assignBug, addBugComment, deleteBug, getBugBoard,
 } from "@/server-actions/bugs";
 import { getProjectAssignableUsers } from "@/server-actions/assignments";
+import { useAppSession } from "@/hooks/use-app-session";
 
 interface BugsViewProps {
   currentUser: { id: string; name: string; email: string; role: string };
@@ -109,7 +109,7 @@ type FilterKey = "all" | "mine" | "unassigned" | "high-severity";
 // ---------------------------------------------------------------------------
 
 export function BugsView({ currentUser, projects, tasks }: BugsViewProps) {
-  const { data: session } = useSession();
+  const { data: session } = useAppSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
   const [bugs, setBugs] = useState<BugCardData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -727,7 +727,7 @@ function BugDetailDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const { data: session } = useSession();
+  const { data: session } = useAppSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
   const [bug, setBug] = useState<BugDetail | null>(null);
   const [loading, setLoading] = useState(true);

@@ -19,10 +19,10 @@ import {
   Sun,
   Bug,
 } from "lucide-react";
-import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { ACCENTS } from "@/lib/constants";
+import { useAppSession } from "@/hooks/use-app-session";
 
 interface CmdItem {
   id: string;
@@ -40,7 +40,7 @@ export function CommandPalette() {
     dark, setDark, setAccent,
   } = useApp();
   const [query, setQuery] = useState("");
-  const { data: session } = useSession();
+  const { data: session } = useAppSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
   const canManageRoles = hasPermission(role, "role:manage");
   const canViewAudit = hasPermission(role, "audit:view");

@@ -9,6 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getSession, getSessionOrThrow, requirePermission, requirePermissionForTarget, AuthorizationError } from "./auth-guard";
+import { revokeUserSessionsIfActive } from "@/lib/auth-revoke";
 import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/rbac";
 import { assertNoCycle } from "@/lib/hierarchy";
 import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/password";
@@ -253,6 +254,9 @@ export async function changePassword(input: {
         data: { usedAt: new Date() },
       }),
     ]);
+    // PR-48 — revoke the Better Auth DB sessions for the same reason the
+    // tokenVersion bump revokes the v4 JWTs (both stacks live in parallel).
+    await revokeUserSessionsIfActive(input.userId);
 
     await logAudit({
       actor: auth,
@@ -552,6 +556,12 @@ export async function updateUser(userId: string, input: {
       }
     });
 
+    // PR-48 — role or password changed → revoke the Better Auth DB sessions
+    // (the tokenVersion bump above already covers the v4 JWTs).
+    if (roleChanged || passwordReset) {
+      await revokeUserSessionsIfActive(userId);
+    }
+
     const changes: string[] = [];
     if (input.name !== undefined && input.name !== target.name) changes.push("name");
     if (input.email !== undefined && input.email !== target.email) changes.push("email");
@@ -616,6 +626,11 @@ export async function deleteUser(userId: string): Promise<ActionResult<void>> {
           ]
         : []),
     ]);
+    // PR-48 — a soft-deleted user must lose their Better Auth DB sessions
+    // immediately (the before-hook blocks new sign-ins; this kills the
+    // outstanding ones — the v4 JWTs die via the jwt callback's deletedAt
+    // filter within the refresh window).
+    await revokeUserSessionsIfActive(userId);
     await logAudit({
       actor: auth,
       action: "user.deleted",
@@ -693,6 +708,9 @@ export async function signOutAllDevices(): Promise<ActionResult<{ revokedAt: str
         data: { usedAt: new Date() },
       }),
     ]);
+    // PR-48 — "sign out everywhere" must also kill the Better Auth DB
+    // sessions, not just the v4 JWTs.
+    await revokeUserSessionsIfActive(auth.userId);
     await logAudit({
       actor: auth,
       action: "user.updated",

@@ -29,6 +29,12 @@ model User {
   email        String    @unique
   name         String
   passwordHash String
+  // PR-48 (auth migration Phase 1) — Better Auth core user fields. The app
+  // itself never reads them: emailVerified is inert (the workspace has no
+  // email-verification gate) and image is unused (avatars are colors), but
+  // the 1.7 adapter selects both on every mapped read, so they must exist.
+  emailVerified Boolean   @default(false)
+  image        String?
   role         String    @default("MEMBER") // ADMIN | MANAGER | MEMBER — see lib/rbac.ts. Defaulting to MEMBER (was "Project Lead") closes L-P0-13.
   // L-P0-8 — session revocation. Incremented on password change and role
   // change. The JWT callback rejects tokens whose tokenVersion is stale,
@@ -76,7 +82,70 @@ model User {
   // L-P0-11 — password reset tokens (single-use, time-boxed).
   passwordResetTokens PasswordResetToken[]
 
+  // PR-48 — Better Auth DB-backed sessions + credential accounts.
+  sessions Session[]
+  accounts Account[]
+
   @@index([managerId])
+}
+
+// ---------------------------------------------------------------------------
+// PR-48 (auth migration Phase 1) — Better Auth 1.7 table set.
+// docs/AUTH_MIGRATION_PLAN.md §5 Phase 1: added alongside the existing User
+// (mapped, not duplicated — `user.modelName: "User"`). While
+// NEXT_PUBLIC_AUTH_STACK=nextauth (v4 default) these tables are inert; they
+// back the parallel /api/auth-better/* stack and become the primary session
+// store at cutover. Credentials themselves stay on User.passwordHash (the
+// single source of truth) — the sign-in bridge syncs 1.7 credential
+// Account rows lazily (spike finding F3).
+// ---------------------------------------------------------------------------
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  // 1.7 credential rows: providerId "credential", accountId = user id,
+  // password = mirror of User.passwordHash (synced by the sign-in bridge).
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
 }
 
 // ---------------------------------------------------------------------------

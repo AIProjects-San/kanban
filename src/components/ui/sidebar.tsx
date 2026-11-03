@@ -19,12 +19,12 @@ import {
   CalendarDays,
   Briefcase,
 } from "lucide-react";
-import { useSession } from "next-auth/react";
 import { useApp, type ViewKey } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
-import { appSignOut } from "@/lib/signout";
+import { appSignOut } from "@/hooks/use-app-session"; // PR-48 — flag-aware (v4 wrapper or Better Auth)
 import { APP } from "@/config/app";
+import { useAppSession } from "@/hooks/use-app-session";
 
 interface NavItem {
   key: ViewKey;
@@ -57,7 +57,7 @@ const generalNav: NavItem[] = [
 
 export function Sidebar() {
   const { view, setView, sidebarOpen, setSidebarOpen } = useApp();
-  const { data: session } = useSession();
+  const { data: session } = useAppSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
   // Audit Log is only visible to roles with audit:view (Admin, Manager).
   // Users management is only visible to roles with role:manage (Admin only).

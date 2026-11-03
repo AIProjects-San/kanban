@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { signIn } from "next-auth/react";
 import { Leaf, Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { RoleBadge } from "../ui/role-badge";
 import { APP } from "@/config/app";
+import { appSignIn } from "@/hooks/use-app-session";
 
 // ---------------------------------------------------------------------------
 // L-P0-12 — demo credentials must not leak into production builds.
@@ -58,23 +58,18 @@ export function LoginScreen() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // Use redirect: false so we control the redirect ourselves.
-    // window.location.reload() stays on the current origin (critical for
-    // reverse-proxy / preview environments where NextAuth might detect the
-    // wrong base URL). The session cookie is set by the POST response, and
-    // the reload picks it up.
-    const res = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-      callbackUrl: "/",
-    });
+    // PR-48 — appSignIn drives whichever auth stack the deployment runs
+    // (v4 credentials callback by default; Better Auth /sign-in/email when
+    // NEXT_PUBLIC_AUTH_STACK=better). redirect stays ours: the reload keeps
+    // the current origin (critical behind reverse proxies / previews) and
+    // picks up the session cookie set by the POST response.
+    const res = await appSignIn(email, password);
     setLoading(false);
     if (res?.error) {
       toast.error(SEED_DEMO
         ? "Invalid credentials. Try a demo account below."
         : "Invalid email or password.");
-    } else if (res?.ok || res?.url) {
+    } else if (res?.ok) {
       // Success — reload the current page to pick up the session cookie.
       // Use replace so the login page doesn't stay in browser history.
       window.location.replace(window.location.pathname);

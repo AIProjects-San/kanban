@@ -28,6 +28,7 @@
 
 import { logError,logWarn } from "@/lib/observability";
 import { db } from "@/lib/db";
+import { revokeUserSessionsIfActive } from "@/lib/auth-revoke";
 import { hashPassword, getMinPasswordLength } from "@/lib/password";
 import { assertPasswordNotBreached } from "@/lib/breach-check";
 import { createMailer } from "@/lib/mailer";
@@ -287,6 +288,10 @@ export async function resetPassword(input: {
     if (result[1].count === 0) {
       throw validationError("This reset link was just used. Request a new one.");
     }
+
+    // PR-48 — the tokenVersion bump above invalidates the v4 JWTs; also
+    // revoke the Better Auth DB sessions (both stacks live in parallel).
+    await revokeUserSessionsIfActive(record.userId);
 
     revalidatePath("/");
     return { success: true };

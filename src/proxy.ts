@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { withRequestId, generateRequestId, log } from "@/lib/observability";
+import { isBetterAuthStack } from "@/lib/auth-stack";
 import { randomBytes } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,14 @@ export default async function proxy(req: NextRequest) {
     const raw = req.cookies.get(SESSION_COOKIE)?.value;
     const secret = process.env.NEXTAUTH_SECRET;
 
+    // PR-48 (auth migration) — on the better stack the v4 JWE guard is
+    // retired: Better Auth's DB-backed opaque tokens fail silent (unknown
+    // token → signed out, no log spam, no CSRF wedge), so there is nothing
+    // to self-heal. A leftover v4 cookie from before the cutover is simply
+    // obsolete — strip and expire it once, unconditionally, without ever
+    // depending on NEXTAUTH_SECRET.
+    const betterStack = isBetterAuthStack();
+
     // Helper: stamp CSP + request-id on any response we return + emit a
     // per-request structured log line with duration + route + status.
     function stampHeaders(res: NextResponse) {
@@ -167,7 +176,32 @@ export default async function proxy(req: NextRequest) {
     }
 
     // No cookie to check, or no explicit secret: pass through with CSP.
-    if (!raw || !secret) return stampHeaders(forward());
+    // (On the better stack a v4 cookie, if any, is handled below as a
+    // cutover leftover — it never gets JWE-validated.)
+    if (!raw || !secret || betterStack) {
+      if (raw && betterStack) {
+        // Cutover cleanup: expire the obsolete v4 cookie jar so the browser
+        // starts clean on the fernly.* cookie set.
+        log.info("proxy: expiring obsolete v4 session cookie (better stack)", {
+          path: req.nextUrl.pathname,
+        });
+        req.cookies.delete(SESSION_COOKIE);
+        req.cookies.delete(CSRF_COOKIE);
+        req.cookies.delete(CALLBACK_COOKIE);
+        const res = forward();
+        const expiredCookie = {
+          httpOnly: true,
+          sameSite: "lax" as const,
+          path: "/",
+          maxAge: 0,
+        };
+        res.cookies.set(SESSION_COOKIE, "", expiredCookie);
+        res.cookies.set("next-auth.csrf-token", "", expiredCookie);
+        res.cookies.set("next-auth.callback-url", "", expiredCookie);
+        return stampHeaders(res);
+      }
+      return stampHeaders(forward());
+    }
 
     let valid = false;
     try {

@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import dynamic from "next/dynamic";
-import { useSession } from "next-auth/react";
 import { useApp, type AccentTheme } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -25,6 +24,7 @@ import { markAllNotificationsRead } from "@/server-actions/data";
 import type {
   ProjectT, TaskT, TeamMemberT, CalendarEventT, NotificationT, ReminderT, TimeEntryT, MessageT,
 } from "@/lib/types";
+import { useAppSession } from "@/hooks/use-app-session";
 
 // ---------------------------------------------------------------------------
 // L-P1-17 — Code splitting. Heavy and rarely-opened views are lazy-loaded
@@ -118,7 +118,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
-  const { data: session, status } = useSession();
+  const { data: session, status } = useAppSession();
   const { view, refreshTick, setAccent, setDark } = useApp();
   const refresh = useRefresh();
   useKeyboardShortcuts();
