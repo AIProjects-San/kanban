@@ -33,7 +33,7 @@ interface DashboardViewProps {
     total: number; ended: number; running: number; pending: number; paused: number;
     weeklyCompletion: number; projectEndedPct: number;
   };
-  user?: { name: string; email: string; avatarColor: string; role: string } | null;
+  user?: { id?: string; name: string; email: string; avatarColor: string; role: string } | null;
   greeting?: string;
   todayDate?: string;
 }
@@ -60,8 +60,26 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
     .slice(0, 5);
 
   const onlineMembers = members.filter((m) => m.online).slice(0, 6);
+  // Display list for the Reminders card (next 4 incomplete, server-sorted
+  // by dueDate) — the greeting count above is computed separately and is
+  // NOT capped by this slice.
   const upcomingReminders = reminders.filter((r) => !r.completed).slice(0, 4);
   const recentActivity = notifs.slice(0, 4);
+
+  // "You have N open tasks" — the greeting is personal, so count only
+  // tasks assigned to the signed-in user. The tasks prop is workspace-wide
+  // for admins — counting every member's tasks made the greeting claim the
+  // whole workspace's workload ("28 open tasks" when the user has 5).
+  const myOpenTasks = tasks.filter(
+    (t) => t.status !== "DONE" && user?.id != null && t.assignee?.userId === user.id,
+  ).length;
+  // "N reminders today" — incomplete reminders due today or overdue (an
+  // overdue reminder still needs doing today). Counted from the FULL list,
+  // not from upcomingReminders, whose .slice(0, 4) display cap froze the
+  // greeting at a maximum of 4 regardless of the real total.
+  const remindersToday = reminders.filter(
+    (r) => !r.completed && r.dueDate.slice(0, 10) <= todayStr,
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -70,7 +88,8 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
         <div>
           <h1 className="text-2xl font-bold text-foreground tracking-tight">{hello}, {firstName}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            You have {tasks.filter((t) => t.status !== "DONE").length} open tasks and {upcomingReminders.length} reminders today.
+            You have {myOpenTasks} open task{myOpenTasks === 1 ? "" : "s"} and{" "}
+            {remindersToday} reminder{remindersToday === 1 ? "" : "s"} today.
           </p>
         </div>
         <div className="flex gap-2">
