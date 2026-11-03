@@ -105,6 +105,16 @@ describe("PR-54 signJwt / verifyJwt", () => {
     expect(verifyJwt("")).toBeNull();
   });
 
+  it("rejects a token whose header is not valid JSON", () => {
+    // Three base64url parts but the header doesn't decode to a JSON object —
+    // verifyJwt must reject at the header JSON.parse catch (line 127), not
+    // proceed to compare signatures against an undefined alg.
+    const garbageHeader = Buffer.from("not json").toString("base64url");
+    const payloadB64 = Buffer.from(JSON.stringify(PAYLOAD)).toString("base64url");
+    const sigB64 = Buffer.from("0".repeat(64), "utf8").toString("base64url");
+    expect(verifyJwt(`${garbageHeader}.${payloadB64}.${sigB64}`)).toBeNull();
+  });
+
   it("rejects a token with a non-JSON payload", () => {
     const token = signJwt(PAYLOAD);
     const [headerB64] = token.split(".");

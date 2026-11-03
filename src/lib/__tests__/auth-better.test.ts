@@ -585,6 +585,21 @@ describe("getBetterSession — PR-54 bearer-token path", () => {
     expect(await getBetterSession()).toBeNull();
   });
 
+  it("returns null when the JWT session DB lookup throws (resilience)", async () => {
+    // A valid JWT is presented but the user lookup rejects (e.g. Prisma
+    // connection error). The catch in getBetterSessionFromJwt must swallow
+    // it and return null (→ 401) rather than propagating a 500 — a bearer
+    // client never gets a stack trace, just an auth failure.
+    seedUser();
+    const { signJwt } = await import("@/lib/jwt");
+    const token = signJwt({
+      sub: "u-1", role: "MEMBER", name: "Ada", email: "ada@fernly.dev",
+    });
+    vi.mocked(db.user.findUnique).mockRejectedValueOnce(new Error("DB connection lost"));
+    mockHeaderBag.current = new Headers({ authorization: `Bearer ${token}` });
+    expect(await getBetterSession()).toBeNull();
+  });
+
   it("falls through to the cookie path when no Authorization header is present", async () => {
     // No bearer token → the existing cookie-based resolution runs.
     seedUser();
