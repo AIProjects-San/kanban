@@ -195,6 +195,31 @@ jobs:
       - name: Run E2E suite
         run: bun run test:e2e
 
+      # PR-48 (auth migration Phase 2) — the parallel Better Auth login
+      # suite: restart the dev server with NEXT_PUBLIC_AUTH_STACK=better
+      # (Turbopack bakes the client flag at compile time) and re-run the
+      # @auth-better scenarios through the same UI steps. This is also the
+      # job that validates the Better Auth table set on PostgreSQL 16 —
+      # the sandbox has no Postgres binary (spike finding, plan §5 Phase 0).
+      - name: Restart dev server on the Better Auth stack
+        run: |
+          pkill -f "next dev" || true
+          sleep 3
+          # Clear the Turbopack dev cache — NEXT_PUBLIC_* flags are baked at
+          # compile time, a stale cache would keep serving the v4 client.
+          rm -rf .next
+          NEXT_PUBLIC_AUTH_STACK=better nohup bun run dev > dev-better.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "better-stack app is healthy"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::better-stack app did not become healthy in 120s"; tail -n 50 dev-better.log; exit 1
+
+      - name: Run Better Auth E2E suite
+        run: bun run test:e2e:better
+
       # Failure forensics: screenshots + URL/h1/toast state for every failed
       # scenario (written by the After hook in e2e/support/world.js).
       - name: Upload e2e artifacts
@@ -208,4 +233,6 @@ jobs:
 
       - name: Dump dev server log on failure
         if: failure()
-        run: tail -n 200 dev.log || echo "dev.log not found — failure occurred before the dev server started"
+        run: |
+          tail -n 200 dev-better.log || true
+          tail -n 200 dev.log || echo "dev.log not found — failure occurred before the dev server started"

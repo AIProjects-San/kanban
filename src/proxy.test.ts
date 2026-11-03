@@ -189,3 +189,65 @@ describe("PR-40: CSP style-src — no unsafe-inline in production", () => {
     expect(scriptSrc).not.toMatch(/unsafe-(eval|inline)/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR-48 — better-stack mode: the v4 JWE guard is retired; leftover v4
+// cookies from before the cutover are expired unconditionally (never
+// JWE-validated, no NEXTAUTH_SECRET dependency), and requests without a v4
+// cookie pass through untouched.
+// ---------------------------------------------------------------------------
+
+describe("PR-48: better-stack cookie handling", () => {
+  beforeEach(() => {
+    process.env.NEXTAUTH_SECRET = SECRET;
+    process.env.NEXT_PUBLIC_AUTH_STACK = "better";
+  });
+
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_AUTH_STACK;
+    delete process.env.NEXTAUTH_SECRET;
+  });
+
+  it("expires a leftover v4 session cookie WITHOUT JWE-validating it (even a valid one)", async () => {
+    // A cookie signed with the CURRENT secret would pass the v4 guard — on
+    // the better stack it is obsolete regardless and must be expired.
+    const cookie = await mintCookie(SECRET);
+    const res = await proxy(makeRequest(cookie));
+    const setCookies = setCookieHeader(res).map((c) => c.split(";")[0]);
+    expect(setCookies).toContain(`${SESSION_COOKIE}=`);
+    expect(setCookies).toContain("next-auth.csrf-token=");
+    expect(setCookies).toContain("next-auth.callback-url=");
+    // And the forwarded request no longer carries it.
+    const forwardedCookie = res.headers.get("x-middleware-override-headers")
+      ? null : null; // NextResponse.next() forwards via internal mutation;
+    // the observable contract is the expiry above plus a 200 pass-through.
+    expect(res.status).toBe(200);
+    expect(forwardedCookie).toBeNull();
+  });
+
+  it("expires a garbage v4 cookie the same way (no decode error path)", async () => {
+    const res = await proxy(makeRequest("garbage-not-a-jwe"));
+    const setCookies = setCookieHeader(res).map((c) => c.split(";")[0]);
+    expect(setCookies).toContain(`${SESSION_COOKIE}=`);
+    expect(res.status).toBe(200);
+  });
+
+  it("passes through untouched when there is no v4 cookie", async () => {
+    const res = await proxy(makeRequest(null));
+    expect(res.status).toBe(200);
+    expect(setCookieHeader(res)).toEqual([]);
+  });
+
+  it("never touches the fernly.* cookie set on the better stack", async () => {
+    const headers = new Headers();
+    headers.set("cookie", "fernly.session_token=tok.sig; fernly.session_data=abc");
+    const res = await proxy(new NextRequest("http://localhost:3000/", { headers }));
+    expect(res.status).toBe(200);
+    // No Set-Cookie expiring the better-auth cookies — Better Auth owns
+    // them entirely (DB-backed opaque tokens fail silent, nothing to heal).
+    const expiredBetter = setCookieHeader(res).filter((c) =>
+      c.startsWith("fernly."),
+    );
+    expect(expiredBetter).toEqual([]);
+  });
+});

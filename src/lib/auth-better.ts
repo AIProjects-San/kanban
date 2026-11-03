@@ -106,21 +106,30 @@ const DUMMY_HASH =
 // Mirrors next.config.ts `serverActionsAllowedOrigins` (audit §1.15): env
 // override first, then the conservative preview default. Better Auth's
 // origin check (its CSRF posture — no double-submit token to keep in sync)
-// must accept exactly the origins Server Actions accept.
+// must accept exactly the origins Server Actions accept. NOTE the format
+// difference: non-wildcard entries must be FULL origins (scheme included —
+// matchesOriginPattern compares against getOrigin()); wildcard entries
+// match on host alone. The prod-smoke origins (127.0.0.1:3111, SMOKE_PORT
+// default) are included so the standalone smoke build passes the same gate.
 function trustedOrigins(): string[] {
   const env = process.env.SERVER_ACTIONS_ALLOWED_ORIGINS;
   if (env) {
     return env
       .split(",")
       .map((o) => o.trim())
-      .filter((o) => o.length > 0);
+      .filter((o) => o.length > 0)
+      // Bare host(:port) entries from the Server Actions format can't match
+      // a full-origin comparison — normalize them onto the dev scheme.
+      .map((o) => (/^[a-z0-9.-]+(:\d+)?$/i.test(o) ? `http://${o}` : o));
   }
   return [
     "*.space-z.ai",
     "*.fcapp.run",
-    "localhost:3000",
-    "localhost:81",
-    "127.0.0.1:3000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:81",
+    "http://localhost:3111",
+    "http://127.0.0.1:3111",
   ];
 }
 
@@ -185,11 +194,14 @@ export const auth = betterAuth({
   user: {
     // Better Auth's default model name "user" maps straight onto the
     // existing Prisma model (client property `db.user`) — mapped, not
-    // duplicated. role/tokenVersion ride along as additional fields so
-    // auth.api.getSession() returns them without extra queries.
+    // duplicated. role/tokenVersion/deletedAt ride along as additional
+    // fields so auth.api.getSession() returns them without extra queries
+    // (deletedAt powers the mid-session soft-delete guard in
+    // getBetterSession — v4 jwt-callback parity).
     additionalFields: {
       role: { type: "string", input: false },
       tokenVersion: { type: "number", input: false },
+      deletedAt: { type: "date", input: false },
     },
   },
   session: {
@@ -260,6 +272,12 @@ export const auth = betterAuth({
       if (!email || !password) {
         throw new APIError("BAD_REQUEST", { message: "invalid credentials" });
       }
+      // P2 edge-case parity — normalise the body the endpoint will validate
+      // and look up (trim + lowercase). ctx.body is spread-copied by the
+      // hook runner but the object itself is shared, so a property write
+      // reaches the endpoint handler. Without this, " ada@x.co " dies at
+      // Better Auth's z.email() check on the RAW value.
+      ctx.body.email = email;
 
       const ip = ipFromRequest(ctx.request);
       const emailKey = `login:email:${email}`;
@@ -480,6 +498,14 @@ export async function getBetterSession(): Promise<BetterAuthSession | null> {
       headers: new Headers(await headers()),
     });
     if (!session?.user?.id) return null;
+    // Soft-deleted mid-session — treat as signed out even if a session row
+    // survived (v4 parity: the jwt callback's refresh path cleared the
+    // identity claim for deletedAt != null). The additionalField means no
+    // extra query: deletedAt rides on the session payload.
+    const deletedAt = (session.user as { deletedAt?: unknown }).deletedAt;
+    if (deletedAt instanceof Date && deletedAt.getTime() <= Date.now()) {
+      return null;
+    }
     const roleRaw = (session.user as { role?: unknown }).role;
     const role: Role = isValidRole(typeof roleRaw === "string" ? roleRaw : "")
       ? (roleRaw as Role)

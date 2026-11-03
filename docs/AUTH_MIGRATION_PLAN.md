@@ -105,14 +105,29 @@ Findings that adjust the Phase 1 port map (validated, not assumed):
   `/api/auth/*` so production is untouched.
 - The proxy cookie guard gains a second accepted cookie name (flag-gated).
 
-### Phase 2 — Parity + test port (1–2 days)
-- Port every `auth.test.ts` case: throttle budgets, dummy-bcrypt timing,
-  soft-deleted-user rejection, tokenVersion revocation semantics (becomes:
-  session invalidation on password change via `databaseHooks.user.update`),
-  sign-in/sign-out audit rows incl. IP/UA (the ALS bridge installs the same
-  way — it lives in our route wrapper, not in NextAuth).
-- Extend e2e: a parallel login suite against the flag-on path.
-- Security gates: the prod-smoke login checks run twice (both stacks).
+### Phase 2 — Parity + test port (1–2 days) — ✅ DONE 2026-11-03
+- ✅ `src/lib/__tests__/auth-better.test.ts` — 20 cases ported 1:1 from
+  `auth.test.ts` against the real HTTP handler (spike harness): throttle
+  budgets (incl. the shared-budget contract with v4 authorize), dummy-bcrypt
+  timing, soft-deleted rejection, wrong-password/no-audit, email
+  normalization, DB-outage 401, PR-11 dual-budget reset, cookie posture
+  (fernly.session_token httpOnly/Lax/7d), get-session payload,
+  sign-out revocation + IP/UA audit rows, best-effort audit failure,
+  revocation semantics (flag-gated deleteMany) and the weak-secret boot
+  refusal. 4 flag-on proxy cases in `src/proxy.test.ts`.
+- ✅ e2e: `e2e/features/auth-better.feature` (@auth-better, run via
+  `bun run test:e2e:better` after starting the app with
+  NEXT_PUBLIC_AUTH_STACK=better) — 5 scenarios / 30 steps through the real
+  UI incl. the fernly cookie assertion and sidebar sign-out. The main suite
+  (`bun run test:e2e`) excludes the tag and stays green: 62 scenarios /
+  455 steps. CI runs BOTH passes; the better pass on the Postgres 16
+  service container is the real PostgreSQL validation of the table set
+  (spike §5).
+- ✅ Security gates: prod-smoke login checks now run against BOTH stacks
+  (17/17 against the standalone production build, incl. better-stack
+  401-rejection, login, get-session and sign-out cookie expiry).
+- ✅ Gates: typecheck/eslint clean, 1189/1189 unit tests, bundle budget OK
+  with better-auth in the tree.
 
 ### Phase 3 — Cutover + cleanup (1 day + 1 soak week)
 - Flip the flag per-deployment (staging → production), keep v4 code for one

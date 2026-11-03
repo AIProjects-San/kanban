@@ -168,3 +168,42 @@ async function headingPresent(driver, expected) {
   const text = await headings[0].getText();
   return text.includes(expected);
 }
+
+// ---------------------------------------------------------------------------
+// PR-48 — Better Auth stack (flag-on) steps. Only used by
+// auth-better.feature (bun run test:e2e:better); they assert the stack-
+// specific observable: the fernly.* session cookie and the UI sign-out.
+// ---------------------------------------------------------------------------
+
+Then("the fernly session cookie should be set", async function () {
+  const driver = await this.getDriver();
+  const cookies = await driver.manage().getCookies();
+  const session = cookies.find(
+    (c) => c.name === "fernly.session_token" || c.name === "__Secure-fernly.session_token",
+  );
+  assert.ok(session, `expected a fernly session cookie, got: ${cookies.map((c) => c.name).join(", ") || "(none)"}`);
+  // httpOnly cookies are invisible to document.cookie but visible to the
+  // driver's cookie manager — assert the flag while we're here.
+  assert.strictEqual(session.httpOnly, true, "fernly session cookie must be httpOnly");
+});
+
+When("I sign out via the sidebar", async function () {
+  const driver = await this.getDriver();
+  // The sign-out button sits in the sidebar footer BELOW the <nav> block —
+  // search the whole sidebar container, not just nav.
+  const btn = await driver.wait(
+    until.elementLocated(By.xpath('//button[.//text()[contains(., "Sign out")] or contains(., "Sign out")]')),
+    10_000,
+    "sign-out button did not appear",
+  );
+  await btn.click();
+});
+
+Then("I should see the login screen within {int} seconds", async function (seconds) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css('input[type="email"]')),
+    seconds * 1000,
+    "login screen did not return after sign-out",
+  );
+});

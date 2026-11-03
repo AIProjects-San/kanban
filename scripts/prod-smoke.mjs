@@ -238,6 +238,76 @@ try {
     );
   }
 
+  // 5b–6b (PR-48, auth migration Phase 2): the SAME credential contract on
+  // the Better Auth parallel stack — the plan requires the login checks to
+  // run against both stacks. These endpoints are always mounted
+  // (/api/auth-better/*) regardless of NEXT_PUBLIC_AUTH_STACK, so the smoke
+  // validates the parallel stack in every build. (The flag-ON app-shell
+  // path is covered by the @auth-better e2e suite, which runs the UI with
+  // the stack flipped.)
+  {
+    const betterLogin = async (email, password) => {
+      const res = await fetch(`${BASE}/api/auth-better/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: BASE },
+        body: JSON.stringify({ email, password }),
+      });
+      await res.arrayBuffer();
+      const setCookies = res.headers.getSetCookie() ?? [];
+      const sessionCookie = setCookies.find((c) =>
+        /fernly\.session_token=/.test(c.split(";")[0]),
+      );
+      return { res, sessionCookie };
+    };
+
+    const betterBad = await betterLogin(EMAIL, "definitely-wrong-password");
+    check(
+      "better stack: bad credentials rejected (401, no fernly cookie)",
+      betterBad.res.status === 401 && !betterBad.sessionCookie,
+      `status ${betterBad.res.status}`,
+    );
+
+    const betterGood = await betterLogin(EMAIL, PASSWORD);
+    check(
+      "better stack: credential login succeeds (200 + fernly.session_token)",
+      betterGood.res.status === 200 && !!betterGood.sessionCookie,
+      `status ${betterGood.res.status}`,
+    );
+
+    if (betterGood.sessionCookie) {
+      const sessionRes = await fetch(`${BASE}/api/auth-better/get-session`, {
+        headers: { cookie: betterGood.sessionCookie.split(";")[0] },
+      });
+      const sessionBody = await sessionRes.json().catch(() => null);
+      check(
+        "better stack: session cookie resolves the user on get-session",
+        sessionRes.status === 200 && sessionBody?.user?.email === EMAIL,
+        `status ${sessionRes.status}`,
+      );
+
+      const outRes = await fetch(`${BASE}/api/auth-better/sign-out`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: BASE,
+          cookie: betterGood.sessionCookie.split(";")[0],
+        },
+        body: "{}",
+      });
+      const outCookies = outRes.headers.getSetCookie() ?? [];
+      check(
+        "better stack: sign-out expires the session cookie",
+        outRes.status === 200 &&
+          outCookies.some(
+            (c) =>
+              /fernly\.session_token=;/.test(c.split(";")[0] + ";") ||
+              (/fernly\.session_token=/.test(c) && /Max-Age=0/i.test(c)),
+          ),
+        `status ${outRes.status}`,
+      );
+    }
+  }
+
   // 7: health detail honours the CRON_SECRET gate.
   const detailRes = await fetch(`${BASE}/api/health?detail=1`, {
     headers: { authorization: `Bearer ${CRON_SECRET || "none"}` },
