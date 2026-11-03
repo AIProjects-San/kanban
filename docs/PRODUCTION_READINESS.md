@@ -195,10 +195,21 @@ planning on real hosts.
 The engineering backlog is empty — every §6 item now either shipped or
 reduced to a decision that belongs to the owner, not the codebase.
 
-1. **Auth migration execution** — the plan shipped (`docs/AUTH_MIGRATION_PLAN.md`,
-   PR-43): Better Auth behind a feature flag, v4 as rollback, 3–5
-   engineer-days + a soak week. Schedule it; until then 4.24.15 carries the
-   2026 security fixes for the credentials-only surface.
+1. **Auth migration execution** — **Phases 0–2 SHIPPED (PR-48) + staging
+   cutover done; production flip is the remaining operator action.** The
+   plan (`docs/AUTH_MIGRATION_PLAN.md`) executed: spike validated
+   better-auth@1.7.15 end-to-end (6 findings recorded), the parallel stack
+   at `/api/auth-better/*` carries every custom mechanism (throttle with
+   shared budgets, cost-12 dummy bcrypt, soft-delete gates, revocation via
+   session-row deletes, IP/UA audit rows, fernly.* cookies), the full
+   parity test port landed (1189/1189 unit incl. 20 better-stack cases,
+   e2e 62 v4 scenarios + 5 flag-on scenarios on Postgres 16 in CI,
+   prod-smoke 17/17 against both stacks), and the sandbox preview now runs
+   `NEXT_PUBLIC_AUTH_STACK=better` (staging cutover verified through the
+   real UI). Remaining: flip production per the runbook
+   (`docs/DEPLOY.md` §3a — rebuild with the flag, one-time sign-out for
+   every user, instant rollback via flag removal), soak ≥1 week, then the
+   post-soak cleanup deletes the v4 stack.
 2. **Full WCAG 2.1 AA audit** — the axe gate now covers all 9 primary
    surfaces at A+AA (serious/critical, PR-41). Remaining: moderate/minor
    findings, screen-reader walkthroughs, focus management on every flow

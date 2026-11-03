@@ -208,6 +208,62 @@ For database-level rollback (PITR), follow
 
 ---
 
+## 3a. Auth stack cutover (PR-48 — NextAuth v4 → Better Auth)
+
+The two auth stacks run in parallel behind one flag
+(`docs/AUTH_MIGRATION_PLAN.md`): NextAuth v4 serves `/api/auth/*` (the
+default) and Better Auth 1.7 serves `/api/auth-better/*`. Both share the
+login throttle budgets, the audit rows, and the `User.passwordHash`
+credential store; Phases 0–2 are complete and gated (unit 1189/1189 incl.
+the 20-case parity suite, e2e 62 scenarios on v4 + 5 flag-on scenarios on
+Postgres 16 in CI, prod-smoke 17/17 against both stacks).
+
+**Cutover (per deployment — staging first, then production):**
+
+```bash
+# 1. Set the flag in the deployment's environment (NOT the repo default):
+NEXT_PUBLIC_AUTH_STACK=better
+
+# 2. Redeploy (a full rebuild — the flag is baked into the client bundle
+#    at compile time; a runtime env change alone is NOT enough).
+docker compose up -d --build   # or your usual rollout
+
+# 3. Run the post-deploy checklist (§7) + prod-smoke:
+bun run test:prodsmoke
+```
+
+What changes at cutover (all one-time, by design):
+
+- Every user is signed out once — v4 JWT cookies are obsolete; the proxy
+  expires them on first request and users re-authenticate. Better Auth
+  mints `fernly.session_token` (httpOnly, SameSite=Lax, 7-day, DB-backed).
+- Sessions become revocable rows: password change / role change /
+  soft-delete / "sign out everywhere" delete the user's DB sessions
+  immediately (v4 noticed within a 5-minute JWT refresh window).
+- The audit rows (`auth.signed_in` / `auth.signed_out` with IP + UA) are
+  identical in shape — the compliance surface is unchanged.
+
+**Rollback (instant, for one release):** remove `NEXT_PUBLIC_AUTH_STACK`
+from the environment (or set `nextauth`) and redeploy. The v4 stack, its
+route, its cookies and its tests are all still present and green; every
+better-auth cookie silently fails (no log spam — DB-backed opaque tokens)
+and users sign in once more. The rollback window is bounded by the 7-day
+session expiry.
+
+**Secrets:** during the parallel period Better Auth signs with
+`BETTER_AUTH_SECRET`, falling back to `NEXTAUTH_SECRET` — one secret to
+manage. The post-soak cleanup renames the env var (keep the same VALUE:
+rotating it signs everyone out).
+
+**Post-soak cleanup (after ≥1 week on the better stack in production):**
+delete the v4 stack (`src/lib/auth.ts`, `signout.ts`, `next-auth.d.ts`,
+`/api/auth/[...nextauth]`, the v4 proxy guard branch, `next-auth` from
+package.json), rename `NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET` in every
+environment (same value), drop the v4-only tests, and update this runbook.
+Until then, BOTH stacks must stay deployable.
+
+---
+
 ## 4. Staging
 
 Mirror the production setup with a separate Supabase staging project

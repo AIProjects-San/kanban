@@ -129,15 +129,26 @@ Findings that adjust the Phase 1 port map (validated, not assumed):
 - ✅ Gates: typecheck/eslint clean, 1189/1189 unit tests, bundle budget OK
   with better-auth in the tree.
 
-### Phase 3 — Cutover + cleanup (1 day + 1 soak week)
-- Flip the flag per-deployment (staging → production), keep v4 code for one
-  release as instant rollback; sessions are 7-day JWTs, so a rollback window
-  of 7 days covers every issued cookie.
-- After the soak: delete the v4 stack, the `signout.ts` workaround, the
-  module augmentation, and `next-auth` from package.json; update
-  `PRODUCTION_READINESS.md` §6.1, DEPLOY.md, `.env.example`
-  (`NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET`; keep the same value — rotating
-  it invalidates sessions, which is acceptable at cutover).
+### Phase 3 — Cutover + cleanup (1 day + 1 soak week) — STAGING DONE 2026-11-03
+- ✅ **Staging cutover executed**: the sandbox preview runs
+  `NEXT_PUBLIC_AUTH_STACK=better` (`.env`), verified through the real UI —
+  stale v4 cookies cleanly retired by the proxy, sign-in mints the fernly
+  session, the dashboard renders, sidebar sign-out returns to the login
+  screen. The repo default stays `nextauth`: production flips
+  per-deployment per the runbook (docs/DEPLOY.md §3a) — rebuild with the
+  flag set, expect one global sign-out, instant rollback by removing the
+  flag (v4 stack + tests retained for one release, exactly as planned).
+- ⏳ **Production flip** — operator action (owner sign-off per §8): set
+  `NEXT_PUBLIC_AUTH_STACK=better` in the deployment environment, redeploy
+  with a rebuild, run prod-smoke (17/17 covers both stacks).
+- ⏳ **Soak (≥1 week)** — CI keeps validating both stacks on every push
+  (the e2e job runs the 62 v4 scenarios AND the 5 @auth-better scenarios
+  on Postgres 16; the unit suite keeps the parity contract at 1189 tests).
+- ⏳ **Post-soak cleanup PR** — delete the v4 stack (`src/lib/auth.ts`,
+  `signout.ts`, `next-auth.d.ts`, `/api/auth/[...nextauth]` route, the v4
+  proxy guard branch, `next-auth` from package.json), rename
+  `NEXTAUTH_SECRET` → `BETTER_AUTH_SECRET` (same value), drop the v4-only
+  tests, update PRODUCTION_READINESS.md §6.1 / DEPLOY.md / .env.example.
 
 ## 6. Port map (custom logic → Better Auth home — updated by the Phase 0 spike)
 
