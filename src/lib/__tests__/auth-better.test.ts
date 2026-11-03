@@ -769,4 +769,48 @@ describe("config posture", () => {
       vi.resetModules();
     }
   });
+
+  it("PR-57: the configured password hash is bcrypt cost 12 (v4 parity contract)", async () => {
+    // `auth.options` is the raw options object handed to betterAuth(), so
+    // this calls the exact `hash` seam Better Auth would invoke if any of
+    // its flows ever needs to mint a password hash. The contract: bcryptjs
+    // cost 12 — identical to src/lib/password.ts AND to the configured
+    // `verify` (bcrypt.compare), so hashes from either stack interoperate.
+    // A regression here (e.g. dropping the config → Better Auth's default
+    // scrypt) would produce hashes its own verify seam can never accept.
+    const hash = auth.options.emailAndPassword?.password?.hash;
+    if (typeof hash !== "function") {
+      throw new Error("emailAndPassword.password.hash config is missing");
+    }
+    const hashed = await hash("pr57-contract-pw");
+    expect(hashed).toMatch(/^\$2[aby]\$12\$/);
+    await expect(bcrypt.compare("pr57-contract-pw", hashed)).resolves.toBe(true);
+    await expect(bcrypt.compare("anything-else-1", hashed)).resolves.toBe(false);
+  });
+
+  it("PR-57: the hooks fail loudly (APIError) when invoked without a request", async () => {
+    // requestOf's contract: /sign-in/email and /sign-out are HTTP-only
+    // paths — the mounted route handler always supplies the real Request.
+    // If a future programmatic auth.api call ever reaches the hooks without
+    // one, it must fail loudly rather than silently bucket every such call
+    // under a single shared "login:ip:unknown" throttle budget. Direct
+    // invocation of the registered hook is the only way to hit the guard
+    // (auth.handler always passes a Request); the cast just widens the
+    // middleware's inferred input type for that manual call.
+    const before = auth.options.hooks?.before as
+      | ((input: {
+          path?: string;
+          body?: Record<string, unknown>;
+          context?: Record<string, unknown>;
+        }) => Promise<unknown>)
+      | undefined;
+    expect(typeof before).toBe("function");
+    await expect(
+      before?.({
+        path: "/sign-in/email",
+        body: { email: "x@y.co", password: "whatever-1" },
+        context: {},
+      }),
+    ).rejects.toThrow(/without a request/);
+  });
 });

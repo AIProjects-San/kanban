@@ -37,8 +37,9 @@ export function extractMentionedNames(text: string): string[] {
 
   let match: RegExpExecArray | null;
   while ((match = re.exec(text)) !== null) {
+    // Group 2 is a MANDATORY letter-initial capture ([A-Za-z]…), so it always
+    // holds at least one non-whitespace character — no empty-guard needed.
     const raw = match[2].trim();
-    if (!raw) continue;
     // De-dup case-insensitively (the same person mentioned twice should only
     // notify once).
     const key = raw.toLowerCase();

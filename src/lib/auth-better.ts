@@ -131,23 +131,51 @@ function normalizeEmail(raw: unknown): string {
   return typeof raw === "string" ? raw.trim().toLowerCase() : "";
 }
 
+// Both helpers take a plain `Request`: they are only called on the
+// /sign-in/email and /sign-out branches, which are dispatched exclusively by
+// the mounted route handler (auth.handler(Request)) — Better Auth always
+// provides the real incoming Request there. The hook slot types ctx.request
+// as optional, so each audited branch asserts the invariant (requestOf).
+
 /** Client IP for the hook's request — trusted-proxy order shared with v4. */
-function ipFromRequest(request: Request | undefined): string {
-  if (!request) return "unknown";
+function ipFromRequest(request: Request): string {
   return extractClientIp((name) => request.headers.get(name));
 }
 
-function userAgentFromRequest(request: Request | undefined): string {
-  return request?.headers.get("user-agent") ?? "unknown";
+function userAgentFromRequest(request: Request): string {
+  return request.headers.get("user-agent") ?? "unknown";
 }
 
-/** Numeric HTTP status off the after-hook's returned payload (spike F5). */
+/**
+ * The hooks' ctx.request, typed as the real Request it always is on the
+ * /sign-in/email and /sign-out paths (only ever dispatched by the mounted
+ * route handler). A programmatic auth.api call without a Request would hit
+ * this guard and fail loudly — preferable to silently throttling every
+ * such call under one shared "login:ip:unknown" budget.
+ */
+function requestOf(ctx: { request?: Request | undefined }): Request {
+  if (!ctx.request) {
+    throw new APIError("INTERNAL_SERVER_ERROR", {
+      message: "auth hook invoked without a request",
+    });
+  }
+  return ctx.request;
+}
+
+/**
+ * Numeric HTTP status off the after-hook's returned payload (spike F5).
+ *
+ * On /sign-in/email the dispatcher (better-call, `asResponse: false`) puts
+ * exactly two shapes in `ctx.context.returned`: Better Auth's success body
+ * `{ redirect, token, url, user }` (no status fields) or a caught `APIError`
+ * — whose `statusCode` is numeric by construction (derived from `status`:
+ * a numeric `status` always yields the same numeric `statusCode`, which the
+ * first check reads). Anything else is a success: 200.
+ */
 function returnedStatus(returned: unknown): number {
-  if (returned instanceof Response) return returned.status;
   if (typeof returned === "object" && returned !== null) {
-    const r = returned as { statusCode?: unknown; status?: unknown };
+    const r = returned as { statusCode?: unknown };
     if (typeof r.statusCode === "number") return r.statusCode;
-    if (typeof r.status === "number") return r.status;
   }
   return 200;
 }
@@ -255,6 +283,10 @@ export const auth = betterAuth({
 
       if (ctx.path !== "/sign-in/email") return;
 
+      // HTTP-only path: dispatched exclusively by the route handler, so the
+      // request is the real incoming Request (see requestOf for the contract).
+      const request = requestOf(ctx);
+
       const email = normalizeEmail(ctx.body?.email);
       const password =
         typeof ctx.body?.password === "string" ? ctx.body.password : "";
@@ -268,7 +300,7 @@ export const auth = betterAuth({
       // Better Auth's z.email() check on the RAW value.
       ctx.body.email = email;
 
-      const ip = ipFromRequest(ctx.request);
+      const ip = ipFromRequest(request);
       const emailKey = `login:email:${email}`;
       const ipKey = `login:ip:${ip}`;
 
@@ -366,8 +398,10 @@ export const auth = betterAuth({
     after: createAuthMiddleware(async (ctx) => {
       // ---- sign-in accounting --------------------------------------
       if (ctx.path === "/sign-in/email") {
+        // HTTP-only path (see requestOf) — the real incoming Request.
+        const request = requestOf(ctx);
         const email = normalizeEmail(ctx.body?.email);
-        const ip = ipFromRequest(ctx.request);
+        const ip = ipFromRequest(request);
         const emailKey = `login:email:${email}`;
         const ipKey = `login:ip:${ip}`;
         const status = returnedStatus(ctx.context.returned);
@@ -400,7 +434,7 @@ export const auth = betterAuth({
                 entityLabel: user.email,
                 detail: `${user.name} signed in to the workspace`,
                 ipAddress: ip,
-                userAgent: userAgentFromRequest(ctx.request).slice(0, 500),
+                userAgent: userAgentFromRequest(request).slice(0, 500),
               },
             });
           }
@@ -414,6 +448,8 @@ export const auth = betterAuth({
 
       // ---- sign-out audit row (§6 row 7) ----------------------------
       if (ctx.path === "/sign-out") {
+        // HTTP-only path (see requestOf) — the real incoming Request.
+        const request = requestOf(ctx);
         // The before-hook stashed the user it resolved from the session
         // cookie (the endpoint deletes the row before we get here). A null
         // stash means no valid session was signed out — no row, matching
@@ -431,8 +467,8 @@ export const auth = betterAuth({
               entityType: "AUTH",
               entityLabel: user.email,
               detail: `${user.name} signed out of the workspace`,
-              ipAddress: ipFromRequest(ctx.request),
-              userAgent: userAgentFromRequest(ctx.request).slice(0, 500),
+              ipAddress: ipFromRequest(request),
+              userAgent: userAgentFromRequest(request).slice(0, 500),
             },
           });
         } catch (err) {

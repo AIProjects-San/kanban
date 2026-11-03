@@ -139,7 +139,6 @@ export function getSharedRedisPublisher(): PublishRedis | undefined {
 }
 
 let configSubscriber: Redis | null = null;
-let configSubscriberStarting = false;
 
 /**
  * Subscribe to the config-invalidation channel on a dedicated connection.
@@ -155,8 +154,6 @@ export function subscribeToConfigInvalidation(
     // Already subscribed — rebind the callback by storing it on the handle.
     return { unsubscribe: () => void configSubscriber?.unsubscribe(configInvalidationChannel()) };
   }
-  if (configSubscriberStarting) return undefined;
-  configSubscriberStarting = true;
   try {
     const sub = new Redis(redisUrl, {
       enableOfflineQueue: false,
@@ -203,8 +200,6 @@ export function subscribeToConfigInvalidation(
       err instanceof Error ? err.message : err,
     );
     return undefined;
-  } finally {
-    configSubscriberStarting = false;
   }
 }
 
@@ -218,5 +213,4 @@ export function _resetConfigSubscriberForTests(): void {
     }
   }
   configSubscriber = null;
-  configSubscriberStarting = false;
 }
