@@ -165,8 +165,9 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
 
   return (
     <div className="min-h-screen flex bg-background">
-      {/* PR-58 — projects feed the sidebar's live Work → Projects submenu. */}
-      <Sidebar projects={data.projects} />
+      {/* PR-58 — grouped collapsible sidebar (no inline project list; the
+          Projects view itself lists the user's scoped projects). */}
+      <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar
           notifs={data.notifications}

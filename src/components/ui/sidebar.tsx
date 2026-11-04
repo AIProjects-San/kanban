@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import {
   ChevronRight,
   LogOut,
@@ -17,14 +16,12 @@ import { APP } from "@/config/app";
 import { useAppSession } from "@/hooks/use-app-session";
 import {
   NAV_GROUPS,
-  SIDEBAR_PROJECT_CAP,
   type NavGroup,
   type NavLeaf,
 } from "@/config/navigation";
-import type { ProjectT } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
-// PR-58 — Grouped, collapsible sidebar.
+// PR-58 — Grouped, collapsible sidebar (revised: no inline project list).
 //
 // Structure and RBAC gates come from src/config/navigation.ts (single source
 // of truth shared with the ⌘K palette and the G-shortcuts). Behaviours:
@@ -34,13 +31,15 @@ import type { ProjectT } from "@/lib/types";
 //   • Collapsed groups stay MOUNTED but visibility:hidden (zero height via
 //     the grid-rows trick): hidden from the a11y tree and unfocusable, yet
 //     still present in the DOM for text-based assertions (e2e locators).
-//   • Work → Projects lists live project names (capped; "+N more" links to
-//     the Projects view). Clicking a name deep-links via openProject().
+//   • Projects is a PLAIN leaf — the sidebar never lists individual
+//     projects. Clicking it opens the Projects view, which shows every
+//     project the server scoped to the signed-in user (getScopedProjectIds:
+//     ADMIN → whole workspace; MEMBER/MANAGER → owned + assigned).
 //   • Desktop rail mode (⌘B / panel toggle): icons-only w-16 with tooltips;
 //     group headers and labels collapse away. Mobile keeps the full drawer.
 // ---------------------------------------------------------------------------
 
-export function Sidebar({ projects }: { projects: ProjectT[] }) {
+export function Sidebar() {
   const {
     view,
     setView,
@@ -50,8 +49,6 @@ export function Sidebar({ projects }: { projects: ProjectT[] }) {
     toggleSidebarRail,
     collapsedGroups,
     toggleGroup,
-    selectedProjectId,
-    openProject,
   } = useApp();
   const { data: session } = useAppSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
@@ -134,9 +131,6 @@ export function Sidebar({ projects }: { projects: ProjectT[] }) {
               collapsed={rail ? false : collapsedGroups.includes(group.id)}
               onToggle={() => toggleGroup(group.id)}
               onNavigate={(key) => setView(key)}
-              projects={projects}
-              selectedProjectId={selectedProjectId}
-              onOpenProject={openProject}
             />
           ))}
         </nav>
@@ -167,9 +161,6 @@ function NavSection({
   collapsed,
   onToggle,
   onNavigate,
-  projects,
-  selectedProjectId,
-  onOpenProject,
 }: {
   group: NavGroup;
   first: boolean;
@@ -178,9 +169,6 @@ function NavSection({
   collapsed: boolean;
   onToggle: () => void;
   onNavigate: (key: NavLeaf["key"]) => void;
-  projects: ProjectT[];
-  selectedProjectId: string | null;
-  onOpenProject: (id: string) => void;
 }) {
   const hasActive = group.items.some((i) => i.key === view);
   const contentId = `nav-group-${group.id}`;
@@ -213,118 +201,15 @@ function NavSection({
         className="f-nav-collapse"
       >
         <div>
-          {group.items.map((item) =>
-            item.dynamicChildren === "projects" ? (
-              <ProjectsNavItem
-                key={item.key}
-                item={item}
-                active={view === item.key}
-                rail={rail}
-                onNavigate={() => onNavigate(item.key)}
-                projects={projects}
-                selectedProjectId={selectedProjectId}
-                onOpenProject={onOpenProject}
-              />
-            ) : (
-              <NavButton
-                key={item.key}
-                item={item}
-                active={view === item.key}
-                rail={rail}
-                onClick={() => onNavigate(item.key)}
-              />
-            )
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Projects leaf — navigates on click; the chevron reveals live project names. */
-function ProjectsNavItem({
-  item,
-  active,
-  rail,
-  onNavigate,
-  projects,
-  selectedProjectId,
-  onOpenProject,
-}: {
-  item: NavLeaf;
-  active: boolean;
-  rail: boolean;
-  onNavigate: () => void;
-  projects: ProjectT[];
-  selectedProjectId: string | null;
-  onOpenProject: (id: string) => void;
-}) {
-  const [listOpen, setListOpen] = useState(false);
-  const Icon = item.icon;
-  const shown = projects.slice(0, SIDEBAR_PROJECT_CAP);
-  const more = projects.length - shown.length;
-
-  return (
-    <div>
-      <div className="flex items-center">
-        <button
-          onClick={onNavigate}
-          data-active={active}
-          className="f-nav-item w-full flex-1 pr-1"
-        >
-          <Icon size={18} />
-          <span className={cn("flex-1 text-left", rail && "lg:hidden")}>{item.label}</span>
-          <kbd className={cn("text-[0.625rem] text-muted-foreground font-mono", rail ? "lg:hidden" : "hidden lg:inline")}>
-            {item.shortcut}
-          </kbd>
-        </button>
-        {/* Separate hit target so "navigate" and "expand list" stay distinct
-            actions (same pattern as GitHub/Notion sidebars). */}
-        <button
-          type="button"
-          onClick={() => setListOpen((o) => !o)}
-          aria-expanded={listOpen}
-          aria-controls="nav-projects-list"
-          aria-label={listOpen ? "Hide project list" : "Show project list"}
-          className={cn("f-nav-chevron-btn shrink-0", rail && "lg:hidden")}
-        >
-          <ChevronRight size={14} className={cn("f-nav-group-chevron", listOpen && "f-nav-group-chevron-open")} />
-        </button>
-      </div>
-
-      {/* Live project names — deep-link into the Projects view. */}
-      <div
-        id="nav-projects-list"
-        data-collapsed={!listOpen || undefined}
-        className={cn("f-nav-collapse", rail && "lg:hidden")}
-      >
-        <div>
-          {shown.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => onOpenProject(p.id)}
-              data-active={active && selectedProjectId === p.id}
-              className="f-nav-sub-item w-full"
-              title={p.name}
-            >
-              <span className={cn("w-2.5 h-2.5 rounded-full shrink-0 f-avatar", `f-avatar-${p.color}`)} aria-hidden />
-              <span className="flex-1 text-left truncate">{p.name}</span>
-            </button>
+          {group.items.map((item) => (
+            <NavButton
+              key={item.key}
+              item={item}
+              active={view === item.key}
+              rail={rail}
+              onClick={() => onNavigate(item.key)}
+            />
           ))}
-          {more > 0 && (
-            <button
-              onClick={onNavigate}
-              className="f-nav-sub-item w-full"
-              title="Open the Projects view"
-            >
-              <span className="flex-1 text-left truncate">+{more} more</span>
-            </button>
-          )}
-          {projects.length === 0 && (
-            <div className="f-nav-sub-item text-muted-foreground cursor-default">
-              <span className="flex-1 text-left truncate">No projects yet</span>
-            </div>
-          )}
         </div>
       </div>
     </div>

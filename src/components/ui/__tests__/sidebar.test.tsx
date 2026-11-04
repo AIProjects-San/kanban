@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 
 // ---------------------------------------------------------------------------
-// PR-58 — Grouped, collapsible sidebar.
+// PR-58 — Grouped, collapsible sidebar (revised: no inline project list).
 //
 // Pins the contract agreed in the PR-58 plan:
 //   1. Six groups for ADMIN; HR + Administration fully hidden for MEMBER
@@ -13,8 +13,9 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 //      collapsed children stay MOUNTED but data-collapsed (hidden via CSS
 //      only — e2e XPath locators still find them).
 //   4. Navigating into a group auto-expands it (store setView behaviour).
-//   5. Work → Projects lists live project names (cap 8 + "+N more"); a
-//      click deep-links via openProject (view + selectedProjectId).
+//   5. Projects is a PLAIN leaf: no inline project list or chevron in the
+//      sidebar; clicking it opens the Projects view, which lists every
+//      project the server scoped to the signed-in user (getScopedProjectIds).
 //   6. Rail mode (⌘B / toggle): icons-only with aria-labels, persisted to
 //      localStorage.
 // ---------------------------------------------------------------------------
@@ -34,26 +35,8 @@ vi.mock("@/hooks/use-app-session", async (importOriginal) => ({
 
 import { Sidebar } from "@/components/ui/sidebar";
 import { useApp } from "@/store/app-store";
-import { NAV_GROUPS, SIDEBAR_PROJECT_CAP, groupIdOfView } from "@/config/navigation";
+import { NAV_GROUPS, groupIdOfView } from "@/config/navigation";
 import { STORAGE_KEYS } from "@/config/app";
-import type { ProjectT } from "@/lib/types";
-
-function mkProject(id: string, name: string): ProjectT {
-  return {
-    id,
-    name,
-    description: "",
-    status: "RUNNING",
-    priority: "MEDIUM",
-    dueDate: null,
-    progress: 0,
-    color: "ocean",
-    ownerName: "Owner",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  };
-}
-
-const PROJECTS = [mkProject("p1", "Apollo Redesign"), mkProject("p2", "Website Revamp")];
 
 /** Smart-minimal boot state for the given active view. */
 function bootCollapsedFor(view: string): string[] {
@@ -65,7 +48,6 @@ function resetStore(view = "dashboard") {
     view: view as never,
     sidebarOpen: false,
     sidebarRail: false,
-    selectedProjectId: null,
     collapsedGroups: bootCollapsedFor(view),
     cmdkOpen: false,
   });
@@ -93,14 +75,14 @@ beforeEach(() => {
 
 describe("Sidebar: grouping + RBAC", () => {
   it("renders the six groups for ADMIN", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     for (const label of ["Overview", "Work", "People", "HR", "Administration", "General"]) {
       expect(headerOf(label)).toBeTruthy();
     }
   });
 
   it("renders every leaf somewhere for ADMIN", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     for (const leaf of ["Dashboard", "Analytics", "Projects", "Tasks", "Bugs", "Team", "Calendar", "Leave", "HR Console", "Users", "Workspace Config", "Audit Log", "Settings", "Help"]) {
       expect(screen.getAllByText(leaf).length).toBeGreaterThan(0);
     }
@@ -112,7 +94,7 @@ describe("Sidebar: grouping + RBAC", () => {
       isPending: false,
       error: null,
     });
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     // The critical e2e contract: the literal string "HR" never appears for
     // MEMBER (hr-leave.feature: "the sidebar should not contain HR").
     expect(screen.queryByText("HR")).toBeNull();
@@ -131,7 +113,7 @@ describe("Sidebar: grouping + RBAC", () => {
       isPending: false,
       error: null,
     });
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     expect(screen.getAllByText("Audit Log").length).toBeGreaterThan(0);
     expect(screen.queryByText("Users")).toBeNull();
     expect(screen.queryByText("Workspace Config")).toBeNull();
@@ -140,7 +122,7 @@ describe("Sidebar: grouping + RBAC", () => {
 
 describe("Sidebar: collapsible groups (smart minimal)", () => {
   it("boot: only the current view's group is expanded", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     expect(headerOf("Overview").getAttribute("aria-expanded")).toBe("true");
     for (const label of ["Work", "People", "Administration", "General"]) {
       expect(headerOf(label).getAttribute("aria-expanded")).toBe("false");
@@ -148,7 +130,7 @@ describe("Sidebar: collapsible groups (smart minimal)", () => {
   });
 
   it("clicking a header toggles aria-expanded and its container's data-collapsed", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     const work = headerOf("Work");
     expect(work.getAttribute("aria-controls")).toBe("nav-group-work");
     const container = document.getElementById("nav-group-work");
@@ -161,7 +143,7 @@ describe("Sidebar: collapsible groups (smart minimal)", () => {
   });
 
   it("collapsed children stay mounted (e2e XPath contract) but marked hidden", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     // Work is collapsed at boot, yet its leaves exist in the DOM.
     const tasks = screen.getAllByText("Tasks");
     expect(tasks.length).toBeGreaterThan(0);
@@ -169,7 +151,7 @@ describe("Sidebar: collapsible groups (smart minimal)", () => {
   });
 
   it("navigating via the store auto-expands the target's group (G-shortcut / ⌘K path)", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     // Direct store mutation mirrors the G-shortcut / ⌘K entry points — wrap
     // in act so React flushes the re-render before assertions.
     act(() => {
@@ -180,67 +162,31 @@ describe("Sidebar: collapsible groups (smart minimal)", () => {
   });
 });
 
-describe("Sidebar: live project names (Work → Projects)", () => {
-  it("chevron reveals project names; clicking one deep-links to a filtered Projects view", () => {
-    render(<Sidebar projects={PROJECTS} />);
+describe("Sidebar: Projects leaf (no inline project list)", () => {
+  it("renders no project submenu — the leaf navigates to the Projects view", () => {
+    render(<Sidebar />);
     // Expand the Work group first (boot state collapses it).
     fireEvent.click(headerOf("Work"));
-    const chevron = screen.getByRole("button", { name: "Show project list" });
-    expect(chevron.getAttribute("aria-controls")).toBe("nav-projects-list");
-    expect(document.getElementById("nav-projects-list")?.getAttribute("data-collapsed")).toBe("true");
-    fireEvent.click(chevron);
-    expect(chevron.getAttribute("aria-label")).toBe("Hide project list");
-    const apollo = screen.getByText("Apollo Redesign");
-    fireEvent.click(apollo);
-    const s = useApp.getState();
-    expect(s.view).toBe("projects");
-    expect(s.selectedProjectId).toBe("p1");
-    // …and the Work group auto-expanded for the journey.
-    expect(headerOf("Work").getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("caps the list at the configured cap and links the overflow to the Projects view", () => {
-    const many = Array.from({ length: SIDEBAR_PROJECT_CAP + 3 }, (_, i) =>
-      mkProject(`p${i}`, `Project ${i}`)
-    );
-    render(<Sidebar projects={many} />);
-    fireEvent.click(headerOf("Work"));
-    fireEvent.click(screen.getByRole("button", { name: "Show project list" }));
-    expect(screen.getByText("Project 0")).toBeTruthy();
-    expect(screen.getByText(`Project ${SIDEBAR_PROJECT_CAP - 1}`)).toBeTruthy();
-    expect(screen.queryByText(`Project ${SIDEBAR_PROJECT_CAP}`)).toBeNull();
-    const more = screen.getByText(`+3 more`);
-    fireEvent.click(more);
-    const s = useApp.getState();
-    expect(s.view).toBe("projects");
-    // Plain navigation clears the deep-link (all projects shown).
-    expect(s.selectedProjectId).toBeNull();
-  });
-
-  it("plain navigation to Projects (leaf click) clears a previous deep-link", () => {
-    render(<Sidebar projects={PROJECTS} />);
-    useApp.getState().openProject("p2");
-    // "Projects" leaf button — its text is exactly "Projects".
+    // No disclosure chevron and no sub-list container in the sidebar —
+    // project names only ever appear inside the Projects view itself.
+    expect(screen.queryByRole("button", { name: "Show project list" })).toBeNull();
+    expect(document.getElementById("nav-projects-list")).toBeNull();
+    // The leaf itself navigates; the view then lists every project the
+    // server scoped to the signed-in user (getScopedProjectIds).
     const leaf = screen.getAllByText("Projects").find(
       (el) => el.closest("button")?.className.includes("f-nav-item")
     );
     expect(leaf).toBeTruthy();
     fireEvent.click(leaf!.closest("button")!);
     expect(useApp.getState().view).toBe("projects");
-    expect(useApp.getState().selectedProjectId).toBeNull();
-  });
-
-  it("renders an empty-state note when the workspace has no projects", () => {
-    render(<Sidebar projects={[]} />);
-    fireEvent.click(headerOf("Work"));
-    fireEvent.click(screen.getByRole("button", { name: "Show project list" }));
-    expect(screen.getByText("No projects yet")).toBeTruthy();
+    // …and the Work group auto-expanded for the journey.
+    expect(headerOf("Work").getAttribute("aria-expanded")).toBe("true");
   });
 });
 
 describe("Sidebar: icon rail (⌘B)", () => {
   it("toggle button flips rail mode, narrows the aside, and persists to localStorage", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     const toggle = screen.getByRole("button", { name: "Collapse sidebar to icon rail" });
     fireEvent.click(toggle);
     const s = useApp.getState();
@@ -255,7 +201,7 @@ describe("Sidebar: icon rail (⌘B)", () => {
   });
 
   it("rail leaves expose accessible names (icons-only never loses labels)", () => {
-    render(<Sidebar projects={PROJECTS} />);
+    render(<Sidebar />);
     act(() => {
       useApp.getState().toggleSidebarRail();
     });

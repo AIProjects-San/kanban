@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import {
-  FolderKanban, Plus, Edit3, Trash2, Calendar as CalIcon, X,
+  FolderKanban, Plus, Edit3, Trash2, Calendar as CalIcon,
 } from "lucide-react";
 import { cn, barWidthClass } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
@@ -22,7 +22,7 @@ interface ProjectsViewProps {
 }
 
 export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
-  const { openProjectModal, selectedProjectId, clearSelectedProject } = useApp();
+  const { openProjectModal } = useApp();
   const refresh = useRefresh();
   const { can } = usePermissions();
   const [query, setQuery] = useState("");
@@ -32,16 +32,11 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
   const canEdit = can("project:edit");
   const canDelete = can("project:delete");
 
-  // PR-58 — sidebar deep-link: opening a project from the Work → Projects
-  // submenu filters the grid to that project until cleared. A stale id
-  // (project deleted in another tab) simply falls back to "all".
-  const selectedProject = selectedProjectId
-    ? projects.find((p) => p.id === selectedProjectId) ?? null
-    : null;
-
+  // `projects` arrives already scoped by the server (getDashboardData →
+  // getScopedProjectIds): every project the signed-in user may see, nothing
+  // else. Local filters below are plain search/status refinements on top.
   const filtered = useMemo(() => {
     return projects.filter((p) => {
-      if (selectedProject && p.id !== selectedProject.id) return false;
       if (statusFilter !== "all" && p.status !== statusFilter) return false;
       if (query) {
         const q = query.toLowerCase();
@@ -49,7 +44,7 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
       }
       return true;
     });
-  }, [projects, query, statusFilter, selectedProject]);
+  }, [projects, query, statusFilter]);
 
   const counts = useMemo(() => ({
     total: projects.length,
@@ -102,25 +97,6 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
           </button>
         )}
       </div>
-
-      {/* Sidebar deep-link banner — one click to get back to all projects */}
-      {selectedProject && (
-        <div className="flex items-center justify-between gap-3 f-card px-4 py-2.5">
-          <div className="flex items-center gap-2 text-sm text-foreground">
-            <FolderKanban size={14} className="text-primary" />
-            <span>
-              Showing project: <span className="font-semibold">{selectedProject.name}</span>
-            </span>
-          </div>
-          <button
-            onClick={clearSelectedProject}
-            className="f-btn f-btn-ghost f-btn-sm"
-            aria-label="Clear project filter and show all projects"
-          >
-            <X size={14} /> Show all
-          </button>
-        </div>
-      )}
 
       {/* Filters */}
       <FilterBar

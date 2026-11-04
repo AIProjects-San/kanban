@@ -43,13 +43,6 @@ interface AppState {
   collapsedGroups: string[];
   toggleGroup: (groupId: string) => void;
 
-  // Deep-link: project picked from the sidebar's Work → Projects submenu.
-  // ProjectsView filters to this project; any plain navigation to the
-  // projects view clears it.
-  selectedProjectId: string | null;
-  openProject: (projectId: string) => void;
-  clearSelectedProject: () => void;
-
   // Command palette
   cmdkOpen: boolean;
   setCmdkOpen: (open: boolean) => void;
@@ -141,14 +134,12 @@ const initialCollapsedGroups = NAV_GROUPS.map((g) => g.id).filter(
 
 export const useApp = create<AppState>((set) => ({
   view: "dashboard",
-  // Any navigation clears a sidebar project deep-link (show ALL projects)
-  // and auto-expands the target view's group so the active item stays
-  // visible (user-approved behaviour).
+  // Navigating auto-expands the target view's group so the active item
+  // stays visible (user-approved behaviour).
   setView: (view) =>
     set((s) => ({
       view,
       sidebarOpen: false,
-      selectedProjectId: null,
       collapsedGroups: expandGroupIn(s.collapsedGroups, groupIdOfView(view)),
     })),
 
@@ -172,18 +163,6 @@ export const useApp = create<AppState>((set) => ({
         ? s.collapsedGroups.filter((g) => g !== groupId)
         : [...s.collapsedGroups, groupId],
     })),
-
-  selectedProjectId: null,
-  // openProject navigates WITHOUT clearing the selection (unlike setView) —
-  // ProjectsView opens pre-filtered to the chosen project.
-  openProject: (projectId) =>
-    set((s) => ({
-      view: "projects",
-      sidebarOpen: false,
-      selectedProjectId: projectId,
-      collapsedGroups: expandGroupIn(s.collapsedGroups, "work"),
-    })),
-  clearSelectedProject: () => set({ selectedProjectId: null }),
 
   cmdkOpen: false,
   setCmdkOpen: (cmdkOpen) => set({ cmdkOpen }),

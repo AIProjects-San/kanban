@@ -30,7 +30,7 @@ import type { Permission } from "@/lib/rbac";
 //
 // Taxonomy (user-approved):
 //   Overview       — Dashboard, Analytics
-//   Work           — Projects (with live project names), Tasks, Bugs
+//   Work           — Projects, Tasks, Bugs
 //   People         — Team, Calendar, Leave
 //   HR             — HR Console (whole group hidden without hr:view; NOTE:
 //                    the group label must never be visible to MEMBER —
@@ -54,8 +54,6 @@ export interface NavLeaf {
   shortcutKey: string;
   /** RBAC gate; the leaf is hidden when the role lacks it. */
   permission?: Permission;
-  /** The leaf row expands to live sub-items (Projects → project names). */
-  dynamicChildren?: "projects";
 }
 
 export interface NavGroup {
@@ -78,8 +76,10 @@ export const NAV_GROUPS: NavGroup[] = [
     id: "work",
     label: "Work",
     items: [
-      // dynamicChildren → the sidebar lists live project names under this row.
-      { key: "projects", label: "Projects", icon: FolderKanban, shortcut: "G P", shortcutKey: "p", dynamicChildren: "projects" },
+      // Plain leaf — the Projects view lists every project the server
+      // scoped to the signed-in user (getScopedProjectIds), so the sidebar
+      // deliberately carries no inline project list.
+      { key: "projects", label: "Projects", icon: FolderKanban, shortcut: "G P", shortcutKey: "p" },
       { key: "tasks", label: "Tasks", icon: CheckSquare, shortcut: "G T", shortcutKey: "t" },
       { key: "bugs", label: "Bugs", icon: Bug, shortcut: "G B", shortcutKey: "b" },
     ],
@@ -136,6 +136,3 @@ export function groupIdOfView(view: ViewKey): string {
   // unmapped view from crashing the store (it simply won't expand a group).
   return group?.id ?? "";
 }
-
-/** How many live project names the sidebar lists before "+N more". */
-export const SIDEBAR_PROJECT_CAP = 8;
