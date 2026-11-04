@@ -1710,6 +1710,7 @@ async function main() {
     }
   }
   console.log(`  ✓ Hiring R5: ${OFFER_TEMPLATES.length} offer templates + 1 draft offer for Priyanka (designer band)`);
+  console.log(`  ✓ Hiring R6 ready: send the draft from the offer builder — the public /offer/<token> page collects the signature, then "Mark joined" provisions the account`);
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }

@@ -312,7 +312,11 @@ describe("Recruitment R1 models are declared", () => {
     expect(rec).toMatch(/components\s+String\s+@default\("\[\]"\)/);
     expect(rec).toMatch(/status\s+String\s+@default\("DRAFT"\)/);
     // R6 lands with the schema now: single-use token + typed signature.
-    expect(rec).toMatch(/token\s+String\s+@default\(""\)/);
+    // token is NULLABLE (NULL while DRAFT) and UNIQUE — a token can address
+    // at most one offer, and uniqueness is enforced at the DB level.
+    expect(rec).toMatch(/token\s+String\?\s+@unique/);
+    expect(rec).toMatch(/tokenExpiresAt\s+DateTime\?/);
+    expect(rec).toMatch(/signedAt\s+DateTime\?/);
     expect(rec).toMatch(/signedName\s+String\s+@default\(""\)/);
     expect(rec).toMatch(/signedIp\s+String\s+@default\(""\)/);
     expect(rec).toMatch(/onDelete:\s*Cascade/);

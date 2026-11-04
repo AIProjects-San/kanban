@@ -445,7 +445,9 @@ export interface OfferTemplateT {
   sortOrder: number;
 }
 
-/** R5 — one offer for one candidate. status: DRAFT → SENT → SIGNED | DECLINED. */
+/** R5 — one offer for one candidate. status: DRAFT → SENT → SIGNED | DECLINED.
+ * R6 adds the e-sign fields: token (null while DRAFT), expiry, and the typed
+ * signature capture (signedAt/signedName/signedIp). */
 export interface OfferRecordT {
   id: string;
   candidateId: string;
@@ -461,4 +463,8 @@ export interface OfferRecordT {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  token: string | null;
+  tokenExpiresAt: string | null;
+  signedAt: string | null;
+  signedName: string;
 }

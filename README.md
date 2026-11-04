@@ -77,8 +77,15 @@ keystroke-reachable. Groups below match the sidebar.
   Offer builder (R5): per-role salary templates (fixed amounts or % of
   basic, employer contributions like KiwiSaver), generated per selected
   candidate with live CTC / net totals and an editable letter.
-  (E-signature, auto employee creation on joining, and full payroll follow
-  in R6–R8.)
+  E-sign & joining (R6): sending an offer mints a single-use signing link
+  (7-day expiry) — the candidate opens the public `/offer/<token>` page
+  without an account, reviews the letter + numbers snapshot, and signs by
+  typing their full legal name (timestamp + IP recorded, record immutable
+  from then on) or declines. "Mark joined" then provisions their employee
+  account automatically: deterministic email `<first>.<last>@fernly.app`
+  (numeric suffix on collision), roster entry, employee profile, a 5-task
+  onboarding checklist, and a welcome email via the audited outbox.
+  (Full payroll follows in R7–R8.)
 
 **Administration**
 - **Users** (`G U`, admin) — create (login + directory entry in one action), edit,
@@ -165,7 +172,7 @@ contains **no credential literals**; the seed refuses to run without it):
 | `bun run build` / `bun run start` | Standalone production build / serve |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | `tsc --noEmit` (strict — part of the gate) |
-| `bun run test` | Vitest unit/integration suite (**1484 tests**) |
+| `bun run test` | Vitest unit/integration suite (**1677 tests**) |
 | `bun run test:coverage` | Coverage report + threshold gates (≥90% statements on `src/lib` + `src/server-actions`) |
 | `bun run test:e2e` | Selenium + Cucumber browser suite (needs Chrome; see `e2e/README.md`) |
 | `bun run test:prodsmoke` | Smoke-checks a production build (health, headers, CSP, login) |
@@ -176,7 +183,7 @@ contains **no credential literals**; the seed refuses to run without it):
 CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR: lint →
 typecheck → coverage-gated unit tests → production build → bundle budget →
 dependency audit → **e2e** on a seeded ephemeral PostgreSQL 16 with headless
-Chrome (81 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
+Chrome (83 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
 messaging, a11y, HR leave/directory/reviews/onboarding, QA hardening).
 
 ## Keyboard shortcuts

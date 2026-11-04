@@ -122,3 +122,23 @@ Feature: Hiring pipeline (Recruitment R1)
     When I sign in as "manager@fernly.app" with the demo password
     And I open the "Hiring" view
     Then the offers panel should not be visible
+
+  Scenario: HR sends the offer and the candidate signs on the public page (R6)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the "Selected" pool
+    And I open the candidate card "Priyanka Menon"
+    And I open the offer builder
+    And I send the offer draft
+    Then the signing link should be displayed
+    When the candidate opens the signing link
+    And the candidate signs with their full legal name
+    Then the public offer page should show the signed confirmation
+
+  Scenario: HR marks the signed candidate as joined (R6)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the "Selected" pool
+    And I open the candidate card "Priyanka Menon"
+    And I mark the candidate as joined
+    Then the candidate detail should show the hired summary

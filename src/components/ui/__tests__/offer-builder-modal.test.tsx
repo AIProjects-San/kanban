@@ -7,11 +7,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 // components with live totals, save the DRAFT (docs/RECRUITMENT_MODULE_PLAN.md).
 // ---------------------------------------------------------------------------
 
-const { getOfferTemplates, getOfferRecords, createOfferRecord, updateOfferRecord } = vi.hoisted(() => ({
+const { getOfferTemplates, getOfferRecords, createOfferRecord, updateOfferRecord, sendOffer } = vi.hoisted(() => ({
   getOfferTemplates: vi.fn(),
   getOfferRecords: vi.fn(),
   createOfferRecord: vi.fn(),
   updateOfferRecord: vi.fn(),
+  sendOffer: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hiring", () => ({
@@ -19,6 +20,7 @@ vi.mock("@/server-actions/hiring", () => ({
   getOfferRecords,
   createOfferRecord,
   updateOfferRecord,
+  sendOffer,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
@@ -65,6 +67,7 @@ function offer(overrides: Partial<OfferRecordT> = {}): OfferRecordT {
     components: TEMPLATE.components, benefits: TEMPLATE.benefits,
     letterText: "Hi Priyanka Menon — $70,040", status: "DRAFT", notes: "",
     createdBy: "Remy", createdAt: "2026-11-11T00:00:00.000Z", updatedAt: "2026-11-11T00:00:00.000Z",
+    token: null, tokenExpiresAt: null, signedAt: null, signedName: "",
     ...overrides,
   };
 }
@@ -149,5 +152,63 @@ describe("OfferBuilderModal", () => {
   it("shows the empty state when the candidate has no offers", async () => {
     render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
     expect(await screen.findByText(/No offer yet/)).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R6 — send: DRAFT → SENT mints the signing link (displayed + copyable)
+// ---------------------------------------------------------------------------
+
+describe("OfferBuilderModal: R6 send", () => {
+  it("Send on a DRAFT calls sendOffer and surfaces the signing link", async () => {
+    sendOffer.mockResolvedValue({ ok: true, data: { token: "tok-abc123" } });
+    getOfferRecords.mockResolvedValue({ ok: true, data: [offer()] });
+    render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
+    await screen.findByTestId("offer-row-or-1");
+
+    fireEvent.click(screen.getByTestId("send-offer-or-1"));
+    await waitFor(() =>
+      expect(sendOffer).toHaveBeenCalledWith({ offerId: "or-1" }),
+    );
+    const box = await screen.findByTestId("offer-link-box");
+    expect(box.textContent).toContain("tok-abc123");
+    expect(screen.getByTestId("offer-sign-link").textContent).toContain("/offer/tok-abc123");
+  });
+
+  it("a failed send surfaces the error and keeps the draft editable", async () => {
+    sendOffer.mockResolvedValue({ ok: false, error: "Offer is already SENT." });
+    getOfferRecords.mockResolvedValue({ ok: true, data: [offer()] });
+    render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
+    await screen.findByTestId("offer-row-or-1");
+
+    fireEvent.click(screen.getByTestId("send-offer-or-1"));
+    const { toast } = await import("sonner");
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Offer is already SENT."));
+    expect(screen.queryByTestId("offer-link-box")).toBeNull();
+  });
+
+  it("a SENT offer shows the awaiting-signature line + signing-link button; SIGNED shows the signer", async () => {
+    getOfferRecords.mockResolvedValue({
+      ok: true,
+      data: [
+        offer({
+          id: "or-sent", status: "SENT", token: "tok-live", tokenExpiresAt: "2026-11-20T00:00:00.000Z",
+        }),
+        offer({
+          id: "or-signed", status: "SIGNED", token: "tok-done",
+          signedAt: "2026-11-14T10:30:00.000Z", signedName: "Priyanka Menon",
+        }),
+      ],
+    });
+    render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
+    const sent = await screen.findByTestId("offer-row-or-sent");
+    expect(sent.textContent).toContain("Awaiting signature");
+    expect(screen.getByTestId("copy-link-or-sent")).toBeTruthy();
+
+    const signed = screen.getByTestId("offer-row-or-signed");
+    expect(signed.textContent).toContain("Signed by Priyanka Menon");
+    // Signed records are immutable — no copy-link, no send.
+    expect(screen.queryByTestId("copy-link-or-signed")).toBeNull();
+    expect(screen.queryByTestId("send-offer-or-signed")).toBeNull();
   });
 });

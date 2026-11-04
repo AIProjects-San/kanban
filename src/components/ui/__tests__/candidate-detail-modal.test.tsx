@@ -28,6 +28,7 @@ const {
   rejectDocument,
   initiateBackgroundCheck,
   updateBackgroundCheck,
+  markJoined,
 } = vi.hoisted(() => ({
   scheduleInterview: vi.fn(),
   saveScorecard: vi.fn(),
@@ -43,6 +44,7 @@ const {
   rejectDocument: vi.fn(),
   initiateBackgroundCheck: vi.fn(),
   updateBackgroundCheck: vi.fn(),
+  markJoined: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hiring", () => ({
@@ -59,6 +61,7 @@ vi.mock("@/server-actions/hiring", () => ({
   rejectDocument,
   initiateBackgroundCheck,
   updateBackgroundCheck,
+  markJoined,
 }));
 
 vi.mock("@/server-actions/hr-directory", () => ({ getDirectory }));
@@ -120,7 +123,7 @@ describe("CandidateDetailModal: scheduling", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     fireEvent.click(screen.getByTestId("schedule-btn-interview_1"));
@@ -140,7 +143,7 @@ describe("CandidateDetailModal: scheduling", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({ stageKey: "screening", stageType: "SCREENING", label: "Screening" })])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     expect(screen.queryByTestId("schedule-btn-screening")).toBeNull();
@@ -153,7 +156,7 @@ describe("CandidateDetailModal: scorecards", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     fireEvent.click(screen.getByTestId("scorecard-btn-interview_1"));
@@ -176,7 +179,7 @@ describe("CandidateDetailModal: scorecards", () => {
           concerns: "Little backend", recommendation: "HIRE",
         })])}
         canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     const card = screen.getByTestId("scorecard-interview_1");
@@ -190,7 +193,7 @@ describe("CandidateDetailModal: scorecards", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr" hasSignedOffer={false}
       />,
     );
     expect(screen.getByTestId("scorecard-btn-interview_1")).toBeTruthy();
@@ -202,7 +205,7 @@ describe("CandidateDetailModal: scorecards", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-diego"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-diego" hasSignedOffer={false}
       />,
     );
     expect(screen.queryByTestId("scorecard-btn-interview_1")).toBeNull();
@@ -219,7 +222,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     fireEvent.click(screen.getByTestId("select-btn"));
@@ -235,7 +238,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr" hasSignedOffer={false}
       />,
     );
     expect(screen.queryByTestId("select-btn")).toBeNull();
@@ -246,7 +249,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     expect(screen.getByText(/Offer preparation pending/)).toBeTruthy();
@@ -259,7 +262,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     fireEvent.click(screen.getByTestId("reject-btn"));
@@ -286,7 +289,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     fireEvent.click(screen.getByTestId("reject-btn"));
@@ -328,7 +331,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     const panel = await screen.findByTestId("joining-formalities");
@@ -350,7 +353,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -368,7 +371,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -402,7 +405,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -422,7 +425,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -439,12 +442,69 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr" hasSignedOffer={false}
       />,
     );
     // Give the effect a beat, then the panel must be absent.
     await waitFor(() => expect(screen.getByTestId("candidate-timeline")).toBeTruthy());
     expect(screen.queryByTestId("joining-formalities")).toBeNull();
     expect(getJoiningFormalities).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R6 — e-sign completion: Mark joined + HIRED display
+// ---------------------------------------------------------------------------
+
+describe("CandidateDetailModal: R6 joining", () => {
+  it("keeps Mark joined disabled until a SIGNED offer exists", () => {
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
+      />,
+    );
+    const btn = screen.getByTestId("mark-joined-btn");
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    // The waiting hint shows instead of the signed banner.
+    expect(screen.getByTestId("offer-prep-banner")).toBeTruthy();
+    expect(screen.queryByTestId("offer-signed-banner")).toBeNull();
+  });
+
+  it("Mark joined (SELECTED + SIGNED offer) calls markJoined and toasts the created account email", async () => {
+    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app" } });
+    const { toast } = await import("sonner");
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer
+      />,
+    );
+    const btn = screen.getByTestId("mark-joined-btn");
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("offer-signed-banner")).toBeTruthy();
+    fireEvent.click(btn);
+    await waitFor(() =>
+      expect(markJoined).toHaveBeenCalledWith(expect.objectContaining({ candidateId: "cand-1" })),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringContaining("nadia.petrova@fernly.app"),
+      ),
+    );
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("a HIRED candidate shows the joined date + onboarding pointer (no joined button)", () => {
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})], { status: "HIRED", userId: "u-new", joinedAt: "2026-11-18T00:00:00.000Z" })} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer
+      />,
+    );
+    const details = screen.getByTestId("hired-details");
+    expect(details.textContent).toContain("Employee account created");
+    expect(details.textContent).toContain("onboarding checklist");
+    expect(screen.queryByTestId("mark-joined-btn")).toBeNull();
   });
 });

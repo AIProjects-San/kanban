@@ -1448,6 +1448,13 @@ export async function getOfferRecords(): Promise<ActionResult<OfferRecordT[]>> {
       createdBy: names.get(r.createdById) ?? null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
+      // R6 e-sign fields — the token lets HR re-copy the signing link (the
+      // action is already hiring:manage gated); signedName/At power the
+      // "signed by" display on SENT → SIGNED records.
+      token: r.token,
+      tokenExpiresAt: r.tokenExpiresAt ? r.tokenExpiresAt.toISOString() : null,
+      signedAt: r.signedAt ? r.signedAt.toISOString() : null,
+      signedName: r.signedName,
     }));
   });
 }
@@ -1487,7 +1494,6 @@ async function nextAvailableHireEmail(fullName: string, domain: string): Promise
   let n = 2;
   // Small workspaces: a linear probe is plenty; the unique constraint is the
   // final guard inside the transaction.
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const existing = await db.user.findUnique({ where: { email: candidate }, select: { id: true } });
     if (!existing) return candidate;
@@ -1585,10 +1591,18 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
 }
 
 /** Public (no session): the candidate's view of a tokenized offer. Never
- * exposes internal notes or the outbox; only the letter + numbers. */
+ * exposes internal notes or the outbox; only the letter + numbers.
+ *
+ * `state` mirrors the token's lifecycle: OPEN (signable), or SIGNED /
+ * DECLINED after the single use — those CONSUMED states still return the
+ * payload (with signedAt/signedName where relevant) so revisiting the link
+ * shows the candidate their own recorded outcome instead of a dead-end
+ * error. Genuinely unopenable links (unknown token, expired, not yet sent)
+ * still throw user-friendly errors. */
 export async function getOfferByToken(
   token: string,
 ): Promise<ActionResult<{
+  state: "OPEN" | "SIGNED" | "DECLINED";
   offerId: string;
   candidateName: string;
   position: string;
@@ -1599,6 +1613,8 @@ export async function getOfferByToken(
   benefits: string[];
   totals: { earnings: number; employerContributions: number; deductions: number; net: number; ctc: number };
   expiresAt: string;
+  signedAt: string | null;
+  signedName: string | null;
 }>> {
   return toResult(async () => {
     const t = String(token ?? "").trim();
@@ -1608,16 +1624,17 @@ export async function getOfferByToken(
       include: { candidate: { select: { fullName: true, position: true } } },
     });
     if (!offer) throw new AuthorizationError("This offer link is not valid.");
-    if (offer.status === "SIGNED") throw new AuthorizationError("This offer has already been signed.");
-    if (offer.status === "DECLINED") throw new AuthorizationError("This offer was declined.");
-    if (offer.status !== "SENT") throw new AuthorizationError("This offer is not available for signing yet.");
-    if (offer.tokenExpiresAt && offer.tokenExpiresAt.getTime() < Date.now()) {
+    if (offer.status !== "SENT" && offer.status !== "SIGNED" && offer.status !== "DECLINED") {
+      throw new AuthorizationError("This offer is not available for signing yet.");
+    }
+    if (offer.status === "SENT" && offer.tokenExpiresAt && offer.tokenExpiresAt.getTime() < Date.now()) {
       throw new AuthorizationError("This offer link has expired — please ask HR to resend it.");
     }
     const components = parseComponents(offer.components);
     const totals = computeOffer(components);
     const config = await getWorkspaceConfig();
     return {
+      state: offer.status === "SIGNED" ? "SIGNED" : offer.status === "DECLINED" ? "DECLINED" : "OPEN",
       offerId: offer.id,
       candidateName: offer.candidate.fullName,
       position: offer.candidate.position,
@@ -1634,6 +1651,8 @@ export async function getOfferByToken(
         ctc: totals.ctc,
       },
       expiresAt: (offer.tokenExpiresAt ?? new Date()).toISOString(),
+      signedAt: offer.signedAt ? offer.signedAt.toISOString() : null,
+      signedName: offer.signedName || null,
     };
   });
 }

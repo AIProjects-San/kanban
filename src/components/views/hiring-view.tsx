@@ -136,6 +136,12 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
 
   const detail = detailId ? candidates.find((c) => c.id === detailId) ?? null : null;
   const editing = editCandidate ? candidates.find((c) => c.id === editCandidate.id) ?? editCandidate : null;
+  // R6 — does this candidate have a SIGNED offer? Gates "Mark joined" in the
+  // detail modal (offers are only loaded for hiring:manage users, which is
+  // exactly who can click it).
+  const detailHasSignedOffer = detail
+    ? offers.some((o) => o.candidateId === detail.id && o.status === "SIGNED")
+    : false;
 
   return (
     <div className="p-6 space-y-5" data-testid="hiring-board">
@@ -339,7 +345,9 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{o.candidateName} — {o.templateLabel || "Custom offer"}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      CTC {formatMoney(t.ctc)} · net {formatMoney(t.net)}{o.notes ? ` · ${o.notes}` : ""}
+                      CTC {formatMoney(t.ctc)} · net {formatMoney(t.net)}
+                      {o.status === "SIGNED" && o.signedName ? ` · signed by ${o.signedName}` : ""}
+                      {o.notes ? ` · ${o.notes}` : ""}
                     </span>
                   </span>
                   <ChevronRight size={14} className="text-muted-foreground shrink-0" />
@@ -348,7 +356,7 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
             })}
             {offers.length === 0 && (
               <div className="text-sm text-muted-foreground px-4 py-6 text-center">
-                No offers yet — generate one from a selected candidate.
+                No offers yet — generate one from a selected candidate, then send the signing link.
               </div>
             )}
           </div>
@@ -434,6 +442,7 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
         onEdit={(c) => { setDetailId(null); setEditCandidate(c); setCreateOpen(true); }}
         onBuildOffer={(c) => { setDetailId(null); setOfferBuilderFor(c); }}
         currentUserId={currentUser.id}
+        hasSignedOffer={detailHasSignedOffer}
       />
       <OfferBuilderModal
         open={offerBuilderFor !== null}

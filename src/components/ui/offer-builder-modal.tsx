@@ -1,14 +1,16 @@
 "use client";
 
-// Recruitment R5 — the per-candidate offer builder
+// Recruitment R5+R6 — the per-candidate offer builder
 // (docs/RECRUITMENT_MODULE_PLAN.md §5). Opened from the candidate detail
 // modal for SELECTED candidates: generate an offer from a role template,
 // negotiate the components (fixed amounts or % of basic), edit benefits +
 // the letter text, with live CTC / net-take-home totals (lib/offer-math.ts).
-// R6 will add the tokenized send + e-signature on top of the DRAFT record.
+// R6 adds the send: DRAFT → SENT mints the single-use signing link (7-day
+// expiry), records the offer email in the audited outbox, and lets HR copy
+// the link; a SENT row shows its link + expiry until it is signed/declined.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, Trash2, X } from "lucide-react";
+import { Check, Copy, Link2, Loader2, PenLine, Plus, Send, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
@@ -18,6 +20,7 @@ import {
   createOfferRecord,
   getOfferRecords,
   getOfferTemplates,
+  sendOffer,
   updateOfferRecord,
 } from "@/server-actions/hiring";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
@@ -37,6 +40,11 @@ const KIND_LABEL: Record<string, string> = {
 
 function newComponent(): OfferComponentT {
   return { key: "", label: "", kind: "EARNING", mode: "FIXED", amount: 0 };
+}
+
+/** The public signing URL for a token — same origin the candidate got. */
+function signingLink(token: string): string {
+  return `${typeof window === "undefined" ? "" : window.location.origin}/offer/${token}`;
 }
 
 export function OfferBuilderModal({
@@ -62,6 +70,10 @@ export function OfferBuilderModal({
   const [benefitsText, setBenefitsText] = useState("");
   const [letterText, setLetterText] = useState("");
   const [notes, setNotes] = useState("");
+  // R6 — the freshly minted signing link (highlighted until the modal
+  // closes) + a copied-link confirmation chip.
+  const [freshToken, setFreshToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async (cid: string) => {
     const [tplRes, offerRes] = await Promise.all([getOfferTemplates(), getOfferRecords()]);
@@ -72,10 +84,34 @@ export function OfferBuilderModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open && candidate) { setLoaded(false); setEditing(null); setGenTemplateId(""); void load(candidate.id); }
+    if (open && candidate) { setLoaded(false); setEditing(null); setGenTemplateId(""); setFreshToken(null); setCopied(false); void load(candidate.id); }
   }, [open, candidate, load]);
 
   const totals = useMemo(() => computeOffer(components), [components]);
+
+  const copyLink = async (token: string) => {
+    try {
+      await navigator.clipboard.writeText(signingLink(token));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard blocked (permissions/iframe) — the raw link stays
+      // selectable next to the button as the fallback.
+      toast.info("Select and copy the link text below.");
+    }
+  };
+
+  const send = async (offerId: string) => {
+    setBusy(true);
+    const res = await sendOffer({ offerId });
+    setBusy(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    setFreshToken(res.data.token);
+    setEditing(null);
+    toast.success("Offer sent — the signing link is below (also emailed and recorded in the outbox).");
+    onChanged();
+    await load(c.id);
+  };
 
   if (!candidate) return null;
   const c = candidate;
@@ -140,31 +176,81 @@ export function OfferBuilderModal({
       open={open}
       onClose={onClose}
       title={`Offer — ${c.fullName}`}
-      description={c.status === "SELECTED" ? "Generate from a role template, then negotiate the numbers. Sending + e-signature arrive with the next milestone." : "Offer records for this candidate."}
+      description={c.status === "SELECTED" ? "Generate from a role template, negotiate, then send the single-use signing link." : "Offer records for this candidate."}
       size="lg"
     >
+      {/* Fresh signing link (R6) — surfaced right after sending */}
+      {freshToken && (
+        <div className="rounded-md border border-primary/40 bg-primary/5 px-3 py-2.5 space-y-1.5 mb-3" data-testid="offer-link-box">
+          <div className="text-xs font-semibold text-primary flex items-center gap-1.5">
+            <Link2 size={13} /> Signing link (single use, expires in 7 days)
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <code className="text-xs bg-card border border-border rounded px-2 py-1 break-all min-w-0 max-w-full" data-testid="offer-sign-link">
+              {signingLink(freshToken)}
+            </code>
+            <button className="f-btn f-btn-ghost text-xs" onClick={() => void copyLink(freshToken)} data-testid="offer-copy-link">
+              {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Also emailed to the candidate and recorded in the audited outbox. Once signed, mark them joined from the candidate panel.
+          </div>
+        </div>
+      )}
+
       {/* Existing offers */}
       <div className="space-y-1.5" data-testid="offer-list">
         {!loaded && <div className="text-xs text-muted-foreground">Loading offers…</div>}
         {offers.map((o) => {
           const t = computeOffer(o.components);
           return (
-            <div key={o.id} className="rounded-md border border-border px-3 py-2 flex items-center gap-2 flex-wrap" data-testid={`offer-row-${o.id}`}>
-              <span className="text-sm font-medium">{o.templateLabel || "Custom offer"}</span>
-              <span className={cn("text-[0.625rem] font-semibold px-1.5 py-0.5 rounded", OFFER_STATUS_CLS[o.status] ?? "bg-muted text-muted-foreground")}>
-                {o.status}
-              </span>
-              <span className="text-xs text-muted-foreground">CTC {formatMoney(t.ctc)}</span>
-              <span className="ml-auto" />
-              {o.status === "DRAFT" && (
-                <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => openDraft(o)} data-testid={`edit-offer-${o.id}`}>
-                  Edit draft
-                </button>
+            <div key={o.id} className="rounded-md border border-border px-3 py-2 space-y-1.5" data-testid={`offer-row-${o.id}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium">{o.templateLabel || "Custom offer"}</span>
+                <span className={cn("text-[0.625rem] font-semibold px-1.5 py-0.5 rounded", OFFER_STATUS_CLS[o.status] ?? "bg-muted text-muted-foreground")}>
+                  {o.status}
+                </span>
+                <span className="text-xs text-muted-foreground">CTC {formatMoney(t.ctc)}</span>
+                <span className="ml-auto" />
+                {o.status === "DRAFT" && (
+                  <>
+                    <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => openDraft(o)} data-testid={`edit-offer-${o.id}`}>
+                      Edit draft
+                    </button>
+                    <button className="f-btn f-btn-primary text-xs" disabled={busy} onClick={() => void send(o.id)} data-testid={`send-offer-${o.id}`}>
+                      {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send
+                    </button>
+                  </>
+                )}
+                {o.status === "SENT" && o.token && (
+                  <button className="f-btn f-btn-ghost text-xs" onClick={() => void copyLink(o.token!)} data-testid={`copy-link-${o.id}`}>
+                    {copied ? <Check size={13} /> : <Link2 size={13} />} {copied ? "Copied" : "Signing link"}
+                  </button>
+                )}
+                {editing?.id === o.id && (
+                  <button className="f-btn f-btn-icon" aria-label="Close editor" onClick={() => setEditing(null)}>
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {/* Signature trail (audit-grade: who + when) */}
+              {o.status === "SENT" && o.tokenExpiresAt && (
+                <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <PenLine size={12} /> Awaiting signature — link expires{" "}
+                  {new Date(o.tokenExpiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                </div>
               )}
-              {editing?.id === o.id && (
-                <button className="f-btn f-btn-icon" aria-label="Close editor" onClick={() => setEditing(null)}>
-                  <X size={14} />
-                </button>
+              {o.status === "SIGNED" && o.signedAt && (
+                <div className="text-xs text-emerald-600 flex items-center gap-1.5" data-testid={`signed-by-${o.id}`}>
+                  <PenLine size={12} /> Signed by {o.signedName} ·{" "}
+                  {new Date(o.signedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                </div>
+              )}
+              {o.status === "DECLINED" && (
+                <div className="text-xs text-destructive flex items-center gap-1.5">
+                  <X size={12} /> Declined by the candidate
+                </div>
               )}
             </div>
           );

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord", "teamMember", "employeeProfile", "onboardingChecklist"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -53,6 +53,18 @@ vi.mock("@/lib/config-loader", () => ({
   getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
 }));
 
+// R6 — password hashing for the auto-created hire account (deterministic
+// test value; the real hashPassword is covered by lib/password tests).
+vi.mock("@/lib/password", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/password")>("@/lib/password");
+  return { ...actual, hashPassword: vi.fn(async () => "hashed-test") };
+});
+
+// R6 — the signing page captures the client IP behind the reverse proxy.
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }),
+}));
+
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
@@ -87,6 +99,11 @@ import {
   scheduleInterview,
   saveScorecard,
   getMyInterviews,
+  sendOffer,
+  getOfferByToken,
+  signOffer,
+  declineOffer,
+  markJoined,
 } from "../hiring";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
@@ -163,7 +180,6 @@ beforeEach(() => {
   db.mailOutbox.findMany.mockResolvedValue([]);
   createMailerMock.mockReset();
   createMailerMock.mockReturnValue({ sendMail: vi.fn().mockResolvedValue({ delivered: true, messageId: "re-test-1" }) });
-  getWorkspaceConfigMock.mockResolvedValue({ workspace: { name: "Fernly Workspace" } });
   // R4 — joining-formalities defaults.
   db.documentTypeConfig.findMany.mockResolvedValue([]);
   db.documentTypeConfig.findUnique.mockResolvedValue(null);
@@ -188,6 +204,14 @@ beforeEach(() => {
   db.offerRecord.findUnique.mockResolvedValue(null);
   db.offerRecord.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "or-new", ...data }));
   db.offerRecord.update.mockResolvedValue({});
+  // R6 — joined-hire provisioning models.
+  db.user.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "u-new", ...data }));
+  db.teamMember.create.mockResolvedValue({ id: "tm-new" });
+  db.employeeProfile.create.mockResolvedValue({ id: "ep-new" });
+  db.onboardingChecklist.create.mockResolvedValue({ id: "oc-new" });
+  getWorkspaceConfigMock.mockResolvedValue({
+    workspace: { name: "Fernly Workspace", hiringEmailDomain: "fernly.app", defaultDepartment: "ENGINEERING" },
+  });
 });
 
 const INTERVIEW_STAGE = {
@@ -1167,5 +1191,330 @@ describe("R5 — updateOfferRecord + getOfferRecords", () => {
       });
       expect(res.data[0].components[0]).toMatchObject({ key: "basic", amount: 68_000 });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R6 — e-sign + auto employee creation (docs/RECRUITMENT_MODULE_PLAN.md §5).
+// sendOffer → tokenized link via the audited outbox; getOfferByToken /
+// signOffer / declineOffer are the PUBLIC token-gated actions; markJoined
+// provisions the employee account + onboarding checklist.
+// ---------------------------------------------------------------------------
+
+const R6_OFFER = {
+  id: "or-1", candidateId: "cand-1", templateId: "ot-1", templateLabel: "Designer Band",
+  components: JSON.stringify([
+    { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68_000 },
+    { key: "kiwisaver", label: "KiwiSaver 3%", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+  ]),
+  benefits: JSON.stringify(["4 weeks annual leave"]),
+  letterText: "Hi Nadia — CTC $70,040.", status: "DRAFT", notes: "",
+  createdById: "u-hr", token: null, tokenExpiresAt: null,
+  signedAt: null, signedName: "", signedIp: "",
+  createdAt: new Date(), updatedAt: new Date(),
+  candidate: { id: "cand-1", fullName: "Nadia Petrova", email: "nadia@example.com", position: "Product Designer", status: "SELECTED" },
+};
+
+describe("R6 — sendOffer", () => {
+  it("requires hiring:manage", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:manage"));
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(false);
+  });
+
+  it("mints a single-use token + 7-day expiry, marks SENT, and records the OFFER outbox email", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(R6_OFFER);
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(true);
+
+    const updateArg = db.offerRecord.update.mock.calls[0][0] as {
+      where: { id: string };
+      data: { status: string; token: string; tokenExpiresAt: Date };
+    };
+    expect(updateArg.where.id).toBe("or-1");
+    expect(updateArg.data.status).toBe("SENT");
+    expect(updateArg.data.token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    const days = (updateArg.data.tokenExpiresAt.getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(6.9);
+    expect(days).toBeLessThanOrEqual(7);
+
+    // The outbox row carries the candidate email + kind OFFER.
+    const outboxArg = db.mailOutbox.create.mock.calls[0][0] as { data: { kind: string; toAddress: string; status: string } };
+    expect(outboxArg.data.kind).toBe("OFFER");
+    expect(outboxArg.data.toAddress).toBe("nadia@example.com");
+    expect(outboxArg.data.status).toBe("QUEUED");
+    // Default mailer delivers → the row resolves SENT with the provider id.
+    const resolveArg = db.mailOutbox.update.mock.calls[0][0] as { data: { status: string; providerMessageId: string } };
+    expect(resolveArg.data.status).toBe("SENT");
+    expect(resolveArg.data.providerMessageId).toBe("re-test-1");
+    // The returned token addresses the offer.
+    if (res.ok) expect(res.data.token).toBe(updateArg.data.token);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_sent" }));
+  });
+
+  it("a provider outage records FAILED but never fails the send itself", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(R6_OFFER);
+    createMailerMock.mockReturnValue({
+      sendMail: vi.fn().mockRejectedValue(new Error("Resend unreachable")),
+    });
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(true);
+    const resolveArg = db.mailOutbox.update.mock.calls[0][0] as { data: { status: string; error: string } };
+    expect(resolveArg.data.status).toBe("FAILED");
+    expect(resolveArg.data.error).toContain("Resend unreachable");
+  });
+
+  it("refuses to send a non-DRAFT offer (immutable once sent)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({ ...R6_OFFER, status: "SENT", token: "tok-existing" });
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(false);
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to send when the candidate is no longer SELECTED", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      ...R6_OFFER,
+      candidate: { ...R6_OFFER.candidate, status: "ACTIVE" },
+    });
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("R6 — getOfferByToken (public)", () => {
+  it("returns state OPEN + letter + resolved components + totals for a live SENT token", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      ...R6_OFFER,
+      status: "SENT",
+      token: "tok-live",
+      tokenExpiresAt: new Date(Date.now() + 86_400_000),
+      candidate: { fullName: "Nadia Petrova", position: "Product Designer" },
+    });
+    const res = await getOfferByToken("tok-live");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.state).toBe("OPEN");
+      expect(res.data.candidateName).toBe("Nadia Petrova");
+      expect(res.data.totals.ctc).toBe(70_040);
+      expect(res.data.totals.net).toBe(68_000);
+      const kiwi = res.data.components.find((c) => c.key === "kiwisaver");
+      expect(kiwi?.resolved).toBe(2_040);
+    }
+  });
+
+  it.each([
+    ["SIGNED", "SIGNED"],
+    ["DECLINED", "DECLINED"],
+  ])("a consumed %s token returns its recorded state (reloading shows the outcome, not a dead end)", async (status, state) => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      ...R6_OFFER, status, token: `tok-${status.toLowerCase()}`,
+      signedAt: status === "SIGNED" ? new Date("2026-11-14T10:30:00Z") : null,
+      signedName: status === "SIGNED" ? "Nadia Petrova" : "",
+    });
+    const res = await getOfferByToken(`tok-${status.toLowerCase()}`);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.state).toBe(state);
+      if (status === "SIGNED") {
+        expect(res.data.signedName).toBe("Nadia Petrova");
+        expect(res.data.signedAt).toBe("2026-11-14T10:30:00.000Z");
+      }
+    }
+  });
+
+  it("refuses an expired SENT token", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      ...R6_OFFER, status: "SENT", token: "tok-old",
+      tokenExpiresAt: new Date(Date.now() - 1_000),
+    });
+    const res = await getOfferByToken("tok-old");
+    expect(res.ok).toBe(false);
+  });
+
+  it("an expired-but-SIGNED token still shows the signed outcome (immutable once signed)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      ...R6_OFFER, status: "SIGNED", token: "tok-signed-old",
+      tokenExpiresAt: new Date(Date.now() - 86_400_000),
+      signedAt: new Date(), signedName: "Nadia Petrova",
+    });
+    const res = await getOfferByToken("tok-signed-old");
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.state).toBe("SIGNED");
+  });
+
+  it("refuses an unknown token without leaking anything", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(null);
+    const res = await getOfferByToken("nope");
+    expect(res.ok).toBe(false);
+  });
+
+  it("refuses a token whose offer was never sent", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({ ...R6_OFFER, status: "DRAFT", token: "tok-draft" });
+    const res = await getOfferByToken("tok-draft");
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("R6 — signOffer (public)", () => {
+  const SENT_OFFER = {
+    ...R6_OFFER, status: "SENT", token: "tok-live",
+    tokenExpiresAt: new Date(Date.now() + 86_400_000),
+    candidate: { id: "cand-1", fullName: "Nadia Petrova" },
+  };
+
+  it("rejects a name that does not match the candidate (the ceremony)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(SENT_OFFER);
+    const res = await signOffer({ token: "tok-live", signedName: "Someone Else" });
+    expect(res.ok).toBe(false);
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("records SIGNED + signedName + signedIp (case-insensitive name match)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(SENT_OFFER);
+    const res = await signOffer({ token: "tok-live", signedName: "nadia petrova" });
+    expect(res.ok).toBe(true);
+    const updateArg = db.offerRecord.update.mock.calls[0][0] as {
+      data: { status: string; signedName: string; signedIp: string; signedAt: Date };
+    };
+    expect(updateArg.data.status).toBe("SIGNED");
+    expect(updateArg.data.signedName).toBe("nadia petrova");
+    // The client IP comes from the first x-forwarded-for hop.
+    expect(updateArg.data.signedIp).toBe("203.0.113.9");
+    expect(updateArg.data.signedAt).toBeInstanceOf(Date);
+    // The audit actor is the candidate, not a session user.
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "hiring.offer_signed",
+      actor: expect.objectContaining({ role: "CANDIDATE" }),
+    }));
+  });
+
+  it("refuses an expired or already-consumed token", async () => {
+    db.offerRecord.findUnique.mockResolvedValueOnce({
+      ...SENT_OFFER, tokenExpiresAt: new Date(Date.now() - 1_000),
+    }).mockResolvedValueOnce({ ...SENT_OFFER, status: "SIGNED" });
+    const expired = await signOffer({ token: "tok-live", signedName: "Nadia Petrova" });
+    expect(expired.ok).toBe(false);
+    const consumed = await signOffer({ token: "tok-live", signedName: "Nadia Petrova" });
+    expect(consumed.ok).toBe(false);
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("R6 — declineOffer (public)", () => {
+  it("marks a SENT offer DECLINED with an audit entry", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      ...R6_OFFER, status: "SENT", token: "tok-live",
+      candidate: { id: "cand-1", fullName: "Nadia Petrova" },
+    });
+    const res = await declineOffer({ token: "tok-live" });
+    expect(res.ok).toBe(true);
+    expect(db.offerRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "or-1" }, data: { status: "DECLINED" } }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_declined" }));
+  });
+
+  it("refuses anything that is not SENT", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({ ...R6_OFFER, status: "DRAFT" });
+    const res = await declineOffer({ token: "tok-draft" });
+    expect(res.ok).toBe(false);
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("R6 — markJoined", () => {
+  const SELECTED_WITH_SIGNER = () => candidateWithStages({ status: "SELECTED" });
+
+  it("requires hiring:manage", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:manage"));
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(false);
+  });
+
+  it("refuses candidates without a SIGNED offer (signature gates joining)", async () => {
+    db.candidate.findUnique.mockResolvedValue(SELECTED_WITH_SIGNER());
+    db.offerRecord.findFirst.mockResolvedValue(null);
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(false);
+    expect(db.user.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-SELECTED candidates and already-joined duplicates", async () => {
+    db.candidate.findUnique.mockResolvedValueOnce(candidateWithStages({ status: "ACTIVE" }));
+    db.offerRecord.findFirst.mockResolvedValue({ id: "or-signed", status: "SIGNED" });
+    const active = await markJoined({ candidateId: "cand-1" });
+    expect(active.ok).toBe(false);
+
+    db.candidate.findUnique.mockResolvedValueOnce(
+      candidateWithStages({ status: "HIRED", userId: "u-existing" }),
+    );
+    const dup = await markJoined({ candidateId: "cand-1" });
+    expect(dup.ok).toBe(false);
+    expect(db.user.create).not.toHaveBeenCalled();
+  });
+
+  it("provisions account + roster + profile + onboarding checklist, flips the candidate to HIRED, and queues the welcome email", async () => {
+    db.candidate.findUnique.mockResolvedValue(SELECTED_WITH_SIGNER());
+    db.offerRecord.findFirst.mockResolvedValue({ id: "or-signed", status: "SIGNED", signedAt: new Date() });
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.email).toBe("nadia.petrova@fernly.app");
+      expect(res.data.userId).toBe("u-new");
+    }
+
+    // 1 — the User account: deterministic email, MEMBER role, hashed password.
+    const userArg = db.user.create.mock.calls[0][0] as { data: { email: string; name: string; role: string; passwordHash: string } };
+    expect(userArg.data.email).toBe("nadia.petrova@fernly.app");
+    expect(userArg.data.name).toBe("Nadia Petrova");
+    expect(userArg.data.role).toBe("MEMBER");
+    expect(userArg.data.passwordHash).toBe("hashed-test");
+    // 2 — roster entry + employee profile carry the department/position.
+    expect(db.teamMember.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: "u-new", email: "nadia.petrova@fernly.app", department: "ENGINEERING" }),
+    }));
+    expect(db.employeeProfile.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: "u-new", jobTitle: "Senior Frontend Engineer" }),
+    }));
+    // 3 — the standard 5-task onboarding checklist.
+    const checklistArg = db.onboardingChecklist.create.mock.calls[0][0] as {
+      data: { newHireId: string; tasks: { create: unknown[] } };
+    };
+    expect(checklistArg.data.newHireId).toBe("u-new");
+    expect(checklistArg.data.tasks.create).toHaveLength(5);
+    // 4 — candidate → HIRED with the link back to the account.
+    expect(db.candidate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-1" },
+        data: expect.objectContaining({ status: "HIRED", userId: "u-new" }),
+      }),
+    );
+    // 5 — WELCOME email via the outbox (delivered by the default mock).
+    const outboxArg = db.mailOutbox.create.mock.calls[0][0] as { data: { kind: string; toAddress: string } };
+    expect(outboxArg.data.kind).toBe("WELCOME");
+    expect(outboxArg.data.toAddress).toBe("nadia.petrova@fernly.app");
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.candidate_joined" }));
+  });
+
+  it("normalizes awkward legal names to <first>.<last>@", async () => {
+    db.candidate.findUnique.mockResolvedValue(
+      candidateWithStages({ status: "SELECTED", fullName: "Jean-Luc O'Brien" }),
+    );
+    db.offerRecord.findFirst.mockResolvedValue({ id: "or-signed", status: "SIGNED" });
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.email).toBe("jean.luc@fernly.app");
+  });
+
+  it("collisions get the numeric suffix (nadia.petrova2@…)", async () => {
+    db.candidate.findUnique.mockResolvedValue(SELECTED_WITH_SIGNER());
+    db.offerRecord.findFirst.mockResolvedValue({ id: "or-signed", status: "SIGNED" });
+    // First probe: base taken. Second probe (suffixed): free.
+    db.user.findUnique
+      .mockResolvedValueOnce({ id: "u-existing" })
+      .mockResolvedValueOnce(null);
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.email).toBe("nadia.petrova2@fernly.app");
   });
 });

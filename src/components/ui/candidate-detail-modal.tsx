@@ -9,11 +9,16 @@
 // server) and a structured scorecard (1–5 rating, strengths, concerns,
 // STRONG_HIRE|HIRE|NO_HIRE — research D). Scorecard edit is open to the
 // assigned interviewer or HR/ADMIN (canManage).
+//
+// R6 additions: once a SIGNED offer exists (hasSignedOffer), SELECTED
+// candidates get the "Mark joined" action — it provisions the employee
+// account + onboarding checklist server-side and displays the created
+// account email in the success toast.
 
 import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2, ChevronRight, CircleDashed, Loader2, MinusCircle, XCircle,
-  Plus, Pencil, CalendarClock, ClipboardPen, FileText, ShieldCheck,
+  Plus, Pencil, CalendarClock, ClipboardPen, FileText, ShieldCheck, UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
@@ -34,6 +39,7 @@ import {
   rejectDocument,
   initiateBackgroundCheck,
   updateBackgroundCheck,
+  markJoined,
 } from "@/server-actions/hiring";
 import { getDirectory } from "@/server-actions/hr-directory";
 import { SCORECARD_RECOMMENDATIONS } from "@/lib/validation";
@@ -96,6 +102,7 @@ export function CandidateDetailModal({
   onEdit,
   onBuildOffer,
   currentUserId,
+  hasSignedOffer,
 }: {
   open: boolean;
   onClose: () => void;
@@ -107,6 +114,8 @@ export function CandidateDetailModal({
   onBuildOffer: (c: CandidateT) => void;
   /** Signed-in user — scorecards are also editable by the assigned interviewer. */
   currentUserId: string;
+  /** R6 — the candidate has a SIGNED offer (gates "Mark joined"). */
+  hasSignedOffer: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -220,6 +229,18 @@ export function CandidateDetailModal({
   // R3 — the hire decision: ACTIVE → SELECTED (offer prep pointer).
   const select = () =>
     run(() => decideCandidate({ candidateId: c.id, decision: "SELECT", reason: "" }), "Candidate selected — offer preparation pending.");
+
+  // R6 — SELECTED + SIGNED offer → employee account + onboarding checklist.
+  // The created account email is the one thing HR must relay to the hire
+  // (the welcome email carries it too, when a mail provider is configured).
+  const join = async () => {
+    setBusy(true);
+    const res = await markJoined({ candidateId: c.id });
+    setBusy(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist.`);
+    onChanged();
+  };
 
   // R4 — joining-formalities mutations. Each refreshes the bundle in place
   // (the board itself doesn't change, so no onChanged round-trip).
@@ -439,15 +460,40 @@ export function CandidateDetailModal({
                   {c.rejectReason ? ` — “${c.rejectReason}”` : ""}
                   {c.decidedAt ? ` · ${fmt(c.decidedAt)}` : ""}
                 </div>
-                {c.status === "SELECTED" && (
-                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700">
-                    Offer preparation pending — build the offer letter next.
+                {c.status === "SELECTED" && !hasSignedOffer && (
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700" data-testid="offer-prep-banner">
+                    Offer preparation pending — build and send the offer letter, then collect the signature.
                   </div>
                 )}
-                {c.status === "SELECTED" && canManage && (
-                  <button className="f-btn f-btn-primary" disabled={busy} onClick={onBuildOffer.bind(null, c)} data-testid="build-offer-btn">
-                    Build offer
-                  </button>
+                {c.status === "SELECTED" && hasSignedOffer && (
+                  <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700" data-testid="offer-signed-banner">
+                    Offer signed — ready to mark joined (creates the account + onboarding checklist).
+                  </div>
+                )}
+                {c.status === "SELECTED" && (
+                  <div className="flex flex-wrap gap-2">
+                    {canManage && (
+                      <button className="f-btn f-btn-primary" disabled={busy} onClick={onBuildOffer.bind(null, c)} data-testid="build-offer-btn">
+                        Build offer
+                      </button>
+                    )}
+                    {canManage && (
+                      <button
+                        className="f-btn f-btn-secondary"
+                        disabled={busy || !hasSignedOffer}
+                        onClick={() => void join()}
+                        data-testid="mark-joined-btn"
+                      >
+                        {busy ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />} Mark joined
+                      </button>
+                    )}
+                  </div>
+                )}
+                {c.status === "HIRED" && (
+                  <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-0.5" data-testid="hired-details">
+                    <div>Employee account created{c.joinedAt ? ` · joined ${fmt(c.joinedAt)}` : ""}.</div>
+                    <div>Their onboarding checklist is live under HR → Onboarding.</div>
+                  </div>
                 )}
                 {(c.status === "REJECTED" || c.status === "WITHDRAWN" || c.status === "SELECTED") && canManage && (
                   <button className="f-btn f-btn-ghost" disabled={busy} onClick={reactivate} data-testid="reactivate-btn">

@@ -324,3 +324,82 @@ Then("the offers panel should not be visible", async function () {
   const panels = await driver.findElements(By.css('[data-testid="offers-panel"]'));
   assert.strictEqual(panels.length, 0, "offers panel must be hidden without hiring:manage");
 });
+
+// ---------------------------------------------------------------------------
+// R6 — e-sign: send the tokenized offer, sign on the PUBLIC /offer/[token]
+// page, then mark the signed candidate joined (provisions the account).
+// The send+sign scenario must run BEFORE "HR marks the signed candidate" —
+// the signing link is minted in the browser and consumed by the candidate.
+// ---------------------------------------------------------------------------
+
+When("I send the offer draft", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid^="send-offer-"]')),
+    10_000,
+    "no Send button — is there a DRAFT offer for this candidate?",
+  );
+  await btn.click();
+  await driver.wait(until.elementLocated(By.css('[data-testid="offer-link-box"]')), 15_000);
+});
+
+Then("the signing link should be displayed", async function () {
+  const driver = await this.getDriver();
+  const link = await driver.wait(
+    until.elementLocated(By.css('[data-testid="offer-sign-link"]')),
+    10_000,
+    "the signing link box did not appear after sending",
+  );
+  const url = (await link.getText()).trim();
+  assert.ok(/\/offer\/[A-Za-z0-9_-]{20,}/.test(url), `signing link should point at /offer/<token>, got: ${url}`);
+  this.offerLink = url;
+});
+
+When("the candidate opens the signing link", async function () {
+  const driver = await this.getDriver();
+  assert.ok(this.offerLink, "no signing link captured — run the send step first");
+  await driver.get(this.offerLink);
+  await driver.wait(until.elementLocated(By.css('[data-testid="offer-sign-form"]')), 15_000);
+});
+
+When("the candidate signs with their full legal name", async function () {
+  const driver = await this.getDriver();
+  const input = await driver.wait(
+    until.elementLocated(By.css('[data-testid="offer-sign-name"]')),
+    10_000,
+  );
+  await input.sendKeys("Priyanka Menon");
+  await driver.findElement(By.css('[data-testid="offer-sign-submit"]')).click();
+  await driver.sleep(1_500);
+});
+
+Then("the public offer page should show the signed confirmation", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="offer-signed-state"]')),
+    15_000,
+    "signed confirmation did not render after signing",
+  );
+});
+
+When("I mark the candidate as joined", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid="mark-joined-btn"]')),
+    10_000,
+    "Mark joined button not found (needs SELECTED candidate + SIGNED offer)",
+  );
+  // The button is disabled until a SIGNED offer exists for this candidate.
+  await driver.wait(until.elementIsEnabled(btn), 10_000, "Mark joined stayed disabled");
+  await btn.click();
+  await driver.sleep(2_000);
+});
+
+Then("the candidate detail should show the hired summary", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="hired-details"]')),
+    15_000,
+    "hired summary did not render after marking joined",
+  );
+});

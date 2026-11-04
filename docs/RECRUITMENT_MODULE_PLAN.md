@@ -1,6 +1,6 @@
 # Recruitment & Joining Formalities Module Plan
 
-Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ R5 ✓ shipped (R6 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
+Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ R5 ✓ R6 ✓ shipped (R7 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
 Decisions confirmed with the product owner on 2026-11-04 (see §1.3).
 
 ---
@@ -190,7 +190,7 @@ push to origin.**
   research + benefits + letter text), editable (hiring:config); generate offer
   from template → candidate-specific editable numbers; totals + net preview;
   store OfferRecord.
-- **R6 — E-sign + auto employee creation**: tokenized offer link (expiry,
+- **R6 — E-sign + auto employee creation** *(shipped)*: tokenized offer link (expiry,
   single-use) with public route; typed signature → immutable snapshot
   (components + terms + signedName + timestamp + IP); mark Joined → auto-create
   User (`<first>.<last>@domain`, collision `<first>.<last><n>`) + EmployeeProfile
@@ -253,7 +253,21 @@ push to origin.**
 | M27 | Offers panel | Back on the board | Offers panel lists the record with DRAFT chip + CTC |
 | M28 | Gating | MANAGER opens Hiring | No offers panel, no template button, no Build offer |
 
-## 7. Automation (e2e, CI-only) — R1
+## 6e. Manual test cases — R6 (executed on the sandbox preview)
+
+| # | Case | Steps | Expected |
+|---|---|---|--- |
+| M29 | Send offer | Open Priyanka → Build offer → Send | Row flips to SENT; signing link box appears (copy button); "Awaiting signature — link expires …"; an OFFER row lands in the outbox (SKIPPED without RESEND_API_KEY) |
+| M30 | Public sign page | Open the signing link in a private window | Letter + component numbers + net/CTC + benefits render; sign form with the name hint; NO login required |
+| M31 | Name ceremony | Type a wrong name → Sign | Blocked with "type your full legal name" error; nothing recorded |
+| M32 | Sign | Type "Priyanka Menon" → Sign offer | Signed confirmation; record immutable (offers panel + builder show "Signed by Priyanka Menon · <time>") |
+| M33 | Decline path | On a fresh SENT offer → Decline | Declined state on the public page; offer row shows DECLINED |
+| M34 | Mark joined gate | Open Priyanka (Selected, signed) | "Offer signed — ready to mark joined" banner; Mark joined enabled |
+| M35 | Mark joined | Click Mark joined | Toast with the created account email (priyanka.menon@fernly.app); status HIRED + joined date; WELCOME email in the outbox |
+| M36 | Account reality | Sign out → log in as priyanka.menon@fernly.app via "Forgot password?" | Account exists (random password was set; reset flow completes); onboarding checklist visible in HR → Onboarding |
+| M37 | Collision | Seed a second "Priyanka Menon" through the pipeline | Second account gets priyanka.menon2@fernly.app |
+
+## 7. Automation (e2e, CI-only)
 
 `e2e/features/hiring.feature` (11 scenarios): MEMBER must not see the Hiring
 nav item; HR creates a candidate; advances a stage; rejects with reason.
@@ -265,7 +279,11 @@ checklist of a selected candidate (seeded VERIFIED chip + BGV vendor),
 requesting a document from the checklist, and the config-gated doc-type
 editor button. R5 adds: HR builds an offer for a selected candidate
 (draft + live CTC), the offers panel lists records, and MANAGERs never
-see it. Follows the rbac/hr-directory feature patterns
+see it. R6 adds (2 scenarios, order matters): HR sends Priyanka's draft
+offer and the candidate signs it on the public `/offer/<token>` page
+(the link is minted in-browser and consumed in the same scenario), then
+HR marks the signed candidate joined and the hired summary renders.
+Follows the rbac/hr-directory feature patterns
 (`data-testid` hooks on the board).
 
 ## 8. References
