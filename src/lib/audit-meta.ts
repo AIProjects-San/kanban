@@ -12,7 +12,7 @@ import {
   UserCog, CalendarPlus, CalendarX, Send, ShieldCheck, Settings, BellPlus,
   CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
   ClipboardCheck,
-  KeyRound, FileText, FileWarning,
+  KeyRound, FileText, FileWarning, XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -122,7 +122,12 @@ export type AuditAction =
   | "hiring.offer_template_saved"
   | "hiring.offer_template_deleted"
   | "hiring.offer_created"
-  | "hiring.offer_updated";
+  | "hiring.offer_updated"
+  // Recruitment R6 — e-sign + joining
+  | "hiring.offer_sent"
+  | "hiring.offer_signed"
+  | "hiring.offer_declined"
+  | "hiring.candidate_joined";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -241,6 +246,10 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.offer_template_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hiring.offer_created": { icon: FileText, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.offer_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "hiring.offer_sent": { icon: Send, cls: "text-indigo-500 bg-indigo-500/10" },
+  "hiring.offer_signed": { icon: ClipboardCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hiring.offer_declined": { icon: XCircle, cls: "text-destructive bg-destructive/10" },
+  "hiring.candidate_joined": { icon: UserPlus, cls: "text-emerald-500 bg-emerald-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

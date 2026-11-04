@@ -16,6 +16,8 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
+import crypto from "node:crypto";
 import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
@@ -63,6 +65,9 @@ import { createMailer } from "@/lib/mailer";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 // R5 — offer builder math + letter rendering.
 import { computeOffer, parseComponents, parseBenefits, renderOfferLetter, formatMoney } from "@/lib/offer-math";
+// R6 — account creation for joined hires + shared HTML escaping.
+import { hashPassword } from "@/lib/password";
+import { escapeHtml } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Serialization helpers
@@ -1444,5 +1449,403 @@ export async function getOfferRecords(): Promise<ActionResult<OfferRecordT[]>> {
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     }));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// R6 — e-sign + auto employee creation (docs/RECRUITMENT_MODULE_PLAN.md §5).
+// Flow: sendOffer (hiring:manage) mints a single-use token + emails the
+// signing link via the outbox; the candidate opens the PUBLIC /offer/[token]
+// page (no session) and either signs (typed full name → immutable snapshot
+// with IP + timestamp) or declines; markJoined then creates the User account
+// (deterministic <first>.<last>@domain email), EmployeeProfile, TeamMember
+// roster entry, onboarding checklist, and queues a welcome email.
+// ---------------------------------------------------------------------------
+
+const OFFER_TOKEN_TTL_DAYS = 7;
+
+function generateOfferToken(): string {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function offerBaseUrl(): string {
+  return process.env.BETTER_AUTH_URL ?? process.env.APP_URL ?? "http://localhost:3000";
+}
+
+/** The deterministic account email for a joining hire:
+ * <first>.<last>@hiringEmailDomain, lowercased ASCII; collisions get a
+ * numeric suffix (priyanka.menon2@…). */
+function buildHireEmail(fullName: string, domain: string): string {
+  const parts = fullName.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "").split(".");
+  const handle = parts.slice(0, 2).join(".") || "new.hire";
+  return `${handle}@${domain}`;
+}
+
+async function nextAvailableHireEmail(fullName: string, domain: string): Promise<string> {
+  const base = buildHireEmail(fullName, domain);
+  let candidate = base;
+  let n = 2;
+  // Small workspaces: a linear probe is plenty; the unique constraint is the
+  // final guard inside the transaction.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const existing = await db.user.findUnique({ where: { email: candidate }, select: { id: true } });
+    if (!existing) return candidate;
+    const [handle, dom] = base.split("@");
+    candidate = `${handle}${n}@${dom}`;
+    n += 1;
+  }
+}
+
+export async function sendOffer(input: { offerId: string }): Promise<ActionResult<{ token: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:manage");
+    const offerId = String(input?.offerId ?? "").trim();
+    if (!offerId) throw new AuthorizationError("An offer id is required.");
+    const offer = await db.offerRecord.findUnique({
+      where: { id: offerId },
+      include: { candidate: { select: { id: true, fullName: true, email: true, position: true, status: true } } },
+    });
+    if (!offer) throw new AuthorizationError("Offer not found.");
+    if (offer.status !== "DRAFT") {
+      throw new AuthorizationError(`Offer is already ${offer.status}.`);
+    }
+    if (offer.candidate.status !== "SELECTED") {
+      throw new AuthorizationError("Offers can only be sent to SELECTED candidates.");
+    }
+
+    const token = generateOfferToken();
+    const tokenExpiresAt = new Date(Date.now() + OFFER_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+    await db.offerRecord.update({
+      where: { id: offer.id },
+      data: { status: "SENT", token, tokenExpiresAt },
+    });
+
+    // Email the signing link via the audited outbox (best-effort like the
+    // rejection email; a provider outage never fails the send itself).
+    const config = await getWorkspaceConfig();
+    const link = `${offerBaseUrl()}/offer/${token}`;
+    const totals = computeOffer(parseComponents(offer.components));
+    const subject = `Your offer from ${config.workspace.name} — ${offer.candidate.position || "the role"}`;
+    const text =
+      `Hi ${offer.candidate.fullName.split(/\s+/)[0]},\n\n` +
+      `Please review and sign your offer from ${config.workspace.name}:\n\n${link}\n\n` +
+      `Total package: ${formatMoney(totals.ctc)} per year (net ${formatMoney(totals.net)}).\n` +
+      `The link expires in ${OFFER_TOKEN_TTL_DAYS} days and can be used once.\n\n` +
+      `We are looking forward to having you on the team!\n\nThe ${config.workspace.name} Hiring Team`;
+    const html =
+      `<p>Hi ${escapeHtml(offer.candidate.fullName.split(/\s+/)[0])},</p>` +
+      `<p>Please review and sign your offer from ${escapeHtml(config.workspace.name)}:</p>` +
+      `<p><a href="${link}">${link}</a></p>` +
+      `<p>Total package: <strong>${formatMoney(totals.ctc)}</strong> per year (net ${formatMoney(totals.net)}).</p>` +
+      `<p>The link expires in ${OFFER_TOKEN_TTL_DAYS} days and can be used once.</p>` +
+      `<p>We are looking forward to having you on the team!</p>` +
+      `<p>The ${escapeHtml(config.workspace.name)} Hiring Team</p>`;
+
+    const row = await db.mailOutbox.create({
+      data: {
+        kind: "OFFER",
+        candidateId: offer.candidateId,
+        toAddress: offer.candidate.email,
+        subject,
+        body: text,
+        status: "QUEUED",
+        sentById: auth.userId,
+      },
+    });
+    let status = "SKIPPED";
+    let providerMessageId = "";
+    let error = "";
+    try {
+      const result = await createMailer().sendMail({ to: offer.candidate.email, subject, html, text });
+      if (result.delivered) {
+        status = "SENT";
+        providerMessageId = result.messageId ?? "";
+      }
+    } catch (err) {
+      status = "FAILED";
+      error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+    }
+    await db.mailOutbox.update({
+      where: { id: row.id },
+      data: { status, providerMessageId, error, sentAt: new Date() },
+    });
+
+    await logAudit({
+      actor: auth,
+      action: "hiring.offer_sent",
+      entityType: "OFFER_RECORD",
+      entityId: offer.id,
+      entityLabel: `${offer.candidate.fullName} — ${offer.templateLabel}`,
+      detail: `${auth.name} sent the offer to ${offer.candidate.email} (signing link expires in ${OFFER_TOKEN_TTL_DAYS} days; email ${status}).`,
+    });
+    revalidatePath("/");
+    return { token };
+  });
+}
+
+/** Public (no session): the candidate's view of a tokenized offer. Never
+ * exposes internal notes or the outbox; only the letter + numbers. */
+export async function getOfferByToken(
+  token: string,
+): Promise<ActionResult<{
+  offerId: string;
+  candidateName: string;
+  position: string;
+  workspaceName: string;
+  templateLabel: string;
+  letterText: string;
+  components: { key: string; label: string; kind: string; mode: string; amount: number; resolved: number }[];
+  benefits: string[];
+  totals: { earnings: number; employerContributions: number; deductions: number; net: number; ctc: number };
+  expiresAt: string;
+}>> {
+  return toResult(async () => {
+    const t = String(token ?? "").trim();
+    if (!t) throw new AuthorizationError("A token is required.");
+    const offer = await db.offerRecord.findUnique({
+      where: { token: t },
+      include: { candidate: { select: { fullName: true, position: true } } },
+    });
+    if (!offer) throw new AuthorizationError("This offer link is not valid.");
+    if (offer.status === "SIGNED") throw new AuthorizationError("This offer has already been signed.");
+    if (offer.status === "DECLINED") throw new AuthorizationError("This offer was declined.");
+    if (offer.status !== "SENT") throw new AuthorizationError("This offer is not available for signing yet.");
+    if (offer.tokenExpiresAt && offer.tokenExpiresAt.getTime() < Date.now()) {
+      throw new AuthorizationError("This offer link has expired — please ask HR to resend it.");
+    }
+    const components = parseComponents(offer.components);
+    const totals = computeOffer(components);
+    const config = await getWorkspaceConfig();
+    return {
+      offerId: offer.id,
+      candidateName: offer.candidate.fullName,
+      position: offer.candidate.position,
+      workspaceName: config.workspace.name,
+      templateLabel: offer.templateLabel,
+      letterText: offer.letterText,
+      components: components.map((c) => ({ ...c, resolved: totals.resolved[c.key] ?? 0 })),
+      benefits: parseBenefits(offer.benefits),
+      totals: {
+        earnings: totals.earnings,
+        employerContributions: totals.employerContributions,
+        deductions: totals.deductions,
+        net: totals.net,
+        ctc: totals.ctc,
+      },
+      expiresAt: (offer.tokenExpiresAt ?? new Date()).toISOString(),
+    };
+  });
+}
+
+/** Public (no session): typed-signature capture. The typed name must match
+ * the candidate's full name (case-insensitive) — the ceremony that makes the
+ * signature deliberate. Records signedAt + source IP; the record becomes
+ * immutable (updateOfferRecord refuses non-DRAFT states). */
+export async function signOffer(input: {
+  token: string;
+  signedName: string;
+}): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const t = String(input?.token ?? "").trim();
+    const signedName = String(input?.signedName ?? "").trim();
+    if (!t || !signedName) throw new AuthorizationError("A token and your full name are required.");
+    const offer = await db.offerRecord.findUnique({
+      where: { token: t },
+      include: { candidate: { select: { id: true, fullName: true } } },
+    });
+    if (!offer) throw new AuthorizationError("This offer link is not valid.");
+    if (offer.status !== "SENT") throw new AuthorizationError(`This offer is ${offer.status}.`);
+    if (offer.tokenExpiresAt && offer.tokenExpiresAt.getTime() < Date.now()) {
+      throw new AuthorizationError("This offer link has expired — please ask HR to resend it.");
+    }
+    if (signedName.toLowerCase() !== offer.candidate.fullName.toLowerCase()) {
+      throw new AuthorizationError("Please type your full legal name exactly as it appears on the offer.");
+    }
+    // Best-effort client IP (behind the reverse proxy), like password-reset.
+    let ip = "unknown";
+    try {
+      const h = await headers();
+      const xff = h.get("x-forwarded-for") ?? "";
+      ip = xff.split(",")[0].trim() || "unknown";
+    } catch {
+      ip = "unknown";
+    }
+    await db.offerRecord.update({
+      where: { id: offer.id },
+      data: { status: "SIGNED", signedAt: new Date(), signedName, signedIp: ip },
+    });
+    await logAudit({
+      actor: { userId: `candidate:${offer.candidateId}`, name: signedName, role: "CANDIDATE" },
+      action: "hiring.offer_signed",
+      entityType: "OFFER_RECORD",
+      entityId: offer.id,
+      entityLabel: `${offer.candidate.fullName} — ${offer.templateLabel}`,
+      detail: `${signedName} signed the offer (IP ${ip}).`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+/** Public (no session): decline without signing. */
+export async function declineOffer(input: { token: string }): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const t = String(input?.token ?? "").trim();
+    if (!t) throw new AuthorizationError("A token is required.");
+    const offer = await db.offerRecord.findUnique({
+      where: { token: t },
+      include: { candidate: { select: { id: true, fullName: true } } },
+    });
+    if (!offer) throw new AuthorizationError("This offer link is not valid.");
+    if (offer.status !== "SENT") throw new AuthorizationError(`This offer is ${offer.status}.`);
+    await db.offerRecord.update({ where: { id: offer.id }, data: { status: "DECLINED" } });
+    await logAudit({
+      actor: { userId: `candidate:${offer.candidateId}`, name: offer.candidate.fullName, role: "CANDIDATE" },
+      action: "hiring.offer_declined",
+      entityType: "OFFER_RECORD",
+      entityId: offer.id,
+      entityLabel: `${offer.candidate.fullName} — ${offer.templateLabel}`,
+      detail: `${offer.candidate.fullName} declined the offer.`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+/** Mark a signed candidate as Joined: creates the employee's account
+ * (deterministic email), EmployeeProfile, roster entry, and onboarding
+ * checklist, then queues the welcome email. Idempotent per candidate. */
+export async function markJoined(input: { candidateId: string }): Promise<ActionResult<{ userId: string; email: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:manage");
+    const candidateId = String(input?.candidateId ?? "").trim();
+    if (!candidateId) throw new AuthorizationError("A candidate id is required.");
+    const candidate = await db.candidate.findUnique({ where: { id: candidateId } });
+    if (!candidate) throw new AuthorizationError("Candidate not found.");
+    if (candidate.userId) {
+      throw new AuthorizationError(`${candidate.fullName} already joined (account exists).`);
+    }
+    if (candidate.status !== "SELECTED") {
+      throw new AuthorizationError("Only selected candidates can be marked as joined.");
+    }
+    const signedOffer = await db.offerRecord.findFirst({
+      where: { candidateId: candidate.id, status: "SIGNED" },
+      orderBy: { signedAt: "desc" },
+    });
+    if (!signedOffer) {
+      throw new AuthorizationError("The candidate must sign their offer before joining (no SIGNED offer found).");
+    }
+
+    const config = await getWorkspaceConfig();
+    const domain = (config as { workspace: { hiringEmailDomain?: string } }).workspace.hiringEmailDomain || "fernly.app";
+    const email = await nextAvailableHireEmail(candidate.fullName, domain);
+    // Random one-time password — never emailed; the hire sets their own via
+    // the existing password-reset flow (welcome mail points them there).
+    const passwordHash = await hashPassword(crypto.randomBytes(24).toString("base64url"));
+
+    const user = await db.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email,
+          name: candidate.fullName,
+          passwordHash,
+          role: "MEMBER",
+        },
+      });
+      await tx.teamMember.create({
+        data: {
+          name: candidate.fullName,
+          role: "MEMBER",
+          department: candidate.department || config.workspace.defaultDepartment,
+          email,
+          userId: created.id,
+        },
+      });
+      await tx.employeeProfile.create({
+        data: {
+          userId: created.id,
+          jobTitle: candidate.position || "",
+          department: candidate.department || "",
+          hireDate: new Date(),
+        },
+      });
+      // The standard onboarding checklist (mirrors hr-onboarding's template).
+      await tx.onboardingChecklist.create({
+        data: {
+          newHireId: created.id,
+          title: `${candidate.fullName} — onboarding`,
+          tasks: {
+            create: [
+              { title: "Sign the employment contract", dueOffsetDays: 1, order: 0 },
+              { title: "Set up accounts and SSO access", dueOffsetDays: 2, order: 1 },
+              { title: "Meet your manager for the 1:1 kick-off", dueOffsetDays: 3, order: 2 },
+              { title: "Complete the workspace tour", dueOffsetDays: 5, assigneeId: created.id, order: 3 },
+              { title: "First small task shipped with a mentor", dueOffsetDays: 14, assigneeId: created.id, order: 4 },
+            ],
+          },
+        },
+      });
+      await tx.candidate.update({
+        where: { id: candidate.id },
+        data: { status: "HIRED", userId: created.id, joinedAt: new Date() },
+      });
+      return created;
+    });
+
+    // Welcome email → outbox (best-effort).
+    const first = candidate.fullName.split(/\s+/)[0];
+    const subject = `Welcome to ${config.workspace.name}, ${first}!`;
+    const text =
+      `Hi ${first},\n\n` +
+      `Welcome aboard! Your account email is ${email}.\n` +
+      `To set your password, open the app and use "Forgot password?" with that email.\n\n` +
+      `Your onboarding checklist is waiting in the app — see you on day one!\n\n` +
+      `The ${config.workspace.name} team`;
+    const html =
+      `<p>Hi ${escapeHtml(first)},</p>` +
+      `<p>Welcome aboard! Your account email is <strong>${escapeHtml(email)}</strong>.</p>` +
+      `<p>To set your password, open the app and use "Forgot password?" with that email.</p>` +
+      `<p>Your onboarding checklist is waiting in the app — see you on day one!</p>` +
+      `<p>The ${escapeHtml(config.workspace.name)} team</p>`;
+    const row = await db.mailOutbox.create({
+      data: {
+        kind: "WELCOME",
+        candidateId: candidate.id,
+        toAddress: email,
+        subject,
+        body: text,
+        status: "QUEUED",
+        sentById: auth.userId,
+      },
+    });
+    let wstatus = "SKIPPED";
+    let wprovider = "";
+    let werror = "";
+    try {
+      const result = await createMailer().sendMail({ to: email, subject, html, text });
+      if (result.delivered) {
+        wstatus = "SENT";
+        wprovider = result.messageId ?? "";
+      }
+    } catch (err) {
+      wstatus = "FAILED";
+      werror = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+    }
+    await db.mailOutbox.update({
+      where: { id: row.id },
+      data: { status: wstatus, providerMessageId: wprovider, error: werror, sentAt: new Date() },
+    });
+
+    await logAudit({
+      actor: auth,
+      action: "hiring.candidate_joined",
+      entityType: "CANDIDATE",
+      entityId: candidate.id,
+      entityLabel: candidate.fullName,
+      detail: `${auth.name} marked "${candidate.fullName}" as joined — account ${email} created with onboarding checklist + welcome email (${wstatus}).`,
+    });
+    revalidatePath("/");
+    return { userId: user.id, email };
   });
 }

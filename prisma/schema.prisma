@@ -503,6 +503,10 @@ model Workspace {
   auditRetentionDays   Int      @default(180)
   entityHistoryLimit   Int      @default(50)
   dashboardNotifLimit  Int      @default(20)
+  // R6 — the domain for deterministic employee emails when a candidate
+  // joins: <first>.<last>@hiringEmailDomain (collisions get a numeric
+  // suffix). Default matches the product's own domain.
+  hiringEmailDomain    String   @default("fernly.app")
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -1168,8 +1172,9 @@ model OfferRecord {
   status       String    @default("DRAFT")
   notes        String    @default("")
   createdById  String    @default("")
-  // R6 — single-use signing token + typed-signature capture.
-  token        String    @default("")
+  // R6 — single-use signing token (NULL while DRAFT; unique so a token
+  // can address at most one offer) + typed-signature capture.
+  token        String?   @unique
   tokenExpiresAt DateTime?
   signedAt     DateTime?
   signedName   String    @default("")
