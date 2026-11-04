@@ -19,7 +19,10 @@ interface ModalProps {
   description?: string;
   children: React.ReactNode;
   className?: string;
-  size?: "sm" | "md" | "lg";
+  /** "xl" is the wide layout for dense detail views (project detail) —
+   *  it exists so multi-section modals can use a two-column layout and
+   *  avoid deep internal scrolling. */
+  size?: "sm" | "md" | "lg" | "xl";
 }
 
 export function Modal({
@@ -55,7 +58,7 @@ export function Modal({
 
   if (!open || typeof document === "undefined") return null;
 
-  const widths = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-2xl" };
+  const widths = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-5xl" };
 
   return createPortal(
     <div

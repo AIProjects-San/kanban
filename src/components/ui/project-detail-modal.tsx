@@ -17,16 +17,23 @@
 //                  they can see anyway). role:manage users additionally get an
 //                  add-member picker + per-row remove; writes go through the
 //                  audit-logged assignUserToProject / unassignUserFromProject.
+//                  Collapsed by default (user request) — the header shows the
+//                  head count.
 //   3. History   — the reusable EntityHistorySection timeline, collapsed by
 //                  default (one click expands + lazy-loads the trail), showing
 //                  created / field-level updates / member changes.
+//
+// The modal opens at the "xl" width (max-w-5xl) so Members and History sit
+// side by side on wide screens instead of stacking — that, plus both sections
+// defaulting to collapsed, keeps the open state short enough that most
+// sessions never scroll inside the modal at all.
 //
 // Server side this component adds nothing: every action it calls already
 // exists, is permission-gated and unit-tested.
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useMemo } from "react";
-import { Loader2, Pencil, UserPlus, X, Crown } from "lucide-react";
+import { Loader2, Pencil, UserPlus, Users, ChevronDown, X, Crown } from "lucide-react";
 import { Modal } from "./modal";
 import { Avatar } from "./avatar";
 import { EntityHistorySection } from "./entity-history-section";
@@ -69,7 +76,7 @@ export function ProjectDetailModal({ projects, members, tasks }: ProjectDetailMo
       onClose={closeProjectDetail}
       title={project ? project.name : "Project"}
       description={project ? "Project details, members and change history" : undefined}
-      size="lg"
+      size="xl"
     >
       {open && projectDetailId && (
         project ? (
@@ -117,6 +124,10 @@ function ProjectDetailBody({
   const [assignments, setAssignments] = useState<AssignmentRow[] | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [pickedMemberId, setPickedMemberId] = useState("");
+  // Collapsed by default (user request) — same interaction model as the
+  // History section below: the header always shows the head count, the
+  // roster (and the role:manage add/remove controls) reveal on expand.
+  const [membersOpen, setMembersOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -316,105 +327,131 @@ function ProjectDetailBody({
         </div>
       </section>
 
-      {/* ---------------------------------------------------- members */}
-      <section aria-label="Project members" className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
-            Members
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
-              {rows.length} {rows.length === 1 ? "person" : "people"}
-            </span>
-          </h3>
-          {canManageMembers && candidates.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              <select
-                className="f-input f-btn-sm py-1 text-xs w-44"
-                value={pickedMemberId}
-                onChange={(e) => setPickedMemberId(e.target.value)}
-                aria-label="Choose a team member to assign"
-              >
-                <option value="">Choose member…</option>
-                {candidates.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-              <button
-                onClick={handleAdd}
-                disabled={!pickedMemberId || busyUserId !== null}
-                className="f-btn f-btn-primary f-btn-sm"
-              >
-                <UserPlus size={13} /> Add
-              </button>
+      {/* --------------------- members + history (side by side on wide screens) */}
+      {/* Both sections collapse by default (user request) and the modal opens
+          at the "xl" width, so on desktop they sit in two columns — the
+          combined open height stays within one screen and the modal body
+          rarely needs to scroll at all. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        {/* ---------------------------------------------------- members */}
+        <section aria-label="Project members" className="border border-border rounded-lg overflow-hidden bg-muted/30">
+          <button
+            type="button"
+            onClick={() => setMembersOpen(!membersOpen)}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 hover:bg-muted/60 transition-colors text-left"
+            aria-expanded={membersOpen}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                <Users size={12} className="text-primary" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-foreground">Members</div>
+                <div className="text-[0.625rem] text-muted-foreground truncate">
+                  {assignments === null
+                    ? "Loading…"
+                    : `${rows.length} ${rows.length === 1 ? "person" : "people"}`}
+                </div>
+              </div>
+            </div>
+            <ChevronDown
+              size={14}
+              className={cn("text-muted-foreground transition-transform shrink-0", membersOpen && "rotate-180")}
+            />
+          </button>
+
+          {membersOpen && (
+            <div className="px-3 pb-3 pt-1 space-y-2 f-view-enter">
+              {canManageMembers && candidates.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <select
+                    className="f-input f-btn-sm py-1 text-xs w-44"
+                    value={pickedMemberId}
+                    onChange={(e) => setPickedMemberId(e.target.value)}
+                    aria-label="Choose a team member to assign"
+                  >
+                    <option value="">Choose member…</option>
+                    {candidates.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAdd}
+                    disabled={!pickedMemberId || busyUserId !== null}
+                    className="f-btn f-btn-primary f-btn-sm"
+                  >
+                    <UserPlus size={13} /> Add
+                  </button>
+                </div>
+              )}
+
+              {assignments === null ? (
+                <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                  <Loader2 size={14} className="animate-spin" /> Loading members…
+                </div>
+              ) : rows.length === 0 ? (
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  No members assigned to this project yet.
+                </div>
+              ) : (
+                <ul className="divide-y divide-border rounded-lg border border-border bg-card">
+                  {rows.map((row) => (
+                    <li key={row.key} className="flex items-center gap-3 px-3 py-2.5">
+                      <Avatar name={row.name} color={row.avatarColor} size={32} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium text-foreground truncate">{row.name}</span>
+                          {row.isOwner && (
+                            <span className="flex items-center gap-0.5 text-[0.625rem] font-semibold text-primary">
+                              <Crown size={10} /> Owner
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {row.email ?? "No linked account"}
+                          {row.assignmentRole && !row.isOwner && (
+                            <span className="ml-1.5 uppercase tracking-wide">· {row.assignmentRole}</span>
+                          )}
+                        </div>
+                      </div>
+                      {canManageMembers && !row.isOwner && row.userId && (
+                        <button
+                          onClick={() => handleRemove({ userId: row.userId as string, name: row.name })}
+                          disabled={busyUserId === row.userId}
+                          className="f-btn f-btn-ghost f-btn-icon h-7 w-7 text-destructive"
+                          title={`Remove ${row.name} from this project`}
+                          aria-label={`Remove ${row.name} from this project`}
+                        >
+                          {busyUserId === row.userId
+                            ? <Loader2 size={13} className="animate-spin" />
+                            : <X size={13} />}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {canManageMembers && candidates.length === 0 && assignments !== null && (
+                <p className="text-xs text-muted-foreground text-center pt-1">
+                  Every team member is already assigned to this project.
+                </p>
+              )}
             </div>
           )}
-        </div>
+        </section>
 
-        {assignments === null ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <Loader2 size={14} className="animate-spin" /> Loading members…
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="text-center py-6 text-sm text-muted-foreground">
-            No members assigned to this project yet.
-          </div>
-        ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {rows.map((row) => (
-              <li key={row.key} className="flex items-center gap-3 px-3 py-2.5">
-                <Avatar name={row.name} color={row.avatarColor} size={32} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-medium text-foreground truncate">{row.name}</span>
-                    {row.isOwner && (
-                      <span className="flex items-center gap-0.5 text-[0.625rem] font-semibold text-primary">
-                        <Crown size={10} /> Owner
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {row.email ?? "No linked account"}
-                    {row.assignmentRole && !row.isOwner && (
-                      <span className="ml-1.5 uppercase tracking-wide">· {row.assignmentRole}</span>
-                    )}
-                  </div>
-                </div>
-                {canManageMembers && !row.isOwner && row.userId && (
-                  <button
-                    onClick={() => handleRemove({ userId: row.userId as string, name: row.name })}
-                    disabled={busyUserId === row.userId}
-                    className="f-btn f-btn-ghost f-btn-icon h-7 w-7 text-destructive"
-                    title={`Remove ${row.name} from this project`}
-                    aria-label={`Remove ${row.name} from this project`}
-                  >
-                    {busyUserId === row.userId
-                      ? <Loader2 size={13} className="animate-spin" />
-                      : <X size={13} />}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {canManageMembers && candidates.length === 0 && assignments !== null && (
-          <p className="text-xs text-muted-foreground text-center pt-1">
-            Every team member is already assigned to this project.
-          </p>
-        )}
-      </section>
-
-      {/* ---------------------------------------------------- history */}
-      {/* Collapsed by default (user request): opening the modal costs no
-          audit round trip — the section lazy-loads on first expand.
-          Keyed by refreshTick so every mutation (project edit, member
-          add/remove) remounts it and re-fetches on the next expand —
-          otherwise the lazy-loaded list would stay stale after a change
-          made right here in the modal. */}
-      <EntityHistorySection
-        key={`${project.id}-${refreshTick}`}
-        entityType="PROJECT"
-        entityId={project.id}
-        entityLabel={project.name}
-      />
+        {/* ---------------------------------------------------- history */}
+        {/* Keyed by refreshTick so every mutation (project edit, member
+            add/remove) remounts the section and re-fetches on the next
+            expand — otherwise the lazy-loaded list would stay stale after a
+            change made right here in the modal. */}
+        <EntityHistorySection
+          key={`${project.id}-${refreshTick}`}
+          entityType="PROJECT"
+          entityId={project.id}
+          entityLabel={project.name}
+        />
+      </div>
     </div>
   );
 }

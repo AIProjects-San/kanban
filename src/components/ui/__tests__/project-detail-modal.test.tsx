@@ -10,7 +10,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 //   1. Info renders for everyone; "Edit details" (project:edit) layers the
 //      existing ProjectModal on top — the detail modal stays open underneath.
 //   2. Members: owner (ownership implies access) + explicit assignments.
-//      role:manage gets an add-picker + per-row remove; MEMBER sees neither.
+//      Collapsed by default — the header shows the head count; expanding
+//      reveals the roster. role:manage gets an add-picker + per-row remove;
+//      MEMBER sees neither.
 //   3. History: the EntityHistorySection timeline, collapsed by default —
 //      no audit round trip until the user expands it.
 //   4. A stale id (project deleted elsewhere) renders a not-found note.
@@ -129,6 +131,11 @@ function renderModal() {
   );
 }
 
+/** The Members section ships collapsed — one click reveals the roster. */
+function expandMembers() {
+  fireEvent.click(screen.getByRole("button", { name: /^Members/i }));
+}
+
 let projectId: string;
 
 beforeEach(() => {
@@ -166,7 +173,11 @@ describe("ProjectDetailModal: info section (every role)", () => {
     });
     renderModal();
     await waitFor(() => {
-      expect(screen.getByText("Theo Vance")).toBeTruthy(); // members loaded
+      expect(screen.getByText("2 people")).toBeTruthy(); // roster loaded (count in header)
+    });
+    expandMembers();
+    await waitFor(() => {
+      expect(screen.getByText("Theo Vance")).toBeTruthy();
     });
     expect(screen.queryByRole("button", { name: /edit details/i })).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
@@ -189,8 +200,33 @@ describe("ProjectDetailModal: info section (every role)", () => {
 });
 
 describe("ProjectDetailModal: members section", () => {
+  it("is collapsed by default (count in header); expanding reveals the roster", async () => {
+    renderModal();
+    const header = await waitFor(() => {
+      const btn = screen.getByRole("button", { name: /^Members/i });
+      expect(btn).toBeTruthy();
+      return btn;
+    });
+    // Collapsed: assignments still load (for the count) but nothing leaks —
+    // no roster rows and no management controls render.
+    await waitFor(() => {
+      expect(screen.getByText("2 people")).toBeTruthy();
+    });
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Theo Vance")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+
+    fireEvent.click(header);
+    await waitFor(() => {
+      expect(screen.getByText("Theo Vance")).toBeTruthy();
+    });
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("2 people")).toBeTruthy();
+  });
+
   it("lists the owner (badged) plus assigned members — owner merged even without an assignment row", async () => {
     renderModal();
+    expandMembers();
     await waitFor(() => {
       expect(screen.getByText("Theo Vance")).toBeTruthy();
     });
@@ -206,6 +242,7 @@ describe("ProjectDetailModal: members section", () => {
 
   it("ADMIN add-picker only offers unassigned, non-owner members; Add calls assignUserToProject", async () => {
     renderModal();
+    expandMembers();
     await waitFor(() => {
       expect(screen.getByText("Theo Vance")).toBeTruthy();
     });
@@ -230,6 +267,7 @@ describe("ProjectDetailModal: members section", () => {
 
   it("remove button calls unassignUserFromProject for that member", async () => {
     renderModal();
+    expandMembers();
     await waitFor(() => {
       expect(screen.getByText("Theo Vance")).toBeTruthy();
     });
@@ -242,6 +280,7 @@ describe("ProjectDetailModal: members section", () => {
 
   it("the owner row has no remove button (access comes from ownership, not an assignment)", async () => {
     renderModal();
+    expandMembers();
     await waitFor(() => {
       expect(screen.getAllByText("Mira Hale").length).toBeGreaterThan(0);
     });
