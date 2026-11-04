@@ -323,3 +323,25 @@ rbac/hr-directory feature patterns (`data-testid` hooks on the board).
 - CTC structure — https://bharatpayroll.com/blog/ctc-structure · https://www.mysa.io/blogs/salary-breakup-ctc-structure-format-calculation
 - Structured scorecards — https://www.pin.com/blog/interview-scorecards-templates
 - E-sign audit trails — https://commonpaper.com/blog/how-to-send-and-sign-employment-contracts-and-offer-letters-online
+
+## 9. Persona acceptance audit (2026-11-05) — post-ship review
+
+A 12-persona acceptance panel (CEO/HR/hiring-manager/accountant/IT-admin at
+ADMIN·HR·MANAGER, new joiners + existing employee + interviewer + QA at MEMBER,
+and an external candidate on the public offer link) walked the whole product
+live — every finding reproduced in the browser or traced in code. Full report:
+`download/Fernly_Persona_Acceptance_Assessment.docx` (verdicts, competitive
+gaps vs Zoho People/Keka/greytHR/Rippling, and a P0/P1/P2 backlog).
+
+**Fixed during the audit (commit 1d7f246):**
+- `updatePayslip` now rejects `lopDays` beyond the run period's day count and
+  rejects any deduction set that would drive net pay negative (audit saved a
+  live `net -$223.33` before the fix).
+- `sendOffer`/`markJoined` return `mailStatus`; the UI warns honestly when the
+  outbox row is SKIPPED (no provider) instead of claiming delivery, and the
+  join toast tells HR to relay the sign-in email manually.
+
+**Top open items (P0):** member-interviewer access, employee payslip
+self-service, joiner lockout without a mail provider, statutory decision
+(build vs reposition), mail-config surfacing. The full backlog (39 open items)
+is in the report's Section 6.
