@@ -22,7 +22,7 @@ interface ProjectsViewProps {
 }
 
 export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
-  const { openProjectModal } = useApp();
+  const { openProjectModal, openProjectDetail } = useApp();
   const refresh = useRefresh();
   const { can } = usePermissions();
   const [query, setQuery] = useState("");
@@ -139,7 +139,8 @@ export function ProjectsView({ projects, tasks }: ProjectsViewProps) {
                 key={p.id}
                 data-testid="project-card"
                 className="f-card f-card-hover p-5 flex flex-col cursor-pointer"
-                onClick={() => canEdit && openProjectModal(p.id)}
+                title="View project details"
+                onClick={() => openProjectDetail(p.id)}
               >
                 {/* Header */}
                 <div className="flex items-start justify-between gap-2 mb-3">

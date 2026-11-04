@@ -39,7 +39,7 @@ interface DashboardViewProps {
 }
 
 export function DashboardView({ projects, members, reminders, tasks, notifs, stats, user, greeting, todayDate }: DashboardViewProps) {
-  const { setView, openTaskModal, openProjectModal } = useApp();
+  const { setView, openTaskModal, openProjectModal, openProjectDetail } = useApp();
   const { can } = usePermissions();
 
   const hello = greeting ?? "Hello";
@@ -164,7 +164,8 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
                 <div
                   key={p.id}
                   data-testid="project-card"
-                  onClick={() => openProjectModal(p.id)}
+                  onClick={() => openProjectDetail(p.id)}
+                  title="View project details"
                   className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 transition-colors cursor-pointer"
                 >
                   <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center text-white text-xs font-bold f-avatar", `f-avatar-${p.color}`)}>

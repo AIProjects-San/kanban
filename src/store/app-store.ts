@@ -71,6 +71,13 @@ interface AppState {
   openProjectModal: (editId?: string | null) => void;
   closeProjectModal: () => void;
 
+  // Project detail modal (PR-59) — clicking a project card opens a
+  // read-oriented detail view (info + assigned members + audit trail) for
+  // EVERY role. Editing stays in the ProjectModal, layered on top.
+  projectDetailId: string | null;
+  openProjectDetail: (projectId: string) => void;
+  closeProjectDetail: () => void;
+
   // Member modal
   memberModalOpen: boolean;
   openMemberModal: () => void;
@@ -188,6 +195,10 @@ export const useApp = create<AppState>((set) => ({
   projectModalEditId: null,
   openProjectModal: (editId = null) => set({ projectModalOpen: true, projectModalEditId: editId }),
   closeProjectModal: () => set({ projectModalOpen: false, projectModalEditId: null }),
+
+  projectDetailId: null,
+  openProjectDetail: (projectId) => set({ projectDetailId: projectId }),
+  closeProjectDetail: () => set({ projectDetailId: null }),
 
   memberModalOpen: false,
   openMemberModal: () => set({ memberModalOpen: true }),

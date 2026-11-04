@@ -11,6 +11,7 @@ import { CommandPalette } from "@/components/ui/command-palette";
 import { InboxDrawer } from "@/components/ui/inbox-drawer";
 import { TaskModal } from "@/components/ui/task-modal";
 import { ProjectModal } from "@/components/ui/project-modal";
+import { ProjectDetailModal } from "@/components/ui/project-detail-modal";
 import { MemberModal } from "@/components/ui/member-modal";
 import { UserModal } from "@/components/ui/user-modal";
 import { AssignmentModal } from "@/components/ui/assignment-modal";
@@ -251,6 +252,9 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
       <CommandPalette />
       <InboxDrawer messages={data.messages} members={data.members} currentUser={userProfile} />
       <TaskModal tasks={data.tasks} projects={data.projects} />
+      {/* PR-59 — read-oriented project detail (info + members + history).
+          Mounted BEFORE ProjectModal so the edit form layers on top of it. */}
+      <ProjectDetailModal projects={data.projects} members={data.members} tasks={data.tasks} />
       <ProjectModal members={data.members} projects={data.projects} />
       <MemberModal />
       <UserModal />
