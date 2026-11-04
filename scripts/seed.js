@@ -110,6 +110,8 @@ async function main() {
   await db.documentTypeConfig.deleteMany();
   await db.offerTemplate.deleteMany();
   await db.offerRecord.deleteMany();
+  await db.salaryStructure.deleteMany();
+  await db.payrollRun.deleteMany(); // cascades payslips
 
   // -----------------------------------------------------------------
   // Workspace settings
@@ -1711,6 +1713,147 @@ async function main() {
   }
   console.log(`  ✓ Hiring R5: ${OFFER_TEMPLATES.length} offer templates + 1 draft offer for Priyanka (designer band)`);
   console.log(`  ✓ Hiring R6 ready: send the draft from the offer builder — the public /offer/<token> page collects the signature, then "Mark joined" provisions the account`);
+
+  // -----------------------------------------------------------------
+  // R7 — payroll seed: salary structures for the leadership team, a LOCKED
+  // run for last month (paid, YTD baseline) and an OPEN run for this month
+  // with one LOP-adjusted payslip. Monthly = annual ÷ 12 (same math as the
+  // actions, lib/payroll-math.ts).
+  // -----------------------------------------------------------------
+  await db.salaryStructure.deleteMany();
+  await db.payrollRun.deleteMany(); // cascades payslips
+  {
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const hrId = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+    const STRUCTURE_SEEDS = [
+      {
+        email: "manager@fernly.app",
+        components: [
+          { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 96_000 },
+          { key: "housing", label: "Housing Allowance", kind: "EARNING", mode: "FIXED", amount: 12_000 },
+          { key: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+        ],
+        notes: "Engineering lead band, reviewed 2026.",
+      },
+      {
+        email: "hana@fernly.app",
+        components: [
+          { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 84_000 },
+          { key: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+        ],
+        notes: "Marketing lead, includes 2026 market adjustment.",
+      },
+      {
+        email: "yuki@fernly.app",
+        components: [
+          { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 78_000 },
+          { key: "transport", label: "Transport Allowance", kind: "EARNING", mode: "FIXED", amount: 2_400 },
+          { key: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+        ],
+        notes: "Data engineering band.",
+      },
+    ];
+    const structures = [];
+    for (const s of STRUCTURE_SEEDS) {
+      const user = await db.user.findUnique({ where: { email: s.email }, select: { id: true, name: true } });
+      if (!user) continue;
+      const row = await db.salaryStructure.create({
+        data: {
+          userId: user.id,
+          components: JSON.stringify(s.components),
+          notes: s.notes,
+          effectiveFrom: addDays(TODAY, -120),
+          isActive: true,
+          createdById: hrId,
+        },
+      });
+      structures.push({ user, row, components: s.components });
+    }
+
+    // Monthly earnings from a structure (mirrors monthlyEarningsFromStructure).
+    const monthlyLines = (components) => {
+      const basic = components.find((c) => c.key.toLowerCase() === "basic")?.amount ?? 0;
+      return components
+        .filter((c) => c.kind === "EARNING")
+        .map((c) => ({
+          key: c.key,
+          label: c.label,
+          amount: round2((c.mode === "PERCENT_OF_BASIC" ? (basic * c.amount) / 100 : c.amount) / 12),
+        }));
+    };
+    const totals = (earnings, deductions) => {
+      const gross = round2(earnings.reduce((s, l) => s + l.amount, 0));
+      return { gross, net: round2(gross - deductions.reduce((s, l) => s + l.amount, 0)) };
+    };
+    const periodOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const daysIn = (period) => { const [y, m] = period.split("-").map(Number); return new Date(y, m, 0).getDate(); };
+
+    const lastMonth = new Date(TODAY.getFullYear(), TODAY.getMonth() - 1, 1);
+    const prevPeriod = periodOf(lastMonth);
+    const thisPeriod = periodOf(TODAY);
+
+    // Last month: LOCKED (paid).
+    await db.payrollRun.create({
+      data: {
+        period: prevPeriod,
+        status: "LOCKED",
+        lockedById: hrId,
+        lockedAt: addDays(TODAY, -3),
+        createdById: hrId,
+        payslips: {
+          create: structures.map((s, i) => {
+            const earnings = monthlyLines(s.components);
+            const { gross, net } = totals(earnings, []);
+            return {
+              userId: s.user.id,
+              slipNo: `PS-${prevPeriod}-${String(i + 1).padStart(3, "0")}`,
+              earnings: JSON.stringify(earnings),
+              deductions: "[]",
+              gross,
+              net,
+            };
+          }),
+        },
+      },
+    });
+
+    // This month: OPEN, with one LOP day deduction (Yuki, 1 day) and a
+    // performance bonus line for Hana (edit-in-action showcase).
+    await db.payrollRun.create({
+      data: {
+        period: thisPeriod,
+        status: "OPEN",
+        createdById: hrId,
+        payslips: {
+          create: structures.map((s, i) => {
+            const earnings = monthlyLines(s.components);
+            let deductions = [];
+            let lopDays = 0;
+            if (s.user.name === "Yuki Tanaka") {
+              lopDays = 1;
+              const gross = round2(earnings.reduce((sum, l) => sum + l.amount, 0));
+              const lop = round2((gross * 1) / daysIn(thisPeriod));
+              deductions = [{ key: "lop", label: "Loss of pay (1 day)", amount: lop }];
+            }
+            if (s.user.name === "Hana Park") {
+              earnings.push({ key: "bonus", label: "Q4 performance bonus", amount: 500 });
+            }
+            const { gross, net } = totals(earnings, deductions);
+            return {
+              userId: s.user.id,
+              slipNo: `PS-${thisPeriod}-${String(i + 1).padStart(3, "0")}`,
+              earnings: JSON.stringify(earnings),
+              deductions: JSON.stringify(deductions),
+              lopDays,
+              gross,
+              net,
+            };
+          }),
+        },
+      },
+    });
+    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (1 LOP day, 1 bonus line)`);
+  }
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }

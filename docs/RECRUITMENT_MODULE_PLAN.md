@@ -1,6 +1,6 @@
 # Recruitment & Joining Formalities Module Plan
 
-Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ R5 ✓ R6 ✓ shipped (R7 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
+Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ R5 ✓ R6 ✓ R7 ✓ shipped (R8 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
 Decisions confirmed with the product owner on 2026-11-04 (see §1.3).
 
 ---
@@ -146,6 +146,7 @@ name lookups) — see docs/HR_MODULE_PLAN.md and the schema comments.
 | `hiring:view` | ✓ | ✓ | ✓ | — | Hiring nav leaf + board read |
 | `hiring:manage` | ✓ | ✓ | — | — | Candidate CRUD, advance/decide stages, schedule |
 | `hiring:config` | ✓ | ✓ | — | — | Stage-template editor, doc-type list, offer templates |
+| `payroll:manage` (R7) | ✓ | ✓ | — | — | Payroll nav leaf, structures, runs, payslips, lock |
 
 Interviewer specifics (R2): an assigned interviewer (any role) may read their own
 assigned interview stage and write remarks/rating for it — scoped, not via
@@ -158,7 +159,8 @@ assigned interview stage and write remarks/rating for it — scoped, not via
   contract).
 - R1 view = Pipeline board (columns = active template stages, cards =
   candidates; detail modal = stage timeline + advance/skip + remarks).
-- Later milestones add tabs/leaves: Offers (R5), Payroll leaf `payroll` (R7).
+- Later milestones add tabs/leaves: Offers (R5, inside the builder), Payroll
+  leaf `payroll` `G Y` (R7, `payroll:manage`).
 
 ## 5. Milestones
 
@@ -195,7 +197,7 @@ push to origin.**
   (components + terms + signedName + timestamp + IP); mark Joined → auto-create
   User (`<first>.<last>@domain`, collision `<first>.<last><n>`) + EmployeeProfile
   + onboarding checklist (existing module); welcome email queued to outbox.
-- **R7 — Payroll (full)**: SalaryStructure per employee (from offer, editable);
+- **R7 — Payroll (full)** *(shipped)*: SalaryStructure per employee (from offer, editable);
   monthly PayrollRun (OPEN → LOCKED) with per-employee Payslip lines (earnings +
   deductions editable while open; pro-rated LOP); lock period once PAID; YTD
   totals; payslip stored with number + print-friendly download view.
@@ -267,6 +269,19 @@ push to origin.**
 | M36 | Account reality | Sign out → log in as priyanka.menon@fernly.app via "Forgot password?" | Account exists (random password was set; reset flow completes); onboarding checklist visible in HR → Onboarding |
 | M37 | Collision | Seed a second "Priyanka Menon" through the pipeline | Second account gets priyanka.menon2@fernly.app |
 
+## 6f. Manual test cases — R7 (executed on the sandbox preview)
+
+| # | Case | Steps | Expected |
+|---|---|---|---|
+| M38 | Payroll nav (HR) | Sign in as remy@fernly.app → `G Y` | Payroll view; November run OPEN + October LOCKED with "locked by Remy"; 3 structures with CTC + monthly gross |
+| M39 | Gating | Sign in as manager@fernly.app | No Payroll leaf anywhere (MANAGER keeps HR Console + Hiring only) |
+| M40 | Payslip math | Open the November run | Ingrid $9,000; Hana $7,500 (incl. $500 bonus line); Yuki $6,700 − $223.33 LOP = $6,476.67; YTD = Oct + Nov nets |
+| M41 | LOP live | Open Yuki's slip → set LOP to 2 days | Deduction updates live to $446.67, net $6,253.33; Save persists "LOP 2d" on the row |
+| M42 | Locked read-only | Open the October run → any slip | Inputs disabled; "paid, immutable record" note; Print / save PDF button |
+| M43 | New run | Pick next month → Create run | Run appears OPEN with a payslip per active structure (PS-YYYY-MM-00n slip numbers) |
+| M44 | Lock | Lock the new run (confirm) | Chip flips LOCKED; payslips become immutable; audit "payroll.run_locked" with the net total |
+| M45 | Structure from offer | New structure → pick employee → Copy from signed offer | Components copied from the SIGNED offer; the previous active structure retires to history |
+
 ## 7. Automation (e2e, CI-only)
 
 `e2e/features/hiring.feature` (11 scenarios): MEMBER must not see the Hiring
@@ -283,8 +298,12 @@ see it. R6 adds (2 scenarios, order matters): HR sends Priyanka's draft
 offer and the candidate signs it on the public `/offer/<token>` page
 (the link is minted in-browser and consumed in the same scenario), then
 HR marks the signed candidate joined and the hired summary renders.
-Follows the rbac/hr-directory feature patterns
-(`data-testid` hooks on the board).
+`payroll.feature` (R7, 5 scenarios): HR sees the seeded runs (LOCKED +
+OPEN) and structures, opens a payslip with the LOP hint, edits LOP days
+and saves, creates next month's run and locks it (retry-tolerant steps —
+the run row satisfies the assertion whether the create won or already
+existed), and MANAGERs never see the Payroll leaf. Follows the
+rbac/hr-directory feature patterns (`data-testid` hooks on the board).
 
 ## 8. References
 

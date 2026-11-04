@@ -14,6 +14,7 @@ import {
   CalendarDays,
   Briefcase,
   UserPlus,
+  Landmark,
 } from "lucide-react";
 // Type-only import — erased at runtime, so the store may import this module
 // (for group bookkeeping) without creating a require cycle.
@@ -106,6 +107,10 @@ export const NAV_GROUPS: NavGroup[] = [
       // (Admin, HR, Manager-as-interviewer). Inside the HR group so MEMBER
       // never sees the group at all (e2e contract).
       { key: "hiring", label: "Hiring", paletteLabel: "Hiring pipeline", icon: UserPlus, shortcut: "G I", shortcutKey: "i", permission: "hiring:view" },
+      // Payroll (R7) — salary data is ADMIN+HR only (payroll:manage); the
+      // leaf is hidden entirely for MANAGER/MEMBER so payslip numbers never
+      // render for them.
+      { key: "payroll", label: "Payroll", icon: Landmark, shortcut: "G Y", shortcutKey: "y", permission: "payroll:manage" },
     ],
   },
   {

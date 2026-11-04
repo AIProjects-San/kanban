@@ -1185,3 +1185,72 @@ model OfferRecord {
   @@index([candidateId])
   @@index([status])
 }
+
+// R7 — payroll (docs/RECRUITMENT_MODULE_PLAN.md §5, milestone R7). The
+// employee's standing salary structure: annual components in the same shape
+// as offers (lib/offer-math.ts resolves FIXED / % of basic), typically
+// copied from the signed offer when the candidate joins. One ACTIVE
+// structure per employee is expected; history is kept by flipping
+// isActive=false when a revision takes over (effectiveFrom).
+model SalaryStructure {
+  id            String   @id @default(cuid())
+  userId        String
+  // JSON: OfferComponent[] — ANNUAL amounts (monthly = ÷12 at payslip time).
+  components    String   @default("[]")
+  notes         String   @default("")
+  effectiveFrom DateTime @default(now())
+  isActive      Boolean  @default(true)
+  createdById   String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([isActive])
+}
+
+// R7 — one payroll period per month ("2026-11", unique — one run per
+// month). OPEN: payslips editable; LOCKED: the period was paid and every
+// line is immutable (audit-grade finality for YTD).
+model PayrollRun {
+  id          String   @id @default(cuid())
+  period      String   @unique
+  status      String   @default("OPEN")
+  lockedById  String   @default("")
+  lockedAt    DateTime?
+  createdById String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  payslips Payslip[]
+
+  @@index([status])
+}
+
+// R7 — one payslip per employee per run. earnings/deductions are JSON
+// PayslipLine[] copies (MONTHLY amounts), editable while the run is OPEN
+// (fixes, bonuses, deductions). gross = Σ earnings; loss-of-pay
+// (lopDays > 0) is an auto-managed "lop" deduction line =
+// gross × lopDays / days-in-period (lib/payroll-math.ts); net =
+// gross − Σ deductions. YTD totals are computed at read time from the
+// same-year periods up to and including this run.
+model Payslip {
+  id         String    @id @default(cuid())
+  runId      String
+  run        PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  userId     String
+  // Human slip number: PS-<period>-<seq> (unique workspace-wide).
+  slipNo     String    @unique
+  earnings   String    @default("[]")
+  deductions String    @default("[]")
+  // Optional per-slip note shown on the printed slip.
+  note       String    @default("")
+  // Loss-of-pay days in the period (drives the auto LOP deduction line).
+  lopDays    Int       @default(0)
+  gross      Float     @default(0)
+  net        Float     @default(0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([runId, userId])
+  @@index([userId])
+}

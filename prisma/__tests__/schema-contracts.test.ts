@@ -324,4 +324,32 @@ describe("Recruitment R1 models are declared", () => {
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
   });
+
+  it("R7: payroll models declared (structures, runs, payslips with LOP + unique slip no)", () => {
+    const ss = modelBlock("SalaryStructure");
+    expect(ss).toMatch(/userId\s+String\b/);
+    expect(ss).toMatch(/components\s+String\s+@default\("\[\]"\)/);
+    expect(ss).toMatch(/effectiveFrom\s+DateTime/);
+    expect(ss).toMatch(/isActive\s+Boolean\s+@default\(true\)/);
+    expect(ss).toMatch(/@@index\(\[userId\]\)/);
+
+    const run = modelBlock("PayrollRun");
+    expect(run).toMatch(/period\s+String\s+@unique/);
+    expect(run).toMatch(/status\s+String\s+@default\("OPEN"\)/);
+    expect(run).toMatch(/lockedAt\s+DateTime\?/);
+
+    const slip = modelBlock("Payslip");
+    expect(slip).toMatch(/runId\s+String\b/);
+    expect(slip).toMatch(/slipNo\s+String\s+@unique/);
+    expect(slip).toMatch(/earnings\s+String\s+@default\("\[\]"\)/);
+    expect(slip).toMatch(/deductions\s+String\s+@default\("\[\]"\)/);
+    expect(slip).toMatch(/lopDays\s+Int\s+@default\(0\)/);
+    expect(slip).toMatch(/gross\s+Float\s+@default\(0\)/);
+    expect(slip).toMatch(/net\s+Float\s+@default\(0\)/);
+    expect(slip).toMatch(/@@unique\(\[runId,\s*userId\]\)/);
+    expect(slip).toMatch(/onDelete:\s*Cascade/);
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261117000000_hiring_payroll");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+  });
 });

@@ -468,3 +468,61 @@ export interface OfferRecordT {
   signedAt: string | null;
   signedName: string;
 }
+
+/** R7 — one monthly money line on a payslip (see lib/payroll-math.ts). */
+export interface PayslipLineT {
+  key: string;
+  label: string;
+  amount: number;
+}
+
+/** R7 — an employee's standing salary structure (annual components; the
+ * payslip generator divides by 12). */
+export interface SalaryStructureT {
+  id: string;
+  userId: string;
+  userName: string;
+  jobTitle: string;
+  department: string;
+  /** Copied from the signed offer when created from one (display hint). */
+  source: "OFFER" | "MANUAL";
+  components: OfferComponentT[];
+  notes: string;
+  effectiveFrom: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+/** R7 — one monthly payroll period. status: OPEN (editable) → LOCKED (paid,
+ * immutable). Totals are aggregated across the run's payslips. */
+export interface PayrollRunT {
+  id: string;
+  period: string;
+  status: "OPEN" | "LOCKED";
+  lockedBy: string | null;
+  lockedAt: string | null;
+  payslipCount: number;
+  totalGross: number;
+  totalNet: number;
+  createdAt: string;
+}
+
+/** R7 — one employee's payslip in a run. Lines are monthly amounts;
+ * ytdNet accumulates the same-year periods up to and including this one. */
+export interface PayslipT {
+  id: string;
+  runId: string;
+  runPeriod: string;
+  runStatus: "OPEN" | "LOCKED";
+  userId: string;
+  userName: string;
+  jobTitle: string;
+  slipNo: string;
+  earnings: PayslipLineT[];
+  deductions: PayslipLineT[];
+  note: string;
+  lopDays: number;
+  gross: number;
+  net: number;
+  ytdNet: number;
+}

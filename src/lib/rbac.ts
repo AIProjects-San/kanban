@@ -42,7 +42,11 @@ export type Permission =
   // interviewers (R2 assigns them stages), but cannot create/advance.
   | "hiring:view"
   | "hiring:manage"
-  | "hiring:config";
+  | "hiring:config"
+  // Payroll (RECRUITMENT_MODULE_PLAN.md §5 R7) — salary data is sensitive:
+  // ADMIN + HR only. MANAGERs (interviewers on the hiring board) and
+  // MEMBERs never see structures, runs or payslips.
+  | "payroll:manage";
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ADMIN: [
@@ -55,6 +59,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "bug:create", "bug:edit:any", "bug:edit:own", "bug:delete", "bug:assign",
     "hr:view", "hr:admin", "leave:request", "review:manage", "onboarding:manage",
     "hiring:view", "hiring:manage", "hiring:config",
+    "payroll:manage",
   ],
   MANAGER: [
     "task:create", "task:edit:any", "task:edit:own",
@@ -84,6 +89,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "leave:request",
     "hr:view", "hr:admin", "review:manage", "onboarding:manage",
     "hiring:view", "hiring:manage", "hiring:config",
+    "payroll:manage",
   ],
 };
 
@@ -133,6 +139,7 @@ export const ALL_PERMISSIONS: { key: Permission; label: string; description: str
   { key: "hiring:view", label: "View hiring pipeline", description: "See the candidate board and stage timelines (interviewers included)" },
   { key: "hiring:manage", label: "Manage hiring", description: "Create candidates, advance stages and decide outcomes in the recruitment pipeline" },
   { key: "hiring:config", label: "Configure hiring", description: "Edit the workspace hiring stage template and document types" },
+  { key: "payroll:manage", label: "Manage payroll", description: "Maintain salary structures, run monthly payroll, edit and lock payslips" },
 ];
 
 export function hasPermission(role: Role | undefined | null, permission: Permission): boolean {

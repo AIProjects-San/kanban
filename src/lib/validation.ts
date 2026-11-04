@@ -627,3 +627,47 @@ export const updateOfferRecordSchema = z.object({
   letterText: z.string().trim().max(10_000).default(""),
   notes: z.string().trim().max(2_000).default(""),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// R7 — payroll (docs/RECRUITMENT_MODULE_PLAN.md §5). Salary structures reuse
+// the offer component schema (annual amounts); payslip lines are monthly
+// { key, label, amount } rows; periods are "YYYY-MM".
+// ---------------------------------------------------------------------------
+
+export const PAYROLL_PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export const payslipLineSchema = z.object({
+  key: z.string().trim().min(1).max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
+  label: z.string().trim().min(1, "A label is required.").max(120),
+  amount: z.number().min(0).max(10_000_000),
+}).strict();
+
+export const saveSalaryStructureSchema = z.object({
+  id: cuidish.optional(),
+  userId: cuidish,
+  components: z.array(offerComponentSchema).max(30),
+  notes: z.string().trim().max(2_000).default(""),
+  effectiveFrom: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use the YYYY-MM-DD date format.").optional(),
+  isActive: z.boolean().default(true),
+}).strict();
+
+export const createPayrollRunSchema = z.object({
+  period: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM)."),
+}).strict();
+
+export const updatePayslipSchema = z.object({
+  payslipId: cuidish,
+  earnings: z.array(payslipLineSchema).max(40),
+  deductions: z.array(payslipLineSchema).max(40),
+  lopDays: z.number().int().min(0).max(31).default(0),
+  note: z.string().trim().max(500).default(""),
+}).strict();
+
+export const lockPayrollRunSchema = z.object({
+  runId: cuidish,
+}).strict();
+
+export const addPayslipSchema = z.object({
+  runId: cuidish,
+  userId: cuidish,
+}).strict();

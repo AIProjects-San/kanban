@@ -450,3 +450,21 @@
 /* Drag state */
 .f-dragging { opacity: 0.4; }
 .f-drop-target { background: var(--sidebar-accent); }
+
+/* R7 — payroll payslip print view: only the .print-area (the open payslip
+   modal) reaches the paper; everything else on the page is hidden. */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    border: none;
+    box-shadow: none;
+    background: var(--background);
+  }
+  .no-print { display: none !important; }
+}

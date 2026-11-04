@@ -19,7 +19,8 @@ export type ViewKey =
   | "bugs"
   | "leave"
   | "hr"
-  | "hiring";
+  | "hiring"
+  | "payroll";
 
 export type AccentTheme = "forest" | "ocean" | "plum" | "ember";
 

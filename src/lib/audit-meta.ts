@@ -12,7 +12,7 @@ import {
   UserCog, CalendarPlus, CalendarX, Send, ShieldCheck, Settings, BellPlus,
   CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
   ClipboardCheck,
-  KeyRound, FileText, FileWarning, XCircle,
+  KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -127,7 +127,14 @@ export type AuditAction =
   | "hiring.offer_sent"
   | "hiring.offer_signed"
   | "hiring.offer_declined"
-  | "hiring.candidate_joined";
+  | "hiring.candidate_joined"
+  // Recruitment R7 — payroll (ADMIN + HR only)
+  | "payroll.structure_saved"
+  | "payroll.structure_from_offer"
+  | "payroll.run_created"
+  | "payroll.payslip_updated"
+  | "payroll.payslip_added"
+  | "payroll.run_locked";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -250,6 +257,12 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.offer_signed": { icon: ClipboardCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.offer_declined": { icon: XCircle, cls: "text-destructive bg-destructive/10" },
   "hiring.candidate_joined": { icon: UserPlus, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.structure_saved": { icon: Landmark, cls: "text-purple-500 bg-purple-500/10" },
+  "payroll.structure_from_offer": { icon: Landmark, cls: "text-indigo-500 bg-indigo-500/10" },
+  "payroll.run_created": { icon: CalendarPlus, cls: "text-sky-500 bg-sky-500/10" },
+  "payroll.payslip_updated": { icon: FilePenLine, cls: "text-amber-500 bg-amber-500/10" },
+  "payroll.payslip_added": { icon: FilePlus2, cls: "text-indigo-500 bg-indigo-500/10" },
+  "payroll.run_locked": { icon: Lock, cls: "text-emerald-500 bg-emerald-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

@@ -5,7 +5,7 @@ and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 
 ## What is covered
 
-**83 scenarios across 12 feature files:**
+**88 scenarios across 13 feature files:**
 
 | Feature file | Scenarios |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -19,6 +19,7 @@ and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 | `hr-reviews.feature` (7) | manager's subtree queue, out-of-chain invisible, self-assessment, manager/HR/skip-level completion, employee acknowledgement |
 | `hr-onboarding.feature` (6) | seeded checklists + progress, create from template, add task, auto-complete on last tick, hire self-serves, outsider blocked |
 | `hiring.feature` (19) | HR sees board + manage controls, manager view-only, member gated, HR advances a stage, rejection requires a reason; R3: select candidate (offer-prep banner), reject with email lands in the outbox, seeded outbox row visible, manager never sees the outbox, selected-pool chip counts; R4: joining formalities of a selected candidate (checklist + BGV vendor), request a document from the checklist, doc-type editor config-gated; R5: HR builds an offer for a selected candidate (live CTC), offers panel lists records, manager never sees the panel; R6: HR sends the offer + the candidate signs on the public `/offer/<token>` page, HR marks the signed candidate joined (hired summary) |
+| `payroll.feature` (5) | HR sees the seeded runs (LOCKED + OPEN) and structures; payslip list shows the LOP hint; payslip editor shows the live net; HR edits loss-of-pay days and saves; HR creates next month's run and locks it; managers never see the Payroll leaf |
 | `hr-qa-hardening.feature` (2) | regression pack from the HR QA audit: approving past the remaining balance is refused; a next-year request is not blocked by this year's balance |
 | `zzz-login-lockout.feature` (1) | 5 failures block the 6th attempt (runs last so its lockout state can't pollute other scenarios) |
 
