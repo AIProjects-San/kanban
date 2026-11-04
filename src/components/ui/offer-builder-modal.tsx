@@ -73,6 +73,7 @@ export function OfferBuilderModal({
   // R6 — the freshly minted signing link (highlighted until the modal
   // closes) + a copied-link confirmation chip.
   const [freshToken, setFreshToken] = useState<string | null>(null);
+  const [sendingMailStatus, setSendingMailStatus] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async (cid: string) => {
@@ -107,8 +108,15 @@ export function OfferBuilderModal({
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
     setFreshToken(res.data.token);
+    setSendingMailStatus(res.data.mailStatus);
     setEditing(null);
-    toast.success("Offer sent — the signing link is below (also emailed and recorded in the outbox).");
+    if (res.data.mailStatus === "SENT") {
+      toast.success("Offer sent — the signing link is below (also emailed and recorded in the outbox).");
+    } else if (res.data.mailStatus === "FAILED") {
+      toast.error("Signing link created, but the email FAILED to send (see the outbox) — copy the link and send it manually.");
+    } else {
+      toast.warning("Signing link created, but the email was NOT delivered — no mail provider configured (set RESEND_API_KEY). Copy the link and send it to the candidate manually.");
+    }
     onChanged();
     await load(c.id);
   };
@@ -194,7 +202,14 @@ export function OfferBuilderModal({
             </button>
           </div>
           <div className="text-xs text-muted-foreground">
-            Also emailed to the candidate and recorded in the audited outbox. Once signed, mark them joined from the candidate panel.
+            {sendingMailStatus === "SENT" ? (
+              <>Also emailed to the candidate and recorded in the audited outbox.</>
+            ) : sendingMailStatus ? (
+              <>Not emailed — no mail provider is configured (the outbox row is SKIPPED). Copy the link and send it to the candidate yourself.</>
+            ) : (
+              <>Also emailed to the candidate (when a mail provider is configured) and recorded in the audited outbox.</>
+            )}{" "}
+            Once signed, mark them joined from the candidate panel.
           </div>
         </div>
       )}

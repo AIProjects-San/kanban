@@ -238,7 +238,11 @@ export function CandidateDetailModal({
     const res = await markJoined({ candidateId: c.id });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    toast.success(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist.`);
+    if (res.data.mailStatus === "SENT") {
+      toast.success(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist. Welcome email sent.`);
+    } else {
+      toast.warning(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist. BUT the welcome email was NOT delivered (no mail provider configured) — tell the hire their sign-in email; they set a password via "Forgot password?".`);
+    }
     onChanged();
   };
 

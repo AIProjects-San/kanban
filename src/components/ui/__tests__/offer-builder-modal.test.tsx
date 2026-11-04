@@ -23,7 +23,7 @@ vi.mock("@/server-actions/hiring", () => ({
   sendOffer,
 }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
 
 vi.mock("@/components/ui/modal", () => ({
   Modal: ({ children, open }: { children: React.ReactNode; open: boolean }) =>

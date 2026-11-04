@@ -40,6 +40,7 @@ import {
   monthlyEarningsFromStructure,
   payslipTotals,
   withLopLine,
+  daysInPeriod,
   parsePayslipLines,
   type PayslipLine,
 } from "@/lib/payroll-math";
@@ -382,10 +383,26 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     if (dupKey(data.earnings) || dupKey(data.deductions)) {
       throw new AuthorizationError("Line keys must be unique (the loss-of-pay key is reserved).");
     }
+    // Payroll invariants (P0 fix, persona-audit PT-P0-2): LOP days can never
+    // exceed the calendar length of the run period, and total deductions can
+    // never exceed gross — otherwise a payslip can be saved with negative net
+    // pay (verified live: 31 LOP days in a 30-day month produced net −$223.33).
+    const periodDays = daysInPeriod(slip.run.period);
+    if (data.lopDays > periodDays) {
+      throw new AuthorizationError(
+        `Loss-of-pay days (${data.lopDays}) can't exceed the ${periodDays} days of ${slip.run.period}.`,
+      );
+    }
     const grossBefore = slip.gross;
     const netBefore = slip.net;
     const deductions = withLopLine(data.deductions, payslipTotals(data.earnings, []).gross, data.lopDays, slip.run.period);
     const { gross, net } = payslipTotals(data.earnings, deductions);
+    if (net < 0) {
+      const totalDeductions = gross - net;
+      throw new AuthorizationError(
+        `Total deductions (${totalDeductions.toFixed(2)}) exceed gross pay (${gross.toFixed(2)}) — net pay can't be negative. Reduce loss-of-pay days or deduction lines.`,
+      );
+    }
     await db.payslip.update({
       where: { id: slip.id },
       data: {

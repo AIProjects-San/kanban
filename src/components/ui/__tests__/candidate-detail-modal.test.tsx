@@ -66,7 +66,7 @@ vi.mock("@/server-actions/hiring", () => ({
 
 vi.mock("@/server-actions/hr-directory", () => ({ getDirectory }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
 
 // Stub the Modal portal but keep children rendering (project-detail pattern).
 vi.mock("@/components/ui/modal", () => ({
@@ -472,7 +472,7 @@ describe("CandidateDetailModal: R6 joining", () => {
   });
 
   it("Mark joined (SELECTED + SIGNED offer) calls markJoined and toasts the created account email", async () => {
-    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app" } });
+    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SENT" } });
     const { toast } = await import("sonner");
     render(
       <CandidateDetailModal
@@ -493,6 +493,24 @@ describe("CandidateDetailModal: R6 joining", () => {
       ),
     );
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("Mark joined with the welcome email SKIPPED warns HR instead of claiming delivery", async () => {
+    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SKIPPED" } });
+    const { toast } = await import("sonner");
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer
+      />,
+    );
+    fireEvent.click(screen.getByTestId("mark-joined-btn"));
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith(
+        expect.stringContaining("welcome email was NOT delivered"),
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("a HIRED candidate shows the joined date + onboarding pointer (no joined button)", () => {

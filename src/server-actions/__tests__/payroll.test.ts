@@ -342,6 +342,33 @@ describe("R7 — payslips", () => {
     expect(db.payslip.update).not.toHaveBeenCalled();
   });
 
+  it("updatePayslip rejects LOP days beyond the run period's day count (persona-audit P0 fix)", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow()); // run period 2026-11 → 30 days
+    const res = await updatePayslip({
+      payslipId: "ps-1",
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 31,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/can't exceed the 30 days of 2026-11/);
+    expect(db.payslip.update).not.toHaveBeenCalled();
+  });
+
+  it("updatePayslip rejects a deduction set that would make net pay negative (persona-audit P0 fix)", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow());
+    // gross 6,700 — LOP 30/30 = 6,700 plus a 500 manual line → net −500.
+    const res = await updatePayslip({
+      payslipId: "ps-1",
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [{ key: "adv", label: "Advance recovery", amount: 500 }],
+      lopDays: 30,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/net pay can't be negative/);
+    expect(db.payslip.update).not.toHaveBeenCalled();
+  });
+
   it("addPayslip appends a mid-period joiner with the next slip number", async () => {
     db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
     db.payslip.findUnique.mockResolvedValue(null);

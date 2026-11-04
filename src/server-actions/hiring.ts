@@ -1589,7 +1589,7 @@ async function nextAvailableHireEmail(fullName: string, domain: string): Promise
   }
 }
 
-export async function sendOffer(input: { offerId: string }): Promise<ActionResult<{ token: string }>> {
+export async function sendOffer(input: { offerId: string }): Promise<ActionResult<{ token: string; mailStatus: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
     const offerId = String(input?.offerId ?? "").trim();
@@ -1672,7 +1672,7 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
       detail: `${auth.name} sent the offer to ${offer.candidate.email} (signing link expires in ${OFFER_TOKEN_TTL_DAYS} days; email ${status}).`,
     });
     revalidatePath("/");
-    return { token };
+    return { token, mailStatus: status };
   });
 }
 
@@ -1821,7 +1821,7 @@ export async function declineOffer(input: { token: string }): Promise<ActionResu
 /** Mark a signed candidate as Joined: creates the employee's account
  * (deterministic email), EmployeeProfile, roster entry, and onboarding
  * checklist, then queues the welcome email. Idempotent per candidate. */
-export async function markJoined(input: { candidateId: string }): Promise<ActionResult<{ userId: string; email: string }>> {
+export async function markJoined(input: { candidateId: string }): Promise<ActionResult<{ userId: string; email: string; mailStatus: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
     const candidateId = String(input?.candidateId ?? "").trim();
@@ -1951,6 +1951,6 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
       detail: `${auth.name} marked "${candidate.fullName}" as joined — account ${email} created with onboarding checklist + welcome email (${wstatus}).`,
     });
     revalidatePath("/");
-    return { userId: user.id, email };
+    return { userId: user.id, email, mailStatus: wstatus };
   });
 }
