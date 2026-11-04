@@ -5,7 +5,7 @@ and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 
 ## What is covered
 
-**69 scenarios across 12 feature files:**
+**70 scenarios across 12 feature files:**
 
 | Feature file | Scenarios |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -18,7 +18,7 @@ and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 | `hr-directory.feature` (6) | roster + search, manager read-only, admin edits, member self-serves contact fields, member blocked |
 | `hr-reviews.feature` (7) | manager's subtree queue, out-of-chain invisible, self-assessment, manager/HR/skip-level completion, employee acknowledgement |
 | `hr-onboarding.feature` (6) | seeded checklists + progress, create from template, add task, auto-complete on last tick, hire self-serves, outsider blocked |
-| `hiring.feature` (5) | HR sees board + manage controls, manager view-only, member gated, HR advances a stage, rejection requires a reason |
+| `hiring.feature` (6) | HR sees board + manage controls, manager view-only, member gated, HR advances a stage, rejection requires a reason |
 | `hr-qa-hardening.feature` (2) | regression pack from the HR QA audit: approving past the remaining balance is refused; a next-year request is not blocked by this year's balance |
 | `zzz-login-lockout.feature` (1) | 5 failures block the 6th attempt (runs last so its lockout state can't pollute other scenarios) |
 

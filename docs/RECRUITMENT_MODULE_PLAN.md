@@ -1,6 +1,6 @@
 # Recruitment & Joining Formalities Module Plan
 
-Status: R1 in progress · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
+Status: R1 ✓ R2 ✓ shipped (R3 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
 Decisions confirmed with the product owner on 2026-11-04 (see §1.3).
 
 ---
@@ -168,11 +168,11 @@ code fixes → unit tests → manual tests → automation (e2e) tests → final 
 src/server-actions, audit:check, build, bundle budget) → doc update → commit →
 push to origin.**
 
-- **R1 — Foundation**: schema (HiringStageConfig/Candidate/CandidateStage) +
+- **R1 — Foundation** *(shipped, 1ead4ff)*: schema (HiringStageConfig/Candidate/CandidateStage) +
   migration; RBAC (3 permissions); stage-template editor; candidate CRUD;
   pipeline board with stage timeline, advance/skip/reject-with-reason basics;
-  nav + store wiring; seed data. *(this release)*
-- **R2 — Interviews**: schedule an interview on an INTERVIEW stage → Calendar
+  nav + store wiring; seed data.
+- **R2 — Interviews** *(shipped)*: schedule an interview on an INTERVIEW stage → Calendar
   event + reminder + interviewer assignment + conflict check; scorecard
   (1–5 + strengths/concerns + recommendation) per interviewer; interviewer
   self-service ("my interviews" list for MANAGERs).

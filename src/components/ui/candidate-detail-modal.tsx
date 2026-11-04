@@ -1,12 +1,20 @@
 "use client";
 
-// Recruitment R1 — candidate detail modal: stage timeline (snapshot of the
+// Recruitment — candidate detail modal: stage timeline (snapshot of the
 // template at creation) + advance/skip/fail + decisions (reject with reason,
 // withdraw, reactivate) + per-candidate custom stage.
-// docs/RECRUITMENT_MODULE_PLAN.md §5 (R1), §1.4–1.5 (statuses).
+//
+// R2 additions (docs/RECRUITMENT_MODULE_PLAN.md §5): INTERVIEW stages get a
+// schedule form (creates a calendar event + interviewer reminder via the
+// server) and a structured scorecard (1–5 rating, strengths, concerns,
+// STRONG_HIRE|HIRE|NO_HIRE — research D). Scorecard edit is open to the
+// assigned interviewer or HR/ADMIN (canManage).
 
-import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronRight, CircleDashed, Loader2, MinusCircle, XCircle, Plus, Pencil } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  CheckCircle2, ChevronRight, CircleDashed, Loader2, MinusCircle, XCircle,
+  Plus, Pencil, CalendarClock, ClipboardPen,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
@@ -17,7 +25,11 @@ import {
   setStageStatus,
   decideCandidate,
   addCandidateStage,
+  scheduleInterview,
+  saveScorecard,
 } from "@/server-actions/hiring";
+import { getDirectory } from "@/server-actions/hr-directory";
+import { SCORECARD_RECOMMENDATIONS } from "@/lib/validation";
 
 const STAGE_STATUS_ICON: Record<string, React.ReactNode> = {
   PENDING: <CircleDashed size={15} className="text-muted-foreground" />,
@@ -32,9 +44,26 @@ const STAGE_TYPE_LABEL: Record<string, string> = {
   BG_CHECK: "Background check", DOCUMENTS: "Documents", OFFER: "Offer", CUSTOM: "Custom",
 };
 
+const RECOMMENDATION_LABEL: Record<string, string> = {
+  STRONG_HIRE: "Strong hire", HIRE: "Hire", NO_HIRE: "No hire",
+};
+
 function fmt(iso: string | null): string {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function toLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function CandidateDetailModal({
@@ -44,6 +73,7 @@ export function CandidateDetailModal({
   candidate,
   canManage,
   onEdit,
+  currentUserId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -51,6 +81,8 @@ export function CandidateDetailModal({
   candidate: CandidateT | null;
   canManage: boolean;
   onEdit: (c: CandidateT) => void;
+  /** Signed-in user — scorecards are also editable by the assigned interviewer. */
+  currentUserId: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -58,9 +90,35 @@ export function CandidateDetailModal({
   const [addOpen, setAddOpen] = useState(false);
   const [newStageLabel, setNewStageLabel] = useState("");
 
+  // R2 — scheduling state (one form at a time).
+  const [schedStageId, setSchedStageId] = useState<string | null>(null);
+  const [schedWhen, setSchedWhen] = useState("");
+  const [schedInterviewer, setSchedInterviewer] = useState("");
+  const [interviewers, setInterviewers] = useState<Array<{ userId: string; name: string }>>([]);
+
+  // R2 — scorecard state.
+  const [cardStage, setCardStage] = useState<CandidateStageT | null>(null);
+  const [rating, setRating] = useState("");
+  const [strengths, setStrengths] = useState("");
+  const [concerns, setConcerns] = useState("");
+  const [recommendation, setRecommendation] = useState("");
+  const [cardRemarks, setCardRemarks] = useState("");
+
+  const loadInterviewers = useCallback(async () => {
+    if (interviewers.length > 0) return;
+    const res = await getDirectory();
+    if (res.ok) {
+      setInterviewers(res.data.profiles.map((p) => ({ userId: p.userId, name: p.name })));
+    }
+  }, [interviewers.length]);
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (!open) { setRejectOpen(false); setAddOpen(false); setReason(""); setNewStageLabel(""); }
+    if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRejectOpen(false); setAddOpen(false); setReason(""); setNewStageLabel("");
+      setSchedStageId(null); setSchedWhen(""); setSchedInterviewer("");
+      setCardStage(null);
+    }
   }, [open]);
 
   if (!candidate) return null;
@@ -118,6 +176,60 @@ export function CandidateDetailModal({
     if (okDone) { setAddOpen(false); setNewStageLabel(""); }
   };
 
+  // R2 — open the schedule form for an INTERVIEW stage.
+  const openSchedule = async (s: CandidateStageT) => {
+    await loadInterviewers();
+    setCardStage(null);
+    setSchedStageId(s.id);
+    setSchedWhen(toLocalInput(s.scheduledAt));
+    setSchedInterviewer(s.ownerUserId ?? "");
+  };
+
+  const submitSchedule = async (e: React.FormEvent, s: CandidateStageT) => {
+    e.preventDefault();
+    if (!schedWhen) { toast.error("Pick a date and time."); return; }
+    const okDone = await run(
+      () => scheduleInterview({
+        stageId: s.id,
+        scheduledAt: new Date(schedWhen).toISOString(),
+        interviewerId: schedInterviewer || null,
+      }),
+      "Interview scheduled — calendar event + reminder created.",
+    );
+    if (okDone) { setSchedStageId(null); setSchedWhen(""); }
+  };
+
+  // R2 — open the scorecard form (interviewer or manager).
+  const openScorecard = (s: CandidateStageT) => {
+    setSchedStageId(null);
+    setCardStage(s);
+    setRating(s.rating ? String(s.rating) : "");
+    setStrengths(s.strengths);
+    setConcerns(s.concerns);
+    setRecommendation(s.recommendation ?? "");
+    setCardRemarks(s.remarks);
+  };
+
+  const submitScorecard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cardStage) return;
+    const okDone = await run(
+      () => saveScorecard({
+        stageId: cardStage.id,
+        rating: rating ? Number(rating) : null,
+        strengths,
+        concerns,
+        recommendation: recommendation || null,
+        remarks: cardRemarks,
+      }),
+      "Scorecard saved.",
+    );
+    if (okDone) setCardStage(null);
+  };
+
+  const hasCard = (s: CandidateStageT) =>
+    s.rating !== null || s.strengths !== "" || s.concerns !== "" || s.recommendation !== null;
+
   return (
     <Modal open={open} onClose={onClose} title={c.fullName} description={`${c.position || "Position n/a"}${c.department ? ` · ${c.department}` : ""}`} size="xl">
       <div className="grid lg:grid-cols-2 gap-6">
@@ -157,7 +269,11 @@ export function CandidateDetailModal({
           {/* Decision panel */}
           <div className="rounded-lg border border-border p-4" data-testid="candidate-decision">
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Decision</div>
-            {c.status === "ACTIVE" ? (
+            {c.status === "ACTIVE" && !canManage ? (
+              <div className="text-xs text-muted-foreground rounded-md bg-muted/60 px-3 py-2">
+                Pipeline in progress — HR drives the stages and the decision.
+              </div>
+            ) : c.status === "ACTIVE" ? (
               <div className="flex flex-wrap gap-2">
                 <button
                   className="f-btn f-btn-primary" disabled={busy} onClick={advance}
@@ -262,6 +378,11 @@ export function CandidateDetailModal({
                     <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wide">
                       {STAGE_TYPE_LABEL[s.stageType] ?? s.stageType}
                     </span>
+                    {s.scheduledAt && s.stageType === "INTERVIEW" && (
+                      <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 inline-flex items-center gap-1" data-testid={`scheduled-chip-${s.stageKey}`}>
+                        <CalendarClock size={11} /> {fmtDateTime(s.scheduledAt)}
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">
                     {s.status}
@@ -270,13 +391,116 @@ export function CandidateDetailModal({
                     {s.ownerName ? ` · ${s.ownerName}` : ""}
                   </div>
                   {s.remarks && <div className="text-xs mt-1 text-foreground/80">“{s.remarks}”</div>}
-                  {canManage && active && (s.status === "PENDING" || s.status === "IN_PROGRESS") && (
-                    <div className="flex gap-2 mt-2">
-                      {s.status !== "IN_PROGRESS" && (
-                        <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => setStatus(s, "SKIPPED")}>Skip</button>
-                      )}
-                      <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => setStatus(s, "FAILED")}>Mark failed</button>
+
+                  {/* R2 — scorecard read view */}
+                  {hasCard(s) && (
+                    <div className="mt-2 rounded-md bg-muted/60 p-2 text-xs space-y-1" data-testid={`scorecard-${s.stageKey}`}>
+                      <div className="flex gap-2 items-center flex-wrap">
+                        {s.rating !== null && <span className="font-semibold">Rating: {s.rating}/5</span>}
+                        {s.recommendation && (
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded font-medium",
+                            s.recommendation === "NO_HIRE" ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success",
+                          )}>
+                            {RECOMMENDATION_LABEL[s.recommendation] ?? s.recommendation}
+                          </span>
+                        )}
+                      </div>
+                      {s.strengths && <div><span className="text-muted-foreground">Strengths:</span> {s.strengths}</div>}
+                      {s.concerns && <div><span className="text-muted-foreground">Concerns:</span> {s.concerns}</div>}
                     </div>
+                  )}
+
+                  {/* Stage actions */}
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {canManage && active && (s.status === "PENDING" || s.status === "IN_PROGRESS") && (
+                      <>
+                        {s.stageType === "INTERVIEW" && (
+                          <button
+                            className="f-btn f-btn-ghost text-xs" disabled={busy}
+                            onClick={() => void openSchedule(s)}
+                            data-testid={`schedule-btn-${s.stageKey}`}
+                          >
+                            <CalendarClock size={13} /> {s.scheduledAt ? "Reschedule" : "Schedule"}
+                          </button>
+                        )}
+                        {s.status !== "IN_PROGRESS" && (
+                          <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => setStatus(s, "SKIPPED")}>Skip</button>
+                        )}
+                        <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => setStatus(s, "FAILED")}>Mark failed</button>
+                      </>
+                    )}
+                    {s.stageType === "INTERVIEW" && active && (canManage || s.ownerUserId === currentUserId) && (
+                      <button
+                        className="f-btn f-btn-ghost text-xs" disabled={busy}
+                        onClick={() => openScorecard(s)}
+                        data-testid={`scorecard-btn-${s.stageKey}`}
+                      >
+                        <ClipboardPen size={13} /> {hasCard(s) ? "Edit scorecard" : "Fill scorecard"}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* R2 — schedule form */}
+                  {schedStageId === s.id && (
+                    <form onSubmit={(e) => submitSchedule(e, s)} className="mt-2 p-2 rounded-md border border-border space-y-2" data-testid="schedule-form">
+                      <div className="grid grid-cols-2 gap-2">
+                        <Field label="Date & time">
+                          <input
+                            type="datetime-local" className="f-input" value={schedWhen}
+                            onChange={(e) => setSchedWhen(e.target.value)} required
+                            data-testid="schedule-when"
+                          />
+                        </Field>
+                        <Field label="Interviewer">
+                          <select className="f-input" value={schedInterviewer} onChange={(e) => setSchedInterviewer(e.target.value)} data-testid="schedule-interviewer">
+                            <option value="">— Keep current owner —</option>
+                            {interviewers.map((i) => (
+                              <option key={i.userId} value={i.userId}>{i.name}</option>
+                            ))}
+                          </select>
+                        </Field>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button type="button" className="f-btn f-btn-ghost text-xs" onClick={() => setSchedStageId(null)}>Cancel</button>
+                        <button type="submit" className="f-btn f-btn-primary f-btn-sm" disabled={busy} data-testid="schedule-submit">
+                          {s.scheduledAt ? "Reschedule" : "Schedule"} interview
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* R2 — scorecard form */}
+                  {cardStage?.id === s.id && (
+                    <form onSubmit={submitScorecard} className="mt-2 p-2 rounded-md border border-border space-y-2" data-testid="scorecard-form">
+                      <div className="grid grid-cols-2 gap-2">
+                        <Field label="Rating (1–5)">
+                          <select className="f-input" value={rating} onChange={(e) => setRating(e.target.value)} data-testid="scorecard-rating">
+                            <option value="">— Not rated —</option>
+                            {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="Recommendation">
+                          <select className="f-input" value={recommendation} onChange={(e) => setRecommendation(e.target.value)} data-testid="scorecard-recommendation">
+                            <option value="">— None —</option>
+                            {SCORECARD_RECOMMENDATIONS.map((r) => <option key={r} value={r}>{RECOMMENDATION_LABEL[r]}</option>)}
+                          </select>
+                        </Field>
+                      </div>
+                      <Field label="Strengths">
+                        <textarea className="f-input min-h-[48px]" value={strengths} onChange={(e) => setStrengths(e.target.value)} maxLength={2_000} />
+                      </Field>
+                      <Field label="Concerns">
+                        <textarea className="f-input min-h-[48px]" value={concerns} onChange={(e) => setConcerns(e.target.value)} maxLength={2_000} />
+                      </Field>
+                      <Field label="Remarks (shown on the stage)">
+                        <textarea className="f-input min-h-[40px]" value={cardRemarks} onChange={(e) => setCardRemarks(e.target.value)} maxLength={2_000} />
+                      </Field>
+                      <div className="flex justify-end gap-2">
+                        <button type="button" className="f-btn f-btn-ghost text-xs" onClick={() => setCardStage(null)}>Cancel</button>
+                        <button type="submit" className="f-btn f-btn-primary f-btn-sm" disabled={busy} data-testid="scorecard-submit">Save scorecard</button>
+                      </div>
+                    </form>
                   )}
                 </div>
               </li>

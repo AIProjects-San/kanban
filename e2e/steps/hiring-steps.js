@@ -73,3 +73,25 @@ Then("the rejection reason field should be required", async function () {
   const confirm = await driver.findElement(By.css('[data-testid="reject-confirm"]'));
   assert.ok(await confirm.isDisplayed(), "confirm button awaits a reason");
 });
+
+When("I open the schedule form for stage {string}", async function (key) {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css(`[data-testid="schedule-btn-${key}"]`)),
+    10_000,
+    `schedule button for stage "${key}" not found`,
+  );
+  await btn.click();
+  await driver.wait(until.elementLocated(By.css('[data-testid="schedule-form"]')), 10_000);
+});
+
+Then("the schedule form should offer the interviewer dropdown", async function () {
+  const driver = await this.getDriver();
+  const select = await driver.wait(
+    until.elementLocated(By.css('[data-testid="schedule-interviewer"]')),
+    10_000,
+  );
+  const options = await select.findElements(By.css("option"));
+  // "— Keep current owner —" + at least the seeded directory members.
+  assert.ok(options.length >= 2, `expected interviewer options, got ${options.length}`);
+});

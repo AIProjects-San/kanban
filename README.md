@@ -60,10 +60,14 @@ keystroke-reachable. Groups below match the sidebar.
   reject **with a stored reason** or withdraw), MANAGERs get an interviewer's
   read view. Candidates snapshot the template at creation, so template edits
   never rewrite history. Rejected / withdrawn / hired pools sit behind a status
-  filter. Every hiring mutation lands in the audit log. (Interview
-  scheduling + scorecards, rejection emails via an auditable outbox, document
-  checklists, the offer builder + e-signature, auto employee creation on
-  joining, and full payroll follow in milestones R2–R8.)
+  filter. Every hiring mutation lands in the audit log. Interviews
+  (R2): scheduling an INTERVIEW stage creates a calendar event + the
+  interviewer's personal reminder, blocks double-bookings within the hour,
+  and collects a structured scorecard (1–5 rating, strengths, concerns,
+  STRONG_HIRE/HIRE/NO_HIRE) — editable by the assigned interviewer or HR;
+  interviewers see a "Your upcoming interviews" panel. (Rejection emails via
+  an auditable outbox, document checklists, the offer builder + e-signature,
+  auto employee creation on joining, and full payroll follow in R3–R8.)
 
 **Administration**
 - **Users** (`G U`, admin) — create (login + directory entry in one action), edit,
@@ -161,7 +165,7 @@ contains **no credential literals**; the seed refuses to run without it):
 CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR: lint →
 typecheck → coverage-gated unit tests → production build → bundle budget →
 dependency audit → **e2e** on a seeded ephemeral PostgreSQL 16 with headless
-Chrome (69 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
+Chrome (70 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
 messaging, a11y, HR leave/directory/reviews/onboarding, QA hardening).
 
 ## Keyboard shortcuts
@@ -247,7 +251,7 @@ deploy/                # Caddy/nginx TLS configs, sandbox preview helper
 | Layer | Tool | Scale |
 |-------|------|-------|
 | Unit / integration | Vitest + jsdom (82 files) | **1484 tests**, coverage-gated |
-| Browser E2E | Cucumber + Selenium | 69 scenarios / 12 feature files |
+| Browser E2E | Cucumber + Selenium | 70 scenarios / 12 feature files |
 | Production smoke | `test:prodsmoke` | health, headers, CSP, credential flow |
 | Load | k6 + `scripts/load-smoke.mjs` | p95 budgets incl. a 100k-row dataset (`scripts/seed-load.js`) |
 

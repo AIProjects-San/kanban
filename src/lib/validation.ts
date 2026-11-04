@@ -503,3 +503,20 @@ export const decideCandidateSchema = z.object({
 export const deleteStageTemplateSchema = z.object({
   id: cuidish,
 }).strict();
+
+export const SCORECARD_RECOMMENDATIONS = ["STRONG_HIRE", "HIRE", "NO_HIRE"] as const;
+
+export const scheduleInterviewSchema = z.object({
+  stageId: cuidish,
+  scheduledAt: z.string().min(4, "A date/time is required.").max(40),
+  interviewerId: cuidish.nullable().optional(),
+}).strict();
+
+export const scorecardSchema = z.object({
+  stageId: cuidish,
+  rating: z.number().int().min(1).max(5).nullable().optional(),
+  strengths: z.string().trim().max(2_000).default(""),
+  concerns: z.string().trim().max(2_000).default(""),
+  recommendation: z.enum(SCORECARD_RECOMMENDATIONS).nullable().optional(),
+  remarks: z.string().trim().max(2_000).default(""),
+}).strict();

@@ -11,6 +11,7 @@ import {
   Plus, Pencil, Trash2, ArrowRightLeft, FolderPlus, UserPlus, UserMinus,
   UserCog, CalendarPlus, CalendarX, Send, ShieldCheck, Settings, BellPlus,
   CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
+  ClipboardCheck,
   KeyRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -101,7 +102,11 @@ export type AuditAction =
   | "hiring.stage_added"
   | "hiring.decided"
   | "hiring.stage_template_saved"
-  | "hiring.stage_template_deleted";
+  | "hiring.stage_template_deleted"
+  // Recruitment R2 — interview scheduling + scorecards
+  | "hiring.interview_scheduled"
+  | "hiring.interview_rescheduled"
+  | "hiring.scorecard_saved";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -204,6 +209,9 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.decided": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.stage_template_saved": { icon: Settings, cls: "text-purple-500 bg-purple-500/10" },
   "hiring.stage_template_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "hiring.interview_scheduled": { icon: CalendarPlus, cls: "text-indigo-500 bg-indigo-500/10" },
+  "hiring.interview_rescheduled": { icon: CalendarPlus, cls: "text-amber-500 bg-amber-500/10" },
+  "hiring.scorecard_saved": { icon: ClipboardCheck, cls: "text-emerald-500 bg-emerald-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

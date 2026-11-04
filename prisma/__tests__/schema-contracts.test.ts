@@ -241,4 +241,15 @@ describe("Recruitment R1 models are declared", () => {
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
   });
+
+  it("R2: interview scheduling + scorecard columns exist on CandidateStage", () => {
+    const block = modelBlock("CandidateStage");
+    expect(block).toMatch(/strengths\s+String\s+@default\(""\)/);
+    expect(block).toMatch(/concerns\s+String\s+@default\(""\)/);
+    expect(block).toMatch(/recommendation\s+String\?/);
+    expect(block).toMatch(/eventId\s+String\?/);
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261112000000_hiring_interviews");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+  });
 });

@@ -199,6 +199,11 @@ Execute each group per persona. ✅ = pass criterion.
 | HIRE-9 | Template edit is non-destructive | Stages editor → rename a stage → open an existing candidate | Template renamed; the existing candidate's timeline keeps the OLD snapshotted label |
 | HIRE-10 | Config gating | As MANAGER open Hiring | "Stages" editor button hidden (no `hiring:config`) |
 
+| HIRE-11 | Schedule interview | HR → open a candidate at an INTERVIEW stage → Schedule → pick date + interviewer | Calendar shows "Interview: <name> — <stage>"; the interviewer's dashboard reminder appears; the stage shows the scheduled chip |
+| HIRE-12 | Double-booking refused | Schedule the same interviewer twice within the same hour | Second attempt refused with a naming conflict message; no second calendar event |
+| HIRE-13 | Scorecard (interviewer) | Sign in as the assigned interviewer (manager@fernly.app) → Hiring → open the candidate → Fill scorecard | Rating 1–5, strengths, concerns, recommendation save and render read-only; HR sees them too |
+| HIRE-14 | My interviews panel | Sign in as manager@fernly.app → Hiring | "Your upcoming interviews" panel lists assigned stages with dates; hidden when empty |
+
 ### 2.14 Personalisation & UX (UX)
 
 | ID | Scenario | Steps | Expected |

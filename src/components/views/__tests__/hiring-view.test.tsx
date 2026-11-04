@@ -13,10 +13,11 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 //   • Opening a candidate renders the stage timeline + advance button.
 // ---------------------------------------------------------------------------
 
-const { getHiringBoard, getHiringPermissions, advanceStage } = vi.hoisted(() => ({
+const { getHiringBoard, getHiringPermissions, advanceStage, getMyInterviews } = vi.hoisted(() => ({
   getHiringBoard: vi.fn(),
   getHiringPermissions: vi.fn(),
   advanceStage: vi.fn(),
+  getMyInterviews: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hiring", async (importOriginal) => ({
@@ -24,6 +25,7 @@ vi.mock("@/server-actions/hiring", async (importOriginal) => ({
   getHiringBoard,
   getHiringPermissions,
   advanceStage,
+  getMyInterviews,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -56,8 +58,8 @@ function cand(overrides: Partial<CandidateT>): CandidateT {
     createdById: "u-admin", userId: null, joinedAt: null,
     createdAt: new Date().toISOString(),
     stages: [
-      { id: "st-1", stageKey: "screening", label: "Application Screening", stageType: "SCREENING", ownerUserId: null, ownerName: null, status: "PASSED", scheduledAt: null, remarks: "", rating: null, sortOrder: 10, startedAt: null, completedAt: null },
-      { id: "st-2", stageKey: "interview_1", label: "Interview 1 — Technical", stageType: "INTERVIEW", ownerUserId: "u-mgr", ownerName: "Ingrid", status: "IN_PROGRESS", scheduledAt: null, remarks: "", rating: null, sortOrder: 20, startedAt: null, completedAt: null },
+      { id: "st-1", stageKey: "screening", label: "Application Screening", stageType: "SCREENING", ownerUserId: null, ownerName: null, status: "PASSED", scheduledAt: null, remarks: "", rating: null, strengths: "", concerns: "", recommendation: null, eventId: null, sortOrder: 10, startedAt: null, completedAt: null },
+      { id: "st-2", stageKey: "interview_1", label: "Interview 1 — Technical", stageType: "INTERVIEW", ownerUserId: "u-mgr", ownerName: "Ingrid", status: "IN_PROGRESS", scheduledAt: null, remarks: "", rating: null, strengths: "", concerns: "", recommendation: null, eventId: null, sortOrder: 20, startedAt: null, completedAt: null },
     ],
     ...overrides,
   };
@@ -70,6 +72,7 @@ beforeEach(() => {
     data: { stages: STAGES, candidates: [cand({})] },
   });
   getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: true, canConfig: true } });
+  getMyInterviews.mockResolvedValue({ ok: true, data: [] });
 });
 
 describe("HiringView: HR (full manage)", () => {
@@ -113,6 +116,31 @@ describe("HiringView: MANAGER (interviewer, view-only)", () => {
     expect(screen.queryByTestId("add-candidate-btn")).toBeNull();
     expect(screen.queryByTestId("stage-template-btn")).toBeNull();
     expect(screen.getByText(/interviewer view/)).toBeTruthy();
+  });
+});
+
+describe("HiringView: R2 interviewer panel", () => {
+  it("renders 'Your upcoming interviews' when the signed-in user has assigned stages", async () => {
+    getMyInterviews.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          stageId: "st-2", stageLabel: "Interview 1 — Technical", candidateId: "cand-1",
+          candidateName: "Nadia Petrova", position: "SWE", status: "IN_PROGRESS",
+          scheduledAt: "2026-11-10T09:30:00.000Z", rating: null, recommendation: null,
+        },
+      ],
+    });
+    render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
+    const panel = await screen.findByTestId("my-interviews");
+    expect(panel.textContent).toContain("Nadia Petrova");
+    expect(panel.textContent).toContain("Interview 1 — Technical");
+  });
+
+  it("hides the panel when the user has no assigned interviews", async () => {
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
+    expect(screen.queryByTestId("my-interviews")).toBeNull();
   });
 });
 

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -54,10 +54,14 @@ import {
   deleteStageTemplate,
   getHiringBoard,
   getHiringPermissions,
+  scheduleInterview,
+  saveScorecard,
+  getMyInterviews,
 } from "../hiring";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
 const MANAGER_AUTH = { userId: "u-mgr", role: "MANAGER" as const, name: "Ingrid", email: "ingrid@x.co" };
+const MEMBER_AUTH = { userId: "u-diego", role: "MEMBER" as const, name: "Diego", email: "diego@x.co" };
 
 function denyFor(perm: string) {
   return async (p: string) => {
@@ -94,9 +98,9 @@ function candidateWithStages(overrides: Record<string, unknown> = {}) {
     joinedAt: null,
     createdAt: new Date("2026-11-01T00:00:00Z"),
     stages: [
-      { id: "st-1", candidateId: "cand-1", stageKey: "screening", label: "Application Screening", stageType: "SCREENING", ownerUserId: null, status: "PASSED", scheduledAt: null, remarks: "", rating: null, sortOrder: 10, startedAt: new Date(), completedAt: new Date() },
-      { id: "st-2", candidateId: "cand-1", stageKey: "interview_1", label: "Interview 1 — Technical", stageType: "INTERVIEW", ownerUserId: "u-mgr", status: "IN_PROGRESS", scheduledAt: null, remarks: "", rating: null, sortOrder: 20, startedAt: new Date(), completedAt: null },
-      { id: "st-3", candidateId: "cand-1", stageKey: "offer", label: "Offer & Signature", stageType: "OFFER", ownerUserId: null, status: "PENDING", scheduledAt: null, remarks: "", rating: null, sortOrder: 70, startedAt: null, completedAt: null },
+      { id: "st-1", candidateId: "cand-1", stageKey: "screening", label: "Application Screening", stageType: "SCREENING", ownerUserId: null, status: "PASSED", scheduledAt: null, remarks: "", rating: null, strengths: "", concerns: "", recommendation: null, eventId: null, sortOrder: 10, startedAt: new Date(), completedAt: new Date() },
+      { id: "st-2", candidateId: "cand-1", stageKey: "interview_1", label: "Interview 1 — Technical", stageType: "INTERVIEW", ownerUserId: "u-mgr", status: "IN_PROGRESS", scheduledAt: null, remarks: "", rating: null, strengths: "", concerns: "", recommendation: null, eventId: null, sortOrder: 20, startedAt: new Date(), completedAt: null },
+      { id: "st-3", candidateId: "cand-1", stageKey: "offer", label: "Offer & Signature", stageType: "OFFER", ownerUserId: null, status: "PENDING", scheduledAt: null, remarks: "", rating: null, strengths: "", concerns: "", recommendation: null, eventId: null, sortOrder: 70, startedAt: null, completedAt: null },
     ],
     ...overrides,
   };
@@ -121,7 +125,17 @@ beforeEach(() => {
   db.candidateStage.create.mockResolvedValue({ id: "st-new" });
   db.candidateStage.update.mockResolvedValue({});
   db.user.findMany.mockResolvedValue([{ id: "u-mgr", name: "Ingrid" }]);
+  db.calendarEvent.create.mockResolvedValue({ id: "ev-1" });
+  db.reminder.create.mockResolvedValue({ id: "rem-1" });
 });
+
+const INTERVIEW_STAGE = {
+  id: "st-2", candidateId: "cand-1", stageKey: "interview_1", label: "Interview 1 — Technical",
+  stageType: "INTERVIEW", ownerUserId: "u-mgr", status: "IN_PROGRESS",
+  scheduledAt: null, remarks: "", rating: null, strengths: "", concerns: "",
+  recommendation: null, eventId: null, sortOrder: 20, startedAt: null, completedAt: null,
+  candidate: { id: "cand-1", fullName: "Nadia Petrova", position: "SWE", status: "ACTIVE" },
+};
 
 describe("createCandidate", () => {
   it("requires hiring:manage (a MEMBER is rejected)", async () => {
@@ -377,5 +391,182 @@ describe("getHiringPermissions", () => {
     const mgrRes = await getHiringPermissions();
     expect(mgrRes.ok).toBe(true);
     if (mgrRes.ok) expect(mgrRes.data).toEqual({ canManage: false, canConfig: false });
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// R2 — interview scheduling + scorecards.
+// ---------------------------------------------------------------------------
+
+describe("scheduleInterview", () => {
+  it("requires hiring:manage (the interviewer alone cannot schedule)", async () => {
+    requirePermissionMock.mockImplementation(async (p: string) => {
+      if (p === "hiring:manage") {
+        throw new (class extends Error { digest = "AuthorizationError"; })("denied");
+      }
+      return MANAGER_AUTH;
+    });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    expect(res.ok).toBe(false);
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to schedule a non-INTERVIEW stage", async () => {
+    db.candidateStage.findUnique.mockResolvedValue({
+      ...INTERVIEW_STAGE, stageType: "SCREENING",
+    });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    expect(res.ok).toBe(false);
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the interviewer already has an interview in the same hour window", async () => {
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    db.candidateStage.findMany.mockResolvedValue([
+      { label: "Interview 1 — Technical", candidate: { fullName: "Sam Whitaker" } },
+    ]);
+    const res = await scheduleInterview({
+      stageId: "st-2", scheduledAt: new Date().toISOString(), interviewerId: "u-mgr",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("Scheduling conflict");
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("schedules: calendar event + interviewer reminder + scheduledAt/owner/eventId recorded", async () => {
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    db.candidateStage.findMany.mockResolvedValue([]);
+    const when = new Date("2026-11-10T09:30:00.000Z").toISOString();
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, interviewerId: "u-mgr" });
+    expect(res.ok).toBe(true);
+    expect(db.calendarEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ title: "Interview: Nadia Petrova — Interview 1 — Technical", type: "MEETING" }),
+      }),
+    );
+    expect(db.reminder.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ownerId: "u-mgr" }) }),
+    );
+    expect(db.candidateStage.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "st-2" },
+        data: expect.objectContaining({ eventId: "ev-1", ownerUserId: "u-mgr" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.interview_scheduled" }));
+  });
+
+  it("refuses without an interviewer (no owner on the stage and none picked)", async () => {
+    db.candidateStage.findUnique.mockResolvedValue({ ...INTERVIEW_STAGE, ownerUserId: null });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("interviewer");
+  });
+});
+
+describe("saveScorecard", () => {
+  it("the assigned interviewer may fill their own scorecard", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    const res = await saveScorecard({
+      stageId: "st-2", rating: 4, strengths: "Great depth", concerns: "Little backend",
+      recommendation: "HIRE", remarks: "Recommended",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.candidateStage.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "st-2" },
+        data: expect.objectContaining({ rating: 4, strengths: "Great depth", recommendation: "HIRE" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.scorecard_saved" }));
+  });
+
+  it("a MEMBER who is not the owner is refused", async () => {
+    requirePermissionMock.mockImplementation(async (p: string) => {
+      if (p === "hiring:manage") {
+        throw new (class extends Error { digest = "AuthorizationError"; })("denied");
+      }
+      return MEMBER_AUTH;
+    });
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    const res = await saveScorecard({ stageId: "st-2", rating: 5 });
+    expect(res.ok).toBe(false);
+    expect(db.candidateStage.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an out-of-range rating at validation", async () => {
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    const res = await saveScorecard({ stageId: "st-2", rating: 9 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("VALIDATION");
+  });
+
+  it("refuses scorecards on a closed candidate", async () => {
+    db.candidateStage.findUnique.mockResolvedValue({
+      ...INTERVIEW_STAGE,
+      candidate: { id: "cand-1", fullName: "Nadia Petrova", position: "SWE", status: "REJECTED" },
+    });
+    const res = await saveScorecard({ stageId: "st-2", rating: 4 });
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("getMyInterviews", () => {
+  it("scopes strictly to the caller's own open INTERVIEW stages on ACTIVE candidates", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.candidateStage.findMany.mockResolvedValue([
+      {
+        id: "st-2", stageLabel: undefined, label: "Interview 1 — Technical", candidateId: "cand-1",
+        status: "IN_PROGRESS", scheduledAt: new Date("2026-11-10T09:30:00Z"), rating: null,
+        recommendation: null,
+        candidate: { id: "cand-1", fullName: "Nadia Petrova", position: "SWE", status: "ACTIVE" },
+      },
+    ]);
+    const res = await getMyInterviews();
+    expect(res.ok).toBe(true);
+    expect(db.candidateStage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          ownerUserId: "u-mgr",
+          stageType: "INTERVIEW",
+          status: { in: ["PENDING", "IN_PROGRESS"] },
+          candidate: { status: "ACTIVE" },
+        }),
+      }),
+    );
+    if (res.ok) {
+      expect(res.data[0].candidateName).toBe("Nadia Petrova");
+      expect(res.data[0].stageLabel).toBe("Interview 1 — Technical");
+    }
+  });
+});
+
+describe("R2 edge branches", () => {
+  it("refuses an invalid schedule date string", async () => {
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: "not-a-date" });
+    expect(res.ok).toBe(false);
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses scheduling on a stage whose candidate is closed", async () => {
+    db.candidateStage.findUnique.mockResolvedValue({
+      ...INTERVIEW_STAGE,
+      candidate: { id: "cand-1", fullName: "Nadia Petrova", position: "SWE", status: "HIRED" },
+    });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    expect(res.ok).toBe(false);
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("a reschedule audits as hiring.interview_rescheduled", async () => {
+    db.candidateStage.findUnique.mockResolvedValue({
+      ...INTERVIEW_STAGE, scheduledAt: new Date("2026-11-05T09:30:00Z"), eventId: "ev-old",
+    });
+    db.candidateStage.findMany.mockResolvedValue([]);
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date("2026-11-10T09:30:00Z").toISOString() });
+    expect(res.ok).toBe(true);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.interview_rescheduled" }));
   });
 });

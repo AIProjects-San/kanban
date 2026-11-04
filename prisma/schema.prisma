@@ -975,6 +975,10 @@ model Candidate {
 // the template at candidate-creation time. status: PENDING → IN_PROGRESS →
 // PASSED | FAILED, plus SKIPPED (per-candidate override). rating is the 1–5
 // scorecard score (R2 interview scorecards; validated 1..5 when present).
+//
+// R2 — interview scheduling + scorecards: eventId links the calendar event
+// created when the interview is scheduled; strengths/concerns/recommendation
+// are the structured scorecard (recommendation: STRONG_HIRE | HIRE | NO_HIRE).
 model CandidateStage {
   id          String    @id @default(cuid())
   candidateId String
@@ -990,6 +994,13 @@ model CandidateStage {
   scheduledAt DateTime?
   remarks     String    @default("")
   rating      Int?
+  // R2 scorecard (docs/RECRUITMENT_MODULE_PLAN.md §5, research D: structured
+  // 1–5 scale + strengths/concerns + a hire recommendation).
+  strengths   String    @default("")
+  concerns    String    @default("")
+  recommendation String?
+  // CalendarEvent.id when this interview stage has been scheduled (R2).
+  eventId     String?
   sortOrder   Int       @default(0)
   startedAt   DateTime?
   completedAt DateTime?

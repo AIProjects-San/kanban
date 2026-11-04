@@ -28,6 +28,8 @@ import {
   decideCandidateSchema,
   saveStageTemplateSchema,
   deleteStageTemplateSchema,
+  scheduleInterviewSchema,
+  scorecardSchema,
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit } from "./shared";
@@ -42,6 +44,8 @@ type StageRow = {
   id: string; candidateId: string; stageKey: string; label: string;
   stageType: string; ownerUserId: string | null; status: string;
   scheduledAt: Date | null; remarks: string; rating: number | null;
+  strengths: string; concerns: string; recommendation: string | null;
+  eventId: string | null;
   sortOrder: number; startedAt: Date | null; completedAt: Date | null;
 };
 
@@ -60,6 +64,10 @@ function serializeStage(
     scheduledAt: s.scheduledAt ? s.scheduledAt.toISOString() : null,
     remarks: s.remarks,
     rating: s.rating,
+    strengths: s.strengths,
+    concerns: s.concerns,
+    recommendation: s.recommendation,
+    eventId: s.eventId,
     sortOrder: s.sortOrder,
     startedAt: s.startedAt ? s.startedAt.toISOString() : null,
     completedAt: s.completedAt ? s.completedAt.toISOString() : null,
@@ -542,6 +550,180 @@ export async function deleteStageTemplate(input: unknown): Promise<ActionResult<
     });
     revalidatePath("/");
     return { id: existing.id };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// R2 — Interview scheduling + scorecards (hiring:manage / stage owner).
+//
+// Scheduling an INTERVIEW stage creates a CalendarEvent (so it lands on the
+// shared Calendar) + a personal Reminder for the interviewer, records
+// scheduledAt/ownerUserId/eventId, and refuses a conflicting booking (the
+// same interviewer already has another interview within the same hour).
+// The scorecard is the structured research-D form: 1-5 rating,
+// strengths/concerns, and a STRONG_HIRE | HIRE | NO_HIRE recommendation.
+// ---------------------------------------------------------------------------
+
+export async function scheduleInterview(input: unknown): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:manage");
+    const data = parseOrThrow(scheduleInterviewSchema, input);
+    const when = new Date(data.scheduledAt);
+    if (Number.isNaN(when.getTime())) {
+      throw new AuthorizationError("The scheduled date/time is invalid.");
+    }
+    const stage = await db.candidateStage.findUnique({
+      where: { id: data.stageId },
+      include: { candidate: true },
+    });
+    if (!stage) throw new AuthorizationError("Stage not found.");
+    if (stage.candidate.status !== "ACTIVE") {
+      throw new AuthorizationError(`Candidate is ${stage.candidate.status} — the pipeline is closed.`);
+    }
+    if (stage.stageType !== "INTERVIEW") {
+      throw new AuthorizationError("Interviews can only be scheduled on INTERVIEW stages.");
+    }
+    const interviewerId = data.interviewerId ?? stage.ownerUserId;
+    if (!interviewerId) {
+      throw new AuthorizationError("Pick an interviewer before scheduling.");
+    }
+
+    // Conflict check: the same interviewer must not have two interviews in
+    // the same hour window (±59 min around `when`). Only counts non-skipped
+    // stages — a skipped loop never happens.
+    const nearby = await db.candidateStage.findMany({
+      where: {
+        ownerUserId: interviewerId,
+        id: { not: stage.id },
+        status: { not: "SKIPPED" },
+        scheduledAt: { not: null, gte: new Date(when.getTime() - 59 * 60_000), lte: new Date(when.getTime() + 59 * 60_000) },
+      },
+      select: { label: true, candidate: { select: { fullName: true } } },
+    });
+    if (nearby.length > 0) {
+      const clash = nearby[0];
+      throw new AuthorizationError(
+        `Scheduling conflict: ${clash.candidate.fullName} has "${clash.label}" within the same hour for this interviewer.`,
+      );
+    }
+
+    const event = await db.calendarEvent.create({
+      data: {
+        title: `Interview: ${stage.candidate.fullName} — ${stage.label}`,
+        description: `${stage.candidate.position || "Position n/a"} · ${stage.candidate.email}`,
+        date: when,
+        time: `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`,
+        durationMin: 60,
+        type: "MEETING",
+        location: stage.candidate.department || "",
+      },
+    });
+    await db.reminder.create({
+      data: {
+        title: `Interview with ${stage.candidate.fullName} (${stage.label})`,
+        dueDate: when,
+        ownerId: interviewerId,
+      },
+    });
+    await db.candidateStage.update({
+      where: { id: stage.id },
+      data: { scheduledAt: when, ownerUserId: interviewerId, eventId: event.id },
+    });
+    await logAudit({
+      actor: auth,
+      action: stage.scheduledAt ? "hiring.interview_rescheduled" : "hiring.interview_scheduled",
+      entityType: "CANDIDATE",
+      entityId: stage.candidateId,
+      entityLabel: stage.candidate.fullName,
+      detail: `${auth.name} scheduled "${stage.label}" with ${stage.candidate.fullName} for ${when.toISOString()} (calendar event + interviewer reminder created).`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+export async function saveScorecard(input: unknown): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:view");
+    const data = parseOrThrow(scorecardSchema, input);
+    const stage = await db.candidateStage.findUnique({
+      where: { id: data.stageId },
+      include: { candidate: { select: { id: true, fullName: true, status: true } } },
+    });
+    if (!stage) throw new AuthorizationError("Stage not found.");
+    // The assigned interviewer may fill their OWN scorecard; everyone else
+    // needs hiring:manage (HR-driven — HR can record on behalf).
+    const isOwner = stage.ownerUserId === auth.userId;
+    if (!isOwner && !hasPermission(auth.role, "hiring:manage")) {
+      throw new AuthorizationError("Only the assigned interviewer or an HR/admin can fill this scorecard.");
+    }
+    if (stage.candidate.status !== "ACTIVE") {
+      throw new AuthorizationError(`Candidate is ${stage.candidate.status} — the pipeline is closed.`);
+    }
+    await db.candidateStage.update({
+      where: { id: stage.id },
+      data: {
+        rating: data.rating ?? null,
+        strengths: data.strengths,
+        concerns: data.concerns,
+        recommendation: data.recommendation ?? null,
+        remarks: data.remarks || stage.remarks,
+      },
+    });
+    await logAudit({
+      actor: auth,
+      action: "hiring.scorecard_saved",
+      entityType: "CANDIDATE",
+      entityId: stage.candidateId,
+      entityLabel: stage.candidate.fullName,
+      detail: `${auth.name} saved the "${stage.label}" scorecard for ${stage.candidate.fullName}` +
+        `${data.rating ? ` (rating ${data.rating}/5, ${data.recommendation ?? "no recommendation"})` : ""}.`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+/** Interviewer self-service: my assigned, still-open interview stages (any
+ * signed-in user — the WHERE clause scopes to the caller's own rows). */
+export async function getMyInterviews(): Promise<
+  ActionResult<
+    Array<{
+      stageId: string;
+      stageLabel: string;
+      candidateId: string;
+      candidateName: string;
+      position: string;
+      status: string;
+      scheduledAt: string | null;
+      rating: number | null;
+      recommendation: string | null;
+    }>
+  >
+> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:view");
+    const rows = await db.candidateStage.findMany({
+      where: {
+        ownerUserId: auth.userId,
+        stageType: "INTERVIEW",
+        status: { in: ["PENDING", "IN_PROGRESS"] },
+        candidate: { status: "ACTIVE" },
+      },
+      include: { candidate: { select: { id: true, fullName: true, position: true, status: true } } },
+      orderBy: { scheduledAt: "asc" },
+    });
+    return rows.map((r) => ({
+      stageId: r.id,
+      stageLabel: r.label,
+      candidateId: r.candidateId,
+      candidateName: r.candidate.fullName,
+      position: r.candidate.position,
+      status: r.status,
+      scheduledAt: r.scheduledAt ? r.scheduledAt.toISOString() : null,
+      rating: r.rating,
+      recommendation: r.recommendation,
+    }));
   });
 }
 

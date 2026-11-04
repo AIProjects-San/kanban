@@ -1427,12 +1427,22 @@ async function main() {
       position: "Senior Frontend Engineer", department: "ENGINEERING", source: "Referral",
       notes: "Strong React + a11y background; referred by Ingrid.",
       progress: [["screening", "PASSED"], ["interview_1", "PASSED"], ["interview_2", "IN_PROGRESS"]],
+      // R2 — next loop scheduled with Ingrid; interview_1 scorecard filled.
+      scheduled: { interview_2: addHours(TODAY, 72) },
+      scorecard: {
+        interview_1: {
+          rating: 4, recommendation: "HIRE",
+          strengths: "Deep React + a11y knowledge; clear communicator; strong system-design instincts.",
+          concerns: "Limited backend exposure — pair on API work early.",
+        },
+      },
     },
     {
       fullName: "Sam Whitaker", email: "sam.whitaker@example.com", phone: "+64 22 555 0102",
       position: "Backend Engineer", department: "ENGINEERING", source: "Job board",
       notes: "Go + Postgres; take-home pending.",
       progress: [["screening", "PASSED"], ["interview_1", "IN_PROGRESS"]],
+      scheduled: { interview_1: addHours(TODAY, 96) },
     },
     {
       fullName: "Priyanka Menon", email: "priyanka.menon@example.com", phone: "+64 27 555 0103",
@@ -1492,7 +1502,12 @@ async function main() {
               stageType: t.stageType,
               ownerUserId: t.ownerRole === "MANAGER" ? managerIdForInterviews : hrUserId,
               status,
-              remarks: "",
+              remarks: (c.scorecard ?? {})[t.key]?.remarks ?? "",
+              rating: (c.scorecard ?? {})[t.key]?.rating ?? null,
+              strengths: (c.scorecard ?? {})[t.key]?.strengths ?? "",
+              concerns: (c.scorecard ?? {})[t.key]?.concerns ?? "",
+              recommendation: (c.scorecard ?? {})[t.key]?.recommendation ?? null,
+              scheduledAt: (c.scheduled ?? {})[t.key] ?? null,
               sortOrder: t.sortOrder,
               startedAt: status !== "PENDING" ? addDays(TODAY, -5) : null,
               completedAt: status === "PASSED" || status === "FAILED" ? addDays(TODAY, -3) : null,
@@ -1502,6 +1517,32 @@ async function main() {
       },
     });
   }
+  // R2 — scheduled interviews also appear on the shared Calendar + as
+  // personal reminders for the interviewer (exactly what scheduleInterview
+  // creates in the app).
+  for (const c of CANDIDATES) {
+    for (const [key, when] of Object.entries(c.scheduled ?? {})) {
+      const d = when instanceof Date ? when : new Date(when);
+      await db.calendarEvent.create({
+        data: {
+          title: `Interview: ${c.fullName} — ${STAGE_TEMPLATE.find((t) => t.key === key)?.label ?? key}`,
+          description: `${c.position || "Position n/a"} · ${c.email}`,
+          date: d,
+          time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+          durationMin: 60,
+          type: "MEETING",
+        },
+      });
+      await db.reminder.create({
+        data: {
+          title: `Interview with ${c.fullName}`,
+          dueDate: d,
+          ownerId: managerIdForInterviews,
+        },
+      });
+    }
+  }
+  console.log(`  ✓ Hiring R2: ${CANDIDATES.reduce((n, c) => n + Object.keys(c.scheduled ?? {}).length, 0)} interviews scheduled on the calendar + 1 filled scorecard`);
   console.log(`  ✓ Hiring: ${STAGE_TEMPLATE.length}-stage template + ${CANDIDATES.length} candidates (5 active, 1 rejected, 1 withdrawn)`);
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);

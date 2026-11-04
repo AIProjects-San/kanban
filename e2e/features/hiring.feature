@@ -33,6 +33,13 @@ Feature: Hiring pipeline (Recruitment R1)
     And I advance the current stage
     Then the candidate detail should show the stage "interview_1" as passed
 
+  Scenario: HR schedules an interview on an INTERVIEW stage
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the candidate card "Tomas Eriksen"
+    And I open the schedule form for stage "interview_1"
+    Then the schedule form should offer the interviewer dropdown
+
   Scenario: Rejection requires a reason
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Hiring" view

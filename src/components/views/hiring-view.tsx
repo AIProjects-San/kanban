@@ -8,13 +8,14 @@
 // until R2 assigns them stages.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRight, Plus, Settings2, UserPlus } from "lucide-react";
+import { CalendarClock, ChevronRight, Plus, Settings2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { CandidateT, HiringStageConfigT } from "@/lib/types";
 import {
   getHiringBoard,
   getHiringPermissions,
+  getMyInterviews,
 } from "@/server-actions/hiring";
 import { CandidateModal } from "../ui/candidate-modal";
 import { CandidateDetailModal } from "../ui/candidate-detail-modal";
@@ -55,6 +56,11 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
   const [editCandidate, setEditCandidate] = useState<CandidateT | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [stageModalOpen, setStageModalOpen] = useState(false);
+  const [myInterviews, setMyInterviews] = useState<Array<{
+    stageId: string; stageLabel: string; candidateId: string; candidateName: string;
+    position: string; status: string; scheduledAt: string | null;
+    rating: number | null; recommendation: string | null;
+  }>>([]);
 
   const load = useCallback(async () => {
     const [boardRes, permRes] = await Promise.all([
@@ -71,6 +77,8 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
       setCanManage(permRes.data.canManage);
       setCanConfig(permRes.data.canConfig);
     }
+    const mine = await getMyInterviews();
+    if (mine.ok) setMyInterviews(mine.data);
     setLoaded(true);
   }, []);
 
@@ -157,6 +165,30 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
           </button>
         ))}
       </div>
+
+      {filter === "ACTIVE" && myInterviews.length > 0 && (
+        <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3" data-testid="my-interviews">
+          <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+            <CalendarClock size={12} /> Your upcoming interviews
+          </div>
+          <div className="space-y-1.5">
+            {myInterviews.map((m) => (
+              <button
+                key={m.stageId}
+                onClick={() => setDetailId(m.candidateId)}
+                className="w-full text-left rounded-md border border-border bg-card px-3 py-2 hover:border-primary/50 transition-colors flex items-center gap-3 text-sm"
+              >
+                <span className="font-medium">{m.candidateName}</span>
+                <span className="text-muted-foreground text-xs">{m.stageLabel}</span>
+                <span className="text-xs text-indigo-600 ml-auto">
+                  {m.scheduledAt ? new Date(m.scheduledAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "unscheduled"}
+                </span>
+                <ChevronRight size={14} className="text-muted-foreground" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {filter !== "ACTIVE" ? (
         /* Flat pool for decided candidates */
@@ -259,6 +291,7 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
         candidate={detail}
         canManage={canManage}
         onEdit={(c) => { setDetailId(null); setEditCandidate(c); setCreateOpen(true); }}
+        currentUserId={currentUser.id}
       />
       <HiringStageModal
         open={stageModalOpen}

@@ -333,6 +333,12 @@ export interface CandidateStageT {
   scheduledAt: string | null;
   remarks: string;
   rating: number | null;
+  /** R2 scorecard (docs/RECRUITMENT_MODULE_PLAN.md §5). */
+  strengths: string;
+  concerns: string;
+  recommendation: string | null;
+  /** CalendarEvent id when the interview has been scheduled (R2). */
+  eventId: string | null;
   sortOrder: number;
   startedAt: string | null;
   completedAt: string | null;
