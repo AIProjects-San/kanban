@@ -15,6 +15,7 @@ import {
   Briefcase,
   UserPlus,
   Landmark,
+  Wallet,
 } from "lucide-react";
 // Type-only import — erased at runtime, so the store may import this module
 // (for group bookkeeping) without creating a require cycle.
@@ -95,6 +96,12 @@ export const NAV_GROUPS: NavGroup[] = [
       // Leave is self-service for every role (docs/HR_MODULE_PLAN.md) — and
       // lives under People so the "HR" label never reaches MEMBER.
       { key: "leave", label: "Leave", icon: CalendarDays, shortcut: "G V", shortcutKey: "v" },
+      // Payslip self-service (persona-audit P0-1 / D-02) — every role sees
+      // their OWN payslips from LOCKED runs; deliberately NOT permission-
+      // gated (own data, like Leave). The full Payroll console stays
+      // payroll:manage — "My Payslips" must never match a "Payroll"
+      // substring assertion in e2e (sidebar contracts).
+      { key: "my-payslips", label: "My Payslips", icon: Wallet, shortcut: "G N", shortcutKey: "n" },
     ],
   },
   {

@@ -343,7 +343,16 @@ Rippling, and a P0/P1/P2 backlog.
   outbox row is SKIPPED (no provider) instead of claiming delivery, and the
   join toast tells HR to relay the sign-in email manually.
 
-**Top open items (P0):** member-interviewer access, employee payslip
-self-service, joiner lockout without a mail provider, statutory decision
-(build vs reposition), mail-config surfacing. The full backlog (39 open items)
-is in the report's Section 6.
+**Top open items (P0):** member-interviewer access, joiner lockout without a
+mail provider, statutory decision (build vs reposition), mail-config
+surfacing. The full backlog (39 open items) is in the report's Section 6.
+
+**Post-audit P0 fixes:**
+- **P0-1 — employee payslip self-service (D-02), FIXED.** New
+  `getMyPayslips()` server action (session-scoped, zero inputs, own data
+  only) + "My Payslips" view in the People nav group + dashboard card.
+  Locked runs only — the "published" semantics of class-leading ESS
+  (greytHR publishes payslips; OPEN drafts never reach the employee); YTD
+  runs on the same locked-only basis per calendar year. The full Payroll
+  console stays `payroll:manage` (ADMIN+HR). Also fixed the G N / G I
+  keyboard-shortcut shadowing found in review.

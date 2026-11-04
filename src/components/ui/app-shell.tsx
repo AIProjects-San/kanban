@@ -89,6 +89,11 @@ const PayrollView = dynamic(() => import("@/components/views/payroll-view").then
   loading: () => <div className="p-6 text-sm text-muted-foreground">Loading payroll…</div>,
 });
 
+const MyPayslipsView = dynamic(() => import("@/components/views/my-payslips-view").then(m => ({ default: m.MyPayslipsView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading your payslips…</div>,
+});
+
 interface AppShellProps {
   data: {
     projects: ProjectT[];
@@ -294,6 +299,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
             {view === "hr" && <HRView currentUser={user} />}
             {view === "hiring" && <HiringView currentUser={user} />}
             {view === "payroll" && <PayrollView currentUser={user} />}
+            {view === "my-payslips" && <MyPayslipsView currentUser={user} />}
           </div>
         </main>
       </div>

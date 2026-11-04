@@ -72,11 +72,14 @@ export function useKeyboardShortcuts() {
       // bindings below must NOT fire in that window, or they shadow the
       // documented G-bindings: "p" was eating G P (projects view opened
       // the project modal instead) and "b" was eating G B (bugs view
-      // opened the notification panel instead).
+      // opened the notification panel). "n" was eating G N (My Payslips
+      // opened the task modal) and "i" was eating G I (Hiring opened the
+      // inbox) — the n/i variants were caught in the persona-audit P0-1
+      // review.
       const gPending = lastG !== 0 && Date.now() - lastG < 800;
 
       // Single-key shortcuts
-      if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey) {
+      if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey && !gPending) {
         e.preventDefault();
         openTaskModal();
         return;
@@ -91,7 +94,7 @@ export function useKeyboardShortcuts() {
         setNotifOpen(true);
         return;
       }
-      if (e.key.toLowerCase() === "i" && !e.metaKey && !e.ctrlKey) {
+      if (e.key.toLowerCase() === "i" && !e.metaKey && !e.ctrlKey && !gPending) {
         e.preventDefault();
         useApp.getState().setInboxOpen(true);
         return;

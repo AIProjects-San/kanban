@@ -18,6 +18,7 @@ import { cn, barWidthClass } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { Avatar } from "../ui/avatar";
 import { StatCard } from "../ui/stat-card";
+import { MyPayslipsCard } from "../ui/my-payslips-card";
 import { useApp } from "@/store/app-store";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -199,6 +200,10 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
 
         {/* Right col — reminders, time tracker, team */}
         <div className="space-y-6">
+          {/* Payslip self-service shortcut (P0-1) — renders only when the
+              signed-in user has a finalized payslip. */}
+          <MyPayslipsCard />
+
           {/* Time Tracker */}
           <TimeTracker />
 

@@ -31,8 +31,10 @@ const db = vi.hoisted(() => {
 vi.mock("@/lib/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
+const getSessionOrThrowMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
   requirePermission: (...a: unknown[]) => requirePermissionMock(...a),
+  getSessionOrThrow: (...a: unknown[]) => getSessionOrThrowMock(...a),
   AuthorizationError: class AuthorizationError extends Error {
     readonly digest = "AuthorizationError";
     constructor(m: string) { super(m); this.name = "AuthorizationError"; }
@@ -57,6 +59,7 @@ import {
   addPayslip,
   lockPayrollRun,
   getPayrollData,
+  getMyPayslips,
 } from "../payroll";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
@@ -110,6 +113,7 @@ function payslipRow(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   requirePermissionMock.mockResolvedValue(HR_AUTH);
+  getSessionOrThrowMock.mockResolvedValue({ ...HR_AUTH, userId: "u-yuki", role: "MEMBER" as const, name: "Yuki Tanaka" });
   db.user.findMany.mockResolvedValue([{ id: "u-yuki", name: "Yuki Tanaka" }, { id: "u-hr", name: "Remy" }]);
   db.user.findUnique.mockResolvedValue({ id: "u-yuki", name: "Yuki Tanaka" });
   db.employeeProfile.findMany.mockResolvedValue([{ userId: "u-yuki", jobTitle: "Data Engineer", department: "ENGINEERING" }]);
@@ -428,5 +432,75 @@ describe("R7 — payslips", () => {
     const empty = await lockPayrollRun({ runId: "run-1" });
     expect(empty.ok).toBe(false);
     expect(db.payrollRun.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("P0-1 — payslip self-service (getMyPayslips, persona-audit D-02)", () => {
+  const LOCKED_RUN_SEPT = { id: "run-sept", period: "2026-09", status: "LOCKED" };
+
+  it("requires a session but NO permission — a MEMBER session is enough", async () => {
+    getSessionOrThrowMock.mockRejectedValue(new Error("You must be signed in."));
+    const anon = await getMyPayslips();
+    expect(anon.ok).toBe(false);
+
+    getSessionOrThrowMock.mockResolvedValue({ userId: "u-yuki", role: "MEMBER", name: "Yuki Tanaka", email: "yuki@x.co" });
+    db.payslip.findMany.mockResolvedValue([]);
+    db.employeeProfile.findUnique.mockResolvedValue({ jobTitle: "Data Engineer" });
+    const member = await getMyPayslips();
+    expect(member.ok).toBe(true);
+    if (member.ok) expect(member.data).toEqual([]);
+    // The self-service read must never consult payroll:manage — it is the
+    // caller's own data, so a MEMBER must not be blocked by the ADMIN+HR gate.
+    expect(requirePermissionMock).not.toHaveBeenCalled();
+  });
+
+  it("scopes the query to the caller's own payslips in LOCKED runs only", async () => {
+    db.payslip.findMany.mockResolvedValue([
+      { ...payslipRow({ id: "ps-oct", runId: "run-0", slipNo: "PS-2026-10-002", run: LOCKED_RUN }) },
+    ]);
+    db.employeeProfile.findUnique.mockResolvedValue({ jobTitle: "Data Engineer" });
+    const res = await getMyPayslips();
+    expect(res.ok).toBe(true);
+    expect(db.payslip.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId: "u-yuki", run: { status: "LOCKED" } },
+    }));
+  });
+
+  it("maps newest-first with running YTD per calendar year on the locked-only basis", async () => {
+    // Simulates the DB honouring the LOCKED filter: Sep/Oct 2026 + Dec 2025
+    // locked slips. The OPEN November draft is not in the result set at all.
+    db.payslip.findMany.mockResolvedValue([
+      payslipRow({ id: "ps-25-12", runId: "run-dec25", slipNo: "PS-2025-12-001", net: 5_000, gross: 5_000, run: { id: "run-dec25", period: "2025-12", status: "LOCKED" } }),
+      payslipRow({ id: "ps-26-09", runId: "run-sept", slipNo: "PS-2026-09-001", net: 6_500, gross: 6_500, run: LOCKED_RUN_SEPT }),
+      payslipRow({ id: "ps-26-10", runId: "run-0", slipNo: "PS-2026-10-002", net: 6_700, gross: 6_700, run: LOCKED_RUN }),
+    ]);
+    db.employeeProfile.findUnique.mockResolvedValue({ jobTitle: "Data Engineer" });
+    const res = await getMyPayslips();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.map((p) => p.runPeriod)).toEqual(["2026-10", "2026-09", "2025-12"]);
+    // YTD restarts each calendar year and accumulates ascending:
+    //   2025: Dec = 5,000 | 2026: Sep = 6,500, Oct = 13,200.
+    const byPeriod = new Map(res.data.map((p) => [p.runPeriod, p.ytdNet] as const));
+    expect(byPeriod.get("2025-12")).toBe(5_000);
+    expect(byPeriod.get("2026-09")).toBe(6_500);
+    expect(byPeriod.get("2026-10")).toBe(13_200);
+    // Every mapped slip is a LOCKED record with the caller's own identity.
+    for (const p of res.data) {
+      expect(p.runStatus).toBe("LOCKED");
+      expect(p.userId).toBe("u-yuki");
+      expect(p.userName).toBe("Yuki Tanaka");
+      expect(p.jobTitle).toBe("Data Engineer");
+    }
+  });
+
+  it("survives a missing employee profile (empty job title, not an error)", async () => {
+    db.payslip.findMany.mockResolvedValue([
+      payslipRow({ id: "ps-oct", runId: "run-0", slipNo: "PS-2026-10-002", run: LOCKED_RUN }),
+    ]);
+    db.employeeProfile.findUnique.mockResolvedValue(null);
+    const res = await getMyPayslips();
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data[0].jobTitle).toBe("");
   });
 });

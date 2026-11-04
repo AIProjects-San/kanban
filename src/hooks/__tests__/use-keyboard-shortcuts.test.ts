@@ -134,6 +134,25 @@ describe("useKeyboardShortcuts (L-P0-15 shortcut permission gating)", () => {
     expect(mockSetNotifOpen).not.toHaveBeenCalled();
   });
 
+  // Persona-audit P0-1 review: same shadow class for n/i — G N must reach
+  // the My Payslips view (not the task modal) and G I the Hiring view (not
+  // the inbox drawer).
+  it("G N switches to the my-payslips view instead of opening the task modal", () => {
+    renderHook(() => useKeyboardShortcuts());
+    gPress("n");
+    expect(mockSetView).toHaveBeenCalledWith("my-payslips");
+    expect(mockOpenTaskModal).not.toHaveBeenCalled();
+  });
+
+  it("G I switches to the hiring view instead of opening the inbox drawer", () => {
+    // Hiring is permission-gated (hiring:view) — grant it, else the G I
+    // binding correctly no-ops for a permission-less session.
+    currentPermissions = new Set(["hiring:view"]);
+    renderHook(() => useKeyboardShortcuts());
+    gPress("i");
+    expect(mockSetView).toHaveBeenCalledWith("hiring");
+  });
+
   it("a lone p (no pending G) still opens the project modal", () => {
     renderHook(() => useKeyboardShortcuts());
     pressKey("p");

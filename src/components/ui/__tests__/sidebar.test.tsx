@@ -94,7 +94,7 @@ describe("Sidebar: grouping + RBAC", () => {
 
   it("renders every leaf somewhere for ADMIN", () => {
     render(<Sidebar />);
-    for (const leaf of ["Dashboard", "Analytics", "Projects", "Tasks", "Bugs", "Team", "Calendar", "Leave", "HR Console", "Users", "Workspace Config", "Audit Log", "Settings", "Help"]) {
+    for (const leaf of ["Dashboard", "Analytics", "Projects", "Tasks", "Bugs", "Team", "Calendar", "Leave", "My Payslips", "HR Console", "Users", "Workspace Config", "Audit Log", "Settings", "Help"]) {
       expect(screen.getAllByText(leaf).length).toBeGreaterThan(0);
     }
   });
@@ -116,6 +116,10 @@ describe("Sidebar: grouping + RBAC", () => {
     expect(screen.queryByText("Audit Log")).toBeNull();
     // …but self-service Leave stays visible (docs/HR_MODULE_PLAN.md).
     expect(screen.getAllByText("Leave").length).toBeGreaterThan(0);
+    // …and so does payslip self-service (persona-audit P0-1 / D-02): every
+    // role sees their OWN payslips. The full Payroll leaf must stay hidden.
+    expect(screen.getAllByText("My Payslips").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Payroll")).toBeNull();
   });
 
   it("shows Administration with only Audit Log for MANAGER", () => {

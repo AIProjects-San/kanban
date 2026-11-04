@@ -22,7 +22,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requirePermission, AuthorizationError } from "./auth-guard";
+import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import type { PayslipT, PayrollRunT, SalaryStructureT } from "@/lib/types";
 import {
   saveSalaryStructureSchema,
@@ -532,5 +532,70 @@ export async function getPayrollData(): Promise<ActionResult<{ structures: Salar
     if (!structuresRes.ok) throw new AuthorizationError(structuresRes.error);
     if (!runsRes.ok) throw new AuthorizationError(runsRes.error);
     return { structures: structuresRes.data, runs: runsRes.data };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Payslip self-service (persona-audit P0-1 / D-02)
+// ---------------------------------------------------------------------------
+
+/** The signed-in employee's OWN payslips — LOCKED runs only.
+ *
+ * "Published" semantics, matching class-leading payroll ESS (greytHR only
+ * exposes payslips after Payroll → Published Info; Rippling/Keka show stubs
+ * once finalized): an OPEN run is still a draft HR may edit, so it must never
+ * reach the employee. YTD is therefore a running net total over the same
+ * locked-only basis per calendar year — draft money can never leak into an
+ * employee-visible number.
+ *
+ * RBAC: no permission required — this is the caller's own data (the ESS
+ * baseline every role holds, like leave self-service). The action takes zero
+ * inputs, so the query is self-scoped by construction: there is no parameter
+ * through which another user's slip could ever be requested. Unauthenticated
+ * calls are rejected by getSessionOrThrow. */
+export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
+  return toResult(async () => {
+    const auth = await getSessionOrThrow();
+    const [slips, profile] = await Promise.all([
+      db.payslip.findMany({
+        where: { userId: auth.userId, run: { status: "LOCKED" } },
+        include: { run: { select: { period: true } } },
+      }),
+      db.employeeProfile.findUnique({
+        where: { userId: auth.userId },
+        select: { jobTitle: true },
+      }),
+    ]);
+
+    // Running YTD per calendar year over the locked-only basis (ascending
+    // period order; slipNo breaks ties, though a user has one slip per run).
+    const runningByYear = new Map<string, number>();
+    const ytdBySlip = new Map<string, number>();
+    for (const s of [...slips].sort((a, b) => a.run.period.localeCompare(b.run.period) || a.slipNo.localeCompare(b.slipNo))) {
+      const year = s.run.period.slice(0, 4);
+      const acc = Math.round(((runningByYear.get(year) ?? 0) + s.net) * 100) / 100;
+      runningByYear.set(year, acc);
+      ytdBySlip.set(s.id, acc);
+    }
+
+    return [...slips]
+      .sort((a, b) => b.run.period.localeCompare(a.run.period) || a.slipNo.localeCompare(b.slipNo))
+      .map((p) => ({
+        id: p.id,
+        runId: p.runId,
+        runPeriod: p.run.period,
+        runStatus: "LOCKED" as const,
+        userId: auth.userId,
+        userName: auth.name,
+        jobTitle: profile?.jobTitle ?? "",
+        slipNo: p.slipNo,
+        earnings: parsePayslipLines(p.earnings),
+        deductions: parsePayslipLines(p.deductions),
+        note: p.note,
+        lopDays: p.lopDays,
+        gross: p.gross,
+        net: p.net,
+        ytdNet: ytdBySlip.get(p.id) ?? p.net,
+      }));
   });
 }
