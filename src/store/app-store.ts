@@ -128,26 +128,30 @@ function loadInitial() {
 
 const initial = loadInitial();
 
-/** Remove `id` from the collapsed list (idempotent). */
-function expandGroupIn(collapsed: string[], id: string): string[] {
-  return collapsed.includes(id) ? collapsed.filter((g) => g !== id) : collapsed;
-}
-
 // Smart-minimal boot state: everything collapsed except the current view's
-// group (default view is dashboard → "overview" is expanded).
+// group (default view is dashboard → "overview" is expanded). This doubles
+// as the accordion invariant: `collapsedGroups` holds every group id except
+// the single open one (or all of them, when the user collapses the last
+// open group).
 const initialCollapsedGroups = NAV_GROUPS.map((g) => g.id).filter(
   (id) => id !== groupIdOfView("dashboard")
 );
 
+/** Accordion helper: every group except `openId` ends up collapsed. */
+function accordionCollapsed(openId: string): string[] {
+  return NAV_GROUPS.map((g) => g.id).filter((id) => id !== openId);
+}
+
 export const useApp = create<AppState>((set) => ({
   view: "dashboard",
   // Navigating auto-expands the target view's group so the active item
-  // stays visible (user-approved behaviour).
+  // stays visible — and, per the accordion rule, closes every other group
+  // ("previous should be collapsed after user selected one of the options").
   setView: (view) =>
-    set((s) => ({
+    set(() => ({
       view,
       sidebarOpen: false,
-      collapsedGroups: expandGroupIn(s.collapsedGroups, groupIdOfView(view)),
+      collapsedGroups: accordionCollapsed(groupIdOfView(view)),
     })),
 
   sidebarOpen: false,
@@ -164,10 +168,13 @@ export const useApp = create<AppState>((set) => ({
     }),
 
   collapsedGroups: initialCollapsedGroups,
+  // Accordion (user request: "only one sidebar menu should be expanded at
+  // once"): opening a collapsed group closes every other group; collapsing
+  // the open group just collapses it (zero-open is a valid state).
   toggleGroup: (groupId) =>
     set((s) => ({
       collapsedGroups: s.collapsedGroups.includes(groupId)
-        ? s.collapsedGroups.filter((g) => g !== groupId)
+        ? accordionCollapsed(groupId)
         : [...s.collapsedGroups, groupId],
     })),
 

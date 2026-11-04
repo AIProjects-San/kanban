@@ -13,6 +13,9 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 //      collapsed children stay MOUNTED but data-collapsed (hidden via CSS
 //      only — e2e XPath locators still find them).
 //   4. Navigating into a group auto-expands it (store setView behaviour).
+//   4b. PR-62 accordion: only ONE group is ever expanded — opening a group
+//      (or navigating into another group's view) collapses the previously
+//      open one (user request).
 //   5. Projects is a PLAIN leaf: no inline project list or chevron in the
 //      sidebar; clicking it opens the Projects view, which lists every
 //      project the server scoped to the signed-in user (getScopedProjectIds).
@@ -159,6 +162,41 @@ describe("Sidebar: collapsible groups (smart minimal)", () => {
     });
     expect(headerOf("Work").getAttribute("aria-expanded")).toBe("true");
     expect(useApp.getState().view).toBe("bugs");
+  });
+
+  it("PR-62 accordion: opening a second group collapses the first", () => {
+    render(<Sidebar />);
+    // Boot: Overview open. Open Work — Overview must close.
+    fireEvent.click(headerOf("Work"));
+    expect(headerOf("Work").getAttribute("aria-expanded")).toBe("true");
+    expect(headerOf("Overview").getAttribute("aria-expanded")).toBe("false");
+    // Open People — Work must close in turn.
+    fireEvent.click(headerOf("People"));
+    expect(headerOf("People").getAttribute("aria-expanded")).toBe("true");
+    expect(headerOf("Work").getAttribute("aria-expanded")).toBe("false");
+    expect(headerOf("Overview").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("PR-62 accordion: navigating into another group's view collapses the previous one", () => {
+    render(<Sidebar />);
+    // Overview is open (dashboard). Navigate to the Team view (People
+    // group) via the store — the G-shortcut / ⌘K path.
+    act(() => {
+      useApp.getState().setView("team");
+    });
+    expect(headerOf("People").getAttribute("aria-expanded")).toBe("true");
+    expect(headerOf("Overview").getAttribute("aria-expanded")).toBe("false");
+    expect(headerOf("Work").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("PR-62 accordion: collapsing the open group leaves zero groups open", () => {
+    render(<Sidebar />);
+    fireEvent.click(headerOf("Overview"));
+    // Every group collapsed — a valid accordion state (nothing forces one
+    // group to stay open).
+    for (const label of ["Overview", "Work", "People", "Administration", "General"]) {
+      expect(headerOf(label).getAttribute("aria-expanded")).toBe("false");
+    }
   });
 });
 
