@@ -42,6 +42,14 @@ export { markNotificationRead, markAllNotificationsRead } from "./notifications"
 export { toggleReminder, createReminder } from "./reminders";
 // PR-54 — JWT bearer-token issuance for external/programmatic clients.
 export { issueAuthToken, type IssuedToken } from "./auth-tokens";
+// PR-63 — role-scoped analytics (self / team / individual / everyone),
+// enforced server-side; see analytics.ts for the authorization matrix.
+export {
+  getAnalyticsData,
+  type AnalyticsData,
+  type AnalyticsFilterOptions,
+  type AnalyticsScope,
+} from "./analytics";
 export {
   getUserProfile,
   getUserSettings,

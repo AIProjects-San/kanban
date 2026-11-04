@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -12,25 +12,119 @@ import {
   BarChart,
   Bar,
 } from "recharts";
-import { CheckCircle2, Clock, TrendingUp, Gauge, Download } from "lucide-react";
+import { CheckCircle2, Clock, TrendingUp, Gauge, Download, Loader2, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "../ui/avatar";
 import { toast } from "sonner";
-import type { TaskT, TimeEntryT, TeamMemberT, ProjectT } from "@/lib/types";
+import {
+  getAnalyticsData,
+  type AnalyticsData,
+  type AnalyticsScope,
+} from "@/server-actions/data";
+
+// ---------------------------------------------------------------------------
+// PR-63 — role-scoped Analytics.
+//
+// The view used to chart workspace-wide data for every role. It now fetches
+// its own data from getAnalyticsData, which enforces the scope server-side:
+//
+//   • MEMBER / HR  — only their own numbers (no filter).
+//   • MANAGER      — their team (self + reporting subtree) by default, with
+//                    a filter for themselves or any individual report.
+//   • ADMIN        — their own data first; the filter adds "Everyone",
+//                    each manager's full team, and any individual.
+//
+// "Top contributors" hides itself for single-person scopes (it would only
+// ever list that one person — user decision). The two static metric cards
+// (on-time delivery, avg cycle time) stay as-is: the schema has no task
+// completion dates, so real values need a schema change first.
+// ---------------------------------------------------------------------------
 
 interface AnalyticsViewProps {
-  tasks: TaskT[];
-  timeEntries: TimeEntryT[];
-  members: TeamMemberT[];
-  projects: ProjectT[];
+  /** The signed-in user (drives the default scope + filter options). */
+  user: { id: string; name: string; role: string };
 }
 
 type Period = "7D" | "30D" | "90D";
 
-export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }: AnalyticsViewProps) {
+/** String key for the <select>; round-trips to/from AnalyticsScope. */
+function keyToScope(key: string): AnalyticsScope {
+  if (key === "everyone") return { kind: "everyone" };
+  if (key.startsWith("user:")) return { kind: "user", userId: key.slice(5) };
+  if (key.startsWith("team:")) return { kind: "team", managerId: key.slice(5) };
+  return { kind: "self" };
+}
+
+/** Human label for the resolved scope + whether it is a single person. */
+function scopeTitle(
+  data: AnalyticsData,
+  user: { id: string; name: string },
+): { possessive: string; isSinglePerson: boolean } {
+  const scope = data.scope;
+  switch (scope.kind) {
+    case "self":
+      return { possessive: "Your", isSinglePerson: true };
+    case "everyone":
+      return { possessive: "Workspace", isSinglePerson: false };
+    case "user": {
+      const person = data.filter.people.find((p) => p.userId === scope.userId);
+      return { possessive: `${person?.name ?? "This person"}'s`, isSinglePerson: true };
+    }
+    case "team": {
+      if (scope.managerId === user.id) return { possessive: "Your team's", isSinglePerson: false };
+      const mgr = data.filter.teams.find((t) => t.managerId === scope.managerId);
+      return { possessive: `${mgr?.name ?? "The manager"}'s team`, isSinglePerson: false };
+    }
+  }
+}
+
+export function AnalyticsView({ user }: AnalyticsViewProps) {
   const [period, setPeriod] = useState<Period>("30D");
+  // Managers start on their team; everyone else starts on their own data
+  // (admin choice: own data first, "Everyone" is an explicit filter).
+  const [scopeKey, setScopeKey] = useState<string>(
+    user.role === "MANAGER" ? `team:${user.id}` : "self",
+  );
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Defer the loading flag toggle to a microtask so it doesn't run
+    // synchronously inside the effect body (which lint flags as cascading
+    // renders — same pattern as entity-history-section.tsx).
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setLoading(true);
+    });
+    getAnalyticsData(keyToScope(scopeKey))
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok) {
+          setData(res.data);
+          setError(null);
+        } else {
+          setError(res.error);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("Failed to load analytics");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scopeKey]);
 
   const days = period === "7D" ? 7 : period === "30D" ? 30 : 90;
+  // Stable identities so the chart memos below don't churn on every render
+  // (`data?.x ?? []` would mint a fresh array each time).
+  const timeEntries = useMemo(() => data?.timeEntries ?? [], [data]);
+  const members = useMemo(() => data?.members ?? [], [data]);
+  const projects = useMemo(() => data?.projects ?? [], [data]);
 
   const filteredEntries = useMemo(() => {
     const cutoff = new Date();
@@ -87,6 +181,11 @@ export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }:
   const onTimeDelivery = 87; // static-ish metric
   const avgCycleTime = 2.4; // days
 
+  const title = data ? scopeTitle(data, user) : { possessive: "Your", isSinglePerson: false };
+  // Single-person scopes hide "Top contributors" (user decision) — it would
+  // only ever list that one person.
+  const showContributors = data !== null && !title.isSinglePerson;
+
   // Top contributors — by completed tasks
   const topContributors = useMemo(() => {
     return members
@@ -141,16 +240,66 @@ export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }:
     toast.success("CSV exported");
   };
 
+  // ---------------------------------------------------------------- filter UI
+  // MEMBER/HR see no filter (their scope is fixed to themselves); MANAGER
+  // picks themselves / their team / individual reports; ADMIN additionally
+  // gets "Everyone" and every manager's full team.
+  const showFilter =
+    data !== null && (data.filter.showEveryone || data.filter.people.length > 0 || user.role === "MANAGER");
+
+  const handleScopeChange = (key: string) => {
+    if (key !== scopeKey) setScopeKey(key);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground tracking-tight">Analytics</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Team performance over the last {days} days
+            {title.possessive} performance over the last {days} days
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {showFilter && (
+            <div className="relative flex items-center">
+              <Users size={13} className="absolute left-2.5 text-muted-foreground pointer-events-none" />
+              <select
+                className="f-input f-btn-sm py-1.5 pl-8 pr-7 text-xs min-w-44"
+                value={scopeKey}
+                onChange={(e) => handleScopeChange(e.target.value)}
+                aria-label="Filter analytics by person or team"
+                disabled={loading}
+              >
+                {/* Self-first options */}
+                {user.role === "MANAGER" ? (
+                  <option value={`team:${user.id}`}>My team</option>
+                ) : null}
+                <option value="self">Just me</option>
+                {data?.filter.showEveryone && <option value="everyone">Everyone</option>}
+                {/* Teams (admin) */}
+                {(data?.filter.teams.length ?? 0) > 0 && (
+                  <optgroup label="Full teams">
+                    {data!.filter.teams.map((t) => (
+                      <option key={t.managerId} value={`team:${t.managerId}`}>
+                        {t.name}&apos;s team
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {/* Individuals */}
+                {(data?.filter.people.length ?? 0) > 0 && (
+                  <optgroup label="People">
+                    {data!.filter.people.map((p) => (
+                      <option key={p.userId} value={`user:${p.userId}`}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+          )}
           <div className="flex items-center gap-1 p-1 bg-muted/60 rounded-lg">
             {(["7D", "30D", "90D"] as Period[]).map((p) => (
               <button
@@ -171,150 +320,166 @@ export function AnalyticsView({ tasks: _tasks, timeEntries, members, projects }:
         </div>
       </div>
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard icon={CheckCircle2} label="Tasks completed" value={tasksCompleted} delta="+12%" color="text-emerald-700" bg="bg-success/10" />
-        <MetricCard icon={Clock} label="Hours tracked" value={`${hoursTracked}h`} delta="+8%" color="text-primary" bg="bg-primary/10" />
-        <MetricCard icon={TrendingUp} label="On-time delivery" value={`${onTimeDelivery}%`} delta="+3%" color="text-blue-600" bg="bg-blue-500/10" />
-        <MetricCard icon={Gauge} label="Avg. cycle time" value={`${avgCycleTime}d`} delta="-0.3d" color="text-amber-700" bg="bg-amber-500/10" />
-      </div>
-
-      {/* Throughput chart */}
-      <div className="f-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">Throughput</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Tasks completed and hours tracked per day</p>
+      {error && data === null ? (
+        <div className="f-card p-10 text-center text-sm text-destructive">{error}</div>
+      ) : data === null ? (
+        <div className="f-card p-10 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 size={14} className="animate-spin" /> Loading analytics…
+        </div>
+      ) : (
+        <>
+          {/* Metric cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricCard icon={CheckCircle2} label="Tasks completed" value={tasksCompleted} delta="+12%" color="text-emerald-700" bg="bg-success/10" />
+            <MetricCard icon={Clock} label="Hours tracked" value={`${hoursTracked}h`} delta="+8%" color="text-primary" bg="bg-primary/10" />
+            <MetricCard icon={TrendingUp} label="On-time delivery" value={`${onTimeDelivery}%`} delta="+3%" color="text-blue-600" bg="bg-blue-500/10" />
+            <MetricCard icon={Gauge} label="Avg. cycle time" value={`${avgCycleTime}d`} delta="-0.3d" color="text-amber-700" bg="bg-amber-500/10" />
           </div>
-        </div>
-        <div style={{ width: "100%", height: 260 }}>
-          <ResponsiveContainer>
-            <AreaChart data={throughput} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
-              <defs>
-                <linearGradient id="grad-tasks" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="grad-hours" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.2} />
-                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="label" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(throughput.length / 8))} />
-              <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
-              <Tooltip
-                contentStyle={{
-                  background: "var(--card)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  fontSize: 12,
-                }}
-              />
-              <Area type="monotone" dataKey="tasks" stroke="var(--primary)" strokeWidth={2} fill="url(#grad-tasks)" name="Tasks" />
-              <Area type="monotone" dataKey="hours" stroke="#3b82f6" strokeWidth={2} fill="url(#grad-hours)" name="Hours" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Time by project */}
-        <div className="f-card p-6">
-          <h2 className="text-base font-semibold text-foreground mb-1">Time by project</h2>
-          <p className="text-xs text-muted-foreground mb-4">Hours logged per project (top 8)</p>
-          {timeByProject.length === 0 ? (
-            <div className="h-[220px] flex items-center justify-center text-sm text-muted-foreground">
-              No time tracked in this period
+          {/* Throughput chart */}
+          <div className="f-card p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">Throughput</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Tasks completed and hours tracked per day</p>
+              </div>
             </div>
-          ) : (
-            <div style={{ width: "100%", height: 220 }}>
+            <div style={{ width: "100%", height: 260 }}>
               <ResponsiveContainer>
-                <BarChart data={timeByProject} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                  <XAxis type="number" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis type="category" dataKey="name" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} width={120} />
+                <AreaChart data={throughput} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
+                  <defs>
+                    <linearGradient id="grad-tasks" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="grad-hours" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.2} />
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="label" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(throughput.length / 8))} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
                   <Tooltip
-                    contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-                    formatter={(v: number | string) => [`${v}h`, "Hours"]}
+                    contentStyle={{
+                      background: "var(--card)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
                   />
-                  <Bar dataKey="hours" radius={[0, 4, 4, 0]} fill="var(--primary)" />
-                </BarChart>
+                  <Area type="monotone" dataKey="tasks" stroke="var(--primary)" strokeWidth={2} fill="url(#grad-tasks)" name="Tasks" />
+                  <Area type="monotone" dataKey="hours" stroke="#3b82f6" strokeWidth={2} fill="url(#grad-hours)" name="Hours" />
+                </AreaChart>
               </ResponsiveContainer>
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Top contributors */}
-        <div className="f-card p-6">
-          <h2 className="text-base font-semibold text-foreground mb-1">Top contributors</h2>
-          <p className="text-xs text-muted-foreground mb-4">By completed tasks this period</p>
-          <div className="space-y-2">
-            {topContributors.map((c, i) => (
-              <div key={c.member.id} className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/60">
-                <span className="text-xs font-bold text-muted-foreground w-5 tabular-nums">#{i + 1}</span>
-                <Avatar name={c.member.name} color={c.member.avatarColor} size={32} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-foreground truncate">{c.member.name}</div>
-                  <div className="text-[0.625rem] text-muted-foreground">{c.member.role}</div>
+          <div className={cn("grid grid-cols-1 lg:grid-cols-2 gap-6", !showContributors && "lg:grid-cols-1")}>
+            {/* Time by project */}
+            <div className="f-card p-6">
+              <h2 className="text-base font-semibold text-foreground mb-1">Time by project</h2>
+              <p className="text-xs text-muted-foreground mb-4">Hours logged per project (top 8)</p>
+              {timeByProject.length === 0 ? (
+                <div className="h-[220px] flex items-center justify-center text-sm text-muted-foreground">
+                  No time tracked in this period
                 </div>
-                <div className="text-right">
-                  <div className="text-sm font-semibold text-foreground tabular-nums">{c.completed}</div>
-                  <div className="text-[0.625rem] text-muted-foreground">{c.hours}h logged</div>
+              ) : (
+                <div style={{ width: "100%", height: 220 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={timeByProject} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                      <XAxis type="number" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
+                      <YAxis type="category" dataKey="name" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} width={120} />
+                      <Tooltip
+                        contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                        formatter={(v: number | string) => [`${v}h`, "Hours"]}
+                      />
+                      <Bar dataKey="hours" radius={[0, 4, 4, 0]} fill="var(--primary)" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Top contributors — hidden for single-person scopes */}
+            {showContributors && (
+              <div className="f-card p-6">
+                <h2 className="text-base font-semibold text-foreground mb-1">Top contributors</h2>
+                <p className="text-xs text-muted-foreground mb-4">By completed tasks this period</p>
+                <div className="space-y-2">
+                  {topContributors.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">No members in this scope yet.</div>
+                  ) : (
+                    topContributors.map((c, i) => (
+                      <div key={c.member.id} className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/60">
+                        <span className="text-xs font-bold text-muted-foreground w-5 tabular-nums">#{i + 1}</span>
+                        <Avatar name={c.member.name} color={c.member.avatarColor} size={32} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-foreground truncate">{c.member.name}</div>
+                          <div className="text-[0.625rem] text-muted-foreground">{c.member.role}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-semibold text-foreground tabular-nums">{c.completed}</div>
+                          <div className="text-[0.625rem] text-muted-foreground">{c.hours}h logged</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      </div>
 
-      {/* Activity graph */}
-      <div className="f-card p-6">
-        <h2 className="text-base font-semibold text-foreground mb-1">Activity</h2>
-        <p className="text-xs text-muted-foreground mb-4">Hours tracked per day over the last 13 weeks</p>
-        <div className="overflow-x-auto f-scroll">
-          <div className="flex gap-1 min-w-[600px]">
-            {activityGraph.map((week, wi) => (
-              <div key={wi} className="flex flex-col gap-1">
-                {week.map((day, di) => {
-                  const intensity = Math.min(1, day.hours / 6);
-                  const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
-                  return (
-                    <div
-                      key={di}
-                      className="w-3 h-3 rounded-sm"
-                      style={{
-                        // §1.10 / L-P1-18 follow-up: the scale is derived from
-                        // the theme's --primary/--background tokens via
-                        // color-mix, so it follows the active accent AND dark
-                        // mode (the old hardcoded oklch(… 152) was forest-only
-                        // and broke contrast on dark backgrounds).
-                        background:
-                          day.hours === 0
-                            ? "var(--muted)"
-                            : `color-mix(in oklch, var(--primary) ${Math.round(30 + intensity * 70)}%, var(--background))`,
-                        opacity: isWeekend && day.hours === 0 ? 0.4 : 1,
-                      }}
-                      title={`${day.date.toLocaleDateString("en-NZ")}: ${day.hours}h`}
-                    />
-                  );
-                })}
+          {/* Activity graph */}
+          <div className="f-card p-6">
+            <h2 className="text-base font-semibold text-foreground mb-1">Activity</h2>
+            <p className="text-xs text-muted-foreground mb-4">Hours tracked per day over the last 13 weeks</p>
+            <div className="overflow-x-auto f-scroll">
+              <div className="flex gap-1 min-w-[600px]">
+                {activityGraph.map((week, wi) => (
+                  <div key={wi} className="flex flex-col gap-1">
+                    {week.map((day, di) => {
+                      const intensity = Math.min(1, day.hours / 6);
+                      const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+                      return (
+                        <div
+                          key={di}
+                          className="w-3 h-3 rounded-sm"
+                          style={{
+                            // §1.10 / L-P1-18 follow-up: the scale is derived from
+                            // the theme's --primary/--background tokens via
+                            // color-mix, so it follows the active accent AND dark
+                            // mode (the old hardcoded oklch(… 152) was forest-only
+                            // and broke contrast on dark backgrounds).
+                            background:
+                              day.hours === 0
+                                ? "var(--muted)"
+                                : `color-mix(in oklch, var(--primary) ${Math.round(30 + intensity * 70)}%, var(--background))`,
+                            opacity: isWeekend && day.hours === 0 ? 0.4 : 1,
+                          }}
+                          title={`${day.date.toLocaleDateString("en-NZ")}: ${day.hours}h`}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
-            ))}
+              <div className="flex items-center gap-2 mt-3 text-[0.625rem] text-muted-foreground">
+                <span>Less</span>
+                {[0, 0.25, 0.5, 0.75, 1].map((i) => (
+                  <div
+                    key={i}
+                    className="w-3 h-3 rounded-sm"
+                    style={{ background: i === 0 ? "var(--muted)" : `color-mix(in oklch, var(--primary) ${Math.round(30 + i * 70)}%, var(--background))` }}
+                  />
+                ))}
+                <span>More</span>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2 mt-3 text-[0.625rem] text-muted-foreground">
-            <span>Less</span>
-            {[0, 0.25, 0.5, 0.75, 1].map((i) => (
-              <div
-                key={i}
-                className="w-3 h-3 rounded-sm"
-                style={{ background: i === 0 ? "var(--muted)" : `color-mix(in oklch, var(--primary) ${Math.round(30 + i * 70)}%, var(--background))` }}
-              />
-            ))}
-            <span>More</span>
-          </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

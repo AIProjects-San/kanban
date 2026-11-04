@@ -221,13 +221,11 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
               />
             )}
             {view === "calendar" && <CalendarView events={data.events} />}
+            {/* PR-63 — the view fetches its own role-scoped data
+                (getAnalyticsData): MEMBER self, MANAGER team+filter,
+                ADMIN own-first + Everyone/manager-team/individual filter. */}
             {view === "analytics" && (
-              <AnalyticsView
-                tasks={data.tasks}
-                timeEntries={data.timeEntries}
-                members={data.members}
-                projects={data.projects}
-              />
+              <AnalyticsView user={{ id: user.id, name: user.name, role: user.role }} />
             )}
             {view === "team" && <TeamView members={data.members} tasks={data.tasks} projects={data.projects} timeEntries={data.timeEntries} currentUser={userProfile} />}
             {view === "settings" && <SettingsView user={user} />}
