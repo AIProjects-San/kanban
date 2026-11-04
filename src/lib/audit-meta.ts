@@ -12,7 +12,7 @@ import {
   UserCog, CalendarPlus, CalendarX, Send, ShieldCheck, Settings, BellPlus,
   CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
   ClipboardCheck,
-  KeyRound,
+  KeyRound, FileText, FileWarning,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -108,7 +108,16 @@ export type AuditAction =
   | "hiring.interview_rescheduled"
   | "hiring.scorecard_saved"
   // Recruitment R3 — decisions & candidate email outbox
-  | "hiring.email_queued";
+  | "hiring.email_queued"
+  // Recruitment R4 — joining formalities (documents + background checks)
+  | "hiring.doc_type_saved"
+  | "hiring.doc_type_deleted"
+  | "hiring.document_requested"
+  | "hiring.document_received"
+  | "hiring.document_verified"
+  | "hiring.document_rejected"
+  | "hiring.bg_check_initiated"
+  | "hiring.bg_check_updated";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -215,6 +224,14 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.interview_rescheduled": { icon: CalendarPlus, cls: "text-amber-500 bg-amber-500/10" },
   "hiring.scorecard_saved": { icon: ClipboardCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.email_queued": { icon: Send, cls: "text-sky-500 bg-sky-500/10" },
+  "hiring.doc_type_saved": { icon: Settings, cls: "text-purple-500 bg-purple-500/10" },
+  "hiring.doc_type_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "hiring.document_requested": { icon: FileText, cls: "text-amber-500 bg-amber-500/10" },
+  "hiring.document_received": { icon: FileText, cls: "text-indigo-500 bg-indigo-500/10" },
+  "hiring.document_verified": { icon: ShieldCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hiring.document_rejected": { icon: FileWarning, cls: "text-destructive bg-destructive/10" },
+  "hiring.bg_check_initiated": { icon: ShieldCheck, cls: "text-sky-500 bg-sky-500/10" },
+  "hiring.bg_check_updated": { icon: ShieldCheck, cls: "text-amber-500 bg-amber-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

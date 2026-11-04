@@ -42,6 +42,9 @@ vi.mock("@/components/ui/candidate-detail-modal", () => ({
 vi.mock("@/components/ui/hiring-stage-modal", () => ({
   HiringStageModal: () => <div data-testid="stage-modal-stub" />,
 }));
+vi.mock("@/components/ui/document-type-modal", () => ({
+  DocumentTypeModal: () => <div data-testid="doc-type-modal-stub" />,
+}));
 
 import { HiringView } from "@/components/views/hiring-view";
 import type { CandidateT, HiringStageConfigT } from "@/lib/types";
@@ -95,6 +98,8 @@ describe("HiringView: HR (full manage)", () => {
     render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
     expect(await screen.findByTestId("add-candidate-btn")).toBeTruthy();
     expect(screen.getByTestId("stage-template-btn")).toBeTruthy();
+    // R4 — the document-type editor is another hiring:config surface.
+    expect(screen.getByTestId("doc-type-btn")).toBeTruthy();
   });
 
   it("the REJECTED pool shows the rejection reason", async () => {
@@ -118,6 +123,7 @@ describe("HiringView: MANAGER (interviewer, view-only)", () => {
     expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
     expect(screen.queryByTestId("add-candidate-btn")).toBeNull();
     expect(screen.queryByTestId("stage-template-btn")).toBeNull();
+    expect(screen.queryByTestId("doc-type-btn")).toBeNull();
     expect(screen.getByText(/interviewer view/)).toBeTruthy();
   });
 });

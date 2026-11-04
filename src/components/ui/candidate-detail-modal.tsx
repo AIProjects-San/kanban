@@ -13,13 +13,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2, ChevronRight, CircleDashed, Loader2, MinusCircle, XCircle,
-  Plus, Pencil, CalendarClock, ClipboardPen,
+  Plus, Pencil, CalendarClock, ClipboardPen, FileText, ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
 import { cn } from "@/lib/utils";
-import type { CandidateT, CandidateStageT } from "@/lib/types";
+import type { CandidateT, CandidateStageT, CandidateDocumentT, BackgroundCheckT, DocumentTypeConfigT } from "@/lib/types";
 import {
   advanceStage,
   setStageStatus,
@@ -27,6 +27,13 @@ import {
   addCandidateStage,
   scheduleInterview,
   saveScorecard,
+  getJoiningFormalities,
+  requestDocument,
+  receiveDocument,
+  verifyDocument,
+  rejectDocument,
+  initiateBackgroundCheck,
+  updateBackgroundCheck,
 } from "@/server-actions/hiring";
 import { getDirectory } from "@/server-actions/hr-directory";
 import { SCORECARD_RECOMMENDATIONS } from "@/lib/validation";
@@ -65,6 +72,20 @@ function toLocalInput(iso: string | null): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+const DOC_STATUS_CLS: Record<string, string> = {
+  REQUESTED: "bg-amber-500/10 text-amber-600",
+  RECEIVED: "bg-indigo-500/10 text-indigo-600",
+  VERIFIED: "bg-emerald-500/10 text-emerald-600",
+  REJECTED: "bg-destructive/10 text-destructive",
+};
+
+const BG_STATUS_CLS: Record<string, string> = {
+  INITIATED: "bg-amber-500/10 text-amber-600",
+  IN_REVIEW: "bg-indigo-500/10 text-indigo-600",
+  CLEARED: "bg-emerald-500/10 text-emerald-600",
+  FLAGGED: "bg-destructive/10 text-destructive",
+};
 
 export function CandidateDetailModal({
   open,
@@ -107,6 +128,20 @@ export function CandidateDetailModal({
   const [recommendation, setRecommendation] = useState("");
   const [cardRemarks, setCardRemarks] = useState("");
 
+  // R4 — joining formalities (docs checklist + background checks).
+  const [formalities, setFormalities] = useState<{
+    docTypes: DocumentTypeConfigT[];
+    documents: CandidateDocumentT[];
+    bgChecks: BackgroundCheckT[];
+  } | null>(null);
+  // Inline action form on one doc row ("receive" fileRef / "reject" remark).
+  const [docAction, setDocAction] = useState<{ doc: CandidateDocumentT; mode: "receive" | "reject" } | null>(null);
+  const [docInput, setDocInput] = useState("");
+  const [bgFormOpen, setBgFormOpen] = useState(false);
+  const [bgVendor, setBgVendor] = useState("");
+  const [bgNotes, setBgNotes] = useState("");
+  const [bgReportRef, setBgReportRef] = useState("");
+
   const loadInterviewers = useCallback(async () => {
     if (interviewers.length > 0) return;
     const res = await getDirectory();
@@ -122,8 +157,22 @@ export function CandidateDetailModal({
       setSchedStageId(null); setSchedWhen(""); setSchedInterviewer("");
       setCardStage(null);
       setSendEmail(false); setEmailRemarks("");
+      setDocAction(null); setDocInput(""); setBgFormOpen(false); setBgVendor(""); setBgNotes(""); setBgReportRef("");
     }
   }, [open]);
+
+  // R4 — load the joining-formalities bundle when HR opens the modal.
+  const loadFormalities = useCallback(async (cid: string) => {
+    const res = await getJoiningFormalities(cid);
+    if (res.ok) {
+      setFormalities({ docTypes: res.data.docTypes, documents: res.data.documents, bgChecks: res.data.bgChecks });
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (open && canManage && candidate) { setFormalities(null); void loadFormalities(candidate.id); }
+  }, [open, canManage, candidate, loadFormalities]);
 
   if (!candidate) return null;
   const c = candidate;
@@ -168,6 +217,72 @@ export function CandidateDetailModal({
   // R3 — the hire decision: ACTIVE → SELECTED (offer prep pointer).
   const select = () =>
     run(() => decideCandidate({ candidateId: c.id, decision: "SELECT", reason: "" }), "Candidate selected — offer preparation pending.");
+
+  // R4 — joining-formalities mutations. Each refreshes the bundle in place
+  // (the board itself doesn't change, so no onChanged round-trip).
+  const runFormality = async (fn: () => Promise<{ ok: boolean; error?: string }>, okMsg: string) => {
+    setBusy(true);
+    const res = await fn();
+    setBusy(false);
+    if (!res.ok) { toast.error(res.error ?? "Action failed."); return false; }
+    toast.success(okMsg);
+    await loadFormalities(c.id);
+    return true;
+  };
+
+  const requestDoc = (docTypeKey: string) =>
+    runFormality(() => requestDocument({ candidateId: c.id, docTypeKey }), "Document requested.");
+
+  const requestAllMandatory = async () => {
+    if (!formalities) return;
+    const missing = formalities.docTypes.filter(
+      (t) => t.isActive && t.isMandatory && !formalities.documents.some((d) => d.docTypeKey === t.key),
+    );
+    if (missing.length === 0) { toast.info("All mandatory documents are already requested."); return; }
+    setBusy(true);
+    for (const t of missing) {
+      const res = await requestDocument({ candidateId: c.id, docTypeKey: t.key });
+      if (!res.ok) { toast.error(res.error); break; }
+    }
+    setBusy(false);
+    toast.success(`${missing.length} mandatory document${missing.length === 1 ? "" : "s"} requested.`);
+    await loadFormalities(c.id);
+  };
+
+  const submitDocAction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!docAction) return;
+    if (docAction.mode === "receive") {
+      const ok = await runFormality(
+        () => receiveDocument({ documentId: docAction.doc.id, fileRef: docInput }),
+        "Document marked received.",
+      );
+      if (ok) { setDocAction(null); setDocInput(""); }
+    } else {
+      if (docInput.trim().length === 0) { toast.error("A rejection note is required."); return; }
+      const ok = await runFormality(
+        () => rejectDocument({ documentId: docAction.doc.id, remarks: docInput }),
+        "Document rejected.",
+      );
+      if (ok) { setDocAction(null); setDocInput(""); }
+    }
+  };
+
+  const initBg = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (bgVendor.trim().length === 0) { toast.error("A vendor is required."); return; }
+    const ok = await runFormality(
+      () => initiateBackgroundCheck({ candidateId: c.id, vendor: bgVendor, notes: bgNotes }),
+      "Background check initiated.",
+    );
+    if (ok) { setBgFormOpen(false); setBgVendor(""); setBgNotes(""); }
+  };
+
+  const setBgStatus = (b: BackgroundCheckT, status: string) =>
+    runFormality(
+      () => updateBackgroundCheck({ id: b.id, status, reportRef: bgReportRef, notes: b.notes }),
+      `Background check ${status.toLowerCase().replace("_", " ")}.`,
+    );
 
   const withdraw = () =>
     run(() => decideCandidate({ candidateId: c.id, decision: "WITHDRAW", reason: "" }), "Candidate marked withdrawn.");
@@ -379,6 +494,211 @@ export function CandidateDetailModal({
               </form>
             )}
           </div>
+
+          {/* R4 — joining formalities: document checklist + background checks */}
+          {canManage && (
+            <div className="rounded-lg border border-border p-4" data-testid="joining-formalities">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <ShieldCheck size={12} /> Joining formalities
+                </div>
+                <button
+                  className="f-btn f-btn-ghost text-xs"
+                  disabled={busy || !formalities}
+                  onClick={requestAllMandatory}
+                  data-testid="request-mandatory-btn"
+                >
+                  Request all mandatory
+                </button>
+              </div>
+
+              {/* Document checklist */}
+              <div className="space-y-1.5" data-testid="doc-checklist">
+                {!formalities && <div className="text-xs text-muted-foreground">Loading checklist…</div>}
+                {formalities?.docTypes
+                  .filter((t) => t.isActive || formalities.documents.some((d) => d.docTypeKey === t.key))
+                  .map((t) => {
+                    const doc = formalities.documents.find((d) => d.docTypeKey === t.key) ?? null;
+                    return (
+                      <div key={t.key} className="rounded-md border border-border px-3 py-2" data-testid={`doc-row-${t.key}`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <FileText size={13} className="text-muted-foreground shrink-0" />
+                          <span className="text-sm min-w-0">{t.label}</span>
+                          {t.isMandatory && !doc && (
+                            <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 uppercase tracking-wide">required</span>
+                          )}
+                          <span className="ml-auto" />
+                          {doc ? (
+                            <span className={cn("text-[0.625rem] font-semibold px-1.5 py-0.5 rounded", DOC_STATUS_CLS[doc.status] ?? "bg-muted text-muted-foreground")} data-testid={`doc-status-${t.key}`}>
+                              {doc.status}
+                            </span>
+                          ) : (
+                            <button
+                              className="f-btn f-btn-ghost text-xs" disabled={busy}
+                              onClick={() => requestDoc(t.key)}
+                              data-testid={`request-doc-${t.key}`}
+                            >
+                              Request
+                            </button>
+                          )}
+                        </div>
+                        {doc && (
+                          <div className="mt-1 text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                            {doc.fileRef && <span className="truncate max-w-[220px] font-mono">{doc.fileRef}</span>}
+                            {doc.verifiedBy && <span>verified by {doc.verifiedBy}{doc.verifiedAt ? ` · ${fmt(doc.verifiedAt)}` : ""}</span>}
+                            {doc.remarks && doc.status === "REJECTED" && <span className="text-destructive">“{doc.remarks}”</span>}
+                          </div>
+                        )}
+                        {doc && doc.status === "REQUESTED" && (
+                          <button
+                            className="f-btn f-btn-ghost text-xs mt-1.5" disabled={busy}
+                            onClick={() => { setDocAction({ doc, mode: "receive" }); setDocInput(doc.fileRef); }}
+                            data-testid={`receive-doc-${t.key}`}
+                          >
+                            Mark received
+                          </button>
+                        )}
+                        {doc && doc.status === "REJECTED" && (
+                          <button
+                            className="f-btn f-btn-ghost text-xs mt-1.5" disabled={busy}
+                            onClick={() => requestDoc(t.key)}
+                            data-testid={`rerequest-doc-${t.key}`}
+                          >
+                            Re-request
+                          </button>
+                        )}
+                        {doc && doc.status === "RECEIVED" && (
+                          <div className="flex gap-2 mt-1.5">
+                            <button
+                              className="f-btn f-btn-ghost text-xs text-emerald-600 hover:bg-emerald-500/10" disabled={busy}
+                              onClick={() => runFormality(() => verifyDocument({ documentId: doc.id, remarks: "" }), "Document verified.")}
+                              data-testid={`verify-doc-${t.key}`}
+                            >
+                              Verify
+                            </button>
+                            <button
+                              className="f-btn f-btn-ghost text-xs text-destructive hover:bg-destructive/10" disabled={busy}
+                              onClick={() => { setDocAction({ doc, mode: "reject" }); setDocInput(""); }}
+                              data-testid={`reject-doc-${t.key}`}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        )}
+                        {docAction && doc && docAction.doc.id === doc.id && (
+                          <form onSubmit={submitDocAction} className="mt-2 space-y-1.5">
+                            <Field label={docAction.mode === "receive" ? "File reference (URL or name — optional)" : "What is wrong? (sent with the re-request)"}>
+                              <input
+                                className="f-input text-xs"
+                                value={docInput}
+                                onChange={(e) => setDocInput(e.target.value)}
+                                data-testid={`doc-action-input-${t.key}`}
+                                maxLength={docAction.mode === "receive" ? 500 : 2_000}
+                              />
+                            </Field>
+                            <div className="flex justify-end gap-2">
+                              <button type="button" className="f-btn f-btn-ghost text-xs" onClick={() => { setDocAction(null); setDocInput(""); }}>Cancel</button>
+                              <button type="submit" className="f-btn f-btn-ghost text-xs" disabled={busy} data-testid={`doc-action-submit-${t.key}`}>
+                                {docAction.mode === "receive" ? "Mark received" : "Reject document"}
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    );
+                  })}
+                {formalities && formalities.docTypes.filter((t) => t.isActive || formalities.documents.some((d) => d.docTypeKey === t.key)).length === 0 && (
+                  <div className="text-xs text-muted-foreground">No document types configured.</div>
+                )}
+              </div>
+
+              {/* Background checks */}
+              <div className="mt-4 pt-3 border-t border-border">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Background check</div>
+                  <button
+                    className="f-btn f-btn-ghost text-xs" disabled={busy}
+                    onClick={() => setBgFormOpen((v) => !v)}
+                    data-testid="bg-initiate-btn"
+                  >
+                    Initiate
+                  </button>
+                </div>
+                {bgFormOpen && (
+                  <form onSubmit={initBg} className="mb-2 space-y-1.5" data-testid="bg-initiate-form">
+                    <Field label="Vendor (who runs the check)">
+                      <input
+                        className="f-input text-xs" value={bgVendor}
+                        onChange={(e) => setBgVendor(e.target.value)}
+                        placeholder="e.g. HireRight"
+                        data-testid="bg-vendor"
+                        maxLength={120}
+                      />
+                    </Field>
+                    <Field label="Notes (optional)">
+                      <input
+                        className="f-input text-xs" value={bgNotes}
+                        onChange={(e) => setBgNotes(e.target.value)}
+                        maxLength={2_000}
+                      />
+                    </Field>
+                    <div className="flex justify-end gap-2">
+                      <button type="button" className="f-btn f-btn-ghost text-xs" onClick={() => setBgFormOpen(false)}>Cancel</button>
+                      <button type="submit" className="f-btn f-btn-ghost text-xs" disabled={busy} data-testid="bg-initiate-submit">
+                        Initiate check
+                      </button>
+                    </div>
+                  </form>
+                )}
+                <div className="space-y-1.5" data-testid="bg-check-list">
+                  {formalities?.bgChecks.map((b) => (
+                    <div key={b.id} className="rounded-md border border-border px-3 py-2" data-testid={`bg-row-${b.id}`}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{b.vendor}</span>
+                        <span className={cn("text-[0.625rem] font-semibold px-1.5 py-0.5 rounded", BG_STATUS_CLS[b.status] ?? "bg-muted text-muted-foreground")}>
+                          {b.status.replace("_", " ")}
+                        </span>
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          {b.initiatedBy ?? "—"} · {fmt(b.initiatedAt)}{b.completedAt ? ` → ${fmt(b.completedAt)}` : ""}
+                        </span>
+                      </div>
+                      {(b.reportRef || b.notes) && (
+                        <div className="mt-1 text-xs text-muted-foreground flex gap-2 flex-wrap">
+                          {b.reportRef && <span className="font-mono">{b.reportRef}</span>}
+                          {b.notes && <span>{b.notes}</span>}
+                        </div>
+                      )}
+                      {b.status !== "CLEARED" && b.status !== "FLAGGED" && (
+                        <div className="flex flex-wrap gap-2 mt-1.5 items-center">
+                          {b.status === "INITIATED" && (
+                            <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => setBgStatus(b, "IN_REVIEW")} data-testid={`bg-in-review-${b.id}`}>
+                              In review
+                            </button>
+                          )}
+                          <input
+                            className="f-input text-xs max-w-[200px]"
+                            value={bgReportRef}
+                            onChange={(e) => setBgReportRef(e.target.value)}
+                            placeholder="Report reference (optional)"
+                            maxLength={500}
+                          />
+                          <button className="f-btn f-btn-ghost text-xs text-emerald-600 hover:bg-emerald-500/10" disabled={busy} onClick={() => setBgStatus(b, "CLEARED")} data-testid={`bg-clear-${b.id}`}>
+                            Cleared
+                          </button>
+                          <button className="f-btn f-btn-ghost text-xs text-destructive hover:bg-destructive/10" disabled={busy} onClick={() => setBgStatus(b, "FLAGGED")} data-testid={`bg-flag-${b.id}`}>
+                            Flagged
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {formalities && formalities.bgChecks.length === 0 && !bgFormOpen && (
+                    <div className="text-xs text-muted-foreground">No background check yet — initiate one around offer acceptance (T-14).</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right — stage timeline */}

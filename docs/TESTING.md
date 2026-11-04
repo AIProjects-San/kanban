@@ -6,7 +6,7 @@
 |-------|------|---------|--------------|
 | Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, components & views — **1484 tests** (82 files), coverage gate 90% stmts / 80% branches |
 | Coverage report | Vitest + v8 | `bun run test:coverage` | HTML report in `coverage/` |
-| Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login & lockout, RBAC gating, board CRUD, messaging isolation, a11y, HR (leave/directory/reviews/onboarding), hiring pipeline + email outbox — **75 scenarios / 12 feature files** (see `e2e/README.md`; requires Chrome) |
+| Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login & lockout, RBAC gating, board CRUD, messaging isolation, a11y, HR (leave/directory/reviews/onboarding), hiring pipeline + email outbox — **78 scenarios / 12 feature files** (see `e2e/README.md`; requires Chrome) |
 | Static | ESLint + tsc | `bun run lint` / `bun run typecheck` | zero errors |
 | Production | Next build | `bun run build` | must pass with full type checking |
 | Production smoke | `bun run test:prodsmoke` | health, headers, CSP shape, credential flow | must pass against a built app |

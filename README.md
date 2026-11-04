@@ -70,8 +70,12 @@ keystroke-reachable. Groups below match the sidebar.
   a courteous rejection email — the internal reason stays audit-only, the
   HR-approved personal note goes to the candidate — and every send is
   recorded in an audited outbox (SENT / SKIPPED dry-run / FAILED) viewable
-  by HR. (Document checklists, the offer builder + e-signature, auto
-  employee creation on joining, and full payroll follow in R4–R8.)
+  by HR. Joining formalities (R4): a configurable document-type checklist
+  (request → receive → verify/reject with a note, per candidate), a
+  background-check record (vendor, INITIATED → IN_REVIEW → CLEARED/FLAGGED),
+  and a "request all mandatory" convenience on selected candidates.
+  (The offer builder + e-signature, auto employee creation on joining, and
+  full payroll follow in R5–R8.)
 
 **Administration**
 - **Users** (`G U`, admin) — create (login + directory entry in one action), edit,
@@ -169,7 +173,7 @@ contains **no credential literals**; the seed refuses to run without it):
 CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR: lint →
 typecheck → coverage-gated unit tests → production build → bundle budget →
 dependency audit → **e2e** on a seeded ephemeral PostgreSQL 16 with headless
-Chrome (75 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
+Chrome (78 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
 messaging, a11y, HR leave/directory/reviews/onboarding, QA hardening).
 
 ## Keyboard shortcuts

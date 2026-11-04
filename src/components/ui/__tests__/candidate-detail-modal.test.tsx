@@ -21,6 +21,13 @@ const {
   addCandidateStage,
   setStageStatus,
   getDirectory,
+  getJoiningFormalities,
+  requestDocument,
+  receiveDocument,
+  verifyDocument,
+  rejectDocument,
+  initiateBackgroundCheck,
+  updateBackgroundCheck,
 } = vi.hoisted(() => ({
   scheduleInterview: vi.fn(),
   saveScorecard: vi.fn(),
@@ -29,6 +36,13 @@ const {
   addCandidateStage: vi.fn(),
   setStageStatus: vi.fn(),
   getDirectory: vi.fn(),
+  getJoiningFormalities: vi.fn(),
+  requestDocument: vi.fn(),
+  receiveDocument: vi.fn(),
+  verifyDocument: vi.fn(),
+  rejectDocument: vi.fn(),
+  initiateBackgroundCheck: vi.fn(),
+  updateBackgroundCheck: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hiring", () => ({
@@ -38,6 +52,13 @@ vi.mock("@/server-actions/hiring", () => ({
   decideCandidate,
   addCandidateStage,
   setStageStatus,
+  getJoiningFormalities,
+  requestDocument,
+  receiveDocument,
+  verifyDocument,
+  rejectDocument,
+  initiateBackgroundCheck,
+  updateBackgroundCheck,
 }));
 
 vi.mock("@/server-actions/hr-directory", () => ({ getDirectory }));
@@ -84,6 +105,11 @@ beforeEach(() => {
   getDirectory.mockResolvedValue({
     ok: true,
     data: { profiles: [{ userId: "u-mgr", name: "Ingrid" }, { userId: "u-hr", name: "Remy" }] },
+  });
+  // R4 — formalities bundle default (empty checklist + no BGV).
+  getJoiningFormalities.mockResolvedValue({
+    ok: true,
+    data: { docTypes: [], documents: [], bgChecks: [] },
   });
 });
 
@@ -270,5 +296,154 @@ describe("CandidateDetailModal: R3 decisions", () => {
         expect.objectContaining({ decision: "REJECT", reason: "Not a fit", sendEmail: false }),
       ),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R4 — joining formalities panel (docs checklist + background checks)
+// ---------------------------------------------------------------------------
+
+const FORMALITIES = {
+  ok: true,
+  data: {
+    docTypes: [
+      { id: "dt-1", key: "id_proof", label: "ID Document", description: "", isMandatory: true, sortOrder: 10, isActive: true },
+      { id: "dt-2", key: "bank_details", label: "Bank Details", description: "", isMandatory: true, sortOrder: 20, isActive: true },
+      { id: "dt-3", key: "education", label: "Education Certificates", description: "", isMandatory: false, sortOrder: 40, isActive: true },
+    ],
+    documents: [
+      { id: "cd-1", candidateId: "cand-1", docTypeKey: "id_proof", label: "ID Document", status: "RECEIVED", fileRef: "passport.pdf", remarks: "", requestedAt: "2026-11-10T00:00:00.000Z", receivedAt: "2026-11-11T00:00:00.000Z", verifiedBy: null, verifiedAt: null },
+      { id: "cd-2", candidateId: "cand-1", docTypeKey: "bank_details", label: "Bank Details", status: "VERIFIED", fileRef: "bank.pdf", remarks: "", requestedAt: "2026-11-10T00:00:00.000Z", receivedAt: "2026-11-11T00:00:00.000Z", verifiedBy: "Remy", verifiedAt: "2026-11-12T00:00:00.000Z" },
+    ],
+    bgChecks: [
+      { id: "bg-1", candidateId: "cand-1", vendor: "VerifyRight", status: "IN_REVIEW", reportRef: "", notes: "ETA 5 days", initiatedBy: "Remy", initiatedAt: "2026-11-08T00:00:00.000Z", completedAt: null },
+    ],
+  },
+};
+
+describe("CandidateDetailModal: R4 joining formalities", () => {
+  it("renders the checklist with per-type status chips and the BGV card (canManage)", async () => {
+    getJoiningFormalities.mockResolvedValue(FORMALITIES);
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    const panel = await screen.findByTestId("joining-formalities");
+    expect(panel.textContent).toContain("ID Document");
+    expect(panel.textContent).toContain("Bank Details");
+    // RECEIVED + VERIFIED chips render; the unrequested type offers Request.
+    const idChip = await screen.findByTestId("doc-status-id_proof");
+    expect(idChip.textContent).toBe("RECEIVED");
+    expect(screen.getByTestId("doc-status-bank_details").textContent).toBe("VERIFIED");
+    expect(screen.getByTestId("request-doc-education")).toBeTruthy();
+    // BGV row with vendor + status.
+    expect(panel.textContent).toContain("VerifyRight");
+    expect(panel.textContent).toContain("IN REVIEW");
+  });
+
+  it("Request on an unrequested type calls requestDocument with the type key", async () => {
+    getJoiningFormalities.mockResolvedValue(FORMALITIES);
+    requestDocument.mockResolvedValue({ ok: true, data: { id: "cd-3" } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    await screen.findByTestId("joining-formalities");
+    fireEvent.click(screen.getByTestId("request-doc-education"));
+    await waitFor(() =>
+      expect(requestDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ candidateId: "cand-1", docTypeKey: "education" }),
+      ),
+    );
+  });
+
+  it("Verify on a RECEIVED row calls verifyDocument", async () => {
+    getJoiningFormalities.mockResolvedValue(FORMALITIES);
+    verifyDocument.mockResolvedValue({ ok: true, data: { ok: true } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    await screen.findByTestId("joining-formalities");
+    fireEvent.click(screen.getByTestId("verify-doc-id_proof"));
+    await waitFor(() =>
+      expect(verifyDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ documentId: "cd-1" }),
+      ),
+    );
+  });
+
+  it("Mark received opens the inline fileRef form and submits receiveDocument", async () => {
+    getJoiningFormalities.mockResolvedValue({
+      ...FORMALITIES,
+      data: {
+        ...FORMALITIES.data,
+        documents: [FORMALITIES.data.documents[0]],
+      },
+    });
+    // id_proof REQUESTED (not received yet).
+    getJoiningFormalities.mockResolvedValue({
+      ok: true,
+      data: {
+        ...FORMALITIES.data,
+        documents: [
+          { ...FORMALITIES.data.documents[0], status: "REQUESTED", fileRef: "" },
+        ],
+      },
+    });
+    receiveDocument.mockResolvedValue({ ok: true, data: { ok: true } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    await screen.findByTestId("joining-formalities");
+    fireEvent.click(screen.getByTestId("receive-doc-id_proof"));
+    fireEvent.change(screen.getByTestId("doc-action-input-id_proof"), { target: { value: "passport_scan.pdf" } });
+    fireEvent.click(screen.getByTestId("doc-action-submit-id_proof"));
+    await waitFor(() =>
+      expect(receiveDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ documentId: "cd-1", fileRef: "passport_scan.pdf" }),
+      ),
+    );
+  });
+
+  it("Cleared on a BGV row calls updateBackgroundCheck", async () => {
+    getJoiningFormalities.mockResolvedValue(FORMALITIES);
+    updateBackgroundCheck.mockResolvedValue({ ok: true, data: { ok: true } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    await screen.findByTestId("joining-formalities");
+    fireEvent.click(screen.getByTestId("bg-clear-bg-1"));
+    await waitFor(() =>
+      expect(updateBackgroundCheck).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "bg-1", status: "CLEARED" }),
+      ),
+    );
+  });
+
+  it("hides the panel entirely without canManage (interviewer view)", async () => {
+    getJoiningFormalities.mockResolvedValue(FORMALITIES);
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage={false}
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-mgr"
+      />,
+    );
+    // Give the effect a beat, then the panel must be absent.
+    await waitFor(() => expect(screen.getByTestId("candidate-timeline")).toBeTruthy());
+    expect(screen.queryByTestId("joining-formalities")).toBeNull();
+    expect(getJoiningFormalities).not.toHaveBeenCalled();
   });
 });

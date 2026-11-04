@@ -381,3 +381,44 @@ export interface MailOutboxT {
   error: string;
   createdAt: string;
 }
+
+/** R4 — one configurable document type in the joining-formalities checklist. */
+export interface DocumentTypeConfigT {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  isMandatory: boolean;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+/** R4 — one document being collected from one candidate.
+ * status: REQUESTED → RECEIVED → VERIFIED | REJECTED. */
+export interface CandidateDocumentT {
+  id: string;
+  candidateId: string;
+  docTypeKey: string;
+  label: string;
+  status: string;
+  fileRef: string;
+  remarks: string;
+  requestedAt: string;
+  receivedAt: string | null;
+  verifiedBy: string | null;
+  verifiedAt: string | null;
+}
+
+/** R4 — one background-verification record.
+ * status: INITIATED → IN_REVIEW → CLEARED | FLAGGED. */
+export interface BackgroundCheckT {
+  id: string;
+  candidateId: string;
+  vendor: string;
+  status: string;
+  reportRef: string;
+  notes: string;
+  initiatedBy: string | null;
+  initiatedAt: string;
+  completedAt: string | null;
+}

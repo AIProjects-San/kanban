@@ -272,4 +272,29 @@ describe("Recruitment R1 models are declared", () => {
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
   });
+
+  it("R4: document + BGV models declared with snapshot keys and cascades", () => {
+    // Template list: unique key drives the checklist references.
+    const dt = modelBlock("DocumentTypeConfig");
+    expect(dt).toMatch(/key\s+String\s+@unique/);
+    expect(dt).toMatch(/isMandatory\s+Boolean\s+@default\(false\)/);
+    expect(dt).toMatch(/isActive\s+Boolean\s+@default\(true\)/);
+    // Per-candidate row: unique (candidateId, docTypeKey); label snapshot.
+    const cd = modelBlock("CandidateDocument");
+    expect(cd).toMatch(/@@unique\(\[candidateId,\s*docTypeKey\]\)/);
+    expect(cd).toMatch(/docTypeKey\s+String\b/);
+    expect(cd).toMatch(/label\s+String\b/);
+    expect(cd).toMatch(/status\s+String\s+@default\("REQUESTED"\)/);
+    expect(cd).toMatch(/onDelete:\s*Cascade/);
+    // BGV: vendor + lifecycle status + terminal completedAt.
+    const bg = modelBlock("BackgroundCheck");
+    expect(bg).toMatch(/vendor\s+String\b/);
+    expect(bg).toMatch(/status\s+String\s+@default\("INITIATED"\)/);
+    expect(bg).toMatch(/completedAt\s+DateTime\?/);
+    expect(bg).toMatch(/onDelete:\s*Cascade/);
+    expect(bg).toMatch(/@@index\(\[candidateId\]\)/);
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261114000000_hiring_bgv_documents");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+  });
 });

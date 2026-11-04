@@ -79,3 +79,28 @@ Feature: Hiring pipeline (Recruitment R1)
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Hiring" view
     Then the selected filter chip should show a count of at least 1
+
+  Scenario: HR sees the joining formalities of a selected candidate (R4)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the "Selected" pool
+    And I open the candidate card "Priyanka Menon"
+    Then the joining formalities panel should show the document checklist
+    And the document "id_proof" should show status "VERIFIED"
+    And the background check section should list the vendor "VerifyRight"
+
+  Scenario: HR requests a document from the checklist (R4)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the "Selected" pool
+    And I open the candidate card "Priyanka Menon"
+    And I request the "education_certificates" document
+    Then the document "education_certificates" should show status "REQUESTED"
+
+  Scenario: The document-type editor is config-gated (R4)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the "Doc types" button should be visible
+    When I sign out and back in as "manager@fernly.app"
+    And I open the "Hiring" view
+    Then the "Doc types" button should not be visible

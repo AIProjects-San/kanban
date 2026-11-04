@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -68,6 +68,16 @@ import {
   getHiringBoard,
   getHiringPermissions,
   getMailOutbox,
+  getDocumentTypes,
+  saveDocumentType,
+  deleteDocumentType,
+  getJoiningFormalities,
+  requestDocument,
+  receiveDocument,
+  verifyDocument,
+  rejectDocument,
+  initiateBackgroundCheck,
+  updateBackgroundCheck,
   scheduleInterview,
   saveScorecard,
   getMyInterviews,
@@ -148,6 +158,20 @@ beforeEach(() => {
   createMailerMock.mockReset();
   createMailerMock.mockReturnValue({ sendMail: vi.fn().mockResolvedValue({ delivered: true, messageId: "re-test-1" }) });
   getWorkspaceConfigMock.mockResolvedValue({ workspace: { name: "Fernly Workspace" } });
+  // R4 — joining-formalities defaults.
+  db.documentTypeConfig.findMany.mockResolvedValue([]);
+  db.documentTypeConfig.findUnique.mockResolvedValue(null);
+  db.documentTypeConfig.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "dt-new", ...data }));
+  db.documentTypeConfig.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "dt-1", ...data }));
+  db.documentTypeConfig.delete.mockResolvedValue({ id: "dt-1", label: "ID Document" });
+  db.candidateDocument.findMany.mockResolvedValue([]);
+  db.candidateDocument.findUnique.mockResolvedValue(null);
+  db.candidateDocument.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "cd-new", ...data }));
+  db.candidateDocument.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "cd-1", ...data }));
+  db.backgroundCheck.findMany.mockResolvedValue([]);
+  db.backgroundCheck.findUnique.mockResolvedValue(null);
+  db.backgroundCheck.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "bg-new", ...data }));
+  db.backgroundCheck.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "bg-1", ...data }));
 });
 
 const INTERVIEW_STAGE = {
@@ -737,5 +761,255 @@ describe("getMailOutbox", () => {
         status: "SENT", sentAt: "2026-11-12T01:02:03.000Z",
       });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R4 — joining formalities: document checklist + background checks
+// ---------------------------------------------------------------------------
+
+const DOC_TYPE = { id: "dt-1", key: "id_proof", label: "ID Document", description: "", isMandatory: true, sortOrder: 10, isActive: true };
+
+function docRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "cd-1", candidateId: "cand-1", docTypeKey: "id_proof", label: "ID Document",
+    status: "REQUESTED", fileRef: "", remarks: "",
+    requestedAt: new Date("2026-11-10T00:00:00Z"), receivedAt: null,
+    verifiedById: "", verifiedAt: null,
+    candidate: { fullName: "Nadia Petrova" },
+    ...overrides,
+  };
+}
+
+describe("R4 — document-type template config", () => {
+  it("saveDocumentType requires hiring:config (HR lacks it in this mock)", async () => {
+    requirePermissionMock.mockImplementation(async (p: string) => {
+      if (p === "hiring:config") throw new (class extends Error { digest = "AuthorizationError"; })("denied");
+      return HR_AUTH;
+    });
+    const res = await saveDocumentType({ key: "x", label: "X" });
+    expect(res.ok).toBe(false);
+    expect(db.documentTypeConfig.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a type and audits doc_type_saved", async () => {
+    const res = await saveDocumentType({ key: "id_proof", label: "ID Document", isMandatory: true, sortOrder: 10, isActive: true, description: "" });
+    expect(res.ok).toBe(true);
+    expect(db.documentTypeConfig.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ key: "id_proof", isMandatory: true }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.doc_type_saved" }));
+  });
+
+  it("rejects an invalid key (uppercase letters) at validation", async () => {
+    const res = await saveDocumentType({ key: "Bad Key", label: "X" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("VALIDATION");
+  });
+
+  it("deleteDocumentType removes the type and audits", async () => {
+    const res = await deleteDocumentType({ id: "dt-1" });
+    expect(res.ok).toBe(true);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.doc_type_deleted" }));
+  });
+
+  it("getDocumentTypes requires only hiring:view (MANAGER may read the template)", async () => {
+    db.documentTypeConfig.findMany.mockResolvedValue([DOC_TYPE]);
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    const res = await getDocumentTypes();
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data[0]).toMatchObject({ key: "id_proof", isMandatory: true });
+  });
+});
+
+describe("R4 — document checklist lifecycle", () => {
+  it("requestDocument creates a REQUESTED row with the label snapshot", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.documentTypeConfig.findUnique.mockResolvedValue(DOC_TYPE);
+    const res = await requestDocument({ candidateId: "cand-1", docTypeKey: "id_proof" });
+    expect(res.ok).toBe(true);
+    expect(db.candidateDocument.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          candidateId: "cand-1", docTypeKey: "id_proof", label: "ID Document", status: "REQUESTED",
+        }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.document_requested" }));
+  });
+
+  it("re-request resets a REJECTED row back to REQUESTED (idempotent upsert)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.documentTypeConfig.findUnique.mockResolvedValue(DOC_TYPE);
+    db.candidateDocument.findUnique.mockResolvedValue(docRow({ status: "REJECTED", remarks: "bad scan" }));
+    const res = await requestDocument({ candidateId: "cand-1", docTypeKey: "id_proof" });
+    expect(res.ok).toBe(true);
+    expect(db.candidateDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cd-1" },
+        data: expect.objectContaining({ status: "REQUESTED", fileRef: "", verifiedById: "" }),
+      }),
+    );
+  });
+
+  it("refuses an unknown or inactive document type", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.documentTypeConfig.findUnique.mockResolvedValue({ ...DOC_TYPE, isActive: false });
+    const res = await requestDocument({ candidateId: "cand-1", docTypeKey: "id_proof" });
+    expect(res.ok).toBe(false);
+    expect(db.candidateDocument.create).not.toHaveBeenCalled();
+  });
+
+  it("receiveDocument marks REQUESTED → RECEIVED with the file reference", async () => {
+    db.candidateDocument.findUnique.mockResolvedValue(docRow());
+    const res = await receiveDocument({ documentId: "cd-1", fileRef: "passport.pdf" });
+    expect(res.ok).toBe(true);
+    expect(db.candidateDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "RECEIVED", fileRef: "passport.pdf", receivedAt: expect.any(Date) }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.document_received" }));
+  });
+
+  it("refuses to receive an already VERIFIED document", async () => {
+    db.candidateDocument.findUnique.mockResolvedValue(docRow({ status: "VERIFIED" }));
+    const res = await receiveDocument({ documentId: "cd-1", fileRef: "x.pdf" });
+    expect(res.ok).toBe(false);
+    expect(db.candidateDocument.update).not.toHaveBeenCalled();
+  });
+
+  it("verifyDocument records the verifier on a RECEIVED row", async () => {
+    db.candidateDocument.findUnique.mockResolvedValue(docRow({ status: "RECEIVED" }));
+    const res = await verifyDocument({ documentId: "cd-1", remarks: "matches the passport" });
+    expect(res.ok).toBe(true);
+    expect(db.candidateDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "VERIFIED", verifiedById: "u-hr", verifiedAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it("refuses to verify a REQUESTED (not yet received) document", async () => {
+    db.candidateDocument.findUnique.mockResolvedValue(docRow({ status: "REQUESTED" }));
+    const res = await verifyDocument({ documentId: "cd-1" });
+    expect(res.ok).toBe(false);
+  });
+
+  it("rejectDocument requires a note and stores it", async () => {
+    db.candidateDocument.findUnique.mockResolvedValue(docRow({ status: "RECEIVED" }));
+    const res = await rejectDocument({ documentId: "cd-1", remarks: "Wrong person's ID" });
+    expect(res.ok).toBe(true);
+    expect(db.candidateDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "REJECTED", remarks: "Wrong person's ID" }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.document_rejected" }));
+  });
+
+  it("rejectDocument without a note fails validation", async () => {
+    const res = await rejectDocument({ documentId: "cd-1", remarks: "  " });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("VALIDATION");
+  });
+});
+
+describe("R4 — background checks", () => {
+  it("initiateBackgroundCheck creates an INITIATED record with the initiator", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await initiateBackgroundCheck({ candidateId: "cand-1", vendor: "VerifyRight", notes: "T-14" });
+    expect(res.ok).toBe(true);
+    expect(db.backgroundCheck.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // status defaults to INITIATED at the DB level (schema @default).
+        data: expect.objectContaining({ candidateId: "cand-1", vendor: "VerifyRight", initiatedById: "u-hr" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.bg_check_initiated" }));
+  });
+
+  it("initiateBackgroundCheck requires a vendor", async () => {
+    const res = await initiateBackgroundCheck({ candidateId: "cand-1", vendor: "" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("VALIDATION");
+  });
+
+  it("updateBackgroundCheck to IN_REVIEW keeps completedAt null", async () => {
+    db.backgroundCheck.findUnique.mockResolvedValue({
+      id: "bg-1", candidateId: "cand-1", vendor: "VerifyRight", status: "INITIATED",
+      reportRef: "", notes: "", initiatedById: "u-hr",
+      initiatedAt: new Date(), completedAt: null,
+      candidate: { fullName: "Nadia Petrova" },
+    });
+    const res = await updateBackgroundCheck({ id: "bg-1", status: "IN_REVIEW" });
+    expect(res.ok).toBe(true);
+    expect(db.backgroundCheck.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "IN_REVIEW", completedAt: null }) }),
+    );
+  });
+
+  it("updateBackgroundCheck to CLEARED stamps completedAt", async () => {
+    db.backgroundCheck.findUnique.mockResolvedValue({
+      id: "bg-1", candidateId: "cand-1", vendor: "VerifyRight", status: "IN_REVIEW",
+      reportRef: "", notes: "", initiatedById: "u-hr",
+      initiatedAt: new Date(), completedAt: null,
+      candidate: { fullName: "Nadia Petrova" },
+    });
+    const res = await updateBackgroundCheck({ id: "bg-1", status: "CLEARED", reportRef: "VR-2026-114" });
+    expect(res.ok).toBe(true);
+    expect(db.backgroundCheck.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "CLEARED", reportRef: "VR-2026-114", completedAt: expect.any(Date) }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.bg_check_updated" }));
+  });
+
+  it("refuses an unknown background check", async () => {
+    db.backgroundCheck.findUnique.mockResolvedValue(null);
+    const res = await updateBackgroundCheck({ id: "bg-404", status: "CLEARED" });
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("R4 — getJoiningFormalities", () => {
+  it("requires hiring:manage (a MANAGER read-only user is denied)", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:manage"));
+    const res = await getJoiningFormalities("cand-1");
+    expect(res.ok).toBe(false);
+    expect(db.candidateDocument.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns the checklist bundle with verifier + initiator names serialized", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.documentTypeConfig.findMany.mockResolvedValue([DOC_TYPE]);
+    db.candidateDocument.findMany.mockResolvedValue([
+      {
+        id: "cd-1", candidateId: "cand-1", docTypeKey: "id_proof", label: "ID Document",
+        status: "VERIFIED", fileRef: "passport.pdf", remarks: "",
+        requestedAt: new Date("2026-11-10T00:00:00Z"), receivedAt: new Date("2026-11-11T00:00:00Z"),
+        verifiedById: "u-hr", verifiedAt: new Date("2026-11-12T00:00:00Z"),
+      },
+    ]);
+    db.backgroundCheck.findMany.mockResolvedValue([
+      {
+        id: "bg-1", candidateId: "cand-1", vendor: "VerifyRight", status: "IN_REVIEW",
+        reportRef: "", notes: "", initiatedById: "u-hr",
+        initiatedAt: new Date("2026-11-08T00:00:00Z"), completedAt: null,
+      },
+    ]);
+    db.user.findMany.mockResolvedValue([{ id: "u-hr", name: "Remy" }]);
+    const res = await getJoiningFormalities("cand-1");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.docTypes).toHaveLength(1);
+      expect(res.data.documents[0]).toMatchObject({
+        status: "VERIFIED", verifiedBy: "Remy", verifiedAt: "2026-11-12T00:00:00.000Z",
+      });
+      expect(res.data.bgChecks[0]).toMatchObject({ vendor: "VerifyRight", initiatedBy: "Remy" });
+    }
+  });
+
+  it("refuses an unknown candidate", async () => {
+    db.candidate.findUnique.mockResolvedValue(null);
+    const res = await getJoiningFormalities("cand-404");
+    expect(res.ok).toBe(false);
   });
 });

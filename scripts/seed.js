@@ -107,6 +107,7 @@ async function main() {
   await db.workspace.deleteMany();
   await db.candidate.deleteMany();
   await db.hiringStageConfig.deleteMany();
+  await db.documentTypeConfig.deleteMany();
 
   // -----------------------------------------------------------------
   // Workspace settings
@@ -1574,6 +1575,46 @@ async function main() {
   console.log(`  ✓ Hiring R2: ${CANDIDATES.reduce((n, c) => n + Object.keys(c.scheduled ?? {}).length, 0)} interviews scheduled on the calendar + 1 filled scorecard`);
   console.log(`  ✓ Hiring R3: 1 selected candidate (offer prep) + 1 rejection email in the outbox`);
   console.log(`  ✓ Hiring: ${STAGE_TEMPLATE.length}-stage template + ${CANDIDATES.length} candidates (4 active, 1 selected, 1 rejected, 1 withdrawn)`);
+
+  // -----------------------------------------------------------------
+  // R4 — joining formalities: document-type template + Priyanka's
+  // checklist (SELECTED → offer accepted story) + a BGV in review.
+  // -----------------------------------------------------------------
+  const DOC_TYPES = [
+    { key: "id_proof", label: "ID Document", description: "Passport or national ID (photo page)", isMandatory: true, sortOrder: 10 },
+    { key: "bank_details", label: "Bank Details", description: "Account for salary deposits", isMandatory: true, sortOrder: 20 },
+    { key: "right_to_work", label: "Right to Work", description: "Visa / citizenship evidence", isMandatory: true, sortOrder: 30 },
+    { key: "education_certificates", label: "Education Certificates", description: "Highest qualification transcripts", isMandatory: false, sortOrder: 40 },
+    { key: "previous_employment_proof", label: "Previous Employment Proof", description: "Relieving / service letters", isMandatory: false, sortOrder: 50 },
+  ];
+  for (const t of DOC_TYPES) {
+    await db.documentTypeConfig.create({ data: t });
+  }
+  {
+    const priyanka = await db.candidate.findUnique({ where: { email: "priyanka.menon@example.com" } });
+    if (priyanka) {
+      const hrId = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+      await db.candidateDocument.createMany({
+        data: [
+          { candidateId: priyanka.id, docTypeKey: "id_proof", label: "ID Document", status: "VERIFIED", fileRef: "passport_menon.pdf", verifiedById: hrId, verifiedAt: addDays(TODAY, -3), receivedAt: addDays(TODAY, -4) },
+          { candidateId: priyanka.id, docTypeKey: "bank_details", label: "Bank Details", status: "RECEIVED", fileRef: "bank_form_menon.pdf", receivedAt: addDays(TODAY, -1) },
+          { candidateId: priyanka.id, docTypeKey: "right_to_work", label: "Right to Work", status: "REQUESTED" },
+          { candidateId: priyanka.id, docTypeKey: "previous_employment_proof", label: "Previous Employment Proof", status: "REJECTED", fileRef: "relieving_letter.pdf", remarks: "Letter is dated after the stated last working day — please request a corrected copy.", receivedAt: addDays(TODAY, -2) },
+        ],
+      });
+      await db.backgroundCheck.create({
+        data: {
+          candidateId: priyanka.id,
+          vendor: "VerifyRight",
+          status: "IN_REVIEW",
+          notes: "Employment + education verification; ETA 5 business days.",
+          initiatedById: hrId,
+          initiatedAt: addDays(TODAY, -6),
+        },
+      });
+    }
+  }
+  console.log(`  ✓ Hiring R4: ${DOC_TYPES.length} document types + Priyanka's checklist (1 verified, 1 received, 1 requested, 1 rejected) + BGV in review`);
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }

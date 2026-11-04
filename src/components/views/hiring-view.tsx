@@ -8,7 +8,7 @@
 // until R2 assigns them stages.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, ChevronRight, Mail, Plus, Settings2, UserPlus } from "lucide-react";
+import { CalendarClock, ChevronRight, FileText, Mail, Plus, Settings2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { CandidateT, HiringStageConfigT, MailOutboxT } from "@/lib/types";
@@ -21,6 +21,7 @@ import {
 import { CandidateModal } from "../ui/candidate-modal";
 import { CandidateDetailModal } from "../ui/candidate-detail-modal";
 import { HiringStageModal } from "../ui/hiring-stage-modal";
+import { DocumentTypeModal } from "../ui/document-type-modal";
 
 type StatusFilter = "ACTIVE" | "SELECTED" | "REJECTED" | "WITHDRAWN" | "HIRED";
 
@@ -58,6 +59,7 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
   const [editCandidate, setEditCandidate] = useState<CandidateT | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [stageModalOpen, setStageModalOpen] = useState(false);
+  const [docTypeModalOpen, setDocTypeModalOpen] = useState(false);
   const [myInterviews, setMyInterviews] = useState<Array<{
     stageId: string; stageLabel: string; candidateId: string; candidateName: string;
     position: string; status: string; scheduledAt: string | null;
@@ -141,9 +143,14 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
         </div>
         <div className="flex items-center gap-2">
           {canConfig && (
-            <button className="f-btn f-btn-ghost" onClick={() => setStageModalOpen(true)} data-testid="stage-template-btn">
-              <Settings2 size={15} /> Stages
-            </button>
+            <>
+              <button className="f-btn f-btn-ghost" onClick={() => setStageModalOpen(true)} data-testid="stage-template-btn">
+                <Settings2 size={15} /> Stages
+              </button>
+              <button className="f-btn f-btn-ghost" onClick={() => setDocTypeModalOpen(true)} data-testid="doc-type-btn">
+                <FileText size={15} /> Doc types
+              </button>
+            </>
           )}
           {canManage && (
             <button className="f-btn f-btn-primary" onClick={() => { setEditCandidate(null); setCreateOpen(true); }} data-testid="add-candidate-btn">
@@ -370,6 +377,11 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
       <HiringStageModal
         open={stageModalOpen}
         onClose={() => setStageModalOpen(false)}
+        onChanged={load}
+      />
+      <DocumentTypeModal
+        open={docTypeModalOpen}
+        onClose={() => setDocTypeModalOpen(false)}
         onChanged={load}
       />
     </div>

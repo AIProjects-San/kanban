@@ -194,3 +194,84 @@ Then("the selected filter chip should show a count of at least {int}", async fun
     `selected count ${match[1]} should be >= ${min}`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// R4 — joining formalities (documents + background checks)
+// ---------------------------------------------------------------------------
+
+When("I open the {string} pool", async function (label) {
+  const driver = await this.getDriver();
+  const key = label.toUpperCase();
+  const chip = await driver.wait(
+    until.elementLocated(By.css(`[data-testid="hiring-filter-${key.toLowerCase()}"]`)),
+    10_000,
+    `filter chip "${label}" not found`,
+  );
+  await chip.click();
+  await driver.sleep(400);
+});
+
+Then("the joining formalities panel should show the document checklist", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="joining-formalities"]')),
+    10_000,
+    "joining-formalities panel did not render",
+  );
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="doc-checklist"]')),
+    10_000,
+    "document checklist did not render",
+  );
+});
+
+Then("the document {string} should show status {string}", async function (docTypeKey, status) {
+  const driver = await this.getDriver();
+  const chip = await driver.wait(
+    until.elementLocated(By.css(`[data-testid="doc-status-${docTypeKey}"]`)),
+    10_000,
+    `status chip for document "${docTypeKey}" not found`,
+  );
+  const text = await chip.getText();
+  assert.strictEqual(text, status, `document "${docTypeKey}" should be ${status}, got: ${text}`);
+});
+
+Then("the background check section should list the vendor {string}", async function (vendor) {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(
+      By.xpath(`//*[@data-testid="bg-check-list"]//*[contains(text(), "${vendor}")]`),
+    ),
+    10_000,
+    `background check for vendor "${vendor}" not found`,
+  );
+  assert.ok(row, `background check row for ${vendor} found`);
+});
+
+When("I request the {string} document", async function (docTypeKey) {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css(`[data-testid="request-doc-${docTypeKey}"]`)),
+    10_000,
+    `request button for document "${docTypeKey}" not found`,
+  );
+  await btn.click();
+  await driver.sleep(1_500);
+});
+
+When("I sign out and back in as {string}", async function (email) {
+  await this.logout();
+  const driver = await this.getDriver();
+  // logout() clears httpOnly cookies — reload to bounce back to the login screen.
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.css('input[type="email"]')), 10_000);
+  const emailInput = await driver.findElement(By.css('input[type="email"]'));
+  const passInput = await driver.findElement(By.css('input[type="password"]'));
+  await emailInput.clear();
+  await emailInput.sendKeys(email);
+  await passInput.clear();
+  const { DEMO_PASSWORD } = process.env;
+  await passInput.sendKeys(DEMO_PASSWORD || "fernly123");
+  await driver.findElement(By.css('button[type="submit"]')).click();
+  await driver.sleep(2_000);
+});

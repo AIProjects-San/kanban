@@ -526,3 +526,59 @@ export const scorecardSchema = z.object({
   recommendation: z.enum(SCORECARD_RECOMMENDATIONS).nullable().optional(),
   remarks: z.string().trim().max(2_000).default(""),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// R4 — joining formalities: document checklist + background checks
+// ---------------------------------------------------------------------------
+
+export const saveDocumentTypeSchema = z.object({
+  id: cuidish.optional(),
+  key: z.string().trim().min(1, "A key is required.").max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
+  label: z.string().trim().min(1, "A label is required.").max(120),
+  description: z.string().trim().max(500).default(""),
+  isMandatory: z.boolean().default(false),
+  sortOrder: z.number().int().min(0).max(9_999).default(0),
+  isActive: z.boolean().default(true),
+}).strict();
+
+export const deleteDocumentTypeSchema = z.object({
+  id: cuidish,
+}).strict();
+
+export const requestDocumentSchema = z.object({
+  candidateId: cuidish,
+  docTypeKey: z.string().trim().min(1).max(60),
+  remarks: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const receiveDocumentSchema = z.object({
+  documentId: cuidish,
+  // A reference to the received file (URL / name) — optional in v1.
+  fileRef: z.string().trim().max(500).default(""),
+}).strict();
+
+export const verifyDocumentSchema = z.object({
+  documentId: cuidish,
+  remarks: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const rejectDocumentSchema = z.object({
+  documentId: cuidish,
+  // Required — the candidate/HR needs to know what to fix.
+  remarks: z.string().trim().min(1, "A rejection note is required.").max(2_000),
+}).strict();
+
+export const BG_CHECK_STATUSES = ["INITIATED", "IN_REVIEW", "CLEARED", "FLAGGED"] as const;
+
+export const initiateBackgroundCheckSchema = z.object({
+  candidateId: cuidish,
+  vendor: z.string().trim().min(1, "A vendor is required.").max(120),
+  notes: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const updateBackgroundCheckSchema = z.object({
+  id: cuidish,
+  status: z.enum(BG_CHECK_STATUSES),
+  reportRef: z.string().trim().max(500).default(""),
+  notes: z.string().trim().max(2_000).default(""),
+}).strict();

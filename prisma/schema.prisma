@@ -966,6 +966,8 @@ model Candidate {
 
   stages CandidateStage[]
   outbox MailOutbox[]
+  documents CandidateDocument[]
+  bgChecks BackgroundCheck[]
 
   @@index([status])
   @@index([createdAt])
@@ -1043,6 +1045,76 @@ model MailOutbox {
   updatedAt DateTime @updatedAt
 
   @@index([createdAt])
+  @@index([candidateId])
+  @@index([status])
+}
+
+// R4 — joining-formalities document checklist. The workspace-level template:
+// which documents HR collects from every joining candidate (ID, bank details,
+// right to work, education certificates, previous-employment proof…).
+// Admins can add / rename / reorder / disable types (hiring:config). Rows
+// reference types by KEY so renaming a label never orphans a candidate's
+// history — CandidateDocument snapshots the label at request time.
+model DocumentTypeConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  description String   @default("")
+  // Mandatory types are flagged in the UI and default-requested when the
+  // joining-formalities panel opens for a SELECTED candidate.
+  isMandatory Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// One document being collected from one candidate.
+// status: REQUESTED → RECEIVED → VERIFIED | REJECTED (back to RECEIVED on
+// re-request after a rejection). fileRef is a reference (URL / file name) —
+// no binary upload infra in v1.
+model CandidateDocument {
+  id         String    @id @default(cuid())
+  candidateId String
+  candidate  Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  // DocumentTypeConfig.key — stable identifier; label is a snapshot.
+  docTypeKey String
+  label      String
+  // REQUESTED | RECEIVED | VERIFIED | REJECTED
+  status     String    @default("REQUESTED")
+  fileRef    String    @default("")
+  remarks    String    @default("")
+  requestedAt DateTime @default(now())
+  receivedAt DateTime?
+  verifiedById String   @default("")
+  verifiedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([candidateId, docTypeKey])
+  @@index([candidateId])
+  @@index([status])
+}
+
+// R4 — background verification (BGV) record. Research B: initiated around
+// offer acceptance (T-14), vendor-run, result clears or flags the join.
+// status: INITIATED → IN_REVIEW → CLEARED | FLAGGED. Multiple records per
+// candidate are allowed (re-runs); the panel shows them newest-first.
+model BackgroundCheck {
+  id           String    @id @default(cuid())
+  candidateId  String
+  candidate    Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  vendor       String
+  // INITIATED | IN_REVIEW | CLEARED | FLAGGED
+  status       String    @default("INITIATED")
+  reportRef    String    @default("")
+  notes        String    @default("")
+  initiatedById String   @default("")
+  initiatedAt  DateTime  @default(now())
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
   @@index([candidateId])
   @@index([status])
 }

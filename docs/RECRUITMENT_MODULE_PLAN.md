@@ -1,6 +1,6 @@
 # Recruitment & Joining Formalities Module Plan
 
-Status: R1 ✓ R2 ✓ R3 ✓ shipped (R4 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
+Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ shipped (R5 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
 Decisions confirmed with the product owner on 2026-11-04 (see §1.3).
 
 ---
@@ -182,7 +182,7 @@ push to origin.**
   Content rule: the internal rejectReason is audit-only — the email carries
   the HR-approved personal note. Every send is recorded (SENT / SKIPPED /
   FAILED); a provider outage never fails the decision itself.
-- **R4 — Background check & documents**: configurable document-type list;
+- **R4 — Background check & documents** *(shipped)*: configurable document-type list;
   per-candidate document checklist (request/receive/verify); BGV record
   (initiate on offer acceptance per research, status, vendor, notes); joining-
   formalities checklist surfaced on the candidate (pre-day-1 items).
@@ -230,6 +230,19 @@ push to origin.**
 | M14 | Outbox gating | Sign in as `manager@fernly.app` → Hiring | No outbox panel (hiring:manage only); board + interviews visible |
 | M15 | Selected pool chip | Hiring → "Selected" filter | Priyanka Menon listed with count 1 |
 
+## 6c. Manual test cases — R4 (executed on the sandbox preview)
+
+| # | Case | Steps | Expected |
+|---|---|---|---|
+| M16 | Doc-type editor | HR → Hiring → "Doc types" | 5 seeded types; add/edit/reorder/delete works; MANAGER has no button |
+| M17 | Checklist renders | Open Priyanka (Selected) | Joining formalities panel: ID VERIFIED, Bank RECEIVED, Right to work REQUESTED, Previous employment REJECTED with note |
+| M18 | Request a document | Click "Request" on Education Certificates | Row appears with REQUESTED chip; audit hiring.document_requested |
+| M19 | Request all mandatory | Click "Request all mandatory" | Every mandatory type without a row becomes REQUESTED |
+| M20 | Receive → verify | Mark received (fileRef) → Verify | RECEIVED with fileRef; then VERIFIED + verified-by name |
+| M21 | Reject with note | Reject a RECEIVED doc with a note | REJECTED + note shown; "Re-request" offered |
+| M22 | BGV lifecycle | Initiate (vendor) → In review → Cleared | Status chip walks INITIATED → IN REVIEW → CLEARED with completedAt |
+| M23 | Panel gating | MANAGER opens any candidate | No joining-formalities panel (hiring:manage only) |
+
 ## 7. Automation (e2e, CI-only) — R1
 
 `e2e/features/hiring.feature` (11 scenarios): MEMBER must not see the Hiring
@@ -237,8 +250,11 @@ nav item; HR creates a candidate; advances a stage; rejects with reason.
 R3 adds: select (offer-prep banner), reject-with-email lands a SKIPPED
 outbox row (CI has no RESEND_API_KEY — the dry-run is the contract), the
 seeded Elena rejection row renders, MANAGERs never see the outbox panel,
-and the Selected chip counts the pool. Follows the rbac/hr-directory
-feature patterns (`data-testid` hooks on the board).
+and the Selected chip counts the pool. R4 adds: the joining-formalities
+checklist of a selected candidate (seeded VERIFIED chip + BGV vendor),
+requesting a document from the checklist, and the config-gated doc-type
+editor button. Follows the rbac/hr-directory feature patterns
+(`data-testid` hooks on the board).
 
 ## 8. References
 
