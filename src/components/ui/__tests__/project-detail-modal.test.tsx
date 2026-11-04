@@ -11,7 +11,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 //      existing ProjectModal on top — the detail modal stays open underneath.
 //   2. Members: owner (ownership implies access) + explicit assignments.
 //      role:manage gets an add-picker + per-row remove; MEMBER sees neither.
-//   3. History: the EntityHistorySection timeline, expanded by default.
+//   3. History: the EntityHistorySection timeline, collapsed by default —
+//      no audit round trip until the user expands it.
 //   4. A stale id (project deleted elsewhere) renders a not-found note.
 // ---------------------------------------------------------------------------
 
@@ -170,8 +171,9 @@ describe("ProjectDetailModal: info section (every role)", () => {
     expect(screen.queryByRole("button", { name: /edit details/i })).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.queryAllByTitle(/Remove .* from this project/)).toHaveLength(0);
-    // …but the member roster itself is visible (read-only). The owner name may
-    // also show up as an audit actor once history loads — hence getAllByText.
+    // …but the member roster itself is visible (read-only). The owner name
+    // may also show up as an audit actor if history is expanded — hence
+    // getAllByText.
     expect(screen.getAllByText("Mira Hale").length).toBeGreaterThan(0);
   });
 
@@ -193,7 +195,8 @@ describe("ProjectDetailModal: members section", () => {
       expect(screen.getByText("Theo Vance")).toBeTruthy();
     });
     // Owner row synthesized from the roster (u1 has no assignment row).
-    // (Name may also appear as an audit actor — getAllByText.)
+    // (Name may also appear as an audit actor if history is expanded —
+    // getAllByText.)
     expect(screen.getAllByText("Mira Hale").length).toBeGreaterThan(0);
     expect(screen.getByText("Owner")).toBeTruthy();
     // Assignment emails are visible for context.
@@ -247,13 +250,25 @@ describe("ProjectDetailModal: members section", () => {
 });
 
 describe("ProjectDetailModal: history + stale ids", () => {
-  it("shows the audit trail expanded by default (no click needed)", async () => {
+  it("history section is collapsed by default; expanding lazy-loads the trail", async () => {
     renderModal();
+    const header = await waitFor(() => {
+      const btn = screen.getByRole("button", { name: /History & Audit/i });
+      expect(btn).toBeTruthy();
+      return btn;
+    });
+    // Collapsed, and no audit round trip has been made just by opening
+    // the modal — the fetch is deferred to the first expand.
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(/Updated status on project/)).toBeNull();
+    expect(getAuditLogsForEntity).not.toHaveBeenCalled();
+
+    // One click expands and lazy-loads the mocked entry.
+    fireEvent.click(header);
     await waitFor(() => {
-      expect(screen.getByText("History & Audit")).toBeTruthy();
+      expect(getAuditLogsForEntity).toHaveBeenCalledWith("PROJECT", "p1");
     });
     await waitFor(() => {
-      // The mocked entry's detail line renders without expanding the section.
       expect(screen.getByText(/Updated status on project/)).toBeTruthy();
       expect(screen.getByText("project.updated")).toBeTruthy();
     });

@@ -17,8 +17,9 @@
 //                  they can see anyway). role:manage users additionally get an
 //                  add-member picker + per-row remove; writes go through the
 //                  audit-logged assignUserToProject / unassignUserFromProject.
-//   3. History   — the reusable EntityHistorySection timeline (defaultOpen),
-//                  showing created / field-level updates / member changes.
+//   3. History   — the reusable EntityHistorySection timeline, collapsed by
+//                  default (one click expands + lazy-loads the trail), showing
+//                  created / field-level updates / member changes.
 //
 // Server side this component adds nothing: every action it calls already
 // exists, is permission-gated and unit-tested.
@@ -402,8 +403,10 @@ function ProjectDetailBody({
       </section>
 
       {/* ---------------------------------------------------- history */}
-      {/* Keyed by refreshTick so every mutation (project edit, member
-          add/remove) remounts the section and re-fetches the trail —
+      {/* Collapsed by default (user request): opening the modal costs no
+          audit round trip — the section lazy-loads on first expand.
+          Keyed by refreshTick so every mutation (project edit, member
+          add/remove) remounts it and re-fetches on the next expand —
           otherwise the lazy-loaded list would stay stale after a change
           made right here in the modal. */}
       <EntityHistorySection
@@ -411,7 +414,6 @@ function ProjectDetailBody({
         entityType="PROJECT"
         entityId={project.id}
         entityLabel={project.name}
-        defaultOpen
       />
     </div>
   );

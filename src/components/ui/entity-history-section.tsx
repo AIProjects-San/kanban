@@ -28,8 +28,6 @@ interface EntityHistorySectionProps {
   entityLabel?: string;
   /** Override the section title. Defaults to "History & Audit". */
   title?: string;
-  /** Start expanded (and load immediately) instead of collapsed. */
-  defaultOpen?: boolean;
 }
 
 /**
@@ -54,9 +52,8 @@ export function EntityHistorySection({
   entityId,
   entityLabel,
   title = "History & Audit",
-  defaultOpen = false,
 }: EntityHistorySectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(false);
   // null = not loaded yet (panel hasn't been opened); [] = loaded, empty; non-empty = loaded
   const [logs, setLogs] = useState<AuditLogEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
