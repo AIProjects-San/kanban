@@ -156,6 +156,9 @@ model UserSettings {
   userId        String   @id
   accent        String   @default("forest") // forest | ocean | plum | ember
   dark          Boolean  @default(false)
+  // PR-65 — per-user sidebar rail (compact icon-only layout). Previously
+  // browser-localStorage only, which every account on that browser shares.
+  sidebarRail   Boolean  @default(false)
   notifEmail    Boolean  @default(true)
   notifPush     Boolean  @default(true)
   notifMentions Boolean  @default(true)

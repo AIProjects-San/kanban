@@ -13,6 +13,8 @@ import { useApp } from "@/store/app-store";
 import { navLeaves } from "@/config/navigation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { ACCENTS } from "@/lib/constants";
+import { useAppSession } from "@/hooks/use-app-session";
+import { updateUserSettings } from "@/server-actions/data";
 
 interface CmdItem {
   id: string;
@@ -30,10 +32,21 @@ export function CommandPalette() {
     dark, setDark, setAccent,
   } = useApp();
   const [query, setQuery] = useState("");
+  const { data: session } = useAppSession();
   // PR-64 — `can` uses the server-computed effective permissions (static ∪
   // DB ceiling), so role-permission saves reflect for logged-in users.
   const { can } = usePermissions();
   const canManageRoles = can("role:manage");
+  // PR-65 — theme changes made here are PER-USER: persist to the signed-in
+  // user's settings row (best-effort; the store already drives the UI).
+  const persistAppearance = useCallback(
+    (patch: { accent?: string; dark?: boolean }) => {
+      const userId = session?.user?.id;
+      if (!userId) return;
+      void updateUserSettings(userId, patch).catch(() => {/* non-critical */});
+    },
+    [session?.user?.id],
+  );
 
   // Every close path (Escape, ⌘K toggle, item action, backdrop click) goes
   // through this helper so the search box always resets — no effect needed
@@ -112,7 +125,9 @@ export function CommandPalette() {
         id: "toggle-theme",
         label: dark ? "Switch to light mode" : "Switch to dark mode",
         icon: dark ? Sun : Moon,
-        action: () => { setDark(!dark); closeCmdk(); },
+        // PR-65 — persist per-user (was store-only: silently reverted on
+        // reload and leaked to other accounts via the shared localStorage).
+        action: () => { setDark(!dark); persistAppearance({ dark: !dark }); closeCmdk(); },
         group: "Theme",
       },
       ...ACCENTS.map((a) => {
@@ -121,12 +136,12 @@ export function CommandPalette() {
           id: `accent-${a.key}`,
           label: `Theme: ${a.label}`,
           icon: Icon,
-          action: () => { setAccent(a.key); closeCmdk(); },
+          action: () => { setAccent(a.key); persistAppearance({ accent: a.key }); closeCmdk(); },
           group: "Theme" as const,
         };
       }),
     ];
-  }, [setView, closeCmdk, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, can]);
+  }, [setView, closeCmdk, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, can, persistAppearance]);
 
   const filtered = items.filter((i) =>
     i.label.toLowerCase().includes(query.toLowerCase())

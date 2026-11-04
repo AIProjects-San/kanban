@@ -40,8 +40,8 @@ describe("app config (src/config/app.ts)", () => {
   });
 
   it("derives storage keys and the error bridge from the slug", () => {
-    expect(STORAGE_KEYS.accent).toBe(`${APP.slug}-accent`);
-    expect(STORAGE_KEYS.dark).toBe(`${APP.slug}-dark`);
+    // PR-65 — one per-user theme blob replaces the three shared flat keys.
+    expect(STORAGE_KEYS.theme).toBe(`${APP.slug}-theme`);
     expect(ERROR_BRIDGE_KEY).toBe(`__${APP.slug}CaptureError`);
     expect(DEFAULT_MAIL_FROM.startsWith(APP.name)).toBe(true);
     expect(DEFAULT_WORKSPACE_NAME.startsWith(APP.name)).toBe(true);

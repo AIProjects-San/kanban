@@ -17,8 +17,15 @@ vi.mock("@/store/app-store", () => ({
     openProjectModal: mockOpenProjectModal,
     setShortcutsOpen: mockSetShortcutsOpen,
     setNotifOpen: mockSetNotifOpen,
+    sidebarRail: false,
     toggleSidebarRail: mockToggleSidebarRail,
   }),
+}));
+
+// PR-65 — ⌘B also persists the rail per-user; keep it inert in tests.
+const mockPersistAppearance = vi.fn();
+vi.mock("@/hooks/use-appearance-sync", () => ({
+  usePersistAppearance: () => mockPersistAppearance,
 }));
 
 let currentPermissions: Set<string> = new Set();

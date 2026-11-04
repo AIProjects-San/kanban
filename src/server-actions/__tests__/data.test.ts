@@ -947,6 +947,19 @@ describe("self-profile & settings", () => {
       expect.objectContaining({ where: { userId: MEMBER.userId } }),
     );
   });
+
+  it("PR-65: updateUserSettings persists the per-user sidebar rail", async () => {
+    signIn(MEMBER);
+    db.userSettings.upsert.mockResolvedValue({});
+    expectOk(await updateUserSettings(MEMBER.userId, { sidebarRail: true }));
+    expect(db.userSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: MEMBER.userId },
+        create: expect.objectContaining({ userId: MEMBER.userId, sidebarRail: true }),
+        update: expect.objectContaining({ sidebarRail: true }),
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

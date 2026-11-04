@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useApp } from "@/store/app-store";
 import { usePermissions } from "@/hooks/use-permissions";
+import { usePersistAppearance } from "@/hooks/use-appearance-sync";
 import { navLeaves } from "@/config/navigation";
 import type { Permission } from "@/lib/rbac";
 
@@ -29,9 +30,12 @@ export function useKeyboardShortcuts() {
     openProjectModal,
     setShortcutsOpen,
     setNotifOpen,
+    sidebarRail,
     toggleSidebarRail,
   } = useApp();
   const { can } = usePermissions();
+  // PR-65 — ⌘B toggles the rail, a per-user preference; persist it.
+  const persistAppearance = usePersistAppearance();
 
   useEffect(() => {
     let lastG = 0;
@@ -45,9 +49,12 @@ export function useKeyboardShortcuts() {
 
       // Cmd+K handled by command palette itself. Cmd+B toggles the sidebar
       // rail (PR-58) — like ⌘K it works even while typing in an input.
+      // PR-65 — the rail is per-user; persist the new state.
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
         e.preventDefault();
+        // The next rail state is persisted per-user (PR-65).
+        persistAppearance({ sidebarRail: !sidebarRail });
         toggleSidebarRail();
         return;
       }
@@ -121,5 +128,5 @@ export function useKeyboardShortcuts() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [setView, openTaskModal, openProjectModal, setShortcutsOpen, setNotifOpen, toggleSidebarRail, can]);
+  }, [setView, openTaskModal, openProjectModal, setShortcutsOpen, setNotifOpen, toggleSidebarRail, can, persistAppearance, sidebarRail]);
 }

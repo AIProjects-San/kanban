@@ -50,6 +50,7 @@ export async function getUserProfile(userId: string) {
       ? {
           accent: user.settings.accent as string,
           dark: user.settings.dark,
+          sidebarRail: user.settings.sidebarRail,
           notifEmail: user.settings.notifEmail,
           notifPush: user.settings.notifPush,
           notifMentions: user.settings.notifMentions,
@@ -121,6 +122,7 @@ export async function getUserSettings(userId: string) {
 export async function updateUserSettings(userId: string, input: Partial<{
   accent: string;
   dark: boolean;
+  sidebarRail: boolean;
   notifEmail: boolean;
   notifPush: boolean;
   notifMentions: boolean;

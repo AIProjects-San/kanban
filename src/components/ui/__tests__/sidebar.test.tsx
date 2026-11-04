@@ -41,6 +41,12 @@ import { useApp } from "@/store/app-store";
 import { NAV_GROUPS, groupIdOfView } from "@/config/navigation";
 import { STORAGE_KEYS } from "@/config/app";
 
+// PR-65 — the rail toggle persists via updateUserSettings; never hit the
+// network (or pull the real Prisma module graph) in tests.
+vi.mock("@/server-actions/data", () => ({
+  updateUserSettings: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+}));
+
 /** Smart-minimal boot state for the given active view. */
 function bootCollapsedFor(view: string): string[] {
   return NAV_GROUPS.map((g) => g.id).filter((id) => id !== groupIdOfView(view as never));
@@ -280,13 +286,16 @@ describe("Sidebar: icon rail (⌘B)", () => {
     fireEvent.click(toggle);
     const s = useApp.getState();
     expect(s.sidebarRail).toBe(true);
-    expect(localStorage.getItem(STORAGE_KEYS.rail)).toBe("1");
+    // PR-65 — the rail now lives in the per-user theme blob (tagged with the
+    // owning user), not a shared flat key.
+    const blob = JSON.parse(localStorage.getItem(STORAGE_KEYS.theme) ?? "{}");
+    expect(blob.rail).toBe(true);
     const aside = document.querySelector("aside");
     expect(aside?.className).toContain("lg:w-16");
     // Toggle back — label flips with the state.
     fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
     expect(useApp.getState().sidebarRail).toBe(false);
-    expect(localStorage.getItem(STORAGE_KEYS.rail)).toBe("0");
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.theme) ?? "{}").rail).toBe(false);
   });
 
   it("rail leaves expose accessible names (icons-only never loses labels)", () => {

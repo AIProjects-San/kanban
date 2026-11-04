@@ -110,6 +110,7 @@ interface AppShellProps {
     settings?: {
       accent: string;
       dark: boolean;
+      sidebarRail?: boolean | null;
       notifEmail: boolean;
       notifPush: boolean;
       notifMentions: boolean;
@@ -124,22 +125,25 @@ interface AppShellProps {
 
 export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
   const { data: session, status } = useAppSession();
-  const { view, refreshTick, setAccent, setDark, setEffectivePermissions } = useApp();
+  const { view, refreshTick, setEffectivePermissions, applyUserAppearance } = useApp();
   const refresh = useRefresh();
   useKeyboardShortcuts();
 
-  // Apply user settings from DB on mount — overrides localStorage defaults
-  // so theme/dark mode follow the user across machines.
+  // PR-65 — appearance is PER-USER. The DB row (UserSettings) is the source
+  // of truth; the localStorage cache only avoids a theme flash for the SAME
+  // user reloading. On every mount we apply the signed-in user's DB values
+  // (defaults when the row is missing — never another user's cached theme)
+  // and rebind the cache to this user. This is what stops one account's
+  // appearance change from applying to every other account on the browser.
   useEffect(() => {
-    if (user?.settings) {
-      // The DB column is a free-form string; narrow it back to the
-      // known AccentTheme union. Unknown values fall back to "forest"
-      // (the default) rather than crashing the store.
-      const accent = user.settings.accent as AccentTheme;
-      setAccent(accent);
-      setDark(user.settings.dark);
-    }
-  }, [user?.settings, user?.settings?.accent, user?.settings?.dark, setAccent, setDark]);
+    if (!user) return;
+    applyUserAppearance({
+      userId: user.id,
+      accent: (user.settings?.accent as AccentTheme) ?? "forest",
+      dark: user.settings?.dark ?? false,
+      rail: user.settings?.sidebarRail ?? false,
+    });
+  }, [user, applyUserAppearance]);
 
   // PR-64 — live RBAC refresh. Seed the client permission store from the
   // SSR payload (correct first paint), then poll so an admin's role-

@@ -136,6 +136,7 @@ export const updateProfileSchema = z.object({
 export const updateUserSettingsSchema = z.object({
   accent: z.string().max(30).optional(),
   dark: z.boolean().optional(),
+  sidebarRail: z.boolean().optional(),
   notifEmail: z.boolean().optional(),
   notifPush: z.boolean().optional(),
   notifMentions: z.boolean().optional(),

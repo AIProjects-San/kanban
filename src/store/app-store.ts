@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { STORAGE_KEYS } from "@/config/app";
+import { STORAGE_KEYS, LEGACY_STORAGE_KEYS, type ThemeCache } from "@/config/app";
 import { NAV_GROUPS, groupIdOfView } from "@/config/navigation";
 
 export type ViewKey =
@@ -116,6 +116,20 @@ interface AppState {
   setAccent: (a: AccentTheme) => void;
   dark: boolean;
   setDark: (d: boolean) => void;
+
+  // PR-65 — per-user appearance. The DB row (UserSettings) is the source of
+  // truth; the localStorage blob under STORAGE_KEYS.theme is only a
+  // first-paint cache tagged with the owning user id so one account's theme
+  // never bleeds into another on the same browser. themeUserId records who
+  // the cached values belong to; AppShell applies the signed-in user's DB
+  // row (or defaults) and rebinds the cache on every mount.
+  themeUserId: string | null;
+  applyUserAppearance: (a: {
+    userId: string;
+    accent: AccentTheme;
+    dark: boolean;
+    rail: boolean;
+  }) => void;
 }
 
 function loadInitial() {
@@ -124,18 +138,59 @@ function loadInitial() {
       accent: "forest" as AccentTheme,
       dark: false,
       rail: false,
+      themeUserId: null as string | null,
     };
   }
-  const savedAccent = localStorage.getItem(STORAGE_KEYS.accent) as AccentTheme | null;
-  const savedDark = localStorage.getItem(STORAGE_KEYS.dark) === "1";
-  const savedRail = localStorage.getItem(STORAGE_KEYS.rail) === "1";
-  // Apply immediately so first paint is correct
-  if (savedAccent) document.documentElement.setAttribute("data-accent", savedAccent);
-  if (savedDark) document.documentElement.classList.add("dark");
-  return { accent: savedAccent ?? "forest", dark: savedDark, rail: savedRail };
+  // PR-65 — the appearance cache is ONE blob tagged with the owning user.
+  // Remove the legacy flat keys (pre-PR-65, shared by every account on the
+  // browser) so stale cross-user values can never resurface.
+  for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key);
+  let cache: ThemeCache | null = null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.theme);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<ThemeCache>;
+      cache = {
+        userId: typeof parsed.userId === "string" ? parsed.userId : null,
+        accent: typeof parsed.accent === "string" ? parsed.accent : "forest",
+        dark: parsed.dark === true,
+        rail: parsed.rail === true,
+      };
+    }
+  } catch {
+    cache = null; // corrupt blob → defaults; AppShell re-seeds from the DB
+  }
+  const accent = (cache?.accent ?? "forest") as AccentTheme;
+  const dark = cache?.dark ?? false;
+  const rail = cache?.rail ?? false;
+  // Apply immediately so first paint is correct (for the SAME user
+  // reloading — a different user's cache is corrected by AppShell right
+  // after mount, before any meaningful interaction).
+  document.documentElement.setAttribute("data-accent", accent);
+  document.documentElement.classList.toggle("dark", dark);
+  return { accent, dark, rail, themeUserId: cache?.userId ?? null };
 }
 
 const initial = loadInitial();
+
+/** Write the per-user appearance cache blob (localStorage). */
+function writeThemeCache(patch: Partial<ThemeCache>) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.theme);
+    const parsed: Partial<ThemeCache> = raw ? JSON.parse(raw) : {};
+    const next: ThemeCache = {
+      userId: patch.userId ?? parsed.userId ?? null,
+      accent: patch.accent ?? parsed.accent ?? "forest",
+      dark: patch.dark ?? parsed.dark ?? false,
+      rail: patch.rail ?? parsed.rail ?? false,
+    };
+    localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(next));
+  } catch {
+    // localStorage unavailable/corrupt — the store state still applies;
+    // the DB row (source of truth) restores everything on next load.
+  }
+}
 
 // Smart-minimal boot state: everything collapsed except the current view's
 // group (default view is dashboard → "overview" is expanded). This doubles
@@ -167,12 +222,13 @@ export const useApp = create<AppState>((set) => ({
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
 
   sidebarRail: initial.rail,
+  // PR-65 — rail is a per-user preference (persisted to the user's DB row
+  // by the UI layer, exactly like accent/dark); the cache blob just keeps
+  // the same-user reload flash-free.
   toggleSidebarRail: () =>
     set((s) => {
       const sidebarRail = !s.sidebarRail;
-      if (typeof document !== "undefined") {
-        localStorage.setItem(STORAGE_KEYS.rail, sidebarRail ? "1" : "0");
-      }
+      writeThemeCache({ rail: sidebarRail });
       return { sidebarRail };
     }),
 
@@ -243,7 +299,7 @@ export const useApp = create<AppState>((set) => ({
     set({ accent });
     if (typeof document !== "undefined") {
       document.documentElement.setAttribute("data-accent", accent);
-      localStorage.setItem(STORAGE_KEYS.accent, accent);
+      writeThemeCache({ accent });
     }
   },
   dark: initial.dark,
@@ -251,7 +307,20 @@ export const useApp = create<AppState>((set) => ({
     set({ dark });
     if (typeof document !== "undefined") {
       document.documentElement.classList.toggle("dark", dark);
-      localStorage.setItem(STORAGE_KEYS.dark, dark ? "1" : "0");
+      writeThemeCache({ dark });
     }
+  },
+
+  themeUserId: initial.themeUserId,
+  // PR-65 — AppShell applies the signed-in user's DB-backed appearance on
+  // mount (defaults when the row is missing) and rebinds the cache to that
+  // user, closing the cross-account leak the old shared keys had.
+  applyUserAppearance: ({ userId, accent, dark, rail }) => {
+    set({ themeUserId: userId, accent, dark, sidebarRail: rail });
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-accent", accent);
+      document.documentElement.classList.toggle("dark", dark);
+    }
+    writeThemeCache({ userId, accent, dark, rail });
   },
 }));

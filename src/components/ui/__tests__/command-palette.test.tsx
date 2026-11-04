@@ -28,6 +28,8 @@ vi.mock("@/lib/auth-client-better", () => ({
 vi.mock("@/server-actions/data", () => ({
   getAllUsers: vi.fn().mockResolvedValue({ ok: true, data: [] }),
   createMember: vi.fn(),
+  // PR-65 — theme commands persist per-user.
+  updateUserSettings: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
 }));
 
 import { CommandPalette } from "@/components/ui/command-palette";
@@ -161,6 +163,23 @@ describe("command palette: role gating", () => {
     // Other role:manage-gated entries stay hidden for this member.
     expect(paletteLabels()).not.toContain("Go to Users");
     useApp.setState({ effectivePermissions: null });
+  });
+
+  it("PR-65: theme commands persist to the signed-in user's settings row", async () => {
+    useSession.mockReturnValue({ data: { user: { id: "u-42", role: "MEMBER" } }, isPending: false, error: null });
+    render(<CommandPalette />);
+    const input = screen.getByPlaceholderText("Type a command or search…") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "plum" } });
+    const plum = await waitFor(() => {
+      const btn = paletteLabels().find((l) => l === "Theme: Plum");
+      expect(btn).toBeTruthy();
+      return screen.getByRole("button", { name: "Theme: Plum" });
+    });
+    fireEvent.click(plum);
+    const { updateUserSettings } = await import("@/server-actions/data");
+    await waitFor(() => {
+      expect(updateUserSettings).toHaveBeenCalledWith("u-42", { accent: "plum" });
+    });
   });
 });
 

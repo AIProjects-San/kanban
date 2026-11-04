@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/store/app-store";
 import { usePermissions } from "@/hooks/use-permissions";
+import { usePersistAppearance } from "@/hooks/use-appearance-sync";
 import { cn } from "@/lib/utils";
 import { appSignOut } from "@/hooks/use-app-session"; // PR-48 — flag-aware (v4 wrapper or Better Auth)
 import { APP } from "@/config/app";
@@ -50,6 +51,8 @@ export function Sidebar() {
     toggleGroup,
   } = useApp();
   const { can } = usePermissions();
+  // PR-65 — the rail is a per-user preference; persist the toggle.
+  const persistAppearance = usePersistAppearance();
 
   // RBAC — same gates as before (navigation.ts carries them now):
   // hr:view (HR Console), audit:view (Audit Log), role:manage (Users,
@@ -104,7 +107,10 @@ export function Sidebar() {
             {/* Rail toggle — desktop only (mobile keeps the full drawer) */}
             <button
               className="f-btn f-btn-ghost f-btn-icon hidden lg:flex"
-              onClick={toggleSidebarRail}
+              onClick={() => {
+                toggleSidebarRail();
+                persistAppearance({ sidebarRail: !rail });
+              }}
               aria-label={rail ? "Expand sidebar" : "Collapse sidebar to icon rail"}
               aria-pressed={rail}
               title={rail ? "Expand sidebar (⌘B)" : "Collapse to icon rail (⌘B)"}

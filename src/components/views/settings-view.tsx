@@ -44,7 +44,7 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({ user }: SettingsViewProps) {
-  const { accent, setAccent, dark, setDark } = useApp();
+  const { accent, setAccent, dark, setDark, sidebarRail, toggleSidebarRail } = useApp();
   const refresh = useRefresh();
   const [name, setName] = useState(user.name);
   const [timezone, setTimezone] = useState(user.timezone);
@@ -99,6 +99,11 @@ export function SettingsView({ user }: SettingsViewProps) {
   const handleDarkChange = async (v: boolean) => {
     setDark(v);
     try { await updateUserSettings(user.id, { dark: v }); } catch { /* ignore */ }
+  };
+  // PR-65 — the rail is a per-user preference, persisted like accent/dark.
+  const handleRailChange = async (v: boolean) => {
+    toggleSidebarRail();
+    try { await updateUserSettings(user.id, { sidebarRail: v }); } catch { /* ignore */ }
   };
 
   return (
@@ -243,6 +248,15 @@ export function SettingsView({ user }: SettingsViewProps) {
               <div className="text-xs text-muted-foreground">Use dark theme across the app</div>
             </div>
             <Toggle checked={dark} onChange={(v) => { handleDarkChange(v); toast.success(v ? "Dark mode on" : "Light mode on"); }} label="Dark mode" />
+          </div>
+
+          {/* PR-65 — per-user sidebar density (was browser-localStorage only). */}
+          <div className="flex items-center justify-between py-2 border-t border-border">
+            <div>
+              <div className="text-sm font-medium text-foreground">Compact sidebar</div>
+              <div className="text-xs text-muted-foreground">Icon-only rail instead of the full sidebar (⌘B)</div>
+            </div>
+            <Toggle checked={sidebarRail} onChange={handleRailChange} label="Compact sidebar" />
           </div>
         </div>
       </Section>

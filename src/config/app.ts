@@ -30,12 +30,33 @@ export const APP = {
 
 export type AppConfig = typeof APP;
 
-/** localStorage keys (theme persistence) — derived from the app slug. */
+/**
+ * localStorage keys — derived from the app slug.
+ *
+ * PR-65 — appearance is PER-USER. The three flat keys below (one shared set
+ * per browser) let one account's theme/rail choices leak into every other
+ * account on that machine; they are now collapsed into ONE versioned blob
+ * tagged with the owning user id (`theme`), which AppShell rebinds on login.
+ * LEGACY_* lists the old flat keys purely so boot can delete them.
+ */
 export const STORAGE_KEYS = {
-  accent: `${APP.slug}-accent`,
-  dark: `${APP.slug}-dark`,
-  rail: `${APP.slug}-rail`,
+  theme: `${APP.slug}-theme`,
 } as const;
+
+export const LEGACY_STORAGE_KEYS = [
+  `${APP.slug}-accent`,
+  `${APP.slug}-dark`,
+  `${APP.slug}-rail`,
+] as const;
+
+/** The per-user appearance cache blob stored under STORAGE_KEYS.theme. */
+export interface ThemeCache {
+  /** Which user this cached appearance belongs to (rebound on login). */
+  userId: string | null;
+  accent: string;
+  dark: boolean;
+  rail: boolean;
+}
 
 /**
  * Window bridge the client error boundary uses to hand captured errors to
