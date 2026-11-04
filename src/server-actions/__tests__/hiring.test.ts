@@ -99,6 +99,7 @@ import {
   scheduleInterview,
   saveScorecard,
   getMyInterviews,
+  getHiringFunnel,
   sendOffer,
   getOfferByToken,
   signOffer,
@@ -1516,5 +1517,71 @@ describe("R6 — markJoined", () => {
     const res = await markJoined({ candidateId: "cand-1" });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.email).toBe("nadia.petrova2@fernly.app");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R8 — funnel analytics (docs/RECRUITMENT_MODULE_PLAN.md §5): pool totals,
+// stage load + velocity, and the offer accept rate.
+// ---------------------------------------------------------------------------
+
+describe("R8 — getHiringFunnel", () => {
+  it("requires hiring:view (MEMBER denied)", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:view"));
+    const res = await getHiringFunnel();
+    expect(res.ok).toBe(false);
+  });
+
+  it("aggregates pool totals, stage load/velocity, and the offer funnel", async () => {
+    const day = 86_400_000;
+    const now = Date.now();
+    db.candidate.findMany.mockResolvedValue([
+      { status: "ACTIVE" }, { status: "ACTIVE" },
+      { status: "SELECTED" }, { status: "HIRED" },
+      { status: "REJECTED" }, { status: "WITHDRAWN" },
+    ]);
+    db.candidateStage.findMany.mockResolvedValue([
+      // Screening: 1 in progress (started 2 days ago), 3 passed (2d, 4d, 6d).
+      { stageKey: "screening", label: "Screening", status: "IN_PROGRESS", startedAt: new Date(now - 2 * day), completedAt: null },
+      { stageKey: "screening", label: "Screening", status: "PASSED", startedAt: new Date(now - 6 * day), completedAt: new Date(now - 4 * day) },
+      { stageKey: "screening", label: "Screening", status: "PASSED", startedAt: new Date(now - 4 * day), completedAt: new Date(now - 2 * day) },
+      { stageKey: "screening", label: "Screening", status: "PASSED", startedAt: new Date(now - 8 * day), completedAt: new Date(now - 2 * day) },
+      // Interview: 1 in progress, none passed — avg over the live instance.
+      { stageKey: "interview_1", label: "Interview 1", status: "IN_PROGRESS", startedAt: new Date(now - 3 * day), completedAt: null },
+      // Skipped stages count for neither load nor velocity.
+      { stageKey: "offer", label: "Offer", status: "SKIPPED", startedAt: null, completedAt: null },
+      { stageKey: "offer", label: "Offer", status: "PENDING", startedAt: null, completedAt: null },
+    ]);
+    db.offerRecord.findMany.mockResolvedValue([
+      { status: "SENT" }, { status: "SIGNED" }, { status: "SIGNED" }, { status: "DECLINED" }, { status: "DRAFT" },
+    ]);
+
+    const res = await getHiringFunnel();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.totals).toEqual({
+        total: 6, active: 2, selected: 1, hired: 1, rejected: 1, withdrawn: 1,
+      });
+
+      const screening = res.data.stages.find((s) => s.stageKey === "screening");
+      expect(screening).toMatchObject({ inStage: 1, passed: 3 });
+      // Avg: PASSED durations (2, 2, 6) + live (2) = 3.0d.
+      expect(screening?.avgDays).toBe(3);
+
+      const interview = res.data.stages.find((s) => s.stageKey === "interview_1");
+      expect(interview).toMatchObject({ inStage: 1, passed: 0, avgDays: 3 });
+
+      // Offer funnel: 2 signed / 3 decided = 67%; awaiting 1; draft ignored.
+      expect(res.data.offers).toEqual({ total: 5, awaiting: 1, signed: 2, declined: 1, acceptRate: 67 });
+    }
+  });
+
+  it("accept rate is null until an offer is decided (no NaN)", async () => {
+    db.candidate.findMany.mockResolvedValue([]);
+    db.candidateStage.findMany.mockResolvedValue([]);
+    db.offerRecord.findMany.mockResolvedValue([{ status: "SENT" }, { status: "DRAFT" }]);
+    const res = await getHiringFunnel();
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.offers.acceptRate).toBeNull();
   });
 });

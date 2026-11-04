@@ -403,3 +403,39 @@ Then("the candidate detail should show the hired summary", async function () {
     "hired summary did not render after marking joined",
   );
 });
+
+// ---------------------------------------------------------------------------
+// R8 — funnel analytics panel
+// ---------------------------------------------------------------------------
+
+Then("the funnel panel should show stage metrics", async function () {
+  const driver = await this.getDriver();
+  const panel = await driver.wait(
+    until.elementLocated(By.css('[data-testid="hiring-funnel"]')),
+    15_000,
+    "funnel panel did not render",
+  );
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid^="funnel-stage-"]')),
+    10_000,
+    "no stage metrics rows rendered",
+  );
+  const text = await panel.getText();
+  // "in progress / passed / avg days" header + at least one row with counts.
+  assert.ok(text.includes("avg days"), `stage metrics header missing: ${text.slice(0, 200)}`);
+  assert.ok(/\d+\s*\/\s*\d+/.test(text), `stage metrics should carry counts: ${text.slice(0, 200)}`);
+});
+
+Then("the funnel panel should show the offer accept rate", async function () {
+  const driver = await this.getDriver();
+  const rate = await driver.wait(
+    until.elementLocated(By.css('[data-testid="funnel-accept-rate"]')),
+    10_000,
+    "accept-rate element did not render",
+  );
+  const text = await rate.getText();
+  assert.ok(
+    /^\d+%$|^—$/.test(text.trim()),
+    `accept rate should render as a percentage or the em-dash, got: "${text}"`,
+  );
+});

@@ -526,3 +526,11 @@ export interface PayslipT {
   net: number;
   ytdNet: number;
 }
+
+/** R8 — recruitment funnel analytics (getHiringFunnel): pool totals, per-stage
+ * load + velocity, and the offer funnel. hiring:view — not salary-sensitive. */
+export interface HiringFunnelT {
+  totals: { total: number; active: number; selected: number; hired: number; rejected: number; withdrawn: number };
+  stages: Array<{ stageKey: string; label: string; inStage: number; passed: number; avgDays: number | null }>;
+  offers: { total: number; awaiting: number; signed: number; declined: number; acceptRate: number | null };
+}

@@ -13,13 +13,14 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 //   • Opening a candidate renders the stage timeline + advance button.
 // ---------------------------------------------------------------------------
 
-const { getHiringBoard, getHiringPermissions, advanceStage, getMyInterviews, getMailOutbox, getOfferRecords } = vi.hoisted(() => ({
+const { getHiringBoard, getHiringPermissions, advanceStage, getMyInterviews, getMailOutbox, getOfferRecords, getHiringFunnel } = vi.hoisted(() => ({
   getHiringBoard: vi.fn(),
   getHiringPermissions: vi.fn(),
   advanceStage: vi.fn(),
   getMyInterviews: vi.fn(),
   getMailOutbox: vi.fn(),
   getOfferRecords: vi.fn(),
+  getHiringFunnel: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hiring", async (importOriginal) => ({
@@ -30,6 +31,7 @@ vi.mock("@/server-actions/hiring", async (importOriginal) => ({
   getMyInterviews,
   getMailOutbox,
   getOfferRecords,
+  getHiringFunnel,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -88,6 +90,14 @@ beforeEach(() => {
   getMyInterviews.mockResolvedValue({ ok: true, data: [] });
   getMailOutbox.mockResolvedValue({ ok: true, data: [] });
   getOfferRecords.mockResolvedValue({ ok: true, data: [] });
+  getHiringFunnel.mockResolvedValue({ ok: true, data: {
+    totals: { total: 7, active: 4, selected: 1, hired: 1, rejected: 1, withdrawn: 0 },
+    stages: [
+      { stageKey: "screening", label: "Application Screening", inStage: 1, passed: 5, avgDays: 2.4 },
+      { stageKey: "interview_1", label: "Interview 1 — Technical", inStage: 2, passed: 2, avgDays: null },
+    ],
+    offers: { total: 2, awaiting: 1, signed: 1, declined: 0, acceptRate: 100 },
+  } });
 });
 
 describe("HiringView: HR (full manage)", () => {
@@ -283,5 +293,31 @@ describe("HiringView: R5 offers panel", () => {
     expect(screen.queryByTestId("offers-panel")).toBeNull();
     expect(screen.queryByTestId("offer-template-btn")).toBeNull();
     expect(getOfferRecords).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R8 — funnel analytics panel
+// ---------------------------------------------------------------------------
+
+describe("HiringView: R8 funnel panel", () => {
+  it("renders pool totals, stage velocity, and the offer accept rate", async () => {
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const funnel = await screen.findByTestId("hiring-funnel");
+    expect(funnel.textContent).toContain("7 candidates all-time");
+
+    const screening = await screen.findByTestId("funnel-stage-screening");
+    expect(screening.textContent).toContain("2.4d");
+
+    // 100% accept rate (1 signed / 1 decided).
+    expect(screen.getByTestId("funnel-accept-rate").textContent).toBe("100%");
+    const offers = screen.getByTestId("funnel-offers");
+    expect(offers.textContent).toContain("Awaiting signature");
+  });
+
+  it("hides the funnel while it has not loaded (no layout flash)", () => {
+    getHiringFunnel.mockResolvedValue({ ok: false, error: "denied" });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    expect(screen.queryByTestId("hiring-funnel")).toBeNull();
   });
 });

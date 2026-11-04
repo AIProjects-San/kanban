@@ -1,6 +1,6 @@
 # Recruitment & Joining Formalities Module Plan
 
-Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ R5 ✓ R6 ✓ R7 ✓ shipped (R8 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
+Status: ALL SHIPPED — R1–R8 complete (2026-11-04) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
 Decisions confirmed with the product owner on 2026-11-04 (see §1.3).
 
 ---
@@ -201,10 +201,10 @@ push to origin.**
   monthly PayrollRun (OPEN → LOCKED) with per-employee Payslip lines (earnings +
   deductions editable while open; pro-rated LOP); lock period once PAID; YTD
   totals; payslip stored with number + print-friendly download view.
-- **R8 — Polish & hardening**: funnel analytics (candidates per stage,
-  time-in-stage, offer-accept rate); permission-matrix tests completed; docs
-  finalized (README, ARCHITECTURE, TESTING); e2e hardening; bundle budget
-  re-check.
+- **R8 — Polish & hardening** *(shipped)*: funnel analytics (candidates per stage,
+  time-in-stage, offer-accept rate) on the Hiring board (hiring:view);
+  the full 32-permission matrix pinned by unit tests; docs finalized
+  (README, ARCHITECTURE, TESTING); e2e hardening; bundle budget re-check.
 
 ## 6. Manual test cases — R1 (executed on the sandbox preview)
 
@@ -282,9 +282,18 @@ push to origin.**
 | M44 | Lock | Lock the new run (confirm) | Chip flips LOCKED; payslips become immutable; audit "payroll.run_locked" with the net total |
 | M45 | Structure from offer | New structure → pick employee → Copy from signed offer | Components copied from the SIGNED offer; the previous active structure retires to history |
 
+## 6g. Manual test cases — R8 (executed on the sandbox preview)
+
+| # | Case | Steps | Expected |
+|---|---|---|---|
+| M46 | Funnel panel | HR → Hiring | "Recruitment funnel" panel: pool totals (7 candidates all-time after seed), stage rows "in progress / passed / avg days", offer accept rate |
+| M47 | Velocity | Compare a stage's avg days against the stage timelines | avg = mean of (completed − started) for PASSED and (now − started) for IN_PROGRESS; SKIPPED/PENDING excluded |
+| M48 | Accept rate | Offers panel vs funnel | Rate = signed ÷ (signed + declined); "—" until the first decided offer |
+| M49 | Funnel for MANAGER | Sign in as manager@fernly.app → Hiring | Funnel panel visible (hiring:view) — no salary data involved |
+
 ## 7. Automation (e2e, CI-only)
 
-`e2e/features/hiring.feature` (11 scenarios): MEMBER must not see the Hiring
+`e2e/features/hiring.feature` (20 scenarios): MEMBER must not see the Hiring
 nav item; HR creates a candidate; advances a stage; rejects with reason.
 R3 adds: select (offer-prep banner), reject-with-email lands a SKIPPED
 outbox row (CI has no RESEND_API_KEY — the dry-run is the contract), the
@@ -302,7 +311,8 @@ HR marks the signed candidate joined and the hired summary renders.
 OPEN) and structures, opens a payslip with the LOP hint, edits LOP days
 and saves, creates next month's run and locks it (retry-tolerant steps —
 the run row satisfies the assertion whether the create won or already
-existed), and MANAGERs never see the Payroll leaf. Follows the
+existed), and MANAGERs never see the Payroll leaf. R8 adds: the funnel
+panel renders stage metrics and the offer accept rate. Follows the
 rbac/hr-directory feature patterns (`data-testid` hooks on the board).
 
 ## 8. References

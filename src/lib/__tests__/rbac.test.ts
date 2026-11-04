@@ -178,3 +178,89 @@ describe("outranks", () => {
     expect(outranks("MEMBER", "MEMBER")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R8 — the FULL permission matrix, pinned (docs/RECRUITMENT_MODULE_PLAN.md
+// §5, milestone R8: "permission-matrix tests completed"). Every declared
+// permission × every role, with the exact expected grant/deny. Any change to
+// the matrix — adding a permission, granting it to a new role — must
+// consciously update this table. This is the contract the RBAC editor's
+// static floor enforces at runtime.
+// ---------------------------------------------------------------------------
+
+describe("permission matrix (full pin)", () => {
+  // ✓ = granted, ✗ = denied. Columns: ADMIN, HR, MANAGER, MEMBER.
+  const MATRIX: Record<Permission, [boolean, boolean, boolean, boolean]> = {
+    // Tasks & projects
+    "task:create":        [true, false, true, true],
+    "task:edit:own":      [true, false, true, true],
+    "task:edit:any":      [true, false, true, false],
+    "task:delete":        [true, false, false, false],
+    "project:create":     [true, false, true, false],
+    "project:edit":       [true, false, true, false],
+    "project:delete":     [true, false, false, false],
+    // Team
+    "member:invite":      [true, false, true, false],
+    "member:edit":        [true, false, false, false],
+    "member:delete":      [true, false, false, false],
+    // Communication & calendar
+    "message:send":       [true, true, true, true],
+    "event:create":       [true, false, true, false],
+    "event:delete":       [true, false, true, false],
+    // General
+    "settings:edit":      [true, true, true, true],
+    "role:manage":        [true, false, false, false],
+    "analytics:view":     [true, true, true, true],
+    "team:view":          [true, true, true, true],
+    "audit:view":         [true, false, true, false],
+    // Bugs
+    "bug:create":         [true, false, true, true],
+    "bug:edit:own":       [true, false, true, true],
+    "bug:edit:any":       [true, false, true, false],
+    "bug:delete":         [true, false, false, false],
+    "bug:assign":         [true, false, true, false],
+    // HR module
+    "hr:view":            [true, true, true, false],
+    "hr:admin":           [true, true, false, false],
+    "leave:request":      [true, true, true, true],
+    "review:manage":      [true, true, true, false],
+    "onboarding:manage":  [true, true, false, false],
+    // Recruitment module (docs/RECRUITMENT_MODULE_PLAN.md §3)
+    "hiring:view":        [true, true, true, false],
+    "hiring:manage":      [true, true, false, false],
+    "hiring:config":      [true, true, false, false],
+    "payroll:manage":     [true, true, false, false],
+  };
+
+  const ROLES: Role[] = ["ADMIN", "HR", "MANAGER", "MEMBER"];
+
+  it("every declared permission has a pinned row", () => {
+    const declared = ALL_PERMISSIONS.map((p) => p.key).sort();
+    const pinned = Object.keys(MATRIX).sort();
+    expect(pinned).toEqual(declared);
+  });
+
+  it.each(ROLES)("matches the pinned grants for %s", (role) => {
+    for (const [permission, grants] of Object.entries(MATRIX) as [Permission, boolean[]][]) {
+      const idx = ROLES.indexOf(role);
+      expect(
+        hasPermission(role, permission),
+        `${role} × ${permission}: expected ${grants[idx]}`,
+      ).toBe(grants[idx]);
+    }
+  });
+
+  it("MANAGER (the hiring interviewer) never reaches payroll or hiring manage", () => {
+    expect(hasPermission("MANAGER", "payroll:manage")).toBe(false);
+    expect(hasPermission("MANAGER", "hiring:manage")).toBe(false);
+    expect(hasPermission("MANAGER", "hiring:config")).toBe(false);
+    // ...but keeps the interviewer's read view.
+    expect(hasPermission("MANAGER", "hiring:view")).toBe(true);
+  });
+
+  it("MEMBER holds no hiring or payroll permission at all", () => {
+    for (const p of ["hiring:view", "hiring:manage", "hiring:config", "payroll:manage"] as Permission[]) {
+      expect(hasPermission("MEMBER", p)).toBe(false);
+    }
+  });
+});

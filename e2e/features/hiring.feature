@@ -142,3 +142,9 @@ Feature: Hiring pipeline (Recruitment R1)
     And I open the candidate card "Priyanka Menon"
     And I mark the candidate as joined
     Then the candidate detail should show the hired summary
+
+  Scenario: The recruitment funnel panel shows stage + offer analytics (R8)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the funnel panel should show stage metrics
+    And the funnel panel should show the offer accept rate

@@ -926,6 +926,92 @@ export async function getHiringPermissions(): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// R8 — funnel analytics (docs/RECRUITMENT_MODULE_PLAN.md §5, milestone R8).
+// hiring:view (interviewers included — counts and durations are not
+// salary-sensitive): candidate pool totals, per-stage load + velocity
+// (average days in stage over started instances), and the offer funnel
+// (sent → signed/declined with the accept rate over DECIDED offers).
+// ---------------------------------------------------------------------------
+
+export async function getHiringFunnel(): Promise<
+  ActionResult<{
+    totals: { total: number; active: number; selected: number; hired: number; rejected: number; withdrawn: number };
+    stages: Array<{ stageKey: string; label: string; inStage: number; passed: number; avgDays: number | null }>;
+    offers: { total: number; awaiting: number; signed: number; declined: number; acceptRate: number | null };
+  }>
+> {
+  return toResult(async () => {
+    await requirePermission("hiring:view");
+    const [candidates, stageRows, offerRows] = await Promise.all([
+      db.candidate.findMany({ select: { status: true } }),
+      db.candidateStage.findMany({
+        select: { stageKey: true, label: true, status: true, startedAt: true, completedAt: true },
+      }),
+      db.offerRecord.findMany({ select: { status: true } }),
+    ]);
+
+    const count = (s: string) => candidates.filter((c) => c.status === s).length;
+
+    // Stage metrics grouped by the snapshotted (stageKey, label) — template
+    // renames create distinct groups, which is exactly right for history.
+    const now = Date.now();
+    const groups = new Map<string, { label: string; inStage: number; passed: number; days: number[] }>();
+    for (const s of stageRows) {
+      const key = s.stageKey;
+      let g = groups.get(key);
+      if (!g) {
+        g = { label: s.label, inStage: 0, passed: 0, days: [] };
+        groups.set(key, g);
+      }
+      if (s.status === "IN_PROGRESS") g.inStage += 1;
+      if (s.status === "PASSED") g.passed += 1;
+      // Velocity: started → completed (PASSED) or started → now (IN_PROGRESS).
+      const from = s.startedAt?.getTime();
+      const to = s.status === "PASSED" ? s.completedAt?.getTime() : s.status === "IN_PROGRESS" ? now : undefined;
+      if (from && to && to >= from) {
+        g.days.push((to - from) / 86_400_000);
+      }
+    }
+    const stages = [...groups.entries()]
+      .map(([stageKey, g]) => ({
+        stageKey,
+        label: g.label,
+        inStage: g.inStage,
+        passed: g.passed,
+        avgDays: g.days.length > 0
+          ? Math.round((g.days.reduce((a, b) => a + b, 0) / g.days.length) * 10) / 10
+          : null,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    const signed = offerRows.filter((o) => o.status === "SIGNED").length;
+    const declined = offerRows.filter((o) => o.status === "DECLINED").length;
+    const awaiting = offerRows.filter((o) => o.status === "SENT").length;
+
+    return {
+      totals: {
+        total: candidates.length,
+        active: count("ACTIVE"),
+        selected: count("SELECTED"),
+        hired: count("HIRED"),
+        rejected: count("REJECTED"),
+        withdrawn: count("WITHDRAWN"),
+      },
+      stages,
+      offers: {
+        total: offerRows.length,
+        awaiting,
+        signed,
+        declined,
+        // Accept rate over DECIDED offers only (pending offers are neither
+        // accepted nor lost — null until the first decision lands).
+        acceptRate: signed + declined > 0 ? Math.round((signed / (signed + declined)) * 100) : null,
+      },
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // R4 — joining formalities: document checklist + background checks
 // (docs/RECRUITMENT_MODULE_PLAN.md §5 R4). All manage ops are hiring:manage;
 // the checklist template editor is hiring:config. Documents reference

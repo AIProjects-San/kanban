@@ -91,7 +91,10 @@ keystroke-reachable. Groups below match the sidebar.
   (monthly = annual ÷ 12), per-slip earnings/deduction editing while the
   run is OPEN with pro-rated loss-of-pay (days in → money out), lock-when-
   paid finality, YTD net totals, sequential slip numbers, and a
-  print-friendly slip view.
+  print-friendly slip view. Funnel analytics (R8): the Hiring board carries
+  a recruitment-funnel panel — pool totals (active / selected / hired /
+  rejected / withdrawn), per-stage load + velocity (avg days in stage over
+  started instances), and the offer accept rate over decided offers.
 
 **Administration**
 - **Users** (`G U`, admin) — create (login + directory entry in one action), edit,
@@ -100,7 +103,7 @@ keystroke-reachable. Groups below match the sidebar.
   capacity, audit retention, configurable vocabularies (task statuses, project
   statuses, event types, tags, priorities, departments) and the **role-permission
   matrix** (edits apply to signed-in users within the 60 s config cache window).
-- **Audit Log** (`G L`) — append-only trail of every mutation (66 typed actions):
+- **Audit Log** (`G L`) — append-only trail of every mutation (101 typed actions):
   actor, entity, timestamp, human-readable detail; filter by entity; per-entity
   history inside edit modals.
 
@@ -178,7 +181,7 @@ contains **no credential literals**; the seed refuses to run without it):
 | `bun run build` / `bun run start` | Standalone production build / serve |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | `tsc --noEmit` (strict — part of the gate) |
-| `bun run test` | Vitest unit/integration suite (**1715 tests**) |
+| `bun run test` | Vitest unit/integration suite (**1727 tests**) |
 | `bun run test:coverage` | Coverage report + threshold gates (≥90% statements on `src/lib` + `src/server-actions`) |
 | `bun run test:e2e` | Selenium + Cucumber browser suite (needs Chrome; see `e2e/README.md`) |
 | `bun run test:prodsmoke` | Smoke-checks a production build (health, headers, CSP, login) |
@@ -189,7 +192,7 @@ contains **no credential literals**; the seed refuses to run without it):
 CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR: lint →
 typecheck → coverage-gated unit tests → production build → bundle budget →
 dependency audit → **e2e** on a seeded ephemeral PostgreSQL 16 with headless
-Chrome (88 scenarios across 13 feature files: login & lockout, RBAC, tasks, hiring,
+Chrome (89 scenarios across 13 feature files: login & lockout, RBAC, tasks, hiring,
 messaging, a11y, HR leave/directory/reviews/onboarding, payroll, QA hardening).
 
 ## Keyboard shortcuts

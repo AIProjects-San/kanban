@@ -8,12 +8,13 @@
 // until R2 assigns them stages.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, ChevronRight, FileText, Mail, Plus, Settings2, UserPlus } from "lucide-react";
+import { CalendarClock, ChevronRight, FileText, Filter, Mail, Plus, Settings2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { CandidateT, HiringStageConfigT, MailOutboxT, OfferRecordT } from "@/lib/types";
+import type { CandidateT, HiringFunnelT, HiringStageConfigT, MailOutboxT, OfferRecordT } from "@/lib/types";
 import {
   getHiringBoard,
+  getHiringFunnel,
   getHiringPermissions,
   getMailOutbox,
   getMyInterviews,
@@ -75,6 +76,8 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
   // R3 — audited candidate-email outbox (hiring:manage only).
   const [outbox, setOutbox] = useState<MailOutboxT[]>([]);
   const [outboxOpenId, setOutboxOpenId] = useState<string | null>(null);
+  // R8 — funnel analytics (hiring:view — interviewers included).
+  const [funnel, setFunnel] = useState<HiringFunnelT | null>(null);
 
   const load = useCallback(async () => {
     const [boardRes, permRes] = await Promise.all([
@@ -101,6 +104,8 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
     }
     const mine = await getMyInterviews();
     if (mine.ok) setMyInterviews(mine.data);
+    const fn = await getHiringFunnel();
+    if (fn.ok) setFunnel(fn.data);
     setLoaded(true);
   }, []);
 
@@ -201,6 +206,69 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
           </button>
         ))}
       </div>
+
+      {/* R8 — funnel analytics (hiring:view) */}
+      {funnel && (
+        <div className="rounded-lg border border-border" data-testid="hiring-funnel">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
+            <Filter size={14} className="text-sky-500" />
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Recruitment funnel</div>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {funnel.totals.total} candidate{funnel.totals.total === 1 ? "" : "s"} all-time
+            </span>
+          </div>
+          <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_1fr_1fr] gap-4">
+            {/* Pool totals */}
+            <div className="grid grid-cols-3 gap-2 content-start" data-testid="funnel-totals">
+              {([
+                ["Active", funnel.totals.active],
+                ["Selected", funnel.totals.selected],
+                ["Hired", funnel.totals.hired],
+                ["Rejected", funnel.totals.rejected],
+                ["Withdrawn", funnel.totals.withdrawn],
+                ["Offers out", funnel.offers.total],
+              ] as const).map(([label, value]) => (
+                <div key={label} className="rounded-md border border-border px-2.5 py-2">
+                  <div className="text-lg font-bold tabular-nums leading-none">{value}</div>
+                  <div className="text-[0.625rem] text-muted-foreground mt-1">{label}</div>
+                </div>
+              ))}
+            </div>
+            {/* Stage load + velocity */}
+            <div data-testid="funnel-stages">
+              <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Stages — in progress / passed / avg days</div>
+              <div className="space-y-1">
+                {funnel.stages.map((s) => (
+                  <div key={s.stageKey} className="flex items-center gap-2 text-xs" data-testid={`funnel-stage-${s.stageKey}`}>
+                    <span className="min-w-0 truncate flex-1">{s.label}</span>
+                    <span className="tabular-nums text-primary font-medium">{s.inStage}</span>
+                    <span className="text-muted-foreground">/</span>
+                    <span className="tabular-nums text-success">{s.passed}</span>
+                    <span className="text-muted-foreground">/</span>
+                    <span className="tabular-nums text-muted-foreground w-10 text-right">{s.avgDays === null ? "—" : `${s.avgDays}d`}</span>
+                  </div>
+                ))}
+                {funnel.stages.length === 0 && (
+                  <div className="text-xs text-muted-foreground">No stages yet.</div>
+                )}
+              </div>
+            </div>
+            {/* Offer funnel */}
+            <div data-testid="funnel-offers">
+              <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Offers</div>
+              <div className="text-3xl font-bold tabular-nums leading-none" data-testid="funnel-accept-rate">
+                {funnel.offers.acceptRate === null ? "—" : `${funnel.offers.acceptRate}%`}
+              </div>
+              <div className="text-[0.625rem] text-muted-foreground mt-1 mb-2">accept rate (decided offers)</div>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between"><span className="text-muted-foreground">Awaiting signature</span><span className="tabular-nums font-medium">{funnel.offers.awaiting}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Signed</span><span className="tabular-nums font-medium text-success">{funnel.offers.signed}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Declined</span><span className="tabular-nums font-medium text-destructive">{funnel.offers.declined}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {filter === "ACTIVE" && myInterviews.length > 0 && (
         <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3" data-testid="my-interviews">

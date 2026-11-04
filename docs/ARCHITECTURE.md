@@ -122,8 +122,9 @@ Cookies flip to `Secure` automatically in production.
 ## 4. Authorization model (two layers)
 
 - **Layer 1 — permission checks** (`requirePermission`): every action states its
-  required permission from the **28-permission matrix** across four roles
-  (ADMIN / MANAGER / MEMBER / HR — `lib/rbac.ts`). Client components use
+  required permission from the **32-permission matrix** across four roles
+  (ADMIN / MANAGER / MEMBER / HR — `lib/rbac.ts`; the full matrix is pinned
+  by a unit test, so any grant change is a deliberate edit). Client components use
   `usePermissions()` to hide UI affordances — cosmetic only. Admins edit the
   DB-driven matrix at runtime; changes reach signed-in users within the 60 s
   config-cache window (with immediate bump on save).
@@ -148,6 +149,14 @@ Cookies flip to `Secure` automatically in production.
   (`User.managerId`, full subtree — a manager approves anyone below them);
   leave balances/requests are personal; employee profiles, reviews and
   onboarding are gated by `hr:*` permissions.
+- **Recruitment & payroll scoping** (docs/RECRUITMENT_MODULE_PLAN.md): the
+  hiring board is `hiring:view` (ADMIN/HR/MANAGER — interviewers), every
+  pipeline mutation is `hiring:manage` (ADMIN/HR), templates are
+  `hiring:config`, and the entire payroll family (structures, runs,
+  payslips) is `payroll:manage` (ADMIN/HR only — MANAGERs never see salary
+  data). The public offer-signing route `/offer/<token>` is authorized by
+  the 256-bit single-use token itself, not a session; the typed signature
+  requires the candidate's exact legal name.
 - **Personal-data scoping (PR-51–54):** reminders are owner-only (the legacy
   `ownerId: null` rows are no longer surfaced); dashboard time entries are filtered to
   **members the viewer can see** (`getVisibleMemberIds` — the same rule governs
@@ -163,7 +172,7 @@ authorization decisions. Identity always comes from `getSession()`. Caller-suppl
 **filters** (e.g. `memberId` on `getTimeEntriesPage`) are intersected with the server-
 derived scope — never allowed to replace it.
 
-## 5. Data model (37 models, key ones)
+## 5. Data model (49 models, key ones)
 
 | Model | Purpose | Notable relations |
 |-------|---------|-------------------|
@@ -180,8 +189,12 @@ derived scope — never allowed to replace it.
 | `EmployeeProfile` | HR directory: structured employee records beyond the roster | 1–1-ish with `User` |
 | `PerformanceReview` | review cycles with stages and reviewer assignments | — |
 | `OnboardingChecklist` / `OnboardingTask` | per-new-hire checklists with task-level progress | — |
-| `AuditLog` | append-only trail (66 typed actions) | written by every mutation |
-| `Workspace` + 6 config tables + `Role/Permission/RolePermission` | runtime-configurable vocabulary and RBAC | cached by config-loader |
+| `HiringStageConfig` / `Candidate` / `CandidateStage` | recruitment pipeline: workspace stage template, candidates (snapshotted timelines at creation) | CandidateStage cascades with Candidate |
+| `MailOutbox` / `CandidateDocument` / `BackgroundCheck` | audited candidate emails, per-candidate document checklist, BGV records | outbox retains history (SetNull) |
+| `OfferTemplate` / `OfferRecord` | per-role salary bands + per-candidate offers (DRAFT → SENT → SIGNED/DECLINED with the single-use signing token + typed signature) | offers cascade with Candidate |
+| `SalaryStructure` / `PayrollRun` / `Payslip` | payroll: per-employee annual structures, monthly runs (OPEN → LOCKED), payslips with LOP + YTD | payslips cascade with the run; unique (runId, userId) |
+| `AuditLog` | append-only trail (101 typed actions) | written by every mutation |
+| `Workspace` + 7 config tables + `Role/Permission/RolePermission` | runtime-configurable vocabulary and RBAC | cached by config-loader |
 
 Cascade policy: deleting a **Project** keeps its tasks (SetNull projectId) but removes
 assignments; deleting a **User** cascades assignments; deleting a **TeamMember** keeps
