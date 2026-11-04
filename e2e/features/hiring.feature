@@ -46,3 +46,36 @@ Feature: Hiring pipeline (Recruitment R1)
     And I open the candidate card "Aisha Rahman"
     And I try to reject the candidate
     Then the rejection reason field should be required
+
+  Scenario: HR selects a candidate (R3)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the candidate card "Tomas Eriksen"
+    And I select the candidate
+    Then the candidate detail should show the offer-prep banner
+
+  Scenario: HR rejects with an email and it lands in the outbox (R3)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the candidate card "Aisha Rahman"
+    And I try to reject the candidate
+    And I fill the rejection reason with "Role filled internally"
+    And I toggle the rejection email on
+    And I confirm the rejection
+    Then the email outbox should show a recorded email to "aisha.rahman@example.com"
+    And the outbox entry should be recorded as skipped
+
+  Scenario: The seeded rejection email is visible in the outbox (R3)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the email outbox should show a recorded email to "elena.moreau@example.com"
+
+  Scenario: Managers never see the email outbox (R3)
+    When I sign in as "manager@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the email outbox panel should not be visible
+
+  Scenario: The selected pool filter counts selected candidates (R3)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the selected filter chip should show a count of at least 1

@@ -43,7 +43,8 @@ const BASE = {
 describe("ConsoleMailer", () => {
   it("logs the full envelope + body (dev workflow for testing flows)", async () => {
     logInfoSpy.mockClear();
-    await new ConsoleMailer().sendMail(BASE);
+    const res = await new ConsoleMailer().sendMail(BASE);
+    expect(res).toEqual({ delivered: false, messageId: null }); // not really sent
     expect(logInfoSpy).toHaveBeenCalledTimes(1);
     const line = logInfoSpy.mock.calls[0][0] as string;
     expect(line).toContain("[mail:console]");
@@ -56,7 +57,8 @@ describe("ConsoleMailer", () => {
 describe("NoopMailer", () => {
   it("drops the mail and logs only the hashed recipient — never the body", async () => {
     logErrorSpy.mockClear();
-    await new NoopMailer().sendMail(BASE);
+    const res = await new NoopMailer().sendMail(BASE);
+    expect(res).toEqual({ delivered: false, messageId: null }); // dropped
     expect(logErrorSpy).toHaveBeenCalledTimes(1);
     const line = logErrorSpy.mock.calls[0][0] as string;
     expect(line).toContain("[mail:noop]");
@@ -67,10 +69,12 @@ describe("NoopMailer", () => {
 });
 
 describe("FakeMailer", () => {
-  it("records sends and clears", async () => {
+  it("records sends and clears; reports delivered with a fake provider id", async () => {
     const mailer = new FakeMailer();
-    await mailer.sendMail(BASE);
-    await mailer.sendMail({ ...BASE, to: "second@example.com" });
+    const r1 = await mailer.sendMail(BASE);
+    const r2 = await mailer.sendMail({ ...BASE, to: "second@example.com" });
+    expect(r1).toEqual({ delivered: true, messageId: "fake-1" });
+    expect(r2).toEqual({ delivered: true, messageId: "fake-2" });
     expect(mailer.sent).toHaveLength(2);
     expect(mailer.sent[0].to).toBe("user@example.com");
     expect(mailer.sent[1].to).toBe("second@example.com");
@@ -91,7 +95,12 @@ describe("ResendMailer", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const mailer = new ResendMailer("re_test_key", "Fernly <noreply@fernly.app>");
-    await expect(mailer.sendMail(BASE)).resolves.toBeUndefined();
+    // 200 with an empty body: delivered, but no provider id to surface (the
+    // .catch(() => null) branch in the R3 result parsing).
+    await expect(mailer.sendMail(BASE)).resolves.toEqual({
+      delivered: true,
+      messageId: null,
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [
@@ -108,6 +117,22 @@ describe("ResendMailer", () => {
     expect(body.to).toEqual(["user@example.com"]);
     expect(body.subject).toBe("Reset your password");
     expect(init.signal).toBeDefined(); // hard 10s timeout wired
+  });
+
+  it("surfaces the Resend message id for the MailOutbox audit trail (R3)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "re-abc-123" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const mailer = new ResendMailer("re_test_key", "Fernly <noreply@fernly.app>");
+    await expect(mailer.sendMail(BASE)).resolves.toEqual({
+      delivered: true,
+      messageId: "re-abc-123",
+    });
   });
 
   it("throws a status + hashed-recipient error on provider failure and never includes the mail body", async () => {

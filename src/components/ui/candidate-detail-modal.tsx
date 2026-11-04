@@ -87,6 +87,9 @@ export function CandidateDetailModal({
   const [busy, setBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reason, setReason] = useState("");
+  // R3 — opt-in rejection email (MailOutbox): HR-approved external note.
+  const [sendEmail, setSendEmail] = useState(false);
+  const [emailRemarks, setEmailRemarks] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [newStageLabel, setNewStageLabel] = useState("");
 
@@ -118,6 +121,7 @@ export function CandidateDetailModal({
       setRejectOpen(false); setAddOpen(false); setReason(""); setNewStageLabel("");
       setSchedStageId(null); setSchedWhen(""); setSchedInterviewer("");
       setCardStage(null);
+      setSendEmail(false); setEmailRemarks("");
     }
   }, [open]);
 
@@ -155,11 +159,15 @@ export function CandidateDetailModal({
       return;
     }
     const okDone = await run(
-      () => decideCandidate({ candidateId: c.id, decision: "REJECT", reason }),
-      "Candidate rejected.",
+      () => decideCandidate({ candidateId: c.id, decision: "REJECT", reason, sendEmail, emailRemarks }),
+      sendEmail ? "Candidate rejected — rejection email queued." : "Candidate rejected.",
     );
-    if (okDone) setRejectOpen(false);
+    if (okDone) { setRejectOpen(false); setSendEmail(false); setEmailRemarks(""); }
   };
+
+  // R3 — the hire decision: ACTIVE → SELECTED (offer prep pointer).
+  const select = () =>
+    run(() => decideCandidate({ candidateId: c.id, decision: "SELECT", reason: "" }), "Candidate selected — offer preparation pending.");
 
   const withdraw = () =>
     run(() => decideCandidate({ candidateId: c.id, decision: "WITHDRAW", reason: "" }), "Candidate marked withdrawn.");
@@ -281,6 +289,13 @@ export function CandidateDetailModal({
                 >
                   Pass “{current?.label ?? "stage"}”
                 </button>
+                <button
+                  className="f-btn f-btn-ghost text-emerald-600 hover:bg-emerald-500/10" disabled={busy}
+                  onClick={select}
+                  data-testid="select-btn"
+                >
+                  Select
+                </button>
                 <button className="f-btn f-btn-ghost" disabled={busy} onClick={onEdit.bind(null, c)}>
                   <Pencil size={14} /> Edit
                 </button>
@@ -299,13 +314,19 @@ export function CandidateDetailModal({
                   "rounded-md px-3 py-2 text-sm",
                   c.status === "REJECTED" && "bg-destructive/10 text-destructive",
                   c.status === "WITHDRAWN" && "bg-muted text-muted-foreground",
+                  c.status === "SELECTED" && "bg-emerald-500/10 text-emerald-600",
                   c.status === "HIRED" && "bg-success/10 text-success",
                 )}>
                   {c.status}
                   {c.rejectReason ? ` — “${c.rejectReason}”` : ""}
                   {c.decidedAt ? ` · ${fmt(c.decidedAt)}` : ""}
                 </div>
-                {(c.status === "REJECTED" || c.status === "WITHDRAWN") && canManage && (
+                {c.status === "SELECTED" && (
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700">
+                    Offer preparation pending — build and send the offer letter next (offer builder arrives in the next milestone).
+                  </div>
+                )}
+                {(c.status === "REJECTED" || c.status === "WITHDRAWN" || c.status === "SELECTED") && canManage && (
                   <button className="f-btn f-btn-ghost" disabled={busy} onClick={reactivate} data-testid="reactivate-btn">
                     Reactivate candidate
                   </button>
@@ -314,7 +335,7 @@ export function CandidateDetailModal({
             )}
             {rejectOpen && (
               <form onSubmit={reject} className="mt-3 space-y-2">
-                <Field label="Rejection reason (required — included in the rejection email)">
+                <Field label="Rejection reason (required — internal, audit only)">
                   <textarea
                     className="f-input min-h-[64px]"
                     value={reason}
@@ -323,6 +344,32 @@ export function CandidateDetailModal({
                     maxLength={2_000}
                   />
                 </Field>
+                <label className="flex items-center gap-2 text-sm cursor-pointer" data-testid="reject-email-toggle">
+                  <input
+                    type="checkbox"
+                    checked={sendEmail}
+                    onChange={(e) => setSendEmail(e.target.checked)}
+                    className="accent-primary"
+                  />
+                  Email the candidate a rejection notice
+                </label>
+                {sendEmail && (
+                  <Field label="Personal note to the candidate (included in the email)">
+                    <textarea
+                      className="f-input min-h-[64px]"
+                      value={emailRemarks}
+                      onChange={(e) => setEmailRemarks(e.target.value)}
+                      placeholder="e.g. We were impressed by your portfolio — please apply again for senior openings next quarter."
+                      data-testid="reject-email-remarks"
+                      maxLength={2_000}
+                    />
+                  </Field>
+                )}
+                {sendEmail && (
+                  <div className="text-xs text-muted-foreground rounded-md bg-muted/60 px-3 py-2">
+                    Every send is recorded in the audited email outbox. Without a mail provider (RESEND_API_KEY) it is recorded as skipped — never sent silently.
+                  </div>
+                )}
                 <div className="flex justify-end gap-2">
                   <button type="button" className="f-btn f-btn-ghost" onClick={() => setRejectOpen(false)}>Cancel</button>
                   <button type="submit" className="f-btn f-btn-ghost text-destructive hover:bg-destructive/10" disabled={busy} data-testid="reject-confirm">

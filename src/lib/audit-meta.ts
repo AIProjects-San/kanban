@@ -106,7 +106,9 @@ export type AuditAction =
   // Recruitment R2 — interview scheduling + scorecards
   | "hiring.interview_scheduled"
   | "hiring.interview_rescheduled"
-  | "hiring.scorecard_saved";
+  | "hiring.scorecard_saved"
+  // Recruitment R3 — decisions & candidate email outbox
+  | "hiring.email_queued";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -212,6 +214,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.interview_scheduled": { icon: CalendarPlus, cls: "text-indigo-500 bg-indigo-500/10" },
   "hiring.interview_rescheduled": { icon: CalendarPlus, cls: "text-amber-500 bg-amber-500/10" },
   "hiring.scorecard_saved": { icon: ClipboardCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hiring.email_queued": { icon: Send, cls: "text-sky-500 bg-sky-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

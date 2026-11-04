@@ -393,6 +393,11 @@ describe("L-P1-11 mailer factory", () => {
   it("ConsoleMailer does not throw", async () => {
     const { ConsoleMailer } = await import("@/lib/mailer");
     const m = new ConsoleMailer();
-    await expect(m.sendMail({ to: "a@b.co", subject: "S", html: "<p>h</p>", text: "t" })).resolves.toBeUndefined();
+    // R3 — sendMail resolves a result object instead of void; console
+    // logging is not a real delivery.
+    await expect(m.sendMail({ to: "a@b.co", subject: "S", html: "<p>h</p>", text: "t" })).resolves.toEqual({
+      delivered: false,
+      messageId: null,
+    });
   });
 });

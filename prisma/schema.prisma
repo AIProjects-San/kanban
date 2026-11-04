@@ -965,6 +965,7 @@ model Candidate {
   updatedAt    DateTime  @updatedAt
 
   stages CandidateStage[]
+  outbox MailOutbox[]
 
   @@index([status])
   @@index([createdAt])
@@ -1010,5 +1011,38 @@ model CandidateStage {
   @@unique([candidateId, stageKey])
   @@index([candidateId])
   @@index([ownerUserId])
+  @@index([status])
+}
+
+// R3 — auditable outbox for every candidate-facing email. A row is written
+// BEFORE the send attempt (status QUEUED), then resolved to SENT (provider
+// accepted; providerMessageId set), SKIPPED (no provider configured — dev
+// dry-run / RESEND_API_KEY unset), or FAILED (provider error, detail in
+// `error`). The internal rejection reason never goes into the email — only
+// HR-approved `remarks` do (see lib/hiring-email.ts).
+model MailOutbox {
+  id        String   @id @default(cuid())
+  // REJECTION (R3) | OFFER | WELCOME | INTERVIEW_INVITE (future milestones).
+  kind      String
+  // Null when the linked candidate is deleted (history is retained).
+  candidateId String?
+  candidate   Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  toAddress String
+  subject   String
+  // Plain-text body as sent — the audit copy HR can re-read in the Outbox.
+  body      String
+  // QUEUED → SENT | SKIPPED | FAILED.
+  status    String   @default("QUEUED")
+  sentById  String   @default("")
+  sentAt    DateTime?
+  // Resend message id when actually delivered ("" otherwise).
+  providerMessageId String @default("")
+  // Provider error detail on FAILED (truncated to 500 chars).
+  error     String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([candidateId])
   @@index([status])
 }

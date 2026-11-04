@@ -34,6 +34,7 @@ import { assertPasswordNotBreached } from "@/lib/breach-check";
 import { createMailer } from "@/lib/mailer";
 import { createPasswordResetLimiter } from "@/lib/rate-limit-redis";
 import { validationError } from "@/lib/validation";
+import { escapeHtml } from "@/lib/utils";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
@@ -74,17 +75,6 @@ function buildResetUrl(token: string): string {
   return `${base}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
-/** F-07 — escape user-controlled text before it lands in an HTML email. */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-/** Best-effort client IP for the reset limiter (behind the reverse proxy). */
 async function clientIp(): Promise<string> {
   try {
     const h = await headers();

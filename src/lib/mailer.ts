@@ -30,17 +30,26 @@ export interface SendMailInput {
   text: string;
 }
 
+/** R3 — result of a send attempt, so callers (MailOutbox) can persist the
+ * outcome: `delivered` true only when a real provider accepted the message;
+ * `messageId` is the provider id (Resend) or null. */
+export interface SendMailResult {
+  delivered: boolean;
+  messageId: string | null;
+}
+
 export interface Mailer {
-  sendMail(input: SendMailInput): Promise<void>;
+  sendMail(input: SendMailInput): Promise<SendMailResult>;
 }
 
 export class ConsoleMailer implements Mailer {
-  async sendMail(input: SendMailInput): Promise<void> {
+  async sendMail(input: SendMailInput): Promise<SendMailResult> {
     logInfo(
       `[mail:console] To: ${input.to}\n` +
       `Subject: ${input.subject}\n` +
       `---\n${input.text}\n---`,
     );
+    return { delivered: false, messageId: null };
   }
 }
 
@@ -48,7 +57,7 @@ export class ConsoleMailer implements Mailer {
  * production when no provider is wired, so reset-token URLs can't leak into
  * logs (deep-dive review F-04). */
 export class NoopMailer implements Mailer {
-  async sendMail(input: SendMailInput): Promise<void> {
+  async sendMail(input: SendMailInput): Promise<SendMailResult> {
     // P1 (production-readiness re-audit) — PII scrub: hash the recipient
     // so the warning log doesn't retain the user's email.
     logError(
@@ -56,6 +65,7 @@ export class NoopMailer implements Mailer {
       `no mail provider configured. Set RESEND_API_KEY to enable delivery. ` +
       `Body intentionally NOT logged (may contain single-use tokens).`,
     );
+    return { delivered: false, messageId: null };
   }
 }
 
@@ -66,7 +76,7 @@ export class ResendMailer implements Mailer {
     private readonly from: string,
   ) {}
 
-  async sendMail(input: SendMailInput): Promise<void> {
+  async sendMail(input: SendMailInput): Promise<SendMailResult> {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -98,13 +108,17 @@ export class ResendMailer implements Mailer {
         `Resend API error ${res.status} for mail (recipient hash ${recipientHash}): ${detail.slice(0, 300)}`,
       );
     }
+    // R3 — surface the provider message id for the MailOutbox audit trail.
+    const payload = (await res.json().catch(() => null)) as { id?: string } | null;
+    return { delivered: true, messageId: payload?.id ?? null };
   }
 }
 
 export class FakeMailer implements Mailer {
   readonly sent: SendMailInput[] = [];
-  async sendMail(input: SendMailInput): Promise<void> {
+  async sendMail(input: SendMailInput): Promise<SendMailResult> {
     this.sent.push(input);
+    return { delivered: true, messageId: `fake-${this.sent.length}` };
   }
   clear(): void {
     this.sent.length = 0;

@@ -363,3 +363,21 @@ export interface CandidateT {
   createdAt: string;
   stages: CandidateStageT[];
 }
+
+/** R3 — one audited outgoing email (docs/RECRUITMENT_MODULE_PLAN.md §5).
+ * status: QUEUED → SENT | SKIPPED | FAILED. */
+export interface MailOutboxT {
+  id: string;
+  kind: string;
+  candidateId: string | null;
+  candidateName: string | null;
+  toAddress: string;
+  subject: string;
+  body: string;
+  status: string;
+  sentBy: string | null;
+  sentAt: string | null;
+  providerMessageId: string;
+  error: string;
+  createdAt: string;
+}

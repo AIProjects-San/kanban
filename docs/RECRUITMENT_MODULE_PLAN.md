@@ -1,6 +1,6 @@
 # Recruitment & Joining Formalities Module Plan
 
-Status: R1 ✓ R2 ✓ shipped (R3 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
+Status: R1 ✓ R2 ✓ R3 ✓ shipped (R4 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
 Decisions confirmed with the product owner on 2026-11-04 (see §1.3).
 
 ---
@@ -176,9 +176,12 @@ push to origin.**
   event + reminder + interviewer assignment + conflict check; scorecard
   (1–5 + strengths/concerns + recommendation) per interviewer; interviewer
   self-service ("my interviews" list for MANAGERs).
-- **R3 — Decisions & email**: select (→ offer prep pointer) / reject with
+- **R3 — Decisions & email** *(shipped)*: select (→ offer prep pointer) / reject with
   reason; rejection email with custom remarks via MailOutbox + Resend (send only
   when RESEND_API_KEY set); Outbox viewer (hiring:manage); audit trail.
+  Content rule: the internal rejectReason is audit-only — the email carries
+  the HR-approved personal note. Every send is recorded (SENT / SKIPPED /
+  FAILED); a provider outage never fails the decision itself.
 - **R4 — Background check & documents**: configurable document-type list;
   per-candidate document checklist (request/receive/verify); BGV record
   (initiate on offer acceptance per research, status, vendor, notes); joining-
@@ -215,11 +218,27 @@ push to origin.**
 | M8 | Template edit | Stages editor → rename + reorder + add custom stage | Existing candidates unchanged (snapshot); new candidate gets new template |
 | M9 | Template config gating | As MANAGER open Hiring | "Stages" editor button hidden (hiring:config absent) |
 
+## 6b. Manual test cases — R3 (executed on the sandbox preview)
+
+| # | Case | Steps | Expected |
+|---|---|---|---|
+| M9 | Select candidate | HR → open ACTIVE candidate → Select | Status chip SELECTED + "Offer preparation pending" banner; card moves to the Selected pool; audit "selected" |
+| M10 | Undo a selection | On a SELECTED candidate → Reactivate | Back to ACTIVE, decidedAt cleared |
+| M11 | Reject with email | Reject → reason + toggle "Email the candidate" + personal note | Card leaves board; outbox row appears with subject + recipient |
+| M12 | Outbox dry-run | Same as M11 (no RESEND_API_KEY in the sandbox) | Row resolves SKIPPED — nothing silently sent |
+| M13 | Outbox audit copy | Click the outbox row | Body expands; internal reason NOT in the body, personal note IS |
+| M14 | Outbox gating | Sign in as `manager@fernly.app` → Hiring | No outbox panel (hiring:manage only); board + interviews visible |
+| M15 | Selected pool chip | Hiring → "Selected" filter | Priyanka Menon listed with count 1 |
+
 ## 7. Automation (e2e, CI-only) — R1
 
-`e2e/features/hiring.feature`: MEMBER must not see the Hiring nav item; HR
-creates a candidate; advances a stage; rejects with reason. Follows the
-rbac/hr-directory feature patterns (`data-testid` hooks on the board).
+`e2e/features/hiring.feature` (11 scenarios): MEMBER must not see the Hiring
+nav item; HR creates a candidate; advances a stage; rejects with reason.
+R3 adds: select (offer-prep banner), reject-with-email lands a SKIPPED
+outbox row (CI has no RESEND_API_KEY — the dry-run is the contract), the
+seeded Elena rejection row renders, MANAGERs never see the outbox panel,
+and the Selected chip counts the pool. Follows the rbac/hr-directory
+feature patterns (`data-testid` hooks on the board).
 
 ## 8. References
 

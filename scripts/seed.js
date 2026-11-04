@@ -1447,8 +1447,10 @@ async function main() {
     {
       fullName: "Priyanka Menon", email: "priyanka.menon@example.com", phone: "+64 27 555 0103",
       position: "Product Designer", department: "DESIGN", source: "Website",
-      notes: "Great portfolio; second loop to schedule.",
-      progress: [["screening", "PASSED"], ["interview_1", "PASSED"], ["interview_2", "PASSED"], ["assessment", "IN_PROGRESS"]],
+      notes: "Great portfolio; cleared the full loop — selected, offer prep pending.",
+      // R3 — selected after the full loop; waits for the offer builder (R5).
+      status: "SELECTED",
+      progress: [["screening", "PASSED"], ["interview_1", "PASSED"], ["interview_2", "PASSED"], ["assessment", "PASSED"]],
     },
     {
       fullName: "Tomas Eriksen", email: "tomas.eriksen@example.com", phone: "+64 3 555 0104",
@@ -1542,8 +1544,36 @@ async function main() {
       });
     }
   }
+  // R3 — MailOutbox seed: the rejection email HR sent to Elena (delivered
+  // via Resend in this story). New sends from the sandbox preview (no
+  // RESEND_API_KEY) land as SKIPPED — the dry-run state is self-demoing.
+  {
+    const elena = await db.candidate.findUnique({ where: { email: "elena.moreau@example.com" } });
+    if (elena) {
+      await db.mailOutbox.create({
+        data: {
+          kind: "REJECTION",
+          candidateId: elena.id,
+          toAddress: elena.email,
+          subject: "Update on your application — Backend Engineer at Fernly Workspace",
+          body:
+            "Hi Elena,\n\n" +
+            "Thank you for taking the time to apply for the Backend Engineer role at Fernly Workspace and for meeting our team.\n\n" +
+            "After careful consideration, we have decided not to move forward with your application at this time.\n" +
+            "We were impressed by your API design work and would gladly consider you for mid-level backend openings next quarter.\n\n" +
+            "We appreciate your interest in Fernly Workspace and wish you the very best in your search.\n\n" +
+            "Warm regards,\nThe Fernly Workspace Hiring Team",
+          status: "SENT",
+          sentById: hrUserId ?? demoUser.id,
+          sentAt: addDays(TODAY, -2),
+          providerMessageId: "seed-demo-000001",
+        },
+      });
+    }
+  }
   console.log(`  ✓ Hiring R2: ${CANDIDATES.reduce((n, c) => n + Object.keys(c.scheduled ?? {}).length, 0)} interviews scheduled on the calendar + 1 filled scorecard`);
-  console.log(`  ✓ Hiring: ${STAGE_TEMPLATE.length}-stage template + ${CANDIDATES.length} candidates (5 active, 1 rejected, 1 withdrawn)`);
+  console.log(`  ✓ Hiring R3: 1 selected candidate (offer prep) + 1 rejection email in the outbox`);
+  console.log(`  ✓ Hiring: ${STAGE_TEMPLATE.length}-stage template + ${CANDIDATES.length} candidates (4 active, 1 selected, 1 rejected, 1 withdrawn)`);
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }

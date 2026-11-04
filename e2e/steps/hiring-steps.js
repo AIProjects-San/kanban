@@ -95,3 +95,102 @@ Then("the schedule form should offer the interviewer dropdown", async function (
   // "— Keep current owner —" + at least the seeded directory members.
   assert.ok(options.length >= 2, `expected interviewer options, got ${options.length}`);
 });
+
+// ---------------------------------------------------------------------------
+// R3 — decisions & email outbox
+// ---------------------------------------------------------------------------
+
+When("I select the candidate", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid="select-btn"]')),
+    10_000,
+  );
+  await btn.click();
+  await driver.sleep(1_500);
+});
+
+Then("the candidate detail should show the offer-prep banner", async function () {
+  const driver = await this.getDriver();
+  const banner = await driver.wait(
+    until.elementLocated(By.xpath("//*[contains(text(), 'Offer preparation pending')]")),
+    10_000,
+    "offer-prep banner did not appear after selecting",
+  );
+  assert.ok(await banner.isDisplayed(), "offer-prep banner visible");
+});
+
+When("I fill the rejection reason with {string}", async function (reason) {
+  const driver = await this.getDriver();
+  const area = await driver.findElement(By.css('[data-testid="reject-reason"]'));
+  await area.sendKeys(reason);
+});
+
+When("I toggle the rejection email on", async function () {
+  const driver = await this.getDriver();
+  const toggle = await driver.findElement(By.css('[data-testid="reject-email-toggle"] input'));
+  await toggle.click();
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="reject-email-remarks"]')),
+    10_000,
+  );
+});
+
+When("I confirm the rejection", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.findElement(By.css('[data-testid="reject-confirm"]'));
+  await btn.click();
+  await driver.sleep(2_000);
+});
+
+Then("the email outbox should show a recorded email to {string}", async function (address) {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(
+      By.xpath(`//*[@data-testid="outbox-row"]//*[contains(text(), "${address}")]`),
+    ),
+    15_000,
+    `no outbox row for "${address}"`,
+  );
+  assert.ok(row, `outbox row for ${address} found`);
+});
+
+Then("the outbox entry should be recorded as skipped", async function () {
+  const driver = await this.getDriver();
+  // CI e2e runs without RESEND_API_KEY — the send is recorded SKIPPED.
+  const chip = await driver.wait(
+    until.elementLocated(
+      By.xpath('//*[@data-testid="outbox-row"]/*[contains(text(), "SKIPPED")]'),
+    ),
+    10_000,
+    "no SKIPPED outbox row",
+  );
+  assert.ok(chip, "outbox row recorded as SKIPPED");
+});
+
+Then("the email outbox panel should not be visible", async function () {
+  const driver = await this.getDriver();
+  // Wait for the board itself first so the assertion isn't just "page still
+  // loading" — then the panel must be absent.
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="stage-column-screening"]')),
+    15_000,
+  );
+  const panels = await driver.findElements(By.css('[data-testid="email-outbox"]'));
+  assert.strictEqual(panels.length, 0, "email outbox panel must be hidden without hiring:manage");
+});
+
+Then("the selected filter chip should show a count of at least {int}", async function (min) {
+  const driver = await this.getDriver();
+  const chip = await driver.wait(
+    until.elementLocated(By.css('[data-testid="hiring-filter-selected"]')),
+    15_000,
+  );
+  const text = await chip.getText();
+  const match = text.match(/(\d+)/);
+  assert.ok(match, `selected chip should carry a count, got: ${text}`);
+  assert.ok(
+    Number(match[1]) >= min,
+    `selected count ${match[1]} should be >= ${min}`,
+  );
+});

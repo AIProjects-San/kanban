@@ -19,7 +19,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
-import type { CandidateT, CandidateStageT, HiringStageConfigT } from "@/lib/types";
+import type { CandidateT, CandidateStageT, HiringStageConfigT, MailOutboxT } from "@/lib/types";
 import {
   createCandidateSchema,
   updateCandidateSchema,
@@ -35,6 +35,10 @@ import {
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+// R3 — decisions & candidate email outbox.
+import { composeRejectionEmail } from "@/lib/hiring-email";
+import { createMailer } from "@/lib/mailer";
+import { getWorkspaceConfig } from "@/lib/config-loader";
 
 // ---------------------------------------------------------------------------
 // Serialization helpers
@@ -439,9 +443,10 @@ export async function addCandidateStage(input: unknown): Promise<ActionResult<{ 
 }
 
 // ---------------------------------------------------------------------------
-// Decisions (hiring:manage) — REJECT / WITHDRAW / REACTIVATE.
-// The rejection email (custom remarks) arrives with R3's outbox; R1 stores
-// the reason, which is the merge source for that email.
+// Decisions (hiring:manage) — SELECT / REJECT / WITHDRAW / REACTIVATE.
+// R3: SELECT moves the candidate to the SELECTED pool (offer prep), and
+// REJECT can queue a rejection email (MailOutbox + provider send). The
+// internal `reason` is audit-only; the email carries HR-approved remarks.
 // ---------------------------------------------------------------------------
 
 export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok: true }>> {
@@ -454,8 +459,12 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
     if (!candidate) throw new AuthorizationError("Candidate not found.");
 
     if (data.decision === "REACTIVATE") {
-      if (candidate.status !== "REJECTED" && candidate.status !== "WITHDRAWN") {
-        throw new AuthorizationError("Only rejected or withdrawn candidates can be reactivated.");
+      if (
+        candidate.status !== "REJECTED" &&
+        candidate.status !== "WITHDRAWN" &&
+        candidate.status !== "SELECTED"
+      ) {
+        throw new AuthorizationError("Only rejected, withdrawn, or selected candidates can be reactivated.");
       }
       await db.candidate.update({
         where: { id: candidate.id },
@@ -468,6 +477,25 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
         entityId: candidate.id,
         entityLabel: candidate.fullName,
         detail: `${auth.name} reactivated candidate "${candidate.fullName}".`,
+      });
+    } else if (data.decision === "SELECT") {
+      // R3 — the hire decision: ACTIVE → SELECTED. The candidate leaves the
+      // active pipeline (SELECTED pool) and waits for offer preparation
+      // (offer builder ships in R5; the UI shows the prep pointer).
+      if (candidate.status !== "ACTIVE") {
+        throw new AuthorizationError(`Candidate is already ${candidate.status}.`);
+      }
+      await db.candidate.update({
+        where: { id: candidate.id },
+        data: { status: "SELECTED", decidedAt: new Date(), decidedById: auth.userId },
+      });
+      await logAudit({
+        actor: auth,
+        action: "hiring.decided",
+        entityType: "CANDIDATE",
+        entityId: candidate.id,
+        entityLabel: candidate.fullName,
+        detail: `${auth.name} selected "${candidate.fullName}" — offer preparation pending.`,
       });
     } else {
       if (candidate.status !== "ACTIVE") {
@@ -493,9 +521,134 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
         entityLabel: candidate.fullName,
         detail: `${auth.name} marked "${candidate.fullName}" as ${data.decision === "REJECT" ? "REJECTED" : "WITHDRAWN"}${data.reason ? ` — "${data.reason}"` : ""}.`,
       });
+
+      // R3 — opt-in rejection email: queue the MailOutbox row, attempt the
+      // send, and record the outcome (SENT / SKIPPED / FAILED). A provider
+      // outage must not fail the decision itself — the failure lands in the
+      // outbox where HR can see it.
+      if (data.decision === "REJECT" && data.sendEmail) {
+        await queueCandidateEmail({
+          kind: "REJECTION",
+          candidate: { id: candidate.id, fullName: candidate.fullName, email: candidate.email, position: candidate.position },
+          remarks: data.emailRemarks,
+          auth,
+        });
+      }
     }
     revalidatePath("/");
     return { ok: true };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// R3 — candidate email outbox (MailOutbox + provider send)
+// ---------------------------------------------------------------------------
+
+type EmailActor = { userId: string; name: string; role: string };
+
+/** Compose → persist QUEUED → attempt delivery → resolve the row to
+ * SENT / SKIPPED / FAILED. Never throws (best-effort like the password-reset
+ * mail path): the outbox row is the error surface for HR. */
+async function queueCandidateEmail(input: {
+  kind: "REJECTION";
+  candidate: { id: string; fullName: string; email: string; position: string };
+  remarks: string;
+  auth: EmailActor;
+}): Promise<{ outboxId: string; status: string }> {
+  const config = await getWorkspaceConfig();
+  const email = composeRejectionEmail({
+    candidateName: input.candidate.fullName,
+    position: input.candidate.position,
+    workspaceName: config.workspace.name,
+    remarks: input.remarks,
+  });
+
+  const row = await db.mailOutbox.create({
+    data: {
+      kind: input.kind,
+      candidateId: input.candidate.id,
+      toAddress: input.candidate.email,
+      subject: email.subject,
+      body: email.text,
+      status: "QUEUED",
+      sentById: input.auth.userId,
+    },
+  });
+
+  let status = "SKIPPED";
+  let providerMessageId = "";
+  let error = "";
+  try {
+    const result = await createMailer().sendMail({
+      to: input.candidate.email,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+    });
+    if (result.delivered) {
+      status = "SENT";
+      providerMessageId = result.messageId ?? "";
+    }
+  } catch (err) {
+    status = "FAILED";
+    error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+  }
+
+  await db.mailOutbox.update({
+    where: { id: row.id },
+    data: {
+      status,
+      providerMessageId,
+      error,
+      sentAt: new Date(),
+    },
+  });
+
+  await logAudit({
+    actor: input.auth,
+    action: "hiring.email_queued",
+    entityType: "MAIL_OUTBOX",
+    entityId: row.id,
+    entityLabel: email.subject,
+    detail:
+      `${input.auth.name} sent a ${input.kind.toLowerCase()} email to ${input.candidate.email} — ` +
+      (status === "SENT"
+        ? `delivered${providerMessageId ? ` (provider id ${providerMessageId})` : ""}.`
+        : status === "SKIPPED"
+          ? "SKIPPED: no mail provider configured (set RESEND_API_KEY to deliver)."
+          : `FAILED: ${error}`),
+  });
+
+  return { outboxId: row.id, status };
+}
+
+/** Outbox viewer (hiring:manage) — the audited history of every
+ * candidate-facing email, newest first. */
+export async function getMailOutbox(): Promise<ActionResult<MailOutboxT[]>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:manage");
+    void auth;
+    const rows = await db.mailOutbox.findMany({
+      include: { candidate: { select: { fullName: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    const names = await namesFor(rows.map((r) => r.sentById));
+    return rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      candidateId: r.candidateId,
+      candidateName: r.candidate?.fullName ?? null,
+      toAddress: r.toAddress,
+      subject: r.subject,
+      body: r.body,
+      status: r.status,
+      sentBy: names.get(r.sentById) ?? null,
+      sentAt: r.sentAt ? r.sentAt.toISOString() : null,
+      providerMessageId: r.providerMessageId,
+      error: r.error,
+      createdAt: r.createdAt.toISOString(),
+    }));
   });
 }
 

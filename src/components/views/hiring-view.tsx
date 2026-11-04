@@ -8,23 +8,25 @@
 // until R2 assigns them stages.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, ChevronRight, Plus, Settings2, UserPlus } from "lucide-react";
+import { CalendarClock, ChevronRight, Mail, Plus, Settings2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { CandidateT, HiringStageConfigT } from "@/lib/types";
+import type { CandidateT, HiringStageConfigT, MailOutboxT } from "@/lib/types";
 import {
   getHiringBoard,
   getHiringPermissions,
+  getMailOutbox,
   getMyInterviews,
 } from "@/server-actions/hiring";
 import { CandidateModal } from "../ui/candidate-modal";
 import { CandidateDetailModal } from "../ui/candidate-detail-modal";
 import { HiringStageModal } from "../ui/hiring-stage-modal";
 
-type StatusFilter = "ACTIVE" | "REJECTED" | "WITHDRAWN" | "HIRED";
+type StatusFilter = "ACTIVE" | "SELECTED" | "REJECTED" | "WITHDRAWN" | "HIRED";
 
 const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "ACTIVE", label: "Active" },
+  { key: "SELECTED", label: "Selected" },
   { key: "REJECTED", label: "Rejected" },
   { key: "WITHDRAWN", label: "Withdrawn" },
   { key: "HIRED", label: "Hired" },
@@ -61,6 +63,9 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
     position: string; status: string; scheduledAt: string | null;
     rating: number | null; recommendation: string | null;
   }>>([]);
+  // R3 — audited candidate-email outbox (hiring:manage only).
+  const [outbox, setOutbox] = useState<MailOutboxT[]>([]);
+  const [outboxOpenId, setOutboxOpenId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [boardRes, permRes] = await Promise.all([
@@ -76,6 +81,12 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
     if (permRes.ok) {
       setCanManage(permRes.data.canManage);
       setCanConfig(permRes.data.canConfig);
+      // R3 — outbox is gated behind hiring:manage; skip the fetch otherwise
+      // so MANAGERs never trigger a permission-denied error path.
+      if (permRes.data.canManage) {
+        const obx = await getMailOutbox();
+        if (obx.ok) setOutbox(obx.data);
+      }
     }
     const mine = await getMyInterviews();
     if (mine.ok) setMyInterviews(mine.data);
@@ -271,6 +282,69 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
             {loaded && activeStages.length === 0 && (
               <div className="text-sm text-muted-foreground py-6">
                 No active stages in the template — {canConfig ? "add some via “Stages”." : "ask an admin to configure the template."}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* R3 — audited email outbox (hiring:manage only) */}
+      {canManage && (
+        <div className="rounded-lg border border-border" data-testid="email-outbox">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
+            <Mail size={14} className="text-sky-500" />
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Email outbox
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">{outbox.length} recorded</span>
+          </div>
+          <div className="divide-y divide-border">
+            {outbox.map((m) => (
+              <div key={m.id}>
+                <button
+                  onClick={() => setOutboxOpenId(outboxOpenId === m.id ? null : m.id)}
+                  className="w-full text-left px-4 py-2.5 hover:bg-muted/50 transition-colors flex items-center gap-3 text-sm"
+                  data-testid="outbox-row"
+                >
+                  <span className={cn(
+                    "text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0",
+                    m.status === "SENT" && "bg-emerald-500/10 text-emerald-600",
+                    m.status === "SKIPPED" && "bg-amber-500/10 text-amber-600",
+                    m.status === "FAILED" && "bg-destructive/10 text-destructive",
+                    m.status === "QUEUED" && "bg-muted text-muted-foreground",
+                  )}>
+                    {m.status}
+                  </span>
+                  <span className="text-[0.625rem] uppercase tracking-wide text-muted-foreground shrink-0 hidden sm:inline">{m.kind}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{m.subject}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      to {m.toAddress}{m.candidateName ? ` · ${m.candidateName}` : ""}
+                    </span>
+                  </span>
+                  <span className="text-xs text-muted-foreground shrink-0 hidden md:inline">
+                    {m.sentBy ?? "—"} · {new Date(m.createdAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <ChevronRight size={14} className={cn("text-muted-foreground transition-transform shrink-0", outboxOpenId === m.id && "rotate-90")} />
+                </button>
+                {outboxOpenId === m.id && (
+                  <div className="px-4 pb-3 text-xs space-y-2" data-testid={`outbox-body-${m.id}`}>
+                    <pre className="whitespace-pre-wrap font-sans text-foreground bg-muted/50 rounded-md p-3 border border-border">{m.body}</pre>
+                    {m.error && (
+                      <div className="rounded-md bg-destructive/10 text-destructive px-3 py-2">
+                        Delivery error: {m.error}
+                      </div>
+                    )}
+                    {m.providerMessageId && (
+                      <div className="text-muted-foreground">Provider message id: {m.providerMessageId}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+            {outbox.length === 0 && (
+              <div className="text-sm text-muted-foreground px-4 py-6 text-center">
+                No candidate emails yet — rejection notices you send land here.
               </div>
             )}
           </div>

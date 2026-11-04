@@ -13,11 +13,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 //   • Opening a candidate renders the stage timeline + advance button.
 // ---------------------------------------------------------------------------
 
-const { getHiringBoard, getHiringPermissions, advanceStage, getMyInterviews } = vi.hoisted(() => ({
+const { getHiringBoard, getHiringPermissions, advanceStage, getMyInterviews, getMailOutbox } = vi.hoisted(() => ({
   getHiringBoard: vi.fn(),
   getHiringPermissions: vi.fn(),
   advanceStage: vi.fn(),
   getMyInterviews: vi.fn(),
+  getMailOutbox: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hiring", async (importOriginal) => ({
@@ -26,6 +27,7 @@ vi.mock("@/server-actions/hiring", async (importOriginal) => ({
   getHiringPermissions,
   advanceStage,
   getMyInterviews,
+  getMailOutbox,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -73,6 +75,7 @@ beforeEach(() => {
   });
   getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: true, canConfig: true } });
   getMyInterviews.mockResolvedValue({ ok: true, data: [] });
+  getMailOutbox.mockResolvedValue({ ok: true, data: [] });
 });
 
 describe("HiringView: HR (full manage)", () => {
@@ -156,5 +159,78 @@ describe("HiringView: empty template", () => {
     const { toast } = await import("sonner");
     render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("denied"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3 — decisions & email outbox
+// ---------------------------------------------------------------------------
+
+describe("HiringView: R3 email outbox", () => {
+  const OUTBOX_ROW = {
+    id: "ob-1", kind: "REJECTION", candidateId: "cand-1", candidateName: "Nadia Petrova",
+    toAddress: "nadia@example.com", subject: "Update on your application — SWE at Fernly Workspace",
+    body: "Hi Nadia,\n\nThank you for taking the time to apply.",
+    status: "SENT", sentBy: "Remy", sentAt: "2026-11-12T01:02:03.000Z",
+    providerMessageId: "re-1", error: "", createdAt: "2026-11-12T01:02:03.000Z",
+  };
+
+  it("HR sees the outbox panel with status chip + subject; rows expand to the body", async () => {
+    getMailOutbox.mockResolvedValue({ ok: true, data: [OUTBOX_ROW] });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const panel = await screen.findByTestId("email-outbox");
+    expect(panel.textContent).toContain("Update on your application");
+    expect(panel.textContent).toContain("nadia@example.com");
+    expect(panel.textContent).toContain("SENT");
+    // Body hidden until the row is expanded.
+    expect(panel.textContent).not.toContain("Thank you for taking the time");
+    fireEvent.click(screen.getAllByTestId("outbox-row")[0]);
+    expect(panel.textContent).toContain("Thank you for taking the time");
+  });
+
+  it("shows the empty-outbox hint when nothing has been sent", async () => {
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const panel = await screen.findByTestId("email-outbox");
+    expect(panel.textContent).toContain("No candidate emails yet");
+  });
+
+  it("MANAGERs (no hiring:manage) never see the outbox panel — and never trigger the fetch", async () => {
+    getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: false, canConfig: false } });
+    render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
+    expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
+    expect(screen.queryByTestId("email-outbox")).toBeNull();
+    expect(getMailOutbox).not.toHaveBeenCalled();
+  });
+
+  it("a FAILED row surfaces the delivery error on expand", async () => {
+    getMailOutbox.mockResolvedValue({
+      ok: true,
+      data: [{ ...OUTBOX_ROW, id: "ob-2", status: "FAILED", error: "Resend API error 422: quota exceeded" }],
+    });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    await screen.findByTestId("email-outbox");
+    fireEvent.click(screen.getAllByTestId("outbox-row")[0]);
+    expect(await screen.findByText(/quota exceeded/)).toBeTruthy();
+  });
+});
+
+describe("HiringView: R3 SELECTED pool", () => {
+  it("the Selected filter chip counts and lists selected candidates", async () => {
+    getHiringBoard.mockResolvedValue({
+      ok: true,
+      data: {
+        stages: STAGES,
+        candidates: [
+          cand({}),
+          cand({ id: "cand-2", fullName: "Priyanka Menon", status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" }),
+        ],
+      },
+    });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const chip = await screen.findByTestId("hiring-filter-selected");
+    expect(chip.textContent).toContain("Selected");
+    expect(chip.textContent).toContain("1");
+    fireEvent.click(chip);
+    expect(await screen.findByText("Priyanka Menon")).toBeTruthy();
   });
 });

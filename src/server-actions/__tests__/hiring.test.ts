@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -40,6 +40,19 @@ vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
 }));
 
+// R3 — injectable mailer: the default mock simulates a successful Resend
+// delivery; individual tests swap in dry-run / throwing mailers.
+const createMailerMock = vi.fn();
+vi.mock("@/lib/mailer", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/mailer")>("@/lib/mailer");
+  return { ...actual, createMailer: (...a: unknown[]) => createMailerMock(...(a as [])) };
+});
+
+const getWorkspaceConfigMock = vi.fn();
+vi.mock("@/lib/config-loader", () => ({
+  getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
+}));
+
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
@@ -54,6 +67,7 @@ import {
   deleteStageTemplate,
   getHiringBoard,
   getHiringPermissions,
+  getMailOutbox,
   scheduleInterview,
   saveScorecard,
   getMyInterviews,
@@ -127,6 +141,13 @@ beforeEach(() => {
   db.user.findMany.mockResolvedValue([{ id: "u-mgr", name: "Ingrid" }]);
   db.calendarEvent.create.mockResolvedValue({ id: "ev-1" });
   db.reminder.create.mockResolvedValue({ id: "rem-1" });
+  // R3 — outbox + mailer defaults.
+  db.mailOutbox.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ob-1", ...data }));
+  db.mailOutbox.update.mockResolvedValue({});
+  db.mailOutbox.findMany.mockResolvedValue([]);
+  createMailerMock.mockReset();
+  createMailerMock.mockReturnValue({ sendMail: vi.fn().mockResolvedValue({ delivered: true, messageId: "re-test-1" }) });
+  getWorkspaceConfigMock.mockResolvedValue({ workspace: { name: "Fernly Workspace" } });
 });
 
 const INTERVIEW_STAGE = {
@@ -282,7 +303,7 @@ describe("addCandidateStage", () => {
 });
 
 describe("decideCandidate", () => {
-  it("rejects without a reason (reason feeds the R3 rejection email)", async () => {
+  it("rejects without a reason (the reason is audit-only; the email carries HR remarks)", async () => {
     db.candidate.findUnique.mockResolvedValue(candidateWithStages());
     const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "   " });
     expect(res.ok).toBe(false);
@@ -568,5 +589,153 @@ describe("R2 edge branches", () => {
     const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date("2026-11-10T09:30:00Z").toISOString() });
     expect(res.ok).toBe(true);
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.interview_rescheduled" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3 — SELECT decision + rejection-email outbox (docs/RECRUITMENT_MODULE_PLAN.md §5).
+// ---------------------------------------------------------------------------
+
+describe("R3 — SELECT decision", () => {
+  it("selects an ACTIVE candidate: status SELECTED + decider recorded + audit", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "SELECT", reason: "" });
+    expect(res.ok).toBe(true);
+    expect(db.candidate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-1" },
+        data: expect.objectContaining({ status: "SELECTED", decidedById: "u-hr" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "hiring.decided",
+      detail: expect.stringContaining("selected"),
+    }));
+  });
+
+  it("refuses to select a non-ACTIVE candidate", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "REJECTED" }));
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "SELECT", reason: "" });
+    expect(res.ok).toBe(false);
+    expect(db.candidate.update).not.toHaveBeenCalled();
+  });
+
+  it("reactivates a SELECTED candidate (undo a misclick)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REACTIVATE", reason: "" });
+    expect(res.ok).toBe(true);
+    expect(db.candidate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "ACTIVE", decidedAt: null, decidedById: null }),
+      }),
+    );
+  });
+});
+
+describe("R3 — rejection email outbox", () => {
+  it("REJECT with sendEmail: queues QUEUED, sends, resolves SENT + provider id", async () => {
+    const sendMail = vi.fn().mockResolvedValue({ delivered: true, messageId: "re-xyz-9" });
+    createMailerMock.mockReturnValue({ sendMail });
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await decideCandidate({
+      candidateId: "cand-1", decision: "REJECT", reason: "Internal: depth below bar",
+      sendEmail: true, emailRemarks: "We encourage you to apply again next quarter.",
+    });
+    expect(res.ok).toBe(true);
+    // The row is created QUEUED before the send attempt (audit-first).
+    expect(db.mailOutbox.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        kind: "REJECTION", candidateId: "cand-1", toAddress: "nadia@example.com",
+        status: "QUEUED", sentById: "u-hr",
+      }),
+    }));
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    const sent = sendMail.mock.calls[0][0] as { to: string; subject: string; text: string };
+    expect(sent.to).toBe("nadia@example.com");
+    expect(sent.subject).toContain("Senior Frontend Engineer");
+    // Content contract: the INTERNAL reason never lands in the email; the
+    // HR-approved remarks do.
+    expect(sent.text).toContain("We encourage you to apply again next quarter.");
+    expect(sent.text).not.toContain("depth below bar");
+    // Resolved to SENT with the provider message id.
+    expect(db.mailOutbox.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "ob-1" },
+      data: expect.objectContaining({ status: "SENT", providerMessageId: "re-xyz-9" }),
+    }));
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.email_queued" }));
+  });
+
+  it("records SKIPPED when the provider layer did not really deliver (dev dry-run)", async () => {
+    const sendMail = vi.fn().mockResolvedValue({ delivered: false, messageId: null });
+    createMailerMock.mockReturnValue({ sendMail });
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: true });
+    expect(res.ok).toBe(true);
+    expect(db.mailOutbox.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "SKIPPED", providerMessageId: "" }),
+    }));
+  });
+
+  it("records FAILED on a provider outage — the rejection decision itself still succeeds", async () => {
+    const sendMail = vi.fn().mockRejectedValue(new Error("Resend API error 422: quota exceeded"));
+    createMailerMock.mockReturnValue({ sendMail });
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: true });
+    expect(res.ok).toBe(true); // best-effort: the decision stands, the outbox carries the failure
+    expect(db.candidate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "REJECTED" }) }),
+    );
+    expect(db.mailOutbox.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "FAILED", error: expect.stringContaining("quota exceeded") }),
+    }));
+  });
+
+  it("skips the outbox entirely when the email is not opted in", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x" });
+    expect(res.ok).toBe(true);
+    expect(db.mailOutbox.create).not.toHaveBeenCalled();
+    expect(createMailerMock).not.toHaveBeenCalled();
+  });
+
+  it("WITHDRAW never sends an email even with the flags set", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await decideCandidate({
+      candidateId: "cand-1", decision: "WITHDRAW", reason: "", sendEmail: true, emailRemarks: "hi",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.mailOutbox.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("getMailOutbox", () => {
+  it("requires hiring:manage (a MANAGER is denied)", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:manage"));
+    const res = await getMailOutbox();
+    expect(res.ok).toBe(false);
+    expect(db.mailOutbox.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns rows with sender + candidate names serialized to ISO strings", async () => {
+    db.mailOutbox.findMany.mockResolvedValue([
+      {
+        id: "ob-2", kind: "REJECTION", candidateId: "cand-1",
+        candidate: { fullName: "Nadia Petrova" },
+        toAddress: "nadia@example.com", subject: "Update on your application — SWE at Fernly Workspace",
+        body: "Hi Nadia,", status: "SENT", sentById: "u-hr",
+        sentAt: new Date("2026-11-12T01:02:03Z"), providerMessageId: "re-1", error: "",
+        createdAt: new Date("2026-11-12T01:02:03Z"),
+      },
+    ]);
+    db.user.findMany.mockResolvedValue([{ id: "u-hr", name: "Remy" }]);
+    const res = await getMailOutbox();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data).toHaveLength(1);
+      expect(res.data[0]).toMatchObject({
+        id: "ob-2", candidateName: "Nadia Petrova", sentBy: "Remy",
+        status: "SENT", sentAt: "2026-11-12T01:02:03.000Z",
+      });
+    }
   });
 });

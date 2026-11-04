@@ -21,3 +21,16 @@ export function barWidthClass(pct: number): string {
   const n = Math.round(Math.min(100, Math.max(0, safe)));
   return `f-w-${n}`;
 }
+
+/**
+ * F-07 — escape user-controlled text before it lands in an HTML email.
+ * Shared by the password-reset and hiring (R3 outbox) mail paths.
+ */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}

@@ -65,9 +65,13 @@ keystroke-reachable. Groups below match the sidebar.
   interviewer's personal reminder, blocks double-bookings within the hour,
   and collects a structured scorecard (1–5 rating, strengths, concerns,
   STRONG_HIRE/HIRE/NO_HIRE) — editable by the assigned interviewer or HR;
-  interviewers see a "Your upcoming interviews" panel. (Rejection emails via
-  an auditable outbox, document checklists, the offer builder + e-signature,
-  auto employee creation on joining, and full payroll follow in R3–R8.)
+  interviewers see a "Your upcoming interviews" panel. Decisions & email
+  (R3): SELECT moves a candidate to the offer-prep pool; rejecting can queue
+  a courteous rejection email — the internal reason stays audit-only, the
+  HR-approved personal note goes to the candidate — and every send is
+  recorded in an audited outbox (SENT / SKIPPED dry-run / FAILED) viewable
+  by HR. (Document checklists, the offer builder + e-signature, auto
+  employee creation on joining, and full payroll follow in R4–R8.)
 
 **Administration**
 - **Users** (`G U`, admin) — create (login + directory entry in one action), edit,
@@ -165,7 +169,7 @@ contains **no credential literals**; the seed refuses to run without it):
 CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR: lint →
 typecheck → coverage-gated unit tests → production build → bundle budget →
 dependency audit → **e2e** on a seeded ephemeral PostgreSQL 16 with headless
-Chrome (70 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
+Chrome (75 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
 messaging, a11y, HR leave/directory/reviews/onboarding, QA hardening).
 
 ## Keyboard shortcuts

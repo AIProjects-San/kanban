@@ -495,9 +495,15 @@ export const addCandidateStageSchema = z.object({
 
 export const decideCandidateSchema = z.object({
   candidateId: cuidish,
-  decision: z.enum(["REJECT", "WITHDRAW", "REACTIVATE"]),
-  // Required for REJECT — it lands in the rejection email (R3).
+  // SELECT (R3): ACTIVE → SELECTED — offer prep pointer (offer builder R5).
+  decision: z.enum(["SELECT", "REJECT", "WITHDRAW", "REACTIVATE"]),
+  // Required for REJECT — audit-only; the email carries HR-approved remarks.
   reason: z.string().trim().max(2_000),
+  // R3 — opt-in rejection email. sendEmail: the MailOutbox row is queued and
+  // a send is attempted (SENT only when RESEND_API_KEY is wired; SKIPPED in
+  // dev dry-run). emailRemarks: the personal note merged into the email.
+  sendEmail: z.boolean().default(false),
+  emailRemarks: z.string().trim().max(2_000).default(""),
 }).strict();
 
 export const deleteStageTemplateSchema = z.object({

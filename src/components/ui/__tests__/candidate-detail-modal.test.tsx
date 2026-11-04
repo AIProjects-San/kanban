@@ -63,7 +63,7 @@ function stage(overrides: Partial<CandidateStageT>): CandidateStageT {
   };
 }
 
-function cand(stages: CandidateStageT[]): CandidateT {
+function cand(stages: CandidateStageT[], overrides: Partial<CandidateT> = {}): CandidateT {
   return {
     id: "cand-1", fullName: "Nadia Petrova", email: "nadia@example.com", phone: "",
     position: "Senior Frontend Engineer", department: "ENGINEERING", source: "Referral",
@@ -71,6 +71,7 @@ function cand(stages: CandidateStageT[]): CandidateT {
     createdById: "u-admin", userId: null, joinedAt: null,
     createdAt: new Date().toISOString(),
     stages,
+    ...overrides,
   };
 }
 
@@ -178,5 +179,96 @@ describe("CandidateDetailModal: scorecards", () => {
       />,
     );
     expect(screen.queryByTestId("scorecard-btn-interview_1")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3 — decisions: SELECT + opt-in rejection email
+// ---------------------------------------------------------------------------
+
+describe("CandidateDetailModal: R3 decisions", () => {
+  it("Select (canManage, ACTIVE) calls decideCandidate with SELECT", async () => {
+    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("select-btn"));
+    await waitFor(() =>
+      expect(decideCandidate).toHaveBeenCalledWith(
+        expect.objectContaining({ candidateId: "cand-1", decision: "SELECT" }),
+      ),
+    );
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("hides Select from a non-manager (MANAGER read-only view)", () => {
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage={false}
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-mgr"
+      />,
+    );
+    expect(screen.queryByTestId("select-btn")).toBeNull();
+    expect(screen.queryByTestId("reject-btn")).toBeNull();
+  });
+
+  it("a SELECTED candidate shows the offer-prep banner + reactivate", () => {
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    expect(screen.getByText(/Offer preparation pending/)).toBeTruthy();
+    expect(screen.getByText(/SELECTED/)).toBeTruthy();
+    expect(screen.getByTestId("reactivate-btn")).toBeTruthy();
+  });
+
+  it("reject with the email toggle submits sendEmail + remarks", async () => {
+    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("reject-btn"));
+    fireEvent.change(screen.getByTestId("reject-reason"), { target: { value: "Internal: depth below bar" } });
+    // The remarks field only exists once the email toggle is on.
+    expect(screen.queryByTestId("reject-email-remarks")).toBeNull();
+    fireEvent.click(screen.getByTestId("reject-email-toggle"));
+    fireEvent.change(screen.getByTestId("reject-email-remarks"), {
+      target: { value: "Please apply again next quarter." },
+    });
+    fireEvent.click(screen.getByTestId("reject-confirm"));
+    await waitFor(() =>
+      expect(decideCandidate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          candidateId: "cand-1", decision: "REJECT", reason: "Internal: depth below bar",
+          sendEmail: true, emailRemarks: "Please apply again next quarter.",
+        }),
+      ),
+    );
+  });
+
+  it("reject without the toggle sends no email flags (defaults)", async () => {
+    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("reject-btn"));
+    fireEvent.change(screen.getByTestId("reject-reason"), { target: { value: "Not a fit" } });
+    fireEvent.click(screen.getByTestId("reject-confirm"));
+    await waitFor(() =>
+      expect(decideCandidate).toHaveBeenCalledWith(
+        expect.objectContaining({ decision: "REJECT", reason: "Not a fit", sendEmail: false }),
+      ),
+    );
   });
 });

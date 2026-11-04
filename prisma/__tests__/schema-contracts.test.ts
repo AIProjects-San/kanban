@@ -252,4 +252,24 @@ describe("Recruitment R1 models are declared", () => {
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
   });
+
+  it("R3: MailOutbox stores the audited email lifecycle (QUEUED→SENT/SKIPPED/FAILED)", () => {
+    const block = modelBlock("MailOutbox");
+    expect(block).toMatch(/kind\s+String\b/);
+    expect(block).toMatch(/toAddress\s+String\b/);
+    expect(block).toMatch(/subject\s+String\b/);
+    expect(block).toMatch(/body\s+String\b/);
+    expect(block).toMatch(/status\s+String\s+@default\("QUEUED"\)/);
+    expect(block).toMatch(/providerMessageId\s+String\s+@default\(""\)/);
+    // Candidate link keeps history on delete (SetNull), never cascades away.
+    expect(block).toMatch(/onDelete:\s*SetNull/);
+    expect(block).not.toMatch(/onDelete:\s*Cascade/);
+    // Hot query paths: newest-first listing, per-candidate history, by status.
+    expect(block).toMatch(/@@index\(\[createdAt\]\)/);
+    expect(block).toMatch(/@@index\(\[candidateId\]\)/);
+    expect(block).toMatch(/@@index\(\[status\]\)/);
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261113000000_hiring_mail_outbox");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+  });
 });
