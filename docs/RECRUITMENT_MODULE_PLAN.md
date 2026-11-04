@@ -330,8 +330,10 @@ A 12-persona acceptance panel (CEO/HR/hiring-manager/accountant/IT-admin at
 ADMIN·HR·MANAGER, new joiners + existing employee + interviewer + QA at MEMBER,
 and an external candidate on the public offer link) walked the whole product
 live — every finding reproduced in the browser or traced in code. Full report:
-`download/Fernly_Persona_Acceptance_Assessment.docx` (verdicts, competitive
-gaps vs Zoho People/Keka/greytHR/Rippling, and a P0/P1/P2 backlog).
+[`docs/Fernly_Persona_Acceptance_Assessment.md`](Fernly_Persona_Acceptance_Assessment.md)
+(markdown edition; the formatted `.docx`/`.pdf` and charts in `assets/` sit in
+the same folder) — verdicts, competitive gaps vs Zoho People/Keka/greytHR/
+Rippling, and a P0/P1/P2 backlog.
 
 **Fixed during the audit (commit 1d7f246):**
 - `updatePayslip` now rejects `lopDays` beyond the run period's day count and
