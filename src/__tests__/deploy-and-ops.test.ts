@@ -331,6 +331,30 @@ describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
     expect(sh).toMatch(/git status --porcelain/);
   });
 
+  it("2026-11-04 outage: restore-preview.sh heals the FULL demo-env trio, not just the password", () => {
+    // The 2026-11-04 sandbox recycle re-provisioned .env down to DATABASE_URL
+    // only. The restore script healed NEXT_PUBLIC_DEMO_PASSWORD and
+    // BETTER_AUTH_SECRET but NOT the panel vars — so the login screen
+    // compiled with the demo quick-login panel hidden and demo logins
+    // "didn't work" even after a restore. The panel only renders when
+    // NEXT_PUBLIC_SEED_DEMO=1 AND NEXT_PUBLIC_DEMO_ACCOUNTS is non-empty
+    // (src/components/auth/login-screen.tsx); both must be healed here.
+    const sh = readFileSync(resolve(repoRoot, "scripts", "restore-preview.sh"), "utf-8");
+    expect(sh).toMatch(/NEXT_PUBLIC_SEED_DEMO=1/);
+    expect(sh).toMatch(/NEXT_PUBLIC_DEMO_ACCOUNTS=demo\@fernly\.app:Admin,manager\@fernly\.app:Manager,member\@fernly\.app:Member/);
+    // The heal must be anchored greps (a substring grep on PASSWORD would
+    // also match the ACCOUNTS line and silently skip healing it).
+    expect(sh).toMatch(/grep -q '\^NEXT_PUBLIC_SEED_DEMO='/);
+    expect(sh).toMatch(/grep -q '\^NEXT_PUBLIC_DEMO_ACCOUNTS='/);
+    // The seeded demo accounts (scripts/seed.js) and the panel list must
+    // stay in sync — all three emails, one per role.
+    const seed = readFileSync(resolve(repoRoot, "scripts", "seed.js"), "utf-8");
+    for (const email of ["demo@fernly.app", "manager@fernly.app", "member@fernly.app"]) {
+      expect(seed).toContain(`"${email}"`);
+      expect(sh).toContain(email);
+    }
+  });
+
   it("PR-42: the right-to-erasure privacy template exists and its retention numbers match the code", () => {
     // The owner signs off and publishes this notice; if the constants change
     // without the notice following, the published policy silently lies.

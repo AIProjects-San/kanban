@@ -36,7 +36,17 @@ ls -d src prisma e2e .git 2>/dev/null
 
 echo "== 2. env: ensure demo password + stable BETTER_AUTH_SECRET =="
 # NEXT_PUBLIC_DEMO_PASSWORD — the value the seed hashes and the login form expects.
-grep -q NEXT_PUBLIC_DEMO_PASSWORD .env || echo 'NEXT_PUBLIC_DEMO_PASSWORD=fernly123' >> .env
+grep -q '^NEXT_PUBLIC_DEMO_PASSWORD=' .env || echo 'NEXT_PUBLIC_DEMO_PASSWORD=fernly123' >> .env
+# NEXT_PUBLIC_SEED_DEMO + NEXT_PUBLIC_DEMO_ACCOUNTS — the demo quick-login
+# panel on / is compiled from these (login-screen.tsx inlines NEXT_PUBLIC_* at
+# build time). The 2026-11-04 recycle re-provisioned .env down to DATABASE_URL
+# only, which compiled the panel away AND left custom.db empty — demo logins
+# failed even though the restore had run. Heal the full trio so the panel
+# renders after every recycle. (Preview-only path: production builds must NOT
+# set these — L-P0-12, pinned by deploy-and-ops.test.ts.)
+grep -q '^NEXT_PUBLIC_SEED_DEMO=' .env || echo 'NEXT_PUBLIC_SEED_DEMO=1' >> .env
+grep -q '^NEXT_PUBLIC_DEMO_ACCOUNTS=' .env || \
+  echo 'NEXT_PUBLIC_DEMO_ACCOUNTS=demo@fernly.app:Admin,manager@fernly.app:Manager,member@fernly.app:Member' >> .env
 # BETTER_AUTH_SECRET — must be STABLE across recycles. The auth-better resolver
 # falls back to crypto.randomUUID() when unset, which rotates on every restart
 # and invalidates every existing session row's signature.
