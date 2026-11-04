@@ -4,23 +4,27 @@
 
 | Layer | Tool | Command | Scope & gate |
 |-------|------|---------|--------------|
-| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, shared components — **271 tests**, coverage gate 90% stmts / 80% branches |
+| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, components & views — **1484 tests** (82 files), coverage gate 90% stmts / 80% branches |
 | Coverage report | Vitest + v8 | `bun run test:coverage` | HTML report in `coverage/` |
-| Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login, brute-force lockout, RBAC UI gating, board CRUD, messaging isolation (see `e2e/README.md`; requires Chrome) |
+| Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login & lockout, RBAC gating, board CRUD, messaging isolation, a11y, HR (leave/directory/reviews/onboarding) — **64 scenarios / 11 feature files** (see `e2e/README.md`; requires Chrome) |
 | Static | ESLint + tsc | `bun run lint` / `bun run typecheck` | zero errors |
 | Production | Next build | `bun run build` | must pass with full type checking |
+| Production smoke | `bun run test:prodsmoke` | health, headers, CSP shape, credential flow | must pass against a built app |
+| Load | k6 + `scripts/load-smoke.mjs` | see `docs/PRODUCTION_READINESS.md` §5 | p95 budgets, incl. 100k-row dataset via `scripts/seed-load.js` |
 
-**Unit-test conventions.** Mocks only at the boundaries (`@/lib/db`, `next-auth`,
-`next/cache`) via `vi.hoisted`; the module under test is always real. Security tests use
-four fixture personas — `ADMIN`, `MANAGER`, `MEMBER`, `OTHER_MEMBER` — and must cover the
+**Unit-test conventions.** Mocks only at the boundaries (`@/lib/db`,
+`better-auth`, `next/cache`) via `vi.hoisted`; the module under test is always real. Security tests use
+fixture personas — `ADMIN`, `MANAGER`, `MEMBER`, `HR`, `OTHER_MEMBER` — and must cover the
 allow path **and** every deny path. Bug fixes require a regression test that fails on the
 pre-fix code.
 
 **What the automated suites cover:** every server action's permission gate, ownership and
-scoping rules (incl. all P0/P1 security regressions), the RBAC matrix invariants, the
-rate limiter, the auth callbacks (sign-in, throttle, JWT role refresh, deleted users),
-zod validation, the config loader (DB-driven + fallbacks + cache), audit metadata
-consistency, password policy, and the shared component library.
+scoping rules (incl. all P0/P1 security regressions, row-level task deletion and
+role-scoped analytics), the RBAC matrix invariants, the rate limiter, the auth callbacks
+(sign-in, throttle, JWT bearer minting/validation, soft-deleted users), zod validation,
+the config loader (DB-driven + fallbacks + cache), audit metadata consistency, password
+policy, the hierarchy subtree logic, the shared component library and the view layer
+(sidebar accordion, project modal, analytics scope selector).
 
 **What they do NOT cover (by design):** pixel layout, drag-and-drop physics, Recharts
 rendering, keyboard-shortcut handling — these are covered by the manual plan below and
@@ -32,9 +36,11 @@ the Selenium suite where a browser is available.
 
 Environment: `bun run dev` + seeded database (`bun run db:seed`).
 Demo accounts (password = `NEXT_PUBLIC_DEMO_PASSWORD` from `.env` — never a literal
-in this repo): `demo@fernly.app` (ADMIN), `manager@fernly.app`
-(MANAGER), `member@fernly.app` (MEMBER), plus `maya@`, `lena@`, `oliver@`, `priya@`,
-`jack@`, `aria@`, `elena@`, `marcus@`, `nina@` (MEMBERs).
+in this repo): `demo@fernly.app` (ADMIN — Mira Hale), `manager@fernly.app`
+(MANAGER — Ingrid Solberg; team: Lena, Rafael, + Soren via Lena), `member@fernly.app`
+(MEMBER — Theo Vance), `remy@fernly.app` (HR — Remy Laurent), `priya@fernly.app`
+(MANAGER — Priya Nair; team: Marcus, Hana), plus MEMBERs `lena@`, `rafael@`, `yuki@`,
+`amara@`, `soren@`, `marcus@`, `hana@`, `diego@` (all `@fernly.app`).
 
 Execute each group per persona. ✅ = pass criterion.
 
@@ -90,7 +96,7 @@ Execute each group per persona. ✅ = pass criterion.
 | TASK-5 | Drag & drop | Move a card To do → In progress → Done | Column placement persists after reload; order within column preserved |
 | TASK-6 | Edit task | Change title/status/priority/due date/assignee | Changes persist; entity history (expand in edit modal) lists the changed fields |
 | TASK-7 | Reassign recalc | Move a task to another assignee | Both members' workload stats update (open/completed/workload) |
-| TASK-8 | Delete task | Delete a card (ADMIN or permitted role) | Card disappears; audit entry written |
+| TASK-8 | Delete task (row-level) | Delete your own card as MEMBER; delete a foreign unassigned card as MEMBER; delete a subordinate's card as MANAGER | Own card deletes; foreign card rejected ("only the assignee, project owner, an admin, or a covering manager"); subordinate's card deletes for the covering MANAGER |
 | TASK-9 | Filters & search | Filter by project, status, priority; search title | Combined filters apply correctly; MEMBER's project filter only lists scoped projects |
 | TASK-10 | Own-task edit rule | As MEMBER drag your own card; then attempt a foreign card via console | Own card moves; foreign card rejected |
 
@@ -117,10 +123,22 @@ Execute each group per persona. ✅ = pass criterion.
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
-| ANL-1 | Charts render | Open Analytics | Completion trend, workload, progress and time charts render without console errors |
-| ANL-2 | Scoped data | Compare as MEMBER vs ADMIN | MEMBER's charts derive only from scoped data |
+| ANL-1 | Charts render | Open Analytics | Completion/hours trend, hours by project, 13-week activity heatmap and metric cards render without console errors |
+| ANL-2 | MEMBER scope forced | As MEMBER, open the scope dropdown next to 7D/30D/90D | Only "Just me" is offered; the server forces self whatever the client sends |
+| ANL-3 | MANAGER team default | As `manager@fernly.app`, open Analytics | Default scope = own team (self + reporting subtree); dropdown offers subtree individuals only; Top contributors hides when narrowed to one person |
+| ANL-4 | ADMIN everyone | As ADMIN, switch scope to Everyone, then to a manager's team, then to an individual | All three honoured; numbers change accordingly |
 
-### 2.8 Team & messaging (MSG)
+### 2.8 HR (HR) — leave / directory / reviews / onboarding
+
+| ID | Scenario | Steps | Expected |
+|----|----------|-------|----------|
+| HR-1 | Leave request | As MEMBER, request leave from your balance | Balance debits on approval; request appears in approver's queue |
+| HR-2 | Chain approval | As `manager@fernly.app` (Ingrid), approve Lena's request; then try Rafael's (also Ingrid's report) — and try Priya's team member (Marcus) | Lena/Rafael approve-able; Marcus is **not** in Ingrid's subtree → rejected |
+| HR-3 | HR console gating | Open `G R` as MEMBER | No HR group in sidebar; console unavailable |
+| HR-4 | Calendar surfacing | Approve a leave request covering next week | Leave appears on the calendar as a virtual event |
+| HR-5 | Directory & reviews | As HR (`remy@`), browse directory, run a review cycle stage, check onboarding progress | All views gated to `hr:*` holders; onboarding checklist progress persists |
+
+### 2.9 Team & messaging (MSG)
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
@@ -132,7 +150,7 @@ Execute each group per persona. ✅ = pass criterion.
 | MSG-6 | Delete message | Delete a message you sent | Removed; a third party attempting deletion via console is rejected |
 | MSG-7 | Mark-thread-read scope | As third party, call `markThreadRead` on someone's thread via console | No rows change (WHERE recipientUserId guards) |
 
-### 2.9 Users administration (USR) — ADMIN only
+### 2.10 Users administration (USR) — ADMIN only
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
@@ -145,7 +163,7 @@ Execute each group per persona. ✅ = pass criterion.
 | USR-7 | Assignment modal | Toggle project memberships | Changes reflected in the user's scoped view immediately |
 | USR-8 | Access control | Open `/` as MANAGER, try `G U` / call `getAllUsers` in console | Users view unavailable; console call rejected |
 
-### 2.10 Workspace settings (WS) — ADMIN only
+### 2.11 Workspace settings (WS) — ADMIN only
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
@@ -153,11 +171,11 @@ Execute each group per persona. ✅ = pass criterion.
 | WS-2 | Security tab | Raise minimum password length to 12 | USR-3 message reflects 12 |
 | WS-3 | Domain enums | Add a custom task status (e.g. BLOCKED); reload Tasks | New status available in modal select |
 | WS-4 | Delete config item | Remove the custom status | Disappears after cache invalidation |
-| WS-5 | Role matrix | Edit MANAGER description + toggle a permission | Label updates; permission change effective ≤ 60 s |
+| WS-5 | Role matrix | Edit MANAGER description + toggle a permission | Label updates; a signed-in MANAGER sees the change apply within the 60 s cache window (no re-login) |
 | WS-6 | System role guard | Attempt to delete the ADMIN role | Rejected: system role |
 | WS-7 | In-use role guard | Create a role, assign nothing, delete → then assign a user and retry | Empty role deletes; in-use role refuses with user count |
 
-### 2.11 Audit log (AUD)
+### 2.12 Audit log (AUD)
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
@@ -166,33 +184,37 @@ Execute each group per persona. ✅ = pass criterion.
 | AUD-3 | Entity history | Open a task's edit modal → expand history | Last ≤ 50 entries for that task only |
 | AUD-4 | Access control | MEMBER calls `getAuditLogs` in console | Rejected (audit:view required) |
 
-### 2.12 Personalisation & UX (UX)
+### 2.13 Personalisation & UX (UX)
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
-| UX-1 | Accent themes | Switch forest/ocean/plum/ember | Applied instantly, persisted per-user (survives reload & re-login) |
-| UX-2 | Dark mode | Toggle in topbar | Persists; no flash on reload (applied pre-hydration) |
+| UX-1 | Accent themes | Switch forest/ocean/plum/ember | Applied instantly, persisted **per account** (survives reload, re-login and another browser — PR-65) |
+| UX-2 | Dark mode | Toggle in topbar | Persists per account; no flash on reload (applied pre-hydration) |
 | UX-3 | Notification prefs | Toggle the six switches | Persisted server-side |
 | UX-4 | Command palette | `⌘K`/`Ctrl K` | Opens; search jumps to views/actions |
-| UX-5 | Shortcuts | `G D/T/P/C/A/E` and `?` overlay | Each navigates / opens overlay |
+| UX-5 | Shortcuts | `G D/A/P/T/B/M/C/V` (+ `G R/U/W/L/S/H` where permitted) and `?` overlay | Each navigates / opens overlay |
 | UX-6 | Profile drawer | Edit name/bio/avatar color | Saved; reflected in topbar |
 | UX-7 | Responsive | Narrow to mobile width | Login and dashboard remain usable (see mobile screenshots) |
+| UX-8 | Sidebar accordion | Expand a nav group, then another | Only one group open at a time; the previous collapses; reloading keeps the current view's group expanded; the icon-rail toggle is remembered |
+| UX-9 | Project detail modal | Open a project card | Wide modal; Members + History collapsed by default, expandable; roster shows staffing count |
 
-### 2.7 Regression pack (run after any security-touching change)
+### 2.14 Regression pack (run after any security-touching change)
 
-AUTH-5, AUTH-10, RBAC-6, RBAC-7, DASH-2/3/4, TASK-10, MSG-4/6/7, USR-8, AUD-4 — these
-mirror the automated security suite; they exist as manual steps for environments without
-the test runner.
+AUTH-5, AUTH-10, RBAC-6, RBAC-7, TASK-8/10, ANL-2/3/4, HR-2/3, MSG-4/6/7, USR-8,
+AUD-4 — these mirror the automated security suite; they exist as manual steps for
+environments without the test runner.
 
 ---
 
-## 3. Coverage snapshot (2026-10-29)
+## 3. Coverage snapshot (2026-11-04, PR-65)
 
 ```
-All files (src/lib + src/server-actions):  95.7% statements · 87.9% branches
-                                           98.5% functions  · 99.4% lines
-data.ts        94.8% stmts / 100% lines      auth.ts        94.6% stmts
-config-loader  100%                           rbac/rate-limit/config/audit-meta 100%
+Gated layers (src/lib + src/server-actions):
+  100.0% statements (3397/3397) · 91.6% branches (2419/2641)
+  src/lib:             100% stmts · 93.0% branches
+  src/server-actions:  100% stmts · 91.2% branches
+Highlights at 100%: rbac, rate-limit, audit-meta, auth-guard, users,
+reminders, events, notifications, validation, pii, time
 ```
 
 Gates (90/80/85/90) enforced in `vitest.config.ts` — `bun run test:coverage` fails the

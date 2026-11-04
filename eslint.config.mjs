@@ -45,7 +45,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-debugger": "error",
     "no-fallthrough": "error",
     "no-unreachable": "error",
-    // Still off (need focused cleanup passes — see docs/CODE_REVIEW.md §6):
+    // Still off (need focused cleanup passes — see docs/PRODUCTION_READINESS.md):
     "no-unused-vars": "off", // handled by @typescript-eslint/no-unused-vars above
     "no-console": "off",
     "no-empty": "off",

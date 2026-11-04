@@ -5,12 +5,21 @@ and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 
 ## What is covered
 
-| Feature file         | Scenarios                                                                                 |
-| -------------------- | ----------------------------------------------------------------------------------------- |
-| `login.feature`      | valid sign-in, wrong password, unknown email, empty fields, brute-force lockout (5 → block) |
-| `rbac.feature`       | admin vs member sidebar, project-create button gating, member workspace scoping            |
-| `tasks.feature`      | create task, drag to another Kanban column, delete task                                    |
-| `messaging.feature`  | send message, recipient inbox visibility, third-party inbox isolation                      |
+**64 scenarios across 11 feature files:**
+
+| Feature file | Scenarios |
+| ------------ | --------------------------------------------------------------------------------- |
+| `login.feature` (5) | valid sign-in, wrong password, unknown email, empty fields, sign-out clears the session |
+| `rbac.feature` (5) | admin vs member sidebar, project-create gating, member workspace scoping |
+| `tasks.feature` (3) | create task, drag to another Kanban column, delete task |
+| `messaging.feature` (3) | send message, recipient inbox visibility, third-party inbox isolation |
+| `a11y.feature` (9) | axe WCAG smoke on all primary surfaces (login, dashboard, tasks, team, bugs, calendar, analytics, audit log, settings) |
+| `hr-leave.feature` (16) | balances + own requests, request form with policy enforcement (weekend block, balance cap, minimum notice, overlap rejection), cancel, chain approval, MEMBER sidebar must not contain the HR group |
+| `hr-directory.feature` (6) | roster + search, manager read-only, admin edits, member self-serves contact fields, member blocked |
+| `hr-reviews.feature` (7) | manager's subtree queue, out-of-chain invisible, self-assessment, manager/HR/skip-level completion, employee acknowledgement |
+| `hr-onboarding.feature` (6) | seeded checklists + progress, create from template, add task, auto-complete on last tick, hire self-serves, outsider blocked |
+| `hr-qa-hardening.feature` (2) | regression pack from the HR QA audit: approving past the remaining balance is refused; a next-year request is not blocked by this year's balance |
+| `zzz-login-lockout.feature` (1) | 5 failures block the 6th attempt (runs last so its lockout state can't pollute other scenarios) |
 
 ## Prerequisites
 
@@ -56,8 +65,15 @@ Failed scenarios automatically capture a screenshot into the Cucumber report.
 - Step definitions prefer **roles, labels and keyboard shortcuts** over CSS
   classes, but the app's modal buttons still rely on text matching; if a
   button label changes, update the corresponding XPath.
-- This sandboxed CI environment has **no browser installed**, so the suite is
-  **not** part of the default `bun test`/`vitest` run — it must be executed on
-  a machine with Chrome. The unit/integration suites
+- **The suite is NOT part of the default `vitest` run** — it needs a real
+  browser. Locally that means Chrome/Chromium (or `SELENIUM_BROWSER=firefox`);
+  on CI, GitHub's `ubuntu-latest` runners ship Google Chrome and the dedicated
+  `e2e` job (`.github/workflows/ci.yml`) runs the full suite on every push and
+  PR against a seeded ephemeral PostgreSQL 16. The unit/integration suites
   (`src/**/*.test.ts`) cover the same authorization logic at the action layer
-  and *do* run everywhere.
+  and run everywhere.
+- **HR scenarios need seeded HR data** (leave types/policies/balances,
+  employee profiles, review cycles, onboarding checklists) — all provided by
+  `scripts/seed.js`. `scripts/qa-cleanup.cjs` removes leave requests created by
+  failed QA-hardening runs (reason prefix `QA `) and restores the balances
+  they debited.

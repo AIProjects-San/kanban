@@ -27,7 +27,7 @@
 //     revocation case (account disabled). For password/role changes,
 //     the existing revokeUserSessions() deletes DB Session rows but does
 //     NOT invalidate outstanding JWTs — the 1h expiry is the revocation
-//     window. Documented in docs/AUTH_MIGRATION_PLAN.md.
+//     window. Documented in docs/SECURITY.md §1 (bearer tokens).
 //   • No `none` algorithm — verifyJwt rejects any alg != HS256.
 //   • Constant-time signature comparison (timingSafeEqual).
 // ---------------------------------------------------------------------------

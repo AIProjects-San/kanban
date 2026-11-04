@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
-// PR-48/PR-49 — the Better Auth auth-stack suite (docs/AUTH_MIGRATION_PLAN.md).
+// PR-48/PR-49 — the Better Auth auth-stack suite (docs/ARCHITECTURE.md §3).
 // Ported 1:1 from the retired v4 auth.test.ts at Phase 2; since the PR-49
 // cleanup it is the ONLY auth suite (the v4 counterpart is deleted).
 //

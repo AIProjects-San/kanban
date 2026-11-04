@@ -210,7 +210,7 @@ For database-level rollback (PITR), follow
 
 ## 3a. Auth stack (PR-48/PR-49 — migration COMPLETE)
 
-**Better Auth 1.7 is the only auth stack** (`docs/AUTH_MIGRATION_PLAN.md`):
+**Better Auth 1.7 is the only auth stack** (design: `docs/ARCHITECTURE.md` §3):
 credentials-only, DB-backed sessions in the `Session` table, served at
 `/api/auth-better/*` with the `fernly.*` cookies (httpOnly, SameSite=Lax,
 7-day, `__Secure-` prefixed in production). The NextAuth v4 stack — its

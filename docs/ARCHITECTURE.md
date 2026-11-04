@@ -32,12 +32,14 @@ trip, and hands it to `AppShell`, which switches between views client-side
 (`store/app-store.ts` holds `ViewKey`). Navigation = state change, not route change.
 
 **No REST/GraphQL layer.** All reads and writes go through Server Actions
-(`src/server-actions/`), organised **per domain** since the 2026-10-30 split:
-`dashboard`, `tasks`, `projects`, `members`, `events`, `notifications`,
-`reminders`, `users`, `time-entries`, `messages`, `assignments`, `workspace`,
-`audit` — with `data.ts` as a thin barrel re-export so callers have one stable
-import path. Every client-invoked action returns an
-**`ActionResult<T> = { ok: true; data: T } | { ok: false; code; error }`**
+(`src/server-actions/`), organised **per domain** since the 2026-10-30 split
+(30+ modules): `dashboard`, `tasks`, `projects`, `members`, `events`,
+`notifications`, `reminders`, `users`, `time-entries`, `messages`, `assignments`,
+`workspace`, `audit`, `analytics`, `bugs`, `bulk`, `search`, `mentions`,
+`auth-tokens`, `data-export`, `ics-export`, `trash`, `hr-leave`, `hr-directory`,
+`hr-reviews`, `hr-onboarding`, `hr-shared` — with `data.ts` as a thin barrel
+re-export so callers have one stable import path. Every client-invoked action
+returns an **`ActionResult<T> = { ok: true; data: T } | { ok: false; code; error }`**
 (`lib/action-result.ts`) instead of throwing: production never masks action
 error messages, and clients branch on `res.ok`. SSR-only loaders
 (`getDashboardData`, `getUserProfile`, `getUserSettings`) keep the throwing
@@ -120,14 +122,32 @@ Cookies flip to `Secure` automatically in production.
 ## 4. Authorization model (two layers)
 
 - **Layer 1 — permission checks** (`requirePermission`): every action states its
-  required permission from the 18-key matrix (`lib/rbac.ts`). Client components use
-  `usePermissions()` to hide UI affordances — cosmetic only.
+  required permission from the **28-permission matrix** across four roles
+  (ADMIN / MANAGER / MEMBER / HR — `lib/rbac.ts`). Client components use
+  `usePermissions()` to hide UI affordances — cosmetic only. Admins edit the
+  DB-driven matrix at runtime; changes reach signed-in users within the 60 s
+  config-cache window (with immediate bump on save).
 - **Layer 2 — row-level scoping**: `getDashboardData()` computes a scoped project-id set
   (owned ∪ assigned-tasks ∪ explicit assignments) from the **server session** and pushes
   it into every query. MEMBER and MANAGER are both scoped; ADMIN is not.
   The same scope is shared by the paginated reads (`pagination.ts`) and the project
   staff reads (`assignments.ts`, `dashboard.ts::getProjectMembers`) via
   `getScopedProjectIds` — see ADR-010.
+- **Task deletion (PR-61)** is row-level, not permission-level: allowed for the
+  task's **assignee**, the **project owner**, any **ADMIN**, or a **MANAGER whose
+  reporting chain covers** the assignee or project owner (`lib/hierarchy.ts`
+  subtree check). The blanket `task:delete` RBAC grant stays ADMIN-only;
+  everyone else passes through `assertTaskDeletePermission`.
+- **Analytics scoping (PR-63)**: `server-actions/analytics.ts` resolves the
+  requested scope server-side — MEMBER/HR are forced to *self*; MANAGER may pick
+  self or any individual in their reporting subtree (default: whole team);
+  ADMIN may pick self, *Everyone*, any manager's full team, or any individual.
+  The response carries the scope options the user is allowed to pick, so the
+  dropdown never offers a scope the server would reject.
+- **HR scoping (ADR-009)**: leave approvals follow the reporting chain
+  (`User.managerId`, full subtree — a manager approves anyone below them);
+  leave balances/requests are personal; employee profiles, reviews and
+  onboarding are gated by `hr:*` permissions.
 - **Personal-data scoping (PR-51–54):** reminders are owner-only (the legacy
   `ownerId: null` rows are no longer surfaced); dashboard time entries are filtered to
   **members the viewer can see** (`getVisibleMemberIds` — the same rule governs
@@ -143,18 +163,23 @@ authorization decisions. Identity always comes from `getSession()`. Caller-suppl
 **filters** (e.g. `memberId` on `getTimeEntriesPage`) are intersected with the server-
 derived scope — never allowed to replace it.
 
-## 5. Data model (22 models, key ones)
+## 5. Data model (37 models, key ones)
 
 | Model | Purpose | Notable relations |
 |-------|---------|-------------------|
-| `User` / `UserSettings` | login identity + preferences | 1–1 settings; assignments cascade |
-| `TeamMember` | directory entry (matches `User` by email) | tasks (SetNull), time entries |
-| `Project` | workspace project | tasks (SetNull), assignments (Cascade) |
+| `User` / `UserSettings` | login identity + preferences; `managerId` self-relation carries the reporting chain | 1–1 settings; assignments cascade |
+| `TeamMember` | directory entry (1–1 with `User` by stable `userId`) | tasks (SetNull), time entries |
+| `Project` | workspace project (`ownerUserId` is authoritative; `ownerName` display-only) | tasks (SetNull), assignments (Cascade) |
 | `Task` | Kanban card with `order` per column | project/assignee (SetNull) |
 | `ProjectAssignment` | explicit user↔project membership | unique (projectId, userId) |
-| `Message` | threaded DMs with `senderUserId`/`recipientUserId` | privacy enforced in queries |
+| `Message` / `MessageRead` | threaded DMs with `senderUserId`/`recipientUserId` | privacy enforced in queries |
 | `Reminder` | dashboard to-do — personal (`ownerId` = creator); legacy null-owner rows retained in DB but not surfaced (PR-52) | — |
 | `Notification` | per-user routing; null-recipient rows are intentional workspace-wide broadcasts | — |
+| `Bug` / `BugComment` | QA defect tracker with its own lifecycle (NEW → … → REOPENED) | — |
+| `LeaveType` / `LeavePolicy` / `LeaveRequest` / `LeaveBalance` | HR leave: types, per-year policies, chain-approved requests, balances | approved leave renders as virtual calendar events |
+| `EmployeeProfile` | HR directory: structured employee records beyond the roster | 1–1-ish with `User` |
+| `PerformanceReview` | review cycles with stages and reviewer assignments | — |
+| `OnboardingChecklist` / `OnboardingTask` | per-new-hire checklists with task-level progress | — |
 | `AuditLog` | append-only trail (66 typed actions) | written by every mutation |
 | `Workspace` + 6 config tables + `Role/Permission/RolePermission` | runtime-configurable vocabulary and RBAC | cached by config-loader |
 
@@ -172,13 +197,23 @@ code defaults when tables are empty, and caches for 60 s. Mutations call
 
 ## 7. Front-end architecture
 
+- **Navigation** — `src/config/navigation.ts` is the single source of truth:
+  six groups (Overview, Work, People, HR, Administration, General), one
+  component per view, RBAC-gated leaves. The sidebar renders it as collapsible
+  **accordion groups with one group open at a time** (opening a group collapses
+  the previous; the group holding the current view auto-expands on load), plus
+  a persisted icon-rail density toggle. The ⌘K palette and `G`-prefix shortcuts
+  derive from the same module — no hand-synced copies (PR-58/PR-62 regression
+  tests pin the drift).
 - **Theme:** OKLCH design tokens in `src/styles/tokens.css` (single source of truth,
   mirrored to TS in `src/styles/tokens.ts`; imported by `globals.css`), four accent
   themes, dark mode via a
-  `dark` class + per-user persistence (applied server-side pre-hydration to avoid flash).
+  `dark` class + per-user persistence — appearance is stored **server-side on the
+  user's account** (accent, dark mode) and applied before hydration, so it follows
+  the account across browsers with no cross-account leakage (PR-65).
 - **State:** server data arrives as props from the server component; Zustand holds only
-  view/session state (active view, open modals, inbox, palette, refresh counter).
-  `bumpRefresh()` triggers a server re-render after mutations.
+  view/session state (active view, open modals, nav-group collapse, inbox, palette,
+  refresh counter). `bumpRefresh()` triggers a server re-render after mutations.
 - **Design system:** `components/ui/*` — no third-party UI kit. The shadcn
   scaffold was removed (49 dependencies dropped).
 - **Keyboard-first:** `G <key>` view jumps, `⌘K` palette, `?` shortcuts overlay.
@@ -187,10 +222,10 @@ code defaults when tables are empty, and caches for 60 s. Mutations call
 
 | Layer | Tooling | Location | Gate |
 |-------|---------|----------|------|
-| Pure logic (rbac, config, time, rate-limit, validation, audit-meta, greeting) | Vitest | `src/lib/__tests__/` | 90% stmts / 80% branches |
+| Pure logic (rbac, config, time, rate-limit, validation, audit-meta, greeting, hierarchy, jwt) | Vitest | `src/lib/__tests__/` | 90% stmts / 80% branches |
 | Server actions incl. security regressions (mocked Prisma/Better Auth session) | Vitest | `src/server-actions/__tests__/` | 90% stmts / 80% branches |
-| Shared components | Vitest + Testing Library | `src/components/ui/__tests__/` | — |
-| Browser E2E (login, RBAC, board, messaging) | Cucumber + Selenium | `e2e/` | run on machines with Chrome |
+| Views + shared components | Vitest + Testing Library | `src/components/**/__tests__/` | — |
+| Browser E2E (login, RBAC, board, messaging, a11y, HR) | Cucumber + Selenium | `e2e/` | 64 scenarios — CI job with Chrome + seeded Postgres 16 |
 
 See `docs/TESTING.md` for the full strategy, coverage numbers and the manual test plan.
 

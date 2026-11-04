@@ -144,7 +144,7 @@ own. Same failing-test→fix→gate discipline.
 | **PR-40** | §6.2 — `style-src 'unsafe-inline'`. | **Gone.** Empirically the production SSR HTML needs no inline styles at all: Next.js links compiled stylesheets (zero `<style>` elements) and dynamic styling is CSSOM (never blocked). Production now ships `style-src 'self'`; dev keeps `'unsafe-inline'` for Tailwind v4's runtime injection. Enablers: the login brand-panel pattern became `.f-decor-dots`; the Avatar size prop became a 9-value TS union backed by `.f-av-*` classes; progress-bar widths map onto a pre-generated `.f-w-0…100` grid (`barWidthClass()`); donut transition → `.f-donut-ring`; global-error converted to utility classes. prod-smoke now asserts the CSP shape AND scans both login + authenticated HTML for zero `<style>`/`style=` (the authed scan caught 29 real violations on its first run). |
 | **PR-41** | §6.3 — axe gate covered 4 surfaces. | **All 9 primary surfaces gated** (login, dashboard, tasks, team, bugs, calendar, analytics, audit log, settings). The new scans found real violations — all fixed: badge text tones `-500/-600 → -700` (amber was 2.9:1) in `lib/config.ts` + `ENTITY_BADGE`; audit `/60` alpha → full token; analytics delta colors; Toggle gained `label` (role=switch had no accessible name); `Field` now associates label↔control via `useId`/`htmlFor` (app-wide fix); settings "sign out all devices" referenced an **undefined** `--destructive-foreground` token. Known follow-up: `--warning` (≈2.5:1) and `--success` (≈3.5:1) tokens fail AA as small-text colors — darkening them shifts every themed surface, needs a dedicated pass. |
 | **PR-42** | §6.4 — erasure policy sign-off (owner decision). | The **deliverable half shipped**: `docs/PRIVACY_ERASURE_TEMPLATE.md` — fill-in notice documenting exactly what `eraseUser` erases vs retains and why, the retention table (180d audit default/30d floor, 90d notifications/read-state, 24h token grace), and the owner's open decisions. A doc-drift tripwire pins the notice's numbers to the shipped constants. Sign-off itself remains the owner's (§6). |
-| **PR-43** | §6.1 — plan the NextAuth v4 strategic migration. | **Plan shipped**: `docs/AUTH_MIGRATION_PLAN.md` — verified inventory of the auth surface, options analysis (landscape re-checked against 2026 sources), Better Auth recommendation behind a feature flag with v4 as rollback, 4-phase plan, port map for every custom mechanism (throttle, dummy-bcrypt, tokenVersion, ALS audit bridge, `__Secure-` cookies, proxy guard). |
+| **PR-43** | §6.1 — plan the NextAuth v4 strategic migration. | **Plan shipped** (`docs/AUTH_MIGRATION_PLAN.md`, retired to git history after the migration completed) — verified inventory of the auth surface, options analysis (landscape re-checked against 2026 sources), Better Auth recommendation behind a feature flag with v4 as rollback, 4-phase plan, port map for every custom mechanism (throttle, dummy-bcrypt, tokenVersion, ALS audit bridge, `__Secure-` cookies, proxy guard). |
 | **PR-48** | §6.1 — execute the planned auth migration. | **Executed**: Phase 0 spike (all checks green on better-auth@1.7.15) → Phase 1 parallel stack behind `NEXT_PUBLIC_AUTH_STACK` → Phase 2 parity suite (unit + e2e + prod-smoke on BOTH stacks) → Phase 3 cutover. |
 | **PR-44** | §6.5 — breach-check enablement (operator decision). | **Closed as a decision record**: the mechanism (PR-35) and the egress decision documentation (DEPLOY.md §1.2, `.env.example`) both shipped; enabling `PASSWORD_BREACH_CHECK=1`/`HIBP_API_KEY` is purely an operator egress call — no further engineering exists. |
 | **PR-45** | *(new finding)* — `.env.example` was never committed. | A `.env*` gitignore glob silently kept the boot-contract file out of the repo through rounds 1–2; fresh clones failed the PR-24 test and the sandbox recycle deleted the only copy. Reconstructed from the code's full env inventory; `.gitignore` negates the glob; the test now pins that the file is git-tracked. |
@@ -199,7 +199,7 @@ reduced to a decision that belongs to the owner, not the codebase.
 
 1. **Auth migration execution** — **Phases 0–2 SHIPPED (PR-48) + staging
    cutover done; production flip is the remaining operator action.** The
-   plan (`docs/AUTH_MIGRATION_PLAN.md`) executed: spike validated
+   plan (docs/AUTH_MIGRATION_PLAN.md, since retired to git history) executed: spike validated
    better-auth@1.7.15 end-to-end (6 findings recorded), the parallel stack
    at `/api/auth-better/*` carries every custom mechanism (throttle with
    shared budgets, cost-12 dummy bcrypt, soft-delete gates, revocation via
@@ -240,3 +240,32 @@ reduced to a decision that belongs to the owner, not the codebase.
 4. Terminate TLS (Caddy production file / nginx TLS example / cloud LB).
 5. Run the §7 post-deploy checklist in DEPLOY.md (login, member login,
    reset email, audit row, `/upstream-health`, logs clean).
+
+---
+
+## 8. Post-review addendum (2026-11-04 — through PR-65)
+
+This review's scope closed at PR-55. The following changes shipped afterwards
+under the same gate discipline (lint · typecheck · coverage-gated unit tests ·
+build · bundle budget · dependency audit · e2e), each as a separate reviewed
+commit on `main`:
+
+| PR | Change |
+|----|--------|
+| PR-56 / PR-57 | Coverage hardening: closed remaining gaps in `src/lib` + `src/server-actions`; cleared the last uncovered defensive statements |
+| PR-58 / PR-62 | Grouped collapsible sidebar (single source of truth in `src/config/navigation.ts`), then accordion behaviour — one group open at a time, current view's group auto-expands |
+| PR-59 / PR-60 | Project detail modal (roster + change trail, collapsed by default), widened to `max-w-5xl` with a collapsible Members section |
+| PR-61 (ADR-012) | Row-level task deletion: assignee / project owner / ADMIN / covering MANAGER (full reporting subtree) |
+| PR-63 (ADR-013) | Role-scoped Analytics: scope resolved + enforced server-side; the scope menu is derived from what the server authorizes |
+| PR-64 | Role-permission matrix saves reflect for signed-in users within the config-cache window |
+| PR-65 | Per-user appearance (accent, dark mode) persisted server-side per account — no cross-account leakage |
+
+Current suite size at PR-65: **1484 unit/integration tests** (82 files),
+**64 e2e scenarios** across 11 feature files (a11y + the HR module joined the
+suite after this review's 62/455 numbers). The live documentation set is
+`README.md` + `docs/` (PRD, ARCHITECTURE, SECURITY, TESTING, CODING_STANDARDS,
+DECISIONS, DEPLOY, this file, HR_MODULE_PLAN, BACKUP_RECOVERY, STATUS_AND_ONCALL,
+DB_REGION_DECISION, PRIVACY_ERASURE_TEMPLATE) + `e2e/README.md`; the completed
+auth-migration plan, the original code-review ledger, the closed HR QA-findings
+log and the one-off generator/debug scripts were retired in the 2026-11-04
+documentation cleanup (preserved in git history).

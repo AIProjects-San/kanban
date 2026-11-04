@@ -396,5 +396,71 @@ rule (ADR-010) applies identically to bearer-authenticated requests. Password/ro
 changes do not invalidate outstanding JWTs: the 1h expiry is the revocation window
 (soft-delete IS immediate). One extra indexed DB lookup per bearer-authenticated
 request (the cookie path has the same cost behind its 5-minute cache). Docs live in
-`AUTH_MIGRATION_PLAN.md` §9; tests pin the crypto (12), the session resolution (8)
+`ARCHITECTURE.md` §3B + `SECURITY.md` §1; tests pin the crypto (12), the session resolution (8)
 and the route (7).
+
+---
+
+## ADR-012 — Task deletion is row-level, not permission-level
+
+**Date:** 2026-11-04 · **Status:** ACCEPTED · **Type:** authorization
+
+**Context.** `task:delete` was a blanket ADMIN-only permission while task
+*editing* already had an ownership path (`task:edit:own`). Users asked for a
+deletion rule that matches how teams actually work: you can remove your own
+work, the owner of a project can prune it, and a lead can clean up after their
+reports — but a random MEMBER must not delete a colleague's card, and a
+MANAGER must not reach outside their reporting chain.
+
+**Decision.** Keep the blanket `task:delete` RBAC grant ADMIN-only, and add an
+explicit row-level check (`assertTaskDeletePermission` in
+`server-actions/tasks.ts`) that allows deletion for exactly four parties: the
+task's **assignee**, the **project owner**, any **ADMIN**, or a **MANAGER whose
+reporting chain covers** the assignee or the project owner — "covers" meaning
+the full subtree via `lib/hierarchy.ts` (`getSubtreeUserIds`), so a skip-level
+manager qualifies and a peer manager does not.
+
+Rejected alternatives: granting `task:delete` to MANAGER in the matrix — that
+would let *any* manager delete *any* task, including other teams' (the matrix
+is per-workspace, not per-row); checking only the direct `managerId` — the
+org chart is a tree, and a subtree check is the same one query.
+
+**Consequences.** The delete button in the UI is offered exactly to the same
+four parties (client `usePermissions()` + row context), but the server check is
+authoritative. Unit tests pin all allow paths and every deny path (foreign
+member, peer manager, out-of-chain manager); the e2e delete scenario covers the
+member-own-card path. Documented in `SECURITY.md` §2 and the PRD (FR-T7).
+
+---
+
+## ADR-013 — Analytics data is role-scoped server-side, with a capability-derived scope menu
+
+**Date:** 2026-11-04 · **Status:** ACCEPTED · **Type:** authorization / data
+
+**Context.** The Analytics tab derived its charts from the dashboard payload,
+which is broader than personal for most roles — a MEMBER could see workspace
+numbers. The requested behaviour: MEMBER sees only their own activity; MANAGER
+defaults to their team and may narrow to individuals; ADMIN defaults to their
+own data but may select Everyone, a manager's full team, or any individual —
+all through one dropdown next to the 7/30/90-day range control.
+
+**Decision.** Enforce the scope **in the data action, not the view**
+(`server-actions/analytics.ts`): the requested `AnalyticsScope`
+(`self | everyone | user | team`) is resolved and authorized server-side —
+MEMBER/HR are forced to `self`; MANAGER may pick self or any individual in
+their reporting subtree (default: the whole team); ADMIN may pick anything.
+The response additionally carries the **filter options the signed-in user is
+allowed to choose** (`AnalyticsFilterOptions`), so the dropdown is generated
+from real capability, never offering a scope the server would reject. The view
+hides the Top-contributors panel for single-person scopes.
+
+Rejected alternatives: deriving analytics from the (broader) dashboard payload
+and filtering client-side — cosmetic only; a scope check in the view component
+— the action is the security boundary; ADMIN defaulting to Everyone — the user
+explicitly chose "start with my own data, select Everyone when needed".
+
+**Consequences.** `getAnalyticsData` is the single source for the tab; the two
+static benchmark cards (on-time delivery, cycle time) are unaffected by scope.
+Unit tests pin every role×scope allow/deny combination; the manual plan
+(ANL-2/3/4 in `TESTING.md`) mirrors them. Documented in `ARCHITECTURE.md` §4
+and the PRD (FR-N2).

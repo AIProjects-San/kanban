@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // PR-48/PR-49 — Better Auth: THE auth stack (migration complete).
-// docs/AUTH_MIGRATION_PLAN.md §5–§6 (port map updated by the Phase 0 spike).
+// Design + session flow: docs/ARCHITECTURE.md §3.
 //
 // This module is the app's auth server. It serves `/api/auth-better/*`
 // (mounted by src/app/api/auth-better/[...all]/route.ts) with the

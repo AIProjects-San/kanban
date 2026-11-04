@@ -37,8 +37,8 @@ security research.
 ## In-Tree Hardening
 
 The full threat model, control inventory, and audit history live in
-[`docs/SECURITY.md`](../docs/SECURITY.md). The launch-readiness audit
-and remediation log is in [`docs/CODE_REVIEW.md`](../docs/CODE_REVIEW.md).
+[`docs/SECURITY.md`](../docs/SECURITY.md). The launch-readiness review
+is in [`docs/PRODUCTION_READINESS.md`](../docs/PRODUCTION_READINESS.md).
 
 ## Coordinated Disclosure
 

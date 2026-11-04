@@ -9,8 +9,8 @@ in PRs. The one-command check is: `bun run lint && bun run typecheck && bun run 
 
 - TypeScript in **strict** mode; `tsc --noEmit` must pass — never re-enable
   `ignoreBuildErrors` (it shipped a guaranteed runtime crash once; never again).
-- No new `any` in server code. Existing `any`s are boundary cases (NextAuth token
-  claims) documented inline; tighten them when touching the file.
+- No new `any` in server code. Existing `any`s are boundary cases (Better Auth
+  session/token payloads) documented inline; tighten them when touching the file.
 - Client-facing DTOs live in `src/lib/types/` and are the **only** shapes views may
   consume. Server actions return exactly these (ISO-string dates, never `Date`).
 - Shared unions (`Role`, `Permission`, `TaskStatus`, `AuditAction`, …) are defined once
@@ -125,7 +125,7 @@ Every exported action in a `"use server"` file is a **public HTTP endpoint**. Th
   path (see `data.test.ts` for the pattern: fixture users ADMIN/MANAGER/MEMBER/OTHER).
 - Coverage gates: 90% statements / 80% branches on `src/lib` + `src/server-actions`
   (enforced by `vitest.config.ts`).
-- Mock the boundaries (`@/lib/db`, `next-auth`), never the module under test. Use
+- Mock the boundaries (`@/lib/db`, `better-auth`), never the module under test. Use
   `vi.hoisted` for mock factories referenced inside `vi.mock`.
 - Component tests: Testing Library, query by role/label, `userEvent` for interaction.
 

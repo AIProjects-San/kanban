@@ -1,6 +1,8 @@
 # Fernly — Security Policy & Threat Model
 
-**Last audited:** 2026-11-03 (PR-51–54 data-scoping audit + JWT bearer-token auth; full audit report: `CODE_REVIEW.md`)
+**Last audited:** 2026-11-03 (PR-51–54 data-scoping audit + JWT bearer-token auth),
+re-verified through PR-65 (row-level task deletion, role-scoped analytics,
+per-user appearance). Launch-readiness review: `PRODUCTION_READINESS.md`.
 
 ---
 
@@ -47,6 +49,19 @@ Two mandatory layers, both server-side:
      - Dashboard greeting counts are personal (own open tasks, own reminders due
        today), even for admins who see workspace-wide board data.
    - Task edits require assignment to the caller unless they hold `task:edit:any`.
+   - Task **deletion** (PR-61) is row-level: only the assignee, the project
+     owner, an ADMIN, or a MANAGER whose reporting chain (`lib/hierarchy.ts`
+     full subtree) covers the assignee/project owner may delete. The blanket
+     `task:delete` grant stays ADMIN-only; all other paths go through
+     `assertTaskDeletePermission`.
+   - **Analytics (PR-63):** the requested scope is resolved server-side —
+     MEMBER/HR are forced to *self*; MANAGER is limited to their reporting
+     subtree; ADMIN may pick Everyone / any manager's team / any individual.
+     The scope menu is derived from what the server authorizes, and an
+     out-of-scope request is narrowed (or rejected), never honoured.
+   - **HR (ADR-009):** leave approvals follow the reporting chain; leave
+     balances and requests are personal; employee profiles, reviews and
+     onboarding require `hr:*` permissions.
    - Messages: read/unread/delete restricted to sender/recipient; mailbox queries filter
      by `recipientUserId`/`senderUserId`.
    - Reminders: toggle allowed for the owner (+admin); null-owner legacy rows
@@ -91,12 +106,12 @@ terminated at the reverse proxy (Caddy).
 
 ## 6. Audit logging
 
-Every mutating action writes an immutable `AuditLog` row (28 typed actions, entity id +
+Every mutating action writes an immutable `AuditLog` row (66 typed actions, entity id +
 label, human-readable detail). Audit failures are caught and logged — they never break
-the underlying operation. Sign-ins, password changes, role changes, user CRUD, config
-changes and all entity CRUD are covered. `audit:view` (ADMIN, MANAGER) gates the
-workspace-wide log; per-entity history is available to anyone who can already see the
-entity (transparency for collaborators).
+the underlying operation. Sign-ins, sign-outs, token issuances, password changes, role
+changes, user CRUD, config changes and all entity CRUD are covered. `audit:view`
+(ADMIN, MANAGER) gates the workspace-wide log; per-entity history is available to anyone
+who can already see the entity (transparency for collaborators).
 
 ## 7. Secrets management
 
@@ -152,27 +167,29 @@ Current inventory and handling:
 
 ## 9. Accepted risks & roadmap
 
-1. Name-based joins (`ownerName`, email-matched members) — two users with identical
-   names can appear in each other's scope. Fix: stable-id columns (planned migration).
-2. Notifications are workspace-global (design decision for a single-team workspace).
-3. Rate limiting shares a real Redis client when `REDIS_URL` is set (deep-dive
+1. Notifications are workspace-global broadcasts by design (single-team workspace;
+   null-recipient rows are intentional).
+2. Rate limiting shares a real Redis client when `REDIS_URL` is set (deep-dive
    F-12 closed: `src/lib/redis-client.ts` lazily constructs the process-wide
    ioredis client; docker-compose ships Redis and both limiters use it). If
    Redis errors mid-flight the limiters **fail open** (logins stay possible,
    throttling degrades, warning rate-limited to 1/30s) — bcrypt cost 12 still
    meters online attacks. Without `REDIS_URL` the limiter is per-instance
    in-memory: acceptable single-instance, a known multi-instance gap.
-4. Unexpected server-action errors surface generically in production (only
+3. Unexpected server-action errors surface generically in production (only
    Authorization/Validation errors carry a digest marker).
-5. `getUserByEmail` + the search member directory let any signed-in user resolve
+4. `getUserByEmail` + the search member directory let any signed-in user resolve
    id/name/email/avatarColor for a known email (deep-dive F-17/F-18) — required
    for message routing in a single-workspace product; revisit with L-P2-36
    tenancy.
-6. CSP ships with `unsafe-inline`/`unsafe-eval` and `connect-src https:`
+5. CSP ships with `unsafe-inline`/`unsafe-eval` and `connect-src https:`
    (deep-dive F-13); a nonce-based policy is the next hardening step.
-7. Config-table class/color strings are admin-authored and render into
+6. Config-table class/color strings are admin-authored and render into
    classNames/inline styles (deep-dive F-16) — admin-only surface, cosmetic blast
    radius.
+7. Bearer tokens are not instantly revocable on password/role change (the 1-hour
+   expiry is the revocation window; soft-delete IS immediate). A Redis-backed
+   JTI blocklist is the documented future enhancement.
 
 ## 10. Incident response
 
@@ -205,7 +222,7 @@ restore drill and the quarterly schedule live in
 
 ---
 
-## 11. PII Inventory (P2 — production-readiness re-audit)
+## 12. PII Inventory (P2 — production-readiness re-audit)
 
 The application stores the following personal data. "Encryption at rest"
 relies on Supabase's PostgreSQL disk encryption + TLS in transit;

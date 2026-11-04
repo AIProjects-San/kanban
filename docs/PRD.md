@@ -1,6 +1,8 @@
 # Fernly — Product Requirements Document (PRD)
 
 **Version:** 1.0 · **Status:** Live (single workspace deployment) · **Owner:** Workspace admin
+· **Covers through:** PR-65 (role-scoped analytics, row-level task deletion, HR module,
+per-user appearance)
 
 ---
 
@@ -9,8 +11,9 @@
 Small teams need a lightweight, self-contained workspace to coordinate projects, tasks,
 schedules and internal communication without the overhead (and cost) of enterprise
 suites. Existing tools either over-serve (Jira/Asana complexity) or under-serve (Trello's
-flat boards). Fernly packages the four pillars a 5–30 person team actually uses daily —
-projects, a Kanban board, a shared calendar, and person-to-person messaging — behind one
+flat boards). Fernly packages the pillars a 5–30 person team actually uses daily —
+projects, a Kanban board, bug tracking, a shared calendar, person-to-person messaging,
+and HR operations (leave, directory, reviews, onboarding) — behind one
 sign-in, with role-appropriate visibility.
 
 ## 2. Goals & non-goals
@@ -34,9 +37,10 @@ sign-in, with role-appropriate visibility.
 
 | Role | Description | Key permissions |
 |------|-------------|-----------------|
-| **ADMIN** | Workspace owner. | Everything: user CRUD, role matrix, workspace config, deletions, audit log. |
-| **MANAGER** | Team lead. | Create/edit projects, invite members, edit any task, calendar, audit log. Cannot delete projects/users or manage roles. |
-| **MEMBER** | Individual contributor. | Create tasks, edit **own** tasks, message, calendar view, analytics. Sees only projects they own/are assigned to/have tasks in. |
+| **ADMIN** | Workspace owner. | Everything: user CRUD, role matrix, workspace config, deletions, audit log, HR console. |
+| **MANAGER** | Team lead (owns a reporting subtree). | Create/edit projects, invite members, edit any task in scope, approve their team's leave, HR console, audit log. Cannot delete projects/users or manage roles. |
+| **MEMBER** | Individual contributor. | Create tasks, edit **own** tasks, delete tasks assigned to them, message, calendar, leave (self-service), analytics (own data only). Sees only projects they own/are assigned to/have tasks in. |
+| **HR** | People Operations. | HR console (leave queue, directory, reviews, onboarding), analytics for their own data, leave self-service. No user administration or role management. |
 
 The permission matrix is **data** (`Role`/`Permission`/`RolePermission` tables), editable
 by admins at runtime, with the code-level matrix in `lib/rbac.ts` as the compile-time
@@ -45,11 +49,15 @@ floor.
 ## 4. Functional requirements
 
 ### 4.1 Authentication (FR-A)
-- FR-A1: Email + password sign-in; JWT sessions (30-day expiry).
+- FR-A1: Email + password sign-in; Better Auth DB-backed sessions (7-day expiry,
+  httpOnly cookies) — plus optional 1-hour JWT bearer tokens for programmatic
+  clients (`POST /api/auth/token`), funnelling through the same permission and
+  scoping rules.
 - FR-A2: 5 failed attempts per email **or** IP within 15 minutes locks that vector.
 - FR-A3: Self-service password change (requires current password).
-- FR-A4: Sign-ins are audit-logged.
-- FR-A5: Role changes take effect within 5 minutes without re-login.
+- FR-A4: Sign-ins, sign-outs and token issuances are audit-logged (IP + user agent).
+- FR-A5: Role changes take effect within 5 minutes without re-login; role-permission
+  matrix edits apply to signed-in users within the 60 s config-cache window.
 
 ### 4.2 Dashboard (FR-D)
 - FR-D1: KPI stats (project counts by status, weekly completion, ended-%).
@@ -72,14 +80,23 @@ floor.
 - FR-T4: Assignee dropdown restricted to people allocated to the chosen project.
 - FR-T5: `task:edit:own` users may only modify tasks assigned to them.
 - FR-T6: Member workload stats (open/completed/workload %) recalculated on every change.
+- FR-T7: Deletion is row-level: a task may be deleted by its assignee, the project
+  owner, any ADMIN, or a MANAGER whose reporting chain covers the assignee or
+  project owner. No one else — regardless of edit rights.
 
 ### 4.5 Calendar (FR-C)
-- FR-C1: Month grid with events (type-coded: meeting, deadline, review, social, focus).
+- FR-C1: Month grid with events (type-coded: meeting, deadline, review, social, focus);
+  approved leave appears as virtual events without duplicating rows.
 - FR-C2: CRUD for events with time + duration + location.
 
 ### 4.6 Analytics (FR-N)
-- FR-N1: Completion trends, workload per member, project progress, time logged.
-- FR-N2: Scoped to the same visibility rules as the dashboard.
+- FR-N1: Completion trends, hours by project, 13-week activity heatmap, top
+  contributors, on-time delivery & cycle-time cards.
+- FR-N2: Role-scoped, enforced server-side: MEMBER/HR see only their own data;
+  MANAGER defaults to their reporting subtree (self + full team) and may narrow to
+  individuals within it; ADMIN defaults to own data and may select Everyone, any
+  manager's full team, or any individual. The scope selector only offers options
+  the server will accept; single-person scopes hide the Top-contributors panel.
 
 ### 4.7 Team & messaging (FR-M)
 - FR-M1: Team directory with availability, department, workload.
@@ -102,15 +119,33 @@ floor.
 
 ### 4.9 Personalisation (FR-S)
 - FR-S1: Per-user accent theme (forest/ocean/plum/ember), dark mode, notification
-  preferences — persisted server-side and applied before hydration.
+  preferences — persisted server-side per account (no cross-device/cross-account
+  leakage) and applied before hydration.
 - FR-S2: Command palette (`⌘K` / `Ctrl K`) with keyboard-first navigation.
+
+### 4.10 Bug tracking (FR-B)
+- FR-B1: Defect tracker with its own lifecycle: NEW → TRIAGED → IN_PROGRESS →
+  RESOLVED → CLOSED, plus REOPENED.
+- FR-B2: Severity, assignee, threaded comments; `bug:create` for all roles,
+  `bug:edit:any`/`bug:assign` for MANAGER+.
+
+### 4.11 HR module (FR-H) — see docs/HR_MODULE_PLAN.md
+- FR-H1 **Leave**: self-service requests for every role with balances per type/year;
+  approvals follow the reporting chain (full subtree); configurable leave types &
+  policies (`hr:admin`); approved leave surfaces as virtual calendar events.
+- FR-H2 **Employee directory**: structured profiles (job title, department, contact
+  data, start date) beyond the team roster.
+- FR-H3 **Performance reviews**: review cycles with stages, reviewer assignments and
+  notes (`review:manage`).
+- FR-H4 **Onboarding**: per-new-hire checklists with task-level progress
+  (`onboarding:manage`); the seed ships one in progress, one nearly complete.
 
 ## 5. Non-functional requirements
 
 | ID | Requirement | Target |
 |----|-------------|--------|
 | NFR-1 | Security | All authorization server-side; every mutation permission-checked + audited; OWASP top-10 basics (CSRF, clickjacking, XSS headers, rate limiting) covered. |
-| NFR-2 | Test coverage | ≥90% statements on `src/lib` + `src/server-actions` (enforced by CI gate); browser E2E suite for critical journeys. |
+| NFR-2 | Test coverage | ≥90% statements on `src/lib` + `src/server-actions` (enforced by CI gate); browser E2E suite (64 scenarios) for critical journeys incl. HR and accessibility. |
 | NFR-3 | Performance | Dashboard: single round trip for all workspace data; config cached 60 s; no client-side waterfalls on first paint. |
 | NFR-4 | Accessibility | Semantic roles, focus rings, aria labels on icon buttons; keyboard shortcuts for every view. |
 | NFR-5 | Auditability | Every mutating action writes an immutable audit entry; audit writes never break the underlying operation. |
