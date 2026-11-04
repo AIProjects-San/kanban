@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -78,6 +78,12 @@ import {
   rejectDocument,
   initiateBackgroundCheck,
   updateBackgroundCheck,
+  getOfferTemplates,
+  saveOfferTemplate,
+  deleteOfferTemplate,
+  createOfferRecord,
+  updateOfferRecord,
+  getOfferRecords,
   scheduleInterview,
   saveScorecard,
   getMyInterviews,
@@ -172,6 +178,16 @@ beforeEach(() => {
   db.backgroundCheck.findUnique.mockResolvedValue(null);
   db.backgroundCheck.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "bg-new", ...data }));
   db.backgroundCheck.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "bg-1", ...data }));
+  // R5 — offer builder defaults.
+  db.offerTemplate.findMany.mockResolvedValue([]);
+  db.offerTemplate.findUnique.mockResolvedValue(null);
+  db.offerTemplate.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ot-new", ...data }));
+  db.offerTemplate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ot-1", ...data }));
+  db.offerTemplate.delete.mockResolvedValue({ id: "ot-1", label: "Designer Band" });
+  db.offerRecord.findMany.mockResolvedValue([]);
+  db.offerRecord.findUnique.mockResolvedValue(null);
+  db.offerRecord.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "or-new", ...data }));
+  db.offerRecord.update.mockResolvedValue({});
 });
 
 const INTERVIEW_STAGE = {
@@ -1011,5 +1027,145 @@ describe("R4 — getJoiningFormalities", () => {
     db.candidate.findUnique.mockResolvedValue(null);
     const res = await getJoiningFormalities("cand-404");
     expect(res.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R5 — offer builder: templates + per-candidate offers
+// ---------------------------------------------------------------------------
+
+const OFFER_TEMPLATE_ROW = {
+  id: "ot-1", key: "designer", label: "Designer Band", description: "",
+  components: JSON.stringify([
+    { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68000 },
+    { key: "kiwisaver", label: "KiwiSaver 3%", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+  ]),
+  benefits: JSON.stringify(["4 weeks annual leave"]),
+  letterTemplate: "Hi {{candidateName}} — CTC {{annualCtc}} at {{workspaceName}}.",
+  isActive: true, sortOrder: 10,
+};
+
+describe("R5 — offer templates", () => {
+  it("getOfferTemplates requires hiring:manage (a MANAGER read-only user is denied)", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:manage"));
+    const res = await getOfferTemplates();
+    expect(res.ok).toBe(false);
+    expect(db.offerTemplate.findMany).not.toHaveBeenCalled();
+  });
+
+  it("saveOfferTemplate stringifies components + benefits and audits", async () => {
+    const res = await saveOfferTemplate({
+      key: "designer", label: "Designer Band",
+      components: [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68000 }],
+      benefits: ["4 weeks annual leave"], letterTemplate: "Hi", isActive: true, sortOrder: 10,
+    });
+    expect(res.ok).toBe(true);
+    expect(db.offerTemplate.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          components: expect.stringContaining('"basic"'),
+          benefits: expect.stringContaining("annual leave"),
+        }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_template_saved" }));
+  });
+
+  it("rejects a component with an invalid kind at validation", async () => {
+    const res = await saveOfferTemplate({
+      key: "x", label: "X",
+      components: [{ key: "basic", label: "B", kind: "MAGIC" as never, mode: "FIXED", amount: 1 }],
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("VALIDATION");
+  });
+
+  it("deleteOfferTemplate removes and audits", async () => {
+    db.offerTemplate.delete.mockResolvedValue({ id: "ot-1", label: "Designer Band" });
+    const res = await deleteOfferTemplate({ id: "ot-1" });
+    expect(res.ok).toBe(true);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_template_deleted" }));
+  });
+});
+
+describe("R5 — createOfferRecord", () => {
+  it("generates a DRAFT offer for a SELECTED candidate with the letter rendered", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerTemplate.findUnique.mockResolvedValue(OFFER_TEMPLATE_ROW);
+    const res = await createOfferRecord({ candidateId: "cand-1", templateId: "ot-1" });
+    expect(res.ok).toBe(true);
+    const createArg = db.offerRecord.create.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(createArg.data).toMatchObject({
+      candidateId: "cand-1", templateId: "ot-1", templateLabel: "Designer Band", status: "DRAFT",
+    });
+    // Letter placeholders resolved: name + CTC (68,000 + 3% = 70,040).
+    expect(createArg.data.letterText).toBe("Hi Nadia Petrova — CTC $70,040 at Fernly Workspace.");
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_created" }));
+  });
+
+  it("refuses offers for non-SELECTED candidates (the decision gates the offer)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "ACTIVE" }));
+    db.offerTemplate.findUnique.mockResolvedValue(OFFER_TEMPLATE_ROW);
+    const res = await createOfferRecord({ candidateId: "cand-1", templateId: "ot-1" });
+    expect(res.ok).toBe(false);
+    expect(db.offerRecord.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown or inactive template", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerTemplate.findUnique.mockResolvedValue({ ...OFFER_TEMPLATE_ROW, isActive: false });
+    const res = await createOfferRecord({ candidateId: "cand-1", templateId: "ot-1" });
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("R5 — updateOfferRecord + getOfferRecords", () => {
+  const OFFER_ROW = {
+    id: "or-1", candidateId: "cand-1", templateId: "ot-1", templateLabel: "Designer Band",
+    components: OFFER_TEMPLATE_ROW.components, benefits: OFFER_TEMPLATE_ROW.benefits,
+    letterText: "Hi", status: "DRAFT", notes: "",
+    createdById: "u-hr", createdAt: new Date(), updatedAt: new Date(),
+    candidate: { fullName: "Nadia Petrova", position: "Product Designer" },
+  };
+
+  it("updates a DRAFT offer's negotiated components + letter", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(OFFER_ROW);
+    const components = [
+      { key: "basic", label: "Basic Salary", kind: "EARNING" as const, mode: "FIXED" as const, amount: 72_000 },
+    ];
+    const res = await updateOfferRecord({ id: "or-1", components, benefits: [], letterText: "negotiated", notes: "bumped" });
+    expect(res.ok).toBe(true);
+    expect(db.offerRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "or-1" },
+        data: expect.objectContaining({ components: JSON.stringify(components), notes: "bumped" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_updated" }));
+  });
+
+  it("refuses to edit a SENT offer — sent offers are immutable", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({ ...OFFER_ROW, status: "SENT" });
+    const res = await updateOfferRecord({
+      id: "or-1",
+      components: [{ key: "basic", label: "B", kind: "EARNING", mode: "FIXED", amount: 1 }],
+      benefits: [],
+    });
+    expect(res.ok).toBe(false);
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("getOfferRecords returns serialized rows with the creator name", async () => {
+    db.offerRecord.findMany.mockResolvedValue([OFFER_ROW]);
+    db.user.findMany.mockResolvedValue([{ id: "u-hr", name: "Remy" }]);
+    const res = await getOfferRecords();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data[0]).toMatchObject({
+        id: "or-1", candidateName: "Nadia Petrova", templateLabel: "Designer Band",
+        createdBy: "Remy", status: "DRAFT",
+      });
+      expect(res.data[0].components[0]).toMatchObject({ key: "basic", amount: 68_000 });
+    }
   });
 });

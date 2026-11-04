@@ -104,3 +104,21 @@ Feature: Hiring pipeline (Recruitment R1)
     When I sign out and back in as "manager@fernly.app"
     And I open the "Hiring" view
     Then the "Doc types" button should not be visible
+
+  Scenario: HR builds an offer for a selected candidate (R5)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the "Selected" pool
+    And I open the candidate card "Priyanka Menon"
+    And I open the offer builder
+    Then the offer builder should list a draft offer with the live CTC total
+
+  Scenario: The offers panel lists offer records (R5)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the offers panel should show "Priyanka Menon" with a DRAFT chip
+
+  Scenario: Managers never see the offers panel (R5)
+    When I sign in as "manager@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the offers panel should not be visible

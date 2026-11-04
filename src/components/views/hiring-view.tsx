@@ -11,17 +11,21 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, ChevronRight, FileText, Mail, Plus, Settings2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { CandidateT, HiringStageConfigT, MailOutboxT } from "@/lib/types";
+import type { CandidateT, HiringStageConfigT, MailOutboxT, OfferRecordT } from "@/lib/types";
 import {
   getHiringBoard,
   getHiringPermissions,
   getMailOutbox,
   getMyInterviews,
+  getOfferRecords,
 } from "@/server-actions/hiring";
 import { CandidateModal } from "../ui/candidate-modal";
 import { CandidateDetailModal } from "../ui/candidate-detail-modal";
+import { OfferBuilderModal } from "../ui/offer-builder-modal";
+import { OfferTemplateModal } from "../ui/offer-template-modal";
 import { HiringStageModal } from "../ui/hiring-stage-modal";
 import { DocumentTypeModal } from "../ui/document-type-modal";
+import { computeOffer, formatMoney } from "@/lib/offer-math";
 
 type StatusFilter = "ACTIVE" | "SELECTED" | "REJECTED" | "WITHDRAWN" | "HIRED";
 
@@ -60,6 +64,9 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
   const [detailId, setDetailId] = useState<string | null>(null);
   const [stageModalOpen, setStageModalOpen] = useState(false);
   const [docTypeModalOpen, setDocTypeModalOpen] = useState(false);
+  const [offerTemplateModalOpen, setOfferTemplateModalOpen] = useState(false);
+  const [offerBuilderFor, setOfferBuilderFor] = useState<CandidateT | null>(null);
+  const [offers, setOffers] = useState<OfferRecordT[]>([]);
   const [myInterviews, setMyInterviews] = useState<Array<{
     stageId: string; stageLabel: string; candidateId: string; candidateName: string;
     position: string; status: string; scheduledAt: string | null;
@@ -88,6 +95,8 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
       if (permRes.data.canManage) {
         const obx = await getMailOutbox();
         if (obx.ok) setOutbox(obx.data);
+        const offers = await getOfferRecords();
+        if (offers.ok) setOffers(offers.data);
       }
     }
     const mine = await getMyInterviews();
@@ -149,6 +158,9 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
               </button>
               <button className="f-btn f-btn-ghost" onClick={() => setDocTypeModalOpen(true)} data-testid="doc-type-btn">
                 <FileText size={15} /> Doc types
+              </button>
+              <button className="f-btn f-btn-ghost" onClick={() => setOfferTemplateModalOpen(true)} data-testid="offer-template-btn">
+                <FileText size={15} /> Offers
               </button>
             </>
           )}
@@ -295,6 +307,54 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
         </div>
       )}
 
+      {/* R5 — offers panel (hiring:manage only) */}
+      {canManage && (
+        <div className="rounded-lg border border-border" data-testid="offers-panel">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
+            <FileText size={14} className="text-emerald-600" />
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Offers
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">{offers.length} record{offers.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="divide-y divide-border">
+            {offers.map((o) => {
+              const t = computeOffer(o.components);
+              return (
+                <button
+                  key={o.id}
+                  onClick={() => setOfferBuilderFor(candidates.find((c) => c.id === o.candidateId) ?? null)}
+                  className="w-full text-left px-4 py-2.5 hover:bg-muted/50 transition-colors flex items-center gap-3 text-sm"
+                  data-testid="offer-panel-row"
+                >
+                  <span className={cn(
+                    "text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0",
+                    o.status === "DRAFT" && "bg-amber-500/10 text-amber-600",
+                    o.status === "SENT" && "bg-indigo-500/10 text-indigo-600",
+                    o.status === "SIGNED" && "bg-emerald-500/10 text-emerald-600",
+                    o.status === "DECLINED" && "bg-destructive/10 text-destructive",
+                  )}>
+                    {o.status}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{o.candidateName} — {o.templateLabel || "Custom offer"}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      CTC {formatMoney(t.ctc)} · net {formatMoney(t.net)}{o.notes ? ` · ${o.notes}` : ""}
+                    </span>
+                  </span>
+                  <ChevronRight size={14} className="text-muted-foreground shrink-0" />
+                </button>
+              );
+            })}
+            {offers.length === 0 && (
+              <div className="text-sm text-muted-foreground px-4 py-6 text-center">
+                No offers yet — generate one from a selected candidate.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* R3 — audited email outbox (hiring:manage only) */}
       {canManage && (
         <div className="rounded-lg border border-border" data-testid="email-outbox">
@@ -372,7 +432,14 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
         candidate={detail}
         canManage={canManage}
         onEdit={(c) => { setDetailId(null); setEditCandidate(c); setCreateOpen(true); }}
+        onBuildOffer={(c) => { setDetailId(null); setOfferBuilderFor(c); }}
         currentUserId={currentUser.id}
+      />
+      <OfferBuilderModal
+        open={offerBuilderFor !== null}
+        onClose={() => { setOfferBuilderFor(null); void load(); }}
+        onChanged={load}
+        candidate={offerBuilderFor}
       />
       <HiringStageModal
         open={stageModalOpen}
@@ -382,6 +449,11 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
       <DocumentTypeModal
         open={docTypeModalOpen}
         onClose={() => setDocTypeModalOpen(false)}
+        onChanged={load}
+      />
+      <OfferTemplateModal
+        open={offerTemplateModalOpen}
+        onClose={() => setOfferTemplateModalOpen(false)}
         onChanged={load}
       />
     </div>

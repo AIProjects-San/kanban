@@ -108,6 +108,8 @@ async function main() {
   await db.candidate.deleteMany();
   await db.hiringStageConfig.deleteMany();
   await db.documentTypeConfig.deleteMany();
+  await db.offerTemplate.deleteMany();
+  await db.offerRecord.deleteMany();
 
   // -----------------------------------------------------------------
   // Workspace settings
@@ -1615,6 +1617,99 @@ async function main() {
     }
   }
   console.log(`  ✓ Hiring R4: ${DOC_TYPES.length} document types + Priyanka's checklist (1 verified, 1 received, 1 requested, 1 rejected) + BGV in review`);
+
+  // -----------------------------------------------------------------
+  // R5 — offer templates (NZ flavour: KiwiSaver 3% employer contribution
+  // as the percent-of-basic EMPLOYER_CONTRIBUTION showcase) + a DRAFT
+  // offer generated for Priyanka from the designer template.
+  // -----------------------------------------------------------------
+  const OFFER_COMPONENTS_SENIOR = [
+    { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 78000 },
+    { key: "housing", label: "Housing Allowance", kind: "EARNING", mode: "FIXED", amount: 12000 },
+    { key: "transport", label: "Transport Allowance", kind: "EARNING", mode: "FIXED", amount: 3000 },
+    { key: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+  ];
+  const LETTER = [
+    "Dear {{candidateName}},",
+    "",
+    "We are delighted to offer you the position of {{position}} at {{workspaceName}}.",
+    "Your annual package: total cost to company {{annualCtc}} (net take-home {{netPay}}).",
+    "Proposed start date: {{startDate}}.",
+    "",
+    "Warm regards,",
+    "The {{workspaceName}} Hiring Team",
+  ].join("\n");
+  const OFFER_TEMPLATES = [
+    {
+      key: "senior_engineer", label: "Senior Engineer Band", description: "Senior IC engineering band (NZD, annual)",
+      components: OFFER_COMPONENTS_SENIOR,
+      benefits: ["5 weeks annual leave", "NZD 2,000 training budget", "Full health insurance"],
+      letterTemplate: LETTER, sortOrder: 10,
+    },
+    {
+      key: "designer", label: "Designer Band", description: "Product/UX designer band (NZD, annual)",
+      components: [
+        { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68000 },
+        { key: "housing", label: "Housing Allowance", kind: "EARNING", mode: "FIXED", amount: 10000 },
+        { key: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+      ],
+      benefits: ["4 weeks annual leave", "NZD 1,500 conference budget"],
+      letterTemplate: LETTER, sortOrder: 20,
+    },
+    {
+      key: "qa_engineer", label: "QA Engineer Band", description: "Quality engineering band (NZD, annual)",
+      components: [
+        { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 58000 },
+        { key: "transport", label: "Transport Allowance", kind: "EARNING", mode: "FIXED", amount: 2400 },
+        { key: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+      ],
+      benefits: ["4 weeks annual leave"],
+      letterTemplate: LETTER, sortOrder: 30,
+    },
+  ];
+  for (const t of OFFER_TEMPLATES) {
+    await db.offerTemplate.create({
+      data: {
+        key: t.key, label: t.label, description: t.description,
+        components: JSON.stringify(t.components),
+        benefits: JSON.stringify(t.benefits),
+        letterTemplate: t.letterTemplate,
+        sortOrder: t.sortOrder,
+      },
+    });
+  }
+  {
+    const priyanka = await db.candidate.findUnique({ where: { email: "priyanka.menon@example.com" } });
+    const designerTpl = await db.offerTemplate.findUnique({ where: { key: "designer" } });
+    if (priyanka && designerTpl) {
+      const hrId = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+      const comps = JSON.parse(designerTpl.components);
+      const basic = comps.find((cp) => cp.key === "basic").amount;
+      const ctc = comps.reduce((sum, cp) => sum + (cp.mode === "PERCENT_OF_BASIC" ? (basic * cp.amount) / 100 : cp.amount), 0);
+      const earnings = comps.filter((cp) => cp.kind === "EARNING").reduce((sum, cp) => sum + (cp.mode === "PERCENT_OF_BASIC" ? (basic * cp.amount) / 100 : cp.amount), 0);
+      const letter = designerTpl.letterTemplate
+        .replace(/{{candidateName}}/g, priyanka.fullName)
+        .replace(/{{position}}/g, priyanka.position || "Product Designer")
+        .replace(/{{workspaceName}}/g, "Fernly Workspace")
+        .replace(/{{startDate}}/g, "the first Monday after signing")
+        .replace(/{{annualCtc}}/g, `$${Math.round(ctc).toLocaleString("en-NZ")}`)
+        .replace(/{{netPay}}/g, `$${Math.round(earnings).toLocaleString("en-NZ")}`);
+      await db.offerRecord.create({
+        data: {
+          candidateId: priyanka.id,
+          templateId: designerTpl.id,
+          templateLabel: designerTpl.label,
+          components: designerTpl.components,
+          benefits: designerTpl.benefits,
+          letterText: letter,
+          status: "DRAFT",
+          notes: "Negotiating start date; numbers match the band.",
+          createdById: hrId,
+        },
+      });
+    }
+  }
+  console.log(`  ✓ Hiring R5: ${OFFER_TEMPLATES.length} offer templates + 1 draft offer for Priyanka (designer band)`);
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }

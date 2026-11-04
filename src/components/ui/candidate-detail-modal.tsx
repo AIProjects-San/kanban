@@ -94,6 +94,7 @@ export function CandidateDetailModal({
   candidate,
   canManage,
   onEdit,
+  onBuildOffer,
   currentUserId,
 }: {
   open: boolean;
@@ -102,6 +103,8 @@ export function CandidateDetailModal({
   candidate: CandidateT | null;
   canManage: boolean;
   onEdit: (c: CandidateT) => void;
+  /** R5 — open the offer builder for this candidate (SELECTED phase). */
+  onBuildOffer: (c: CandidateT) => void;
   /** Signed-in user — scorecards are also editable by the assigned interviewer. */
   currentUserId: string;
 }) {
@@ -438,8 +441,13 @@ export function CandidateDetailModal({
                 </div>
                 {c.status === "SELECTED" && (
                   <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700">
-                    Offer preparation pending — build and send the offer letter next (offer builder arrives in the next milestone).
+                    Offer preparation pending — build the offer letter next.
                   </div>
+                )}
+                {c.status === "SELECTED" && canManage && (
+                  <button className="f-btn f-btn-primary" disabled={busy} onClick={onBuildOffer.bind(null, c)} data-testid="build-offer-btn">
+                    Build offer
+                  </button>
                 )}
                 {(c.status === "REJECTED" || c.status === "WITHDRAWN" || c.status === "SELECTED") && canManage && (
                   <button className="f-btn f-btn-ghost" disabled={busy} onClick={reactivate} data-testid="reactivate-btn">

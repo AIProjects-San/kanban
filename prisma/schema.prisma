@@ -968,6 +968,7 @@ model Candidate {
   outbox MailOutbox[]
   documents CandidateDocument[]
   bgChecks BackgroundCheck[]
+  offers OfferRecord[]
 
   @@index([status])
   @@index([createdAt])
@@ -1112,6 +1113,67 @@ model BackgroundCheck {
   initiatedById String   @default("")
   initiatedAt  DateTime  @default(now())
   completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([candidateId])
+  @@index([status])
+}
+
+// R5 — per-role offer template: the salary structure HR configures once and
+// generates offers from. Components are JSON (lib/offer-math.ts computes the
+// math): each entry is a fixed annual amount or a percentage of the basic
+// component, and is an employee earning, an employer contribution on top
+// (KiwiSaver / PF / gratuity), or an employee-side deduction.
+model OfferTemplate {
+  id          String   @id @default(cuid())
+  // Stable identifier for the role band (e.g. "senior_engineer").
+  key         String   @unique
+  label       String
+  description String   @default("")
+  // JSON: OfferComponent[] (kind/mode/amount/label/key).
+  components  String   @default("[]")
+  // JSON: string[] — benefits bullets (extra leave, training budget…).
+  benefits    String   @default("[]")
+  // Letter text with {{candidateName}}/{{position}}/{{workspaceName}}/
+  // {{annualCtc}}/{{startDate}} placeholders (rendered at offer generation).
+  letterTemplate String @default("")
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// One offer for one candidate, generated from a template then negotiated.
+// components is the EDITED copy (numbers HR and the candidate agreed on);
+// templateLabel snapshots the source template so later template edits never
+// rewrite a live offer. Status: DRAFT (R5) → SENT → SIGNED | DECLINED (R6:
+// tokenized link + typed signature; the token/signature columns land with
+// the schema now so R6 needs no migration).
+model OfferRecord {
+  id           String    @id @default(cuid())
+  candidateId  String
+  candidate    Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  templateId   String?
+  // Snapshot of the source template's label at generation time.
+  templateLabel String   @default("")
+  // JSON: OfferComponent[] — the negotiated copy (editable while DRAFT).
+  components   String    @default("[]")
+  // JSON: string[] — benefits copied from the template (editable).
+  benefits     String    @default("[]")
+  // Rendered letter text (placeholders resolved; the R6 signing page shows
+  // this + a snapshot of components as the immutable record).
+  letterText   String    @default("")
+  // DRAFT | SENT | SIGNED | DECLINED
+  status       String    @default("DRAFT")
+  notes        String    @default("")
+  createdById  String    @default("")
+  // R6 — single-use signing token + typed-signature capture.
+  token        String    @default("")
+  tokenExpiresAt DateTime?
+  signedAt     DateTime?
+  signedName   String    @default("")
+  signedIp     String    @default("")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

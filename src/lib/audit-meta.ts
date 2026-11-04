@@ -117,7 +117,12 @@ export type AuditAction =
   | "hiring.document_verified"
   | "hiring.document_rejected"
   | "hiring.bg_check_initiated"
-  | "hiring.bg_check_updated";
+  | "hiring.bg_check_updated"
+  // Recruitment R5 — offer builder
+  | "hiring.offer_template_saved"
+  | "hiring.offer_template_deleted"
+  | "hiring.offer_created"
+  | "hiring.offer_updated";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -232,6 +237,10 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.document_rejected": { icon: FileWarning, cls: "text-destructive bg-destructive/10" },
   "hiring.bg_check_initiated": { icon: ShieldCheck, cls: "text-sky-500 bg-sky-500/10" },
   "hiring.bg_check_updated": { icon: ShieldCheck, cls: "text-amber-500 bg-amber-500/10" },
+  "hiring.offer_template_saved": { icon: Settings, cls: "text-purple-500 bg-purple-500/10" },
+  "hiring.offer_template_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "hiring.offer_created": { icon: FileText, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hiring.offer_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

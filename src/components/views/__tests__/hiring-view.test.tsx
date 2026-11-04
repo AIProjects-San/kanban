@@ -13,12 +13,13 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 //   • Opening a candidate renders the stage timeline + advance button.
 // ---------------------------------------------------------------------------
 
-const { getHiringBoard, getHiringPermissions, advanceStage, getMyInterviews, getMailOutbox } = vi.hoisted(() => ({
+const { getHiringBoard, getHiringPermissions, advanceStage, getMyInterviews, getMailOutbox, getOfferRecords } = vi.hoisted(() => ({
   getHiringBoard: vi.fn(),
   getHiringPermissions: vi.fn(),
   advanceStage: vi.fn(),
   getMyInterviews: vi.fn(),
   getMailOutbox: vi.fn(),
+  getOfferRecords: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hiring", async (importOriginal) => ({
@@ -28,6 +29,7 @@ vi.mock("@/server-actions/hiring", async (importOriginal) => ({
   advanceStage,
   getMyInterviews,
   getMailOutbox,
+  getOfferRecords,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -44,6 +46,12 @@ vi.mock("@/components/ui/hiring-stage-modal", () => ({
 }));
 vi.mock("@/components/ui/document-type-modal", () => ({
   DocumentTypeModal: () => <div data-testid="doc-type-modal-stub" />,
+}));
+vi.mock("@/components/ui/offer-builder-modal", () => ({
+  OfferBuilderModal: () => <div data-testid="offer-builder-stub" />,
+}));
+vi.mock("@/components/ui/offer-template-modal", () => ({
+  OfferTemplateModal: () => <div data-testid="offer-template-modal-stub" />,
 }));
 
 import { HiringView } from "@/components/views/hiring-view";
@@ -79,6 +87,7 @@ beforeEach(() => {
   getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: true, canConfig: true } });
   getMyInterviews.mockResolvedValue({ ok: true, data: [] });
   getMailOutbox.mockResolvedValue({ ok: true, data: [] });
+  getOfferRecords.mockResolvedValue({ ok: true, data: [] });
 });
 
 describe("HiringView: HR (full manage)", () => {
@@ -238,5 +247,41 @@ describe("HiringView: R3 SELECTED pool", () => {
     expect(chip.textContent).toContain("1");
     fireEvent.click(chip);
     expect(await screen.findByText("Priyanka Menon")).toBeTruthy();
+  });
+});
+
+
+describe("HiringView: R5 offers panel", () => {
+  it("HR sees the offers panel with CTC; the Offers template button is config-gated", async () => {
+    getOfferRecords.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "or-1", candidateId: "cand-1", candidateName: "Priyanka Menon",
+          position: "Product Designer", templateId: "ot-1", templateLabel: "Designer Band",
+          components: [
+            { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68000 },
+            { key: "kiwisaver", label: "KiwiSaver 3%", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+          ],
+          benefits: [], letterText: "", status: "DRAFT", notes: "",
+          createdBy: "Remy", createdAt: "2026-11-11T00:00:00.000Z", updatedAt: "2026-11-11T00:00:00.000Z",
+        },
+      ],
+    });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const panel = await screen.findByTestId("offers-panel");
+    expect(panel.textContent).toContain("Priyanka Menon");
+    expect(panel.textContent).toContain("Designer Band");
+    expect(panel.textContent).toContain("CTC $70,040");
+    expect(screen.getByTestId("offer-template-btn")).toBeTruthy();
+  });
+
+  it("MANAGERs see neither the offers panel nor the template button", async () => {
+    getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: false, canConfig: false } });
+    render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
+    expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
+    expect(screen.queryByTestId("offers-panel")).toBeNull();
+    expect(screen.queryByTestId("offer-template-btn")).toBeNull();
+    expect(getOfferRecords).not.toHaveBeenCalled();
   });
 });

@@ -297,4 +297,27 @@ describe("Recruitment R1 models are declared", () => {
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
   });
+
+  it("R5: offer templates + records declared (JSON components, snapshot label, R6 token columns)", () => {
+    const tpl = modelBlock("OfferTemplate");
+    expect(tpl).toMatch(/key\s+String\s+@unique/);
+    expect(tpl).toMatch(/components\s+String\s+@default\("\[\]"\)/);
+    expect(tpl).toMatch(/benefits\s+String\s+@default\("\[\]"\)/);
+    expect(tpl).toMatch(/letterTemplate\s+String\s+@default\(""\)/);
+
+    const rec = modelBlock("OfferRecord");
+    expect(rec).toMatch(/candidateId\s+String\b/);
+    // Snapshot of the source template label at generation time.
+    expect(rec).toMatch(/templateLabel\s+String\s+@default\(""\)/);
+    expect(rec).toMatch(/components\s+String\s+@default\("\[\]"\)/);
+    expect(rec).toMatch(/status\s+String\s+@default\("DRAFT"\)/);
+    // R6 lands with the schema now: single-use token + typed signature.
+    expect(rec).toMatch(/token\s+String\s+@default\(""\)/);
+    expect(rec).toMatch(/signedName\s+String\s+@default\(""\)/);
+    expect(rec).toMatch(/signedIp\s+String\s+@default\(""\)/);
+    expect(rec).toMatch(/onDelete:\s*Cascade/);
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261115000000_hiring_offers");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+  });
 });

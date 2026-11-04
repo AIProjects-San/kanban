@@ -422,3 +422,43 @@ export interface BackgroundCheckT {
   initiatedAt: string;
   completedAt: string | null;
 }
+
+/** R5 — one salary line of an offer (lib/offer-math.ts). */
+export type OfferComponentT = {
+  key: string;
+  label: string;
+  kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION";
+  mode: "FIXED" | "PERCENT_OF_BASIC";
+  amount: number;
+};
+
+/** R5 — a per-role offer template (hiring:config). */
+export interface OfferTemplateT {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  components: OfferComponentT[];
+  benefits: string[];
+  letterTemplate: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/** R5 — one offer for one candidate. status: DRAFT → SENT → SIGNED | DECLINED. */
+export interface OfferRecordT {
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  position: string;
+  templateId: string | null;
+  templateLabel: string;
+  components: OfferComponentT[];
+  benefits: string[];
+  letterText: string;
+  status: string;
+  notes: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

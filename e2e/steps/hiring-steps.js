@@ -275,3 +275,52 @@ When("I sign out and back in as {string}", async function (email) {
   await driver.findElement(By.css('button[type="submit"]')).click();
   await driver.sleep(2_000);
 });
+
+// ---------------------------------------------------------------------------
+// R5 — offer builder
+// ---------------------------------------------------------------------------
+
+When("I open the offer builder", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid="build-offer-btn"]')),
+    10_000,
+    "Build offer button not found (SELECTED candidates only)",
+  );
+  await btn.click();
+  await driver.wait(until.elementLocated(By.css('[data-testid="offer-list"]')), 10_000);
+});
+
+Then("the offer builder should list a draft offer with the live CTC total", async function () {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(By.css('[data-testid^="offer-row-"]')),
+    10_000,
+    "no offer row rendered",
+  );
+  const text = await row.getText();
+  assert.ok(/DRAFT/.test(text), `offer should be a DRAFT, got: ${text}`);
+  assert.ok(/CTC \$[\d,]+/.test(text), `offer row should show a CTC total, got: ${text}`);
+});
+
+Then("the offers panel should show {string} with a DRAFT chip", async function (name) {
+  const driver = await this.getDriver();
+  const panel = await driver.wait(
+    until.elementLocated(By.css('[data-testid="offers-panel"]')),
+    10_000,
+    "offers panel not found",
+  );
+  const text = await panel.getText();
+  assert.ok(text.includes(name), `offers panel should mention ${name}, got: ${text.slice(0, 200)}`);
+  assert.ok(/DRAFT/.test(text), "offers panel should show a DRAFT chip");
+});
+
+Then("the offers panel should not be visible", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="stage-column-screening"]')),
+    15_000,
+  );
+  const panels = await driver.findElements(By.css('[data-testid="offers-panel"]'));
+  assert.strictEqual(panels.length, 0, "offers panel must be hidden without hiring:manage");
+});

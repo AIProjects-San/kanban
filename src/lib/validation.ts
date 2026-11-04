@@ -582,3 +582,48 @@ export const updateBackgroundCheckSchema = z.object({
   reportRef: z.string().trim().max(500).default(""),
   notes: z.string().trim().max(2_000).default(""),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// R5 — offer builder: templates + per-candidate offers
+// ---------------------------------------------------------------------------
+
+export const OFFER_COMPONENT_KINDS = ["EARNING", "EMPLOYER_CONTRIBUTION", "DEDUCTION"] as const;
+export const OFFER_COMPONENT_MODES = ["FIXED", "PERCENT_OF_BASIC"] as const;
+
+export const offerComponentSchema = z.object({
+  key: z.string().trim().min(1).max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
+  label: z.string().trim().min(1, "A label is required.").max(120),
+  kind: z.enum(OFFER_COMPONENT_KINDS),
+  mode: z.enum(OFFER_COMPONENT_MODES),
+  amount: z.number().min(0).max(100_000_000),
+}).strict();
+
+export const saveOfferTemplateSchema = z.object({
+  id: cuidish.optional(),
+  key: z.string().trim().min(1, "A key is required.").max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
+  label: z.string().trim().min(1, "A label is required.").max(120),
+  description: z.string().trim().max(500).default(""),
+  components: z.array(offerComponentSchema).max(30),
+  benefits: z.array(z.string().trim().min(1).max(200)).max(30).default([]),
+  letterTemplate: z.string().trim().max(10_000).default(""),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(9_999).default(0),
+}).strict();
+
+export const deleteOfferTemplateSchema = z.object({
+  id: cuidish,
+}).strict();
+
+export const createOfferRecordSchema = z.object({
+  candidateId: cuidish,
+  templateId: cuidish,
+  notes: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const updateOfferRecordSchema = z.object({
+  id: cuidish,
+  components: z.array(offerComponentSchema).max(30),
+  benefits: z.array(z.string().trim().min(1).max(200)).max(30),
+  letterText: z.string().trim().max(10_000).default(""),
+  notes: z.string().trim().max(2_000).default(""),
+}).strict();

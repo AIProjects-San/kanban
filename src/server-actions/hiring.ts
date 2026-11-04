@@ -27,6 +27,8 @@ import type {
   DocumentTypeConfigT,
   CandidateDocumentT,
   BackgroundCheckT,
+  OfferTemplateT,
+  OfferRecordT,
 } from "@/lib/types";
 import {
   createCandidateSchema,
@@ -46,6 +48,10 @@ import {
   rejectDocumentSchema,
   initiateBackgroundCheckSchema,
   updateBackgroundCheckSchema,
+  saveOfferTemplateSchema,
+  deleteOfferTemplateSchema,
+  createOfferRecordSchema,
+  updateOfferRecordSchema,
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit } from "./shared";
@@ -55,6 +61,8 @@ import type { ActionResult } from "@/lib/action-result";
 import { composeRejectionEmail } from "@/lib/hiring-email";
 import { createMailer } from "@/lib/mailer";
 import { getWorkspaceConfig } from "@/lib/config-loader";
+// R5 — offer builder math + letter rendering.
+import { computeOffer, parseComponents, parseBenefits, renderOfferLetter, formatMoney } from "@/lib/offer-math";
 
 // ---------------------------------------------------------------------------
 // Serialization helpers
@@ -1233,5 +1241,208 @@ export async function updateBackgroundCheck(input: unknown): Promise<ActionResul
     });
     revalidatePath("/");
     return { ok: true };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// R5 — offer builder (docs/RECRUITMENT_MODULE_PLAN.md §5). Templates are
+// hiring:config; offers are hiring:manage and only for SELECTED candidates
+// (the hire decision gates the offer, not the other way round). Components
+// are stored as JSON and computed by lib/offer-math.ts.
+// ---------------------------------------------------------------------------
+
+function serializeOfferTemplate(t: {
+  id: string; key: string; label: string; description: string;
+  components: string; benefits: string; letterTemplate: string;
+  isActive: boolean; sortOrder: number;
+}): OfferTemplateT {
+  return {
+    id: t.id, key: t.key, label: t.label, description: t.description,
+    components: parseComponents(t.components),
+    benefits: parseBenefits(t.benefits),
+    letterTemplate: t.letterTemplate,
+    isActive: t.isActive, sortOrder: t.sortOrder,
+  };
+}
+
+/** List offer templates (hiring:manage — salary bands are sensitive). */
+export async function getOfferTemplates(): Promise<ActionResult<OfferTemplateT[]>> {
+  return toResult(async () => {
+    await requirePermission("hiring:manage");
+    const rows = await db.offerTemplate.findMany({
+      orderBy: [{ sortOrder: "asc" }, { key: "asc" }],
+    });
+    return rows.map(serializeOfferTemplate);
+  });
+}
+
+export async function saveOfferTemplate(input: unknown): Promise<ActionResult<{ id: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:config");
+    const data = parseOrThrow(saveOfferTemplateSchema, input);
+    const payload = {
+      key: data.key,
+      label: data.label,
+      description: data.description,
+      components: JSON.stringify(data.components),
+      benefits: JSON.stringify(data.benefits),
+      letterTemplate: data.letterTemplate,
+      isActive: data.isActive,
+      sortOrder: data.sortOrder,
+    };
+    const row = data.id
+      ? await db.offerTemplate.update({ where: { id: data.id }, data: payload })
+      : await db.offerTemplate.create({ data: payload });
+    await logAudit({
+      actor: auth,
+      action: "hiring.offer_template_saved",
+      entityType: "OFFER_TEMPLATE",
+      entityId: row.id,
+      entityLabel: row.label,
+      detail: `${auth.name} ${data.id ? "updated" : "created"} offer template "${row.label}" (${data.components.length} components).`,
+    });
+    revalidatePath("/");
+    return { id: row.id };
+  });
+}
+
+export async function deleteOfferTemplate(input: { id: string }): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:config");
+    const data = parseOrThrow(deleteOfferTemplateSchema, input);
+    const row = await db.offerTemplate.delete({ where: { id: data.id } });
+    await logAudit({
+      actor: auth,
+      action: "hiring.offer_template_deleted",
+      entityType: "OFFER_TEMPLATE",
+      entityId: row.id,
+      entityLabel: row.label,
+      detail: `${auth.name} removed offer template "${row.label}" (existing offers keep their snapshots).`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+/** Generate an offer for a SELECTED candidate from a template: components +
+ * benefits are copied (the template snapshot), the letter is rendered with
+ * the candidate's numbers. Status DRAFT — editable until sent (R6). */
+export async function createOfferRecord(input: unknown): Promise<ActionResult<{ id: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:manage");
+    const data = parseOrThrow(createOfferRecordSchema, input);
+    const [candidate, template] = await Promise.all([
+      db.candidate.findUnique({ where: { id: data.candidateId } }),
+      db.offerTemplate.findUnique({ where: { id: data.templateId } }),
+    ]);
+    if (!candidate) throw new AuthorizationError("Candidate not found.");
+    if (candidate.status !== "SELECTED") {
+      throw new AuthorizationError("Offers can only be created for SELECTED candidates.");
+    }
+    if (!template || !template.isActive) {
+      throw new AuthorizationError("Unknown or inactive offer template.");
+    }
+    const components = parseComponents(template.components);
+    const benefits = parseBenefits(template.benefits);
+    const config = await getWorkspaceConfig();
+    const totals = computeOffer(components);
+    const letterText = renderOfferLetter(
+      template.letterTemplate,
+      {
+        candidateName: candidate.fullName,
+        position: candidate.position,
+        workspaceName: config.workspace.name,
+      },
+      totals,
+    );
+    const row = await db.offerRecord.create({
+      data: {
+        candidateId: candidate.id,
+        templateId: template.id,
+        templateLabel: template.label,
+        components: JSON.stringify(components),
+        benefits: JSON.stringify(benefits),
+        letterText,
+        status: "DRAFT",
+        notes: data.notes,
+        createdById: auth.userId,
+      },
+    });
+    await logAudit({
+      actor: auth,
+      action: "hiring.offer_created",
+      entityType: "OFFER_RECORD",
+      entityId: row.id,
+      entityLabel: `${candidate.fullName} — ${template.label}`,
+      detail: `${auth.name} generated a draft offer for ${candidate.fullName} from "${template.label}" (CTC ${formatMoney(totals.ctc)}).`,
+    });
+    revalidatePath("/");
+    return { id: row.id };
+  });
+}
+
+/** Edit a DRAFT offer's negotiated numbers / benefits / letter. Once sent
+ * (R6) the record is immutable — the signed snapshot is the contract. */
+export async function updateOfferRecord(input: unknown): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:manage");
+    const data = parseOrThrow(updateOfferRecordSchema, input);
+    const offer = await db.offerRecord.findUnique({
+      where: { id: data.id },
+      include: { candidate: { select: { fullName: true } } },
+    });
+    if (!offer) throw new AuthorizationError("Offer not found.");
+    if (offer.status !== "DRAFT") {
+      throw new AuthorizationError(`Offer is already ${offer.status} — sent offers are immutable.`);
+    }
+    await db.offerRecord.update({
+      where: { id: offer.id },
+      data: {
+        components: JSON.stringify(data.components),
+        benefits: JSON.stringify(data.benefits),
+        letterText: data.letterText,
+        notes: data.notes,
+      },
+    });
+    const totals = computeOffer(data.components);
+    await logAudit({
+      actor: auth,
+      action: "hiring.offer_updated",
+      entityType: "OFFER_RECORD",
+      entityId: offer.id,
+      entityLabel: `${offer.candidate.fullName} — ${offer.templateLabel}`,
+      detail: `${auth.name} updated the draft offer for ${offer.candidate.fullName} (CTC ${formatMoney(totals.ctc)}).`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+/** All offers, newest first (hiring:manage) — the Offers panel. */
+export async function getOfferRecords(): Promise<ActionResult<OfferRecordT[]>> {
+  return toResult(async () => {
+    await requirePermission("hiring:manage");
+    const rows = await db.offerRecord.findMany({
+      include: { candidate: { select: { fullName: true, position: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    const names = await namesFor(rows.map((r) => r.createdById));
+    return rows.map((r) => ({
+      id: r.id,
+      candidateId: r.candidateId,
+      candidateName: r.candidate.fullName,
+      position: r.candidate.position,
+      templateId: r.templateId,
+      templateLabel: r.templateLabel,
+      components: parseComponents(r.components),
+      benefits: parseBenefits(r.benefits),
+      letterText: r.letterText,
+      status: r.status,
+      notes: r.notes,
+      createdBy: names.get(r.createdById) ?? null,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    }));
   });
 }

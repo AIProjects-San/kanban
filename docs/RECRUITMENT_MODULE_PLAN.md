@@ -1,6 +1,6 @@
 # Recruitment & Joining Formalities Module Plan
 
-Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ shipped (R5 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
+Status: R1 ✓ R2 ✓ R3 ✓ R4 ✓ R5 ✓ shipped (R6 next) · Owner: HR module family (docs/HR_MODULE_PLAN.md sibling)
 Decisions confirmed with the product owner on 2026-11-04 (see §1.3).
 
 ---
@@ -186,7 +186,7 @@ push to origin.**
   per-candidate document checklist (request/receive/verify); BGV record
   (initiate on offer acceptance per research, status, vendor, notes); joining-
   formalities checklist surfaced on the candidate (pre-day-1 items).
-- **R5 — Offer builder**: OfferTemplate per role (earnings components from CTC
+- **R5 — Offer builder** *(shipped)*: OfferTemplate per role (earnings components from CTC
   research + benefits + letter text), editable (hiring:config); generate offer
   from template → candidate-specific editable numbers; totals + net preview;
   store OfferRecord.
@@ -243,6 +243,16 @@ push to origin.**
 | M22 | BGV lifecycle | Initiate (vendor) → In review → Cleared | Status chip walks INITIATED → IN REVIEW → CLEARED with completedAt |
 | M23 | Panel gating | MANAGER opens any candidate | No joining-formalities panel (hiring:manage only) |
 
+## 6d. Manual test cases — R5 (executed on the sandbox preview)
+
+| # | Case | Steps | Expected |
+|---|---|---|---|
+| M24 | Offer templates | HR → Hiring → "Offers" | 3 seeded bands with CTC preview; add/edit/delete works |
+| M25 | Build offer | Open Priyanka (Selected) → Build offer | Draft listed (Designer Band, CTC $70,040); editor opens |
+| M26 | Negotiate | In the editor bump Basic to 70,000 | Totals update live: CTC $72,100; Save draft persists |
+| M27 | Offers panel | Back on the board | Offers panel lists the record with DRAFT chip + CTC |
+| M28 | Gating | MANAGER opens Hiring | No offers panel, no template button, no Build offer |
+
 ## 7. Automation (e2e, CI-only) — R1
 
 `e2e/features/hiring.feature` (11 scenarios): MEMBER must not see the Hiring
@@ -253,7 +263,9 @@ seeded Elena rejection row renders, MANAGERs never see the outbox panel,
 and the Selected chip counts the pool. R4 adds: the joining-formalities
 checklist of a selected candidate (seeded VERIFIED chip + BGV vendor),
 requesting a document from the checklist, and the config-gated doc-type
-editor button. Follows the rbac/hr-directory feature patterns
+editor button. R5 adds: HR builds an offer for a selected candidate
+(draft + live CTC), the offers panel lists records, and MANAGERs never
+see it. Follows the rbac/hr-directory feature patterns
 (`data-testid` hooks on the board).
 
 ## 8. References

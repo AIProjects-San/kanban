@@ -98,6 +98,7 @@ function cand(stages: CandidateStageT[], overrides: Partial<CandidateT> = {}): C
 
 const onChanged = vi.fn();
 const onEdit = vi.fn();
+const onBuildOffer = vi.fn();
 const onClose = vi.fn();
 
 beforeEach(() => {
@@ -119,7 +120,7 @@ describe("CandidateDetailModal: scheduling", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     fireEvent.click(screen.getByTestId("schedule-btn-interview_1"));
@@ -139,7 +140,7 @@ describe("CandidateDetailModal: scheduling", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({ stageKey: "screening", stageType: "SCREENING", label: "Screening" })])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     expect(screen.queryByTestId("schedule-btn-screening")).toBeNull();
@@ -152,7 +153,7 @@ describe("CandidateDetailModal: scorecards", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     fireEvent.click(screen.getByTestId("scorecard-btn-interview_1"));
@@ -175,7 +176,7 @@ describe("CandidateDetailModal: scorecards", () => {
           concerns: "Little backend", recommendation: "HIRE",
         })])}
         canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     const card = screen.getByTestId("scorecard-interview_1");
@@ -189,7 +190,7 @@ describe("CandidateDetailModal: scorecards", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-mgr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr"
       />,
     );
     expect(screen.getByTestId("scorecard-btn-interview_1")).toBeTruthy();
@@ -201,7 +202,7 @@ describe("CandidateDetailModal: scorecards", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-diego"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-diego"
       />,
     );
     expect(screen.queryByTestId("scorecard-btn-interview_1")).toBeNull();
@@ -218,7 +219,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     fireEvent.click(screen.getByTestId("select-btn"));
@@ -234,7 +235,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-mgr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr"
       />,
     );
     expect(screen.queryByTestId("select-btn")).toBeNull();
@@ -245,7 +246,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     expect(screen.getByText(/Offer preparation pending/)).toBeTruthy();
@@ -258,7 +259,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     fireEvent.click(screen.getByTestId("reject-btn"));
@@ -285,7 +286,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     fireEvent.click(screen.getByTestId("reject-btn"));
@@ -327,7 +328,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     const panel = await screen.findByTestId("joining-formalities");
@@ -349,7 +350,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -367,7 +368,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -401,7 +402,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -421,7 +422,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-hr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr"
       />,
     );
     await screen.findByTestId("joining-formalities");
@@ -438,7 +439,7 @@ describe("CandidateDetailModal: R4 joining formalities", () => {
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage={false}
-        onClose={onClose} onChanged={onChanged} onEdit={onEdit} currentUserId="u-mgr"
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-mgr"
       />,
     );
     // Give the effect a beat, then the panel must be absent.
