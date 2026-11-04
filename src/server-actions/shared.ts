@@ -7,6 +7,7 @@
 import { logError } from "@/lib/observability";
 import { db } from "@/lib/db";
 import { hasPermission, type Role } from "@/lib/rbac";
+import { getSubtreeUserIds } from "@/lib/hierarchy";
 import { AuthorizationError } from "./auth-guard";
 import type { AuditAction } from "@/lib/audit-meta";
 import { headers as nextHeaders } from "next/headers";
@@ -333,6 +334,70 @@ export async function assertTaskEditPermission(
   if (!task.assigneeId || task.assigneeId !== myMemberId) {
     throw new AuthorizationError("You can only edit tasks that are assigned to you.");
   }
+}
+
+// PR-61 — task-delete rights are row-level, not a blanket RBAC grant:
+// `task:delete` stays ADMIN-only in the matrix, and this helper layers the
+// user-approved rules on top for everyone else:
+//
+//   1. ADMIN                       — any task (the blanket permission).
+//   2. the assigned user           — their own task, whatever their role.
+//   3. the project owner           — any task in a project they own
+//                                    (ownership implies stewardship), any role.
+//   4. a MANAGER of that team      — tasks whose assignee OR project owner
+//                                    reports to them (direct or transitive —
+//                                    getSubtreeUserIds walks the managerId
+//                                    chain). Managers outside the chain, and
+//                                    any other role, are rejected.
+//
+// Unassigned tasks in projects nobody "owns" for the caller are deletable by
+// ADMIN (and a chain manager of the project owner) only. The client mirrors
+// this predicate in lib/task-delete.ts to decide whether to render the
+// Delete button; the server remains the source of truth.
+export async function assertTaskDeletePermission(
+  auth: { userId: string; email: string; role: Role },
+  task: { assigneeId: string | null; projectId: string | null },
+) {
+  // 1. ADMIN — the only role holding the blanket task:delete permission.
+  if (hasPermission(auth.role, "task:delete")) return;
+
+  // 2. The assigned user may delete their own task (any role).
+  const myMemberId = await getMyTeamMemberId(auth);
+  if (task.assigneeId && task.assigneeId === myMemberId) return;
+
+  // Project context — fetched once for rules 3 + 4.
+  let ownerUserId: string | null = null;
+  if (task.projectId) {
+    const project = await db.project.findUnique({
+      where: { id: task.projectId },
+      select: { ownerUserId: true },
+    });
+    ownerUserId = project?.ownerUserId ?? null;
+
+    // 3. The project owner may delete tasks in their project (any role).
+    if (ownerUserId && ownerUserId === auth.userId) return;
+  }
+
+  // 4. MANAGER — the assignee or the project owner must report to them.
+  if (auth.role === "MANAGER") {
+    const subjects: string[] = [];
+    if (task.assigneeId) {
+      const assignee = await db.teamMember.findUnique({
+        where: { id: task.assigneeId },
+        select: { userId: true },
+      });
+      if (assignee?.userId) subjects.push(assignee.userId);
+    }
+    if (ownerUserId) subjects.push(ownerUserId);
+    if (subjects.length > 0) {
+      const subtree = await getSubtreeUserIds(auth.userId);
+      if (subjects.some((s) => subtree.has(s))) return;
+    }
+  }
+
+  throw new AuthorizationError(
+    "Only the assigned user, the project owner, a manager of that team, or an admin can delete this task.",
+  );
 }
 
 /**

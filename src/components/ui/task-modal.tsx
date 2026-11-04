@@ -24,11 +24,16 @@ import { FormActions } from "./form-actions";
 import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
 import { TASK_STATUSES, BUG_SEVERITY_BADGE, BUG_SEVERITY_LABELS, BUG_STATUS_BADGE, BUG_STATUS_LABELS } from "@/lib/config";
 import { cn } from "@/lib/utils";
-import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, BugSeverity, BugStatus } from "@/lib/types";
+import { canDeleteTask, type TaskDeleteContext } from "@/lib/task-delete";
+import { useAppSession } from "@/hooks/use-app-session";
+import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, TeamMemberT, BugSeverity, BugStatus } from "@/lib/types";
 
 interface TaskModalProps {
   tasks: TaskT[];
   projects: ProjectT[];
+  /** PR-61 — context for the row-level task-delete rule (see lib/task-delete.ts). */
+  members?: TeamMemberT[];
+  managedUserIds?: string[];
 }
 
 /** Narrow shape used by the project selector — from getMyProjects() */
@@ -54,9 +59,20 @@ interface ProjectMember {
   isOwner: boolean;
 }
 
-export function TaskModal({ tasks, projects }: TaskModalProps) {
+export function TaskModal({ tasks, projects, members = [], managedUserIds = [] }: TaskModalProps) {
   const { taskModalOpen, taskModalEditId, taskModalDefaultStatus, closeTaskModal } = useApp();
   const editing = taskModalEditId ? tasks.find((t) => t.id === taskModalEditId) ?? null : null;
+  const { data: session } = useAppSession();
+  const sessionUser = session?.user ?? null;
+
+  // PR-61 — the Delete button only renders for users the server would
+  // actually allow to delete this task: ADMIN, the assignee, the project
+  // owner, or a manager whose reporting chain covers the assignee/owner.
+  const myTeamMemberId = sessionUser
+    ? members.find((m) => m.userId === sessionUser.id)?.id ?? null
+    : null;
+  const deleteCtx: TaskDeleteContext = { members, projects, myTeamMemberId, managedUserIds };
+  const showDelete = editing ? canDeleteTask(sessionUser, editing, deleteCtx) : false;
 
   return (
     <Modal
@@ -73,6 +89,7 @@ export function TaskModal({ tasks, projects }: TaskModalProps) {
           editing={editing}
           defaultStatus={taskModalDefaultStatus as TaskStatus}
           allProjects={projects}
+          showDelete={showDelete}
           onClose={closeTaskModal}
         />
       )}
@@ -84,11 +101,14 @@ function TaskModalBody({
   editing,
   defaultStatus,
   allProjects,
+  showDelete,
   onClose,
 }: {
   editing: TaskT | null;
   defaultStatus: TaskStatus;
   allProjects: ProjectT[];
+  /** PR-61 — row-level delete rule, computed by the parent. */
+  showDelete: boolean;
   onClose: () => void;
 }) {
   // Projects the current user is associated with (owner or task assignee).
@@ -130,6 +150,7 @@ function TaskModalBody({
       defaultStatus={defaultStatus}
       projects={allowedProjects ?? []}
       projectsLoading={allowedProjects === null}
+      showDelete={showDelete}
       onClose={onClose}
     />
   );
@@ -140,12 +161,15 @@ function TaskForm({
   defaultStatus,
   projects,
   projectsLoading,
+  showDelete,
   onClose,
 }: {
   editing: TaskT | null;
   defaultStatus: TaskStatus;
   projects: ProjectOption[];
   projectsLoading: boolean;
+  /** PR-61 — row-level delete rule, computed in TaskModal. */
+  showDelete: boolean;
   onClose: () => void;
 }) {
   const refresh = useRefresh();
@@ -350,6 +374,7 @@ function TaskForm({
         onCancel={onClose}
         onSubmit={submit}
         onDelete={remove}
+        showDelete={showDelete}
       />
 
       {/* Board enhancement — time log (required vs spent). Only when editing

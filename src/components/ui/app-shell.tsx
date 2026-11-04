@@ -94,6 +94,8 @@ interface AppShellProps {
       weeklyCompletion: number; projectEndedPct: number;
     };
     scope?: { isMember: boolean; projectIds: string[] | null };
+    /** PR-61 — MANAGER reporting subtree (user ids); empty for other roles. */
+    managedUserIds?: string[];
   };
   user: {
     id: string;
@@ -251,7 +253,10 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
 
       <CommandPalette />
       <InboxDrawer messages={data.messages} members={data.members} currentUser={userProfile} />
-      <TaskModal tasks={data.tasks} projects={data.projects} />
+      {/* PR-61 — members + managedUserIds feed the row-level task-delete
+          rule (lib/task-delete.ts): assignee / project owner / manager-of-
+          team see the Delete button; everyone else doesn't. */}
+      <TaskModal tasks={data.tasks} projects={data.projects} members={data.members} managedUserIds={data.managedUserIds} />
       {/* PR-59 — read-oriented project detail (info + members + history).
           Mounted BEFORE ProjectModal so the edit form layers on top of it. */}
       <ProjectDetailModal projects={data.projects} members={data.members} tasks={data.tasks} />

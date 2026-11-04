@@ -285,6 +285,12 @@ export interface DashboardData {
   messages: MessageT[];
   stats: DashboardStats;
   scope?: DashboardScope;
+  /** PR-61 — user ids in the signed-in MANAGER's reporting subtree
+   *  (self + direct + transitive reports). Empty for every other role:
+   *  only managers need hierarchy data client-side (task-delete button,
+   *  scoped analytics). ADMIN decides with the blanket permission, MEMBER
+   *  with assignee/owner checks that need no hierarchy. */
+  managedUserIds?: string[];
 }
 
 export const EMPTY_DASHBOARD_DATA: DashboardData = {
@@ -292,4 +298,5 @@ export const EMPTY_DASHBOARD_DATA: DashboardData = {
   notifications: [], timeEntries: [], events: [], messages: [],
   stats: { total: 0, ended: 0, running: 0, pending: 0, paused: 0, weeklyCompletion: 0, projectEndedPct: 0 },
   scope: { isMember: false, projectIds: null },
+  managedUserIds: [],
 };

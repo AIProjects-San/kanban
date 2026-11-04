@@ -90,6 +90,10 @@ beforeEach(() => {
   db.teamMember.findUnique.mockResolvedValue(null);
   // PR-20 — recalcMemberStats now uses two COUNT queries; default to 0.
   db.task.count.mockResolvedValue(0);
+  // PR-61 — getDashboardData now resolves the MANAGER reporting subtree
+  // (getSubtreeUserIds BFS); default to "no reports" so non-hierarchy
+  // tests don't see an un-iterable mock return.
+  db.user.findMany.mockResolvedValue([]);
 });
 
 describe("updateTask change-detection matrix", () => {

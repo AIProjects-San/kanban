@@ -5,11 +5,11 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requirePermission } from "./auth-guard";
+import { requirePermission, getSessionOrThrow } from "./auth-guard";
 import { AuthorizationError } from "./auth-guard";
 import { TASK_STATUS_LABELS } from "@/lib/config";
 import { createTaskSchema, updateTaskSchema, moveTaskSchema, parseOrThrow } from "@/lib/validation";
-import { logAudit, assertTaskEditPermission, recalcMemberStats, getScopedProjectIds, getProjectAssociatedUserIds, assertTeamMemberAssociatedWithProject } from "./shared";
+import { logAudit, assertTaskEditPermission, assertTaskDeletePermission, recalcMemberStats, getScopedProjectIds, getProjectAssociatedUserIds, assertTeamMemberAssociatedWithProject } from "./shared";
 import { notifyMentionedUsers } from "./mentions";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -246,11 +246,17 @@ export async function moveTask(id: string, newStatus: string, newOrder: number):
 
 export async function deleteTask(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await requirePermission("task:delete");
+    // PR-61 — row-level delete rights (see assertTaskDeletePermission):
+    // ADMIN (any), the assigned user (own task), the project owner, or a
+    // MANAGER whose reporting chain covers the assignee / project owner.
+    // The blanket `task:delete` RBAC grant stays ADMIN-only; everyone else
+    // passes through the row-level checks below.
+    const auth = await getSessionOrThrow();
     const task = await db.task.findUnique({ where: { id } });
     // Deep-dive review F-15 — not-found is a clean no-op, not a P2025
     // INTERNAL error from Prisma.
     if (!task) return;
+    await assertTaskDeletePermission(auth, task);
     await db.task.delete({ where: { id } });
     await recalcMemberStats(task.assigneeId);
     await logAudit({

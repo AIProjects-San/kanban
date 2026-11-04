@@ -10,6 +10,7 @@
 import { db } from "@/lib/db";
 import { getSession, AuthorizationError } from "./auth-guard";
 import { getScopedProjectIds, getWorkspaceLimit } from "./shared";
+import { getSubtreeUserIds } from "@/lib/hierarchy";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 import { toResult } from "./result";
@@ -309,6 +310,16 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   const projectEndedPct = total ? Math.round((ended / total) * 100) : 0;
 
+  // PR-61 — the signed-in MANAGER's reporting subtree (user ids), for the
+  // client-side task-delete predicate and (later) scoped analytics. Only
+  // managers need it: ADMIN decides via the blanket task:delete permission,
+  // MEMBER/HR via assignee/project-owner checks that need no hierarchy.
+  // Cheap for the common case (few reports) and capped internally at 1000.
+  const managedUserIds =
+    role === "MANAGER" && currentUserId
+      ? Array.from(await getSubtreeUserIds(currentUserId))
+      : [];
+
   // Prisma returns plain strings for status/priority/tag columns; every
   // write path in this app only ever stores the enum values defined in
   // lib/types, so the narrowing cast below is safe at runtime.
@@ -399,6 +410,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       isMember: !!isMember,
       projectIds: scopedProjectIds ? Array.from(scopedProjectIds) : null,
     },
+    managedUserIds,
   } as DashboardData;
 }
 
