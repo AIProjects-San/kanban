@@ -1,78 +1,73 @@
 "use client";
 
+import { useState } from "react";
 import {
-  LayoutDashboard,
-  CheckSquare,
-  FolderKanban,
-  Calendar,
-  BarChart3,
-  Users,
-  Settings,
-  HelpCircle,
-  History,
+  ChevronRight,
   LogOut,
   X,
   Leaf,
-  UserCog,
-  Settings2,
-  Bug,
-  CalendarDays,
-  Briefcase,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
-import { useApp, type ViewKey } from "@/store/app-store";
+import { useApp } from "@/store/app-store";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
 import { appSignOut } from "@/hooks/use-app-session"; // PR-48 — flag-aware (v4 wrapper or Better Auth)
 import { APP } from "@/config/app";
 import { useAppSession } from "@/hooks/use-app-session";
+import {
+  NAV_GROUPS,
+  SIDEBAR_PROJECT_CAP,
+  type NavGroup,
+  type NavLeaf,
+} from "@/config/navigation";
+import type { ProjectT } from "@/lib/types";
 
-interface NavItem {
-  key: ViewKey;
-  label: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  shortcut: string;
-}
+// ---------------------------------------------------------------------------
+// PR-58 — Grouped, collapsible sidebar.
+//
+// Structure and RBAC gates come from src/config/navigation.ts (single source
+// of truth shared with the ⌘K palette and the G-shortcuts). Behaviours:
+//   • Smart minimal: on boot only the current view's group is expanded.
+//   • Navigating into a group (click / G-shortcut / ⌘K) auto-expands it —
+//     done in the store's setView so every entry point gets it.
+//   • Collapsed groups stay MOUNTED but visibility:hidden (zero height via
+//     the grid-rows trick): hidden from the a11y tree and unfocusable, yet
+//     still present in the DOM for text-based assertions (e2e locators).
+//   • Work → Projects lists live project names (capped; "+N more" links to
+//     the Projects view). Clicking a name deep-links via openProject().
+//   • Desktop rail mode (⌘B / panel toggle): icons-only w-16 with tooltips;
+//     group headers and labels collapse away. Mobile keeps the full drawer.
+// ---------------------------------------------------------------------------
 
-const mainNav: NavItem[] = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, shortcut: "G D" },
-  { key: "tasks", label: "Tasks", icon: CheckSquare, shortcut: "G T" },
-  { key: "projects", label: "Projects", icon: FolderKanban, shortcut: "G P" },
-  { key: "calendar", label: "Calendar", icon: Calendar, shortcut: "G C" },
-  { key: "analytics", label: "Analytics", icon: BarChart3, shortcut: "G A" },
-  { key: "team", label: "Team", icon: Users, shortcut: "G M" },
-  { key: "bugs", label: "Bugs", icon: Bug, shortcut: "G B" },
-  // HR module (docs/HR_MODULE_PLAN.md): Leave is self-service for every
-  // role; the HR console (queue / types & policies) needs hr:view.
-  { key: "leave", label: "Leave", icon: CalendarDays, shortcut: "G V" },
-  { key: "hr", label: "HR", icon: Briefcase, shortcut: "G R" },
-];
-
-const generalNav: NavItem[] = [
-  { key: "settings", label: "Settings", icon: Settings, shortcut: "G S" },
-  { key: "users", label: "Users", icon: UserCog, shortcut: "G U" },
-  { key: "workspace-settings", label: "Workspace Config", icon: Settings2, shortcut: "G W" },
-  { key: "audit", label: "Audit Log", icon: History, shortcut: "G L" },
-  { key: "help", label: "Help", icon: HelpCircle, shortcut: "G H" },
-];
-
-export function Sidebar() {
-  const { view, setView, sidebarOpen, setSidebarOpen } = useApp();
+export function Sidebar({ projects }: { projects: ProjectT[] }) {
+  const {
+    view,
+    setView,
+    sidebarOpen,
+    setSidebarOpen,
+    sidebarRail,
+    toggleSidebarRail,
+    collapsedGroups,
+    toggleGroup,
+    selectedProjectId,
+    openProject,
+  } = useApp();
   const { data: session } = useAppSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
-  // Audit Log is only visible to roles with audit:view (Admin, Manager).
-  // Users management is only visible to roles with role:manage (Admin only).
-  // Workspace Config is only visible to roles with role:manage (Admin only).
-  // The HR console is only visible to roles with hr:view (Admin, Manager, HR).
-  const visibleMainNav = mainNav.filter((item) => {
-    if (item.key === "hr") return hasPermission(role, "hr:view");
-    return true;
-  });
-  const visibleGeneralNav = generalNav.filter((item) => {
-    if (item.key === "audit") return hasPermission(role, "audit:view");
-    if (item.key === "users") return hasPermission(role, "role:manage");
-    if (item.key === "workspace-settings") return hasPermission(role, "role:manage");
-    return true;
-  });
+
+  // RBAC — same gates as before (navigation.ts carries them now):
+  // hr:view (HR Console), audit:view (Audit Log), role:manage (Users,
+  // Workspace Config). A group whose children are ALL gated away for this
+  // role is hidden entirely (MEMBER sees no Administration/HR sections).
+  const visibleGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => !item.permission || hasPermission(role, item.permission)
+    ),
+  })).filter((group) => group.items.length > 0);
+
+  const rail = sidebarRail;
 
   return (
     <>
@@ -87,58 +82,75 @@ export function Sidebar() {
 
       <aside
         className={cn(
-          "fixed lg:sticky top-0 left-0 z-40 h-screen w-64 shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-200",
+          "fixed lg:sticky top-0 left-0 z-40 h-screen w-64 shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col transition-[transform,width] duration-200",
+          rail && "lg:w-16",
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
+        data-rail={rail || undefined}
       >
         {/* Brand */}
-        <div className="h-16 px-5 flex items-center justify-between border-b border-sidebar-border">
+        <div className={cn("h-16 flex items-center border-b border-sidebar-border", rail ? "px-3 lg:px-2 lg:justify-center" : "px-5 justify-between")}>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground shrink-0">
               <Leaf size={18} />
             </div>
-            <span className="text-base font-semibold text-sidebar-foreground tracking-tight">
+            <span className={cn(
+              "text-base font-semibold text-sidebar-foreground tracking-tight",
+              rail && "lg:hidden"
+            )}>
               {APP.name}
             </span>
           </div>
-          <button
-            className="f-btn f-btn-ghost f-btn-icon lg:hidden"
-            onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
-          >
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            {/* Rail toggle — desktop only (mobile keeps the full drawer) */}
+            <button
+              className="f-btn f-btn-ghost f-btn-icon hidden lg:flex"
+              onClick={toggleSidebarRail}
+              aria-label={rail ? "Expand sidebar" : "Collapse sidebar to icon rail"}
+              aria-pressed={rail}
+              title={rail ? "Expand sidebar (⌘B)" : "Collapse to icon rail (⌘B)"}
+            >
+              {rail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
+            <button
+              className="f-btn f-btn-ghost f-btn-icon lg:hidden"
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Close sidebar"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 overflow-y-auto f-scroll px-3 py-4">
-          <div className="px-2 mb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
-            Workspace
-          </div>
-          <div className="space-y-1">
-            {visibleMainNav.map((item) => (
-              <NavButton key={item.key} item={item} active={view === item.key} onClick={() => setView(item.key)} />
-            ))}
-          </div>
-
-          <div className="px-2 mt-6 mb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
-            General
-          </div>
-          <div className="space-y-1">
-            {visibleGeneralNav.map((item) => (
-              <NavButton key={item.key} item={item} active={view === item.key} onClick={() => setView(item.key)} />
-            ))}
-          </div>
+        <nav className="flex-1 overflow-y-auto f-scroll px-3 py-4" aria-label="Main navigation">
+          {visibleGroups.map((group, gi) => (
+            <NavSection
+              key={group.id}
+              group={group}
+              first={gi === 0}
+              view={view}
+              rail={rail}
+              collapsed={rail ? false : collapsedGroups.includes(group.id)}
+              onToggle={() => toggleGroup(group.id)}
+              onNavigate={(key) => setView(key)}
+              projects={projects}
+              selectedProjectId={selectedProjectId}
+              onOpenProject={openProject}
+            />
+          ))}
         </nav>
 
         {/* Sign out */}
-        <div className="p-3 border-t border-sidebar-border">
+        <div className={cn("p-3 border-t border-sidebar-border", rail && "lg:px-2")}>
           <button
             onClick={() => { void appSignOut(); }}
-            className="f-nav-item w-full"
+            className={cn("f-nav-item w-full", rail && "f-nav-item-rail")}
+            aria-label="Sign out"
+            title="Sign out"
           >
             <LogOut size={18} />
-            <span>Sign out</span>
+            <span className={cn("flex-1 text-left", rail && "lg:hidden")}>Sign out</span>
           </button>
         </div>
       </aside>
@@ -146,16 +158,207 @@ export function Sidebar() {
   );
 }
 
+/** One collapsible group: header button + animated children container. */
+function NavSection({
+  group,
+  first,
+  view,
+  rail,
+  collapsed,
+  onToggle,
+  onNavigate,
+  projects,
+  selectedProjectId,
+  onOpenProject,
+}: {
+  group: NavGroup;
+  first: boolean;
+  view: string;
+  rail: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  onNavigate: (key: NavLeaf["key"]) => void;
+  projects: ProjectT[];
+  selectedProjectId: string | null;
+  onOpenProject: (id: string) => void;
+}) {
+  const hasActive = group.items.some((i) => i.key === view);
+  const contentId = `nav-group-${group.id}`;
+
+  return (
+    <div className={cn(!first && "mt-4")}>
+      {/* Group header — a disclosure button. Hidden in desktop rail mode. */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        aria-controls={contentId}
+        data-has-active={hasActive || undefined}
+        className={cn("f-nav-group-header w-full", rail && "lg:hidden")}
+      >
+        <ChevronRight size={12} className="f-nav-group-chevron shrink-0" />
+        <span className="flex-1 text-left">{group.label}</span>
+      </button>
+
+      {rail && <div className="hidden lg:block my-2 border-t border-sidebar-border" aria-hidden />}
+
+      {/* Children stay mounted when collapsed (visibility:hidden removes
+          them from the a11y tree + tab order while keeping DOM presence
+          for e2e XPath locators — see the comment atop this file). */}
+      <div
+        id={contentId}
+        role="group"
+        aria-label={group.label}
+        data-collapsed={collapsed || undefined}
+        className="f-nav-collapse"
+      >
+        <div>
+          {group.items.map((item) =>
+            item.dynamicChildren === "projects" ? (
+              <ProjectsNavItem
+                key={item.key}
+                item={item}
+                active={view === item.key}
+                rail={rail}
+                onNavigate={() => onNavigate(item.key)}
+                projects={projects}
+                selectedProjectId={selectedProjectId}
+                onOpenProject={onOpenProject}
+              />
+            ) : (
+              <NavButton
+                key={item.key}
+                item={item}
+                active={view === item.key}
+                rail={rail}
+                onClick={() => onNavigate(item.key)}
+              />
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Projects leaf — navigates on click; the chevron reveals live project names. */
+function ProjectsNavItem({
+  item,
+  active,
+  rail,
+  onNavigate,
+  projects,
+  selectedProjectId,
+  onOpenProject,
+}: {
+  item: NavLeaf;
+  active: boolean;
+  rail: boolean;
+  onNavigate: () => void;
+  projects: ProjectT[];
+  selectedProjectId: string | null;
+  onOpenProject: (id: string) => void;
+}) {
+  const [listOpen, setListOpen] = useState(false);
+  const Icon = item.icon;
+  const shown = projects.slice(0, SIDEBAR_PROJECT_CAP);
+  const more = projects.length - shown.length;
+
+  return (
+    <div>
+      <div className="flex items-center">
+        <button
+          onClick={onNavigate}
+          data-active={active}
+          className="f-nav-item w-full flex-1 pr-1"
+        >
+          <Icon size={18} />
+          <span className={cn("flex-1 text-left", rail && "lg:hidden")}>{item.label}</span>
+          <kbd className={cn("text-[0.625rem] text-muted-foreground font-mono", rail ? "lg:hidden" : "hidden lg:inline")}>
+            {item.shortcut}
+          </kbd>
+        </button>
+        {/* Separate hit target so "navigate" and "expand list" stay distinct
+            actions (same pattern as GitHub/Notion sidebars). */}
+        <button
+          type="button"
+          onClick={() => setListOpen((o) => !o)}
+          aria-expanded={listOpen}
+          aria-controls="nav-projects-list"
+          aria-label={listOpen ? "Hide project list" : "Show project list"}
+          className={cn("f-nav-chevron-btn shrink-0", rail && "lg:hidden")}
+        >
+          <ChevronRight size={14} className={cn("f-nav-group-chevron", listOpen && "f-nav-group-chevron-open")} />
+        </button>
+      </div>
+
+      {/* Live project names — deep-link into the Projects view. */}
+      <div
+        id="nav-projects-list"
+        data-collapsed={!listOpen || undefined}
+        className={cn("f-nav-collapse", rail && "lg:hidden")}
+      >
+        <div>
+          {shown.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onOpenProject(p.id)}
+              data-active={active && selectedProjectId === p.id}
+              className="f-nav-sub-item w-full"
+              title={p.name}
+            >
+              <span className={cn("w-2.5 h-2.5 rounded-full shrink-0 f-avatar", `f-avatar-${p.color}`)} aria-hidden />
+              <span className="flex-1 text-left truncate">{p.name}</span>
+            </button>
+          ))}
+          {more > 0 && (
+            <button
+              onClick={onNavigate}
+              className="f-nav-sub-item w-full"
+              title="Open the Projects view"
+            >
+              <span className="flex-1 text-left truncate">+{more} more</span>
+            </button>
+          )}
+          {projects.length === 0 && (
+            <div className="f-nav-sub-item text-muted-foreground cursor-default">
+              <span className="flex-1 text-left truncate">No projects yet</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NavButton({
   item,
   active,
+  rail,
   onClick,
 }: {
-  item: NavItem;
+  item: NavLeaf;
   active: boolean;
+  rail: boolean;
   onClick: () => void;
 }) {
   const Icon = item.icon;
+  if (rail) {
+    // Rail: icon-only with tooltip; full label still renders below lg (mobile
+    // drawer keeps the expanded layout regardless of the rail preference).
+    return (
+      <button
+        onClick={onClick}
+        data-active={active}
+        className="f-nav-item f-nav-item-rail w-full"
+        aria-label={item.label}
+        title={`${item.label} · ${item.shortcut}`}
+      >
+        <Icon size={18} />
+        <span className="lg:hidden flex-1 text-left">{item.label}</span>
+      </button>
+    );
+  }
   return (
     <button
       onClick={onClick}

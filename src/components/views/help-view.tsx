@@ -25,11 +25,13 @@ const FAQS = [
   { q: "Can I export analytics data?", a: "Yes. On the Analytics page, click “Export CSV” to download a CSV file of your throughput data for the selected time period (7D, 30D, or 90D).", cat: "settings" },
   { q: "How do I change my accent color?", a: "Go to Settings → Appearance, or open the command palette (⌘K) and search for the theme name. Your choice persists across sessions.", cat: "settings" },
   { q: "How do I filter tasks?", a: "On the Tasks page, use the filter chips at the top to show All tasks, My tasks, High priority, or Due this week.", cat: "tasks" },
+  { q: "How do I organize the sidebar?", a: "Sidebar entries are grouped (Overview, Work, People, HR, Administration, General). Click a group heading to expand or collapse it — the group you are working in stays expanded automatically. Under Work → Projects, click the chevron next to \"Projects\" to list your projects and jump straight to one. Press ⌘B (or Ctrl+B) to collapse the whole sidebar into an icon rail and back.", cat: "getting-started" },
   { q: "What do the calendar event colors mean?", a: "Each event type has a color: Meeting (green), Deadline (red), Review (amber), Social (pink), and Focus (emerald). You can see the legend at the bottom of the calendar grid.", cat: "tasks" },
 ];
 
 const SHORTCUTS = [
   { keys: ["⌘", "K"], desc: "Open command palette" },
+  { keys: ["⌘", "B"], desc: "Toggle sidebar (full ↔ icon rail)" },
   { keys: ["?"], desc: "Show keyboard shortcuts" },
   { keys: ["N"], desc: "New task" },
   { keys: ["P"], desc: "New project" },

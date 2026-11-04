@@ -8,6 +8,7 @@ const mockOpenTaskModal = vi.fn();
 const mockOpenProjectModal = vi.fn();
 const mockSetShortcutsOpen = vi.fn();
 const mockSetNotifOpen = vi.fn();
+const mockToggleSidebarRail = vi.fn();
 
 vi.mock("@/store/app-store", () => ({
   useApp: () => ({
@@ -16,6 +17,7 @@ vi.mock("@/store/app-store", () => ({
     openProjectModal: mockOpenProjectModal,
     setShortcutsOpen: mockSetShortcutsOpen,
     setNotifOpen: mockSetNotifOpen,
+    toggleSidebarRail: mockToggleSidebarRail,
   }),
 }));
 
@@ -137,5 +139,34 @@ describe("useKeyboardShortcuts (L-P0-15 shortcut permission gating)", () => {
     pressKey("b");
     expect(mockSetNotifOpen).toHaveBeenCalledTimes(1);
     expect(mockSetView).not.toHaveBeenCalled();
+  });
+});
+
+describe("useKeyboardShortcuts (PR-58 sidebar rail toggle)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentPermissions = new Set();
+  });
+
+  function pressKeyWithMeta(key: string) {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key, metaKey: true, bubbles: true, cancelable: true })
+    );
+  }
+
+  it("⌘B toggles the sidebar rail", () => {
+    renderHook(() => useKeyboardShortcuts());
+    pressKeyWithMeta("b");
+    expect(mockToggleSidebarRail).toHaveBeenCalledTimes(1);
+    // And it must NOT fall through to the single-key "b" (notifications).
+    expect(mockSetNotifOpen).not.toHaveBeenCalled();
+    expect(mockSetView).not.toHaveBeenCalled();
+  });
+
+  it("a bare B without a modifier still opens notifications, not the rail toggle", () => {
+    renderHook(() => useKeyboardShortcuts());
+    pressKey("b");
+    expect(mockSetNotifOpen).toHaveBeenCalledTimes(1);
+    expect(mockToggleSidebarRail).not.toHaveBeenCalled();
   });
 });

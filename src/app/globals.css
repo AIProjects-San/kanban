@@ -176,6 +176,85 @@
   }
   .f-nav-item[data-active="true"] svg { color: var(--primary); }
 
+  /* PR-58 — collapsible nav groups ----------------------------------------- */
+
+  /* Group disclosure header (Overview / Work / People / …). */
+  .f-nav-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 1.75rem;
+    padding: 0 0.5rem;
+    border-radius: calc(var(--radius) - 4px);
+    color: var(--muted-foreground);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    width: 100%;
+  }
+  .f-nav-group-header:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
+  .f-nav-group-header[data-has-active="true"] { color: var(--sidebar-foreground); }
+  .f-nav-group-chevron { transition: transform 0.15s ease; }
+  .f-nav-group-header[aria-expanded="true"] .f-nav-group-chevron,
+  .f-nav-group-chevron-open { transform: rotate(90deg); }
+
+  /* Height-collapse via grid-template-rows keeps children MOUNTED when
+     collapsed (e2e XPath locators) while visibility:hidden removes them
+     from the accessibility tree and tab order. */
+  .f-nav-collapse {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.2s ease, visibility 0.2s;
+  }
+  .f-nav-collapse > div { overflow: hidden; min-height: 0; }
+  .f-nav-collapse[data-collapsed="true"] { grid-template-rows: 0fr; visibility: hidden; }
+
+  /* Chevrons next to the Projects row (separate hit target from navigation). */
+  .f-nav-chevron-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 2.5rem;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    border-radius: calc(var(--radius) - 4px);
+  }
+  .f-nav-chevron-btn:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
+
+  /* Live project names under Work → Projects. */
+  .f-nav-sub-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 2rem;
+    padding: 0 0.75rem 0 2.25rem;
+    border-radius: calc(var(--radius) - 4px);
+    color: var(--sidebar-foreground);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    width: 100%;
+  }
+  .f-nav-sub-item:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
+  .f-nav-sub-item[data-active="true"] {
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+    font-weight: 600;
+  }
+  .f-nav-sub-item[data-active="true"] + .f-nav-sub-item { font-weight: 400; }
+
+  /* Icon-only rail (desktop ≥lg). Below lg the item falls back to the
+     standard expanded layout, so the mobile drawer is unaffected. */
+  @media (min-width: 1024px) {
+    .f-nav-item-rail { justify-content: center; padding: 0; gap: 0; }
+  }
+
+
   .f-tag {
     display: inline-flex;
     align-items: center;

@@ -4,22 +4,13 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Search,
-  LayoutDashboard,
-  CheckSquare,
-  FolderKanban,
-  Calendar,
-  BarChart3,
-  Users,
-  Settings,
-  HelpCircle,
-  History,
   Plus,
   UserPlus,
   Moon,
   Sun,
-  Bug,
 } from "lucide-react";
-import { useApp, type ViewKey } from "@/store/app-store";
+import { useApp } from "@/store/app-store";
+import { navLeaves } from "@/config/navigation";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { ACCENTS } from "@/lib/constants";
 import { useAppSession } from "@/hooks/use-app-session";
@@ -43,7 +34,6 @@ export function CommandPalette() {
   const { data: session } = useAppSession();
   const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
   const canManageRoles = hasPermission(role, "role:manage");
-  const canViewAudit = hasPermission(role, "audit:view");
 
   // Every close path (Escape, ⌘K toggle, item action, backdrop click) goes
   // through this helper so the search box always resets — no effect needed
@@ -70,30 +60,14 @@ export function CommandPalette() {
   }, [cmdkOpen, setCmdkOpen, closeCmdk]);
 
   const items: CmdItem[] = useMemo(() => {
-    type NavEntry = { key: ViewKey; label: string; icon: React.ComponentType<{ size?: number }> };
-    // Navigation mirrors the sidebar exactly (src/components/ui/sidebar.tsx)
-    // so ⌘K and the sidebar expose the same set of reachable views. Role-gated
-    // entries are conditionally included to match the sidebar's filter logic.
-    const nav: NavEntry[] = [
-      { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { key: "tasks", label: "Tasks", icon: CheckSquare },
-      { key: "projects", label: "Projects", icon: FolderKanban },
-      { key: "calendar", label: "Calendar", icon: Calendar },
-      { key: "analytics", label: "Analytics", icon: BarChart3 },
-      { key: "team", label: "Team", icon: Users },
-      { key: "bugs", label: "Bugs", icon: Bug },
-      { key: "settings", label: "Settings", icon: Settings },
-      ...(canManageRoles
-        ? [{ key: "users" as ViewKey, label: "Users", icon: UserPlus } satisfies NavEntry]
-        : []),
-      ...(canManageRoles
-        ? [{ key: "workspace-settings" as ViewKey, label: "Workspace Config", icon: Settings } satisfies NavEntry]
-        : []),
-      ...(canViewAudit
-        ? [{ key: "audit" as ViewKey, label: "Audit Log", icon: History } satisfies NavEntry]
-        : []),
-      { key: "help", label: "Help & Shortcuts", icon: HelpCircle },
-    ];
+    // PR-58 — navigation derives from src/config/navigation.ts (the same
+    // single source the sidebar and the G-shortcuts use), so ⌘K and the
+    // sidebar expose the same set of reachable views and can no longer
+    // drift apart. Role-gated entries are filtered by the same permission
+    // the sidebar applies per leaf.
+    const nav = navLeaves()
+      .filter((l) => !l.permission || hasPermission(role, l.permission))
+      .map((l) => ({ key: l.key, label: l.paletteLabel ?? l.label, icon: l.icon }));
     return [
       ...nav.map((n) => ({
         id: `nav-${n.key}`,
@@ -152,7 +126,7 @@ export function CommandPalette() {
         };
       }),
     ];
-  }, [setView, closeCmdk, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, canViewAudit]);
+  }, [setView, closeCmdk, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, role]);
 
   const filtered = items.filter((i) =>
     i.label.toLowerCase().includes(query.toLowerCase())

@@ -34,6 +34,7 @@ export type AppConfig = typeof APP;
 export const STORAGE_KEYS = {
   accent: `${APP.slug}-accent`,
   dark: `${APP.slug}-dark`,
+  rail: `${APP.slug}-rail`,
 } as const;
 
 /**

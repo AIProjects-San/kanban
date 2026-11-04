@@ -3,23 +3,24 @@
 import { useEffect } from "react";
 import { useApp } from "@/store/app-store";
 import { usePermissions } from "@/hooks/use-permissions";
+import { navLeaves } from "@/config/navigation";
 import type { Permission } from "@/lib/rbac";
 
 // ---------------------------------------------------------------------------
-// L-P0-15 — Permission map for G-prefix view shortcuts.
+// L-P0-15 — Permission gates for G-prefix view shortcuts.
 //
-// Mirrors the sidebar's gating exactly: u (Users) requires role:manage,
-// w (Workspace Config) requires role:manage, l (Audit Log) requires
-// audit:view. Shortcuts not in the gate map are unrestricted. When a user
-// lacks the required permission, the shortcut no-ops silently.
+// PR-58 — the view map AND its gates now derive from
+// src/config/navigation.ts (the same source the sidebar and ⌘K use), so a
+// gated view can no longer be reachable by shortcut while hidden in the
+// sidebar (or vice versa). When a user lacks the required permission, the
+// shortcut no-ops silently.
 // ---------------------------------------------------------------------------
 
-const SHORTCUT_PERMISSION_GATE: Record<string, Permission> = {
-  u: "role:manage",  // G U → users view — admin only
-  w: "role:manage",  // G W → workspace-settings — admin only
-  l: "audit:view",   // G L → audit log — admin + manager
-  r: "hr:view",      // G R → HR console — admin + manager + HR
-};
+const LEAVES = navLeaves();
+
+const SHORTCUT_PERMISSION_GATE: Record<string, Permission> = Object.fromEntries(
+  LEAVES.filter((l) => l.permission).map((l) => [l.shortcutKey, l.permission!])
+);
 
 export function useKeyboardShortcuts() {
   const {
@@ -28,6 +29,7 @@ export function useKeyboardShortcuts() {
     openProjectModal,
     setShortcutsOpen,
     setNotifOpen,
+    toggleSidebarRail,
   } = useApp();
   const { can } = usePermissions();
 
@@ -41,8 +43,14 @@ export function useKeyboardShortcuts() {
         target.isContentEditable ||
         target.tagName === "SELECT";
 
-      // Cmd+K handled by command palette itself
+      // Cmd+K handled by command palette itself. Cmd+B toggles the sidebar
+      // rail (PR-58) — like ⌘K it works even while typing in an input.
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebarRail();
+        return;
+      }
 
       // "?" opens shortcuts — works even when typing? no, only when not typing
       if (e.key === "?" && !typing) {
@@ -88,22 +96,11 @@ export function useKeyboardShortcuts() {
         return;
       }
       if (lastG && Date.now() - lastG < 800) {
-        const map: Record<string, () => void> = {
-          d: () => setView("dashboard"),
-          t: () => setView("tasks"),
-          p: () => setView("projects"),
-          c: () => setView("calendar"),
-          a: () => setView("analytics"),
-          m: () => setView("team"),
-          s: () => setView("settings"),
-          u: () => setView("users"),
-          w: () => setView("workspace-settings"),
-          h: () => setView("help"),
-          l: () => setView("audit"),
-          b: () => setView("bugs"),
-          v: () => setView("leave"),
-          r: () => setView("hr"),
-        };
+        // PR-58 — the letter → view map derives from the nav config, same
+        // as the sidebar. setView auto-expands the target's sidebar group.
+        const map: Record<string, () => void> = Object.fromEntries(
+          LEAVES.map((l) => [l.shortcutKey, () => setView(l.key)])
+        );
         const shortcutKey = e.key.toLowerCase();
         const action = map[shortcutKey];
         if (action) {
@@ -124,5 +121,5 @@ export function useKeyboardShortcuts() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [setView, openTaskModal, openProjectModal, setShortcutsOpen, setNotifOpen, can]);
+  }, [setView, openTaskModal, openProjectModal, setShortcutsOpen, setNotifOpen, toggleSidebarRail, can]);
 }

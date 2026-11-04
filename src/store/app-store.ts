@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { STORAGE_KEYS } from "@/config/app";
+import { NAV_GROUPS, groupIdOfView } from "@/config/navigation";
 
 export type ViewKey =
   | "dashboard"
@@ -26,9 +27,28 @@ interface AppState {
   view: ViewKey;
   setView: (v: ViewKey) => void;
 
-  // Sidebar (mobile)
+  // Sidebar (mobile slide-over)
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
+
+  // Sidebar layout — icon-only rail (desktop). Persisted per browser like the
+  // theme so a reload keeps the user's chosen density.
+  sidebarRail: boolean;
+  toggleSidebarRail: () => void;
+
+  // Collapsible nav groups (PR-58). "Smart minimal": on boot every group is
+  // collapsed except the one holding the current view; navigating into a
+  // group (sidebar click, G-shortcut, ⌘K) auto-expands it. Deliberately NOT
+  // persisted — it follows the user's navigation instead.
+  collapsedGroups: string[];
+  toggleGroup: (groupId: string) => void;
+
+  // Deep-link: project picked from the sidebar's Work → Projects submenu.
+  // ProjectsView filters to this project; any plain navigation to the
+  // projects view clears it.
+  selectedProjectId: string | null;
+  openProject: (projectId: string) => void;
+  clearSelectedProject: () => void;
 
   // Command palette
   cmdkOpen: boolean;
@@ -91,24 +111,79 @@ interface AppState {
 
 function loadInitial() {
   if (typeof window === "undefined") {
-    return { accent: "forest" as AccentTheme, dark: false };
+    return {
+      accent: "forest" as AccentTheme,
+      dark: false,
+      rail: false,
+    };
   }
   const savedAccent = localStorage.getItem(STORAGE_KEYS.accent) as AccentTheme | null;
   const savedDark = localStorage.getItem(STORAGE_KEYS.dark) === "1";
+  const savedRail = localStorage.getItem(STORAGE_KEYS.rail) === "1";
   // Apply immediately so first paint is correct
   if (savedAccent) document.documentElement.setAttribute("data-accent", savedAccent);
   if (savedDark) document.documentElement.classList.add("dark");
-  return { accent: savedAccent ?? "forest", dark: savedDark };
+  return { accent: savedAccent ?? "forest", dark: savedDark, rail: savedRail };
 }
 
 const initial = loadInitial();
 
+/** Remove `id` from the collapsed list (idempotent). */
+function expandGroupIn(collapsed: string[], id: string): string[] {
+  return collapsed.includes(id) ? collapsed.filter((g) => g !== id) : collapsed;
+}
+
+// Smart-minimal boot state: everything collapsed except the current view's
+// group (default view is dashboard → "overview" is expanded).
+const initialCollapsedGroups = NAV_GROUPS.map((g) => g.id).filter(
+  (id) => id !== groupIdOfView("dashboard")
+);
+
 export const useApp = create<AppState>((set) => ({
   view: "dashboard",
-  setView: (view) => set({ view, sidebarOpen: false }),
+  // Any navigation clears a sidebar project deep-link (show ALL projects)
+  // and auto-expands the target view's group so the active item stays
+  // visible (user-approved behaviour).
+  setView: (view) =>
+    set((s) => ({
+      view,
+      sidebarOpen: false,
+      selectedProjectId: null,
+      collapsedGroups: expandGroupIn(s.collapsedGroups, groupIdOfView(view)),
+    })),
 
   sidebarOpen: false,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+
+  sidebarRail: initial.rail,
+  toggleSidebarRail: () =>
+    set((s) => {
+      const sidebarRail = !s.sidebarRail;
+      if (typeof document !== "undefined") {
+        localStorage.setItem(STORAGE_KEYS.rail, sidebarRail ? "1" : "0");
+      }
+      return { sidebarRail };
+    }),
+
+  collapsedGroups: initialCollapsedGroups,
+  toggleGroup: (groupId) =>
+    set((s) => ({
+      collapsedGroups: s.collapsedGroups.includes(groupId)
+        ? s.collapsedGroups.filter((g) => g !== groupId)
+        : [...s.collapsedGroups, groupId],
+    })),
+
+  selectedProjectId: null,
+  // openProject navigates WITHOUT clearing the selection (unlike setView) —
+  // ProjectsView opens pre-filtered to the chosen project.
+  openProject: (projectId) =>
+    set((s) => ({
+      view: "projects",
+      sidebarOpen: false,
+      selectedProjectId: projectId,
+      collapsedGroups: expandGroupIn(s.collapsedGroups, "work"),
+    })),
+  clearSelectedProject: () => set({ selectedProjectId: null }),
 
   cmdkOpen: false,
   setCmdkOpen: (cmdkOpen) => set({ cmdkOpen }),

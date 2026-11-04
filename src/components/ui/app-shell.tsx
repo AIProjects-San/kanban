@@ -165,7 +165,8 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
 
   return (
     <div className="min-h-screen flex bg-background">
-      <Sidebar />
+      {/* PR-58 — projects feed the sidebar's live Work → Projects submenu. */}
+      <Sidebar projects={data.projects} />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar
           notifs={data.notifications}
