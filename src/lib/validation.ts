@@ -438,3 +438,68 @@ export const taskDoneSchema = z.object({
   taskId: cuidish,
   done: z.boolean(),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// Recruitment module (docs/RECRUITMENT_MODULE_PLAN.md).
+// ---------------------------------------------------------------------------
+
+export const HIRING_STAGE_TYPES = [
+  "SCREENING", "INTERVIEW", "ASSESSMENT", "BG_CHECK", "DOCUMENTS", "OFFER", "CUSTOM",
+] as const;
+export const HIRING_STAGE_STATUSES = [
+  "PENDING", "IN_PROGRESS", "PASSED", "FAILED", "SKIPPED",
+] as const;
+export const CANDIDATE_STATUSES = ["ACTIVE", "HIRED", "REJECTED", "WITHDRAWN"] as const;
+
+export const saveStageTemplateSchema = z.object({
+  id: cuidish.optional(),
+  key: z.string().trim().min(1, "Stage key is required.").max(60)
+    .regex(/^[a-z0-9_]+$/, "Key must be lowercase letters, digits and underscores."),
+  label: z.string().trim().min(1, "Stage label is required.").max(120),
+  stageType: z.enum(HIRING_STAGE_TYPES),
+  ownerRole: z.enum(["ADMIN", "MANAGER", "HR", "MEMBER"]),
+  description: z.string().trim().max(500).default(""),
+  sortOrder: z.number().int().min(0).max(999).default(0),
+  isActive: z.boolean().default(true),
+}).strict();
+
+export const createCandidateSchema = z.object({
+  fullName: z.string().trim().min(1, "Full name is required.").max(120),
+  email,
+  phone: z.string().trim().max(40).default(""),
+  position: z.string().trim().max(120).default(""),
+  department: z.string().trim().max(60).default(""),
+  source: z.string().trim().max(60).default(""),
+  resumeUrl: z.string().trim().max(500).default(""),
+  notes: text.default(""),
+}).strict();
+
+export const updateCandidateSchema = createCandidateSchema.extend({
+  id: cuidish,
+}).strict();
+
+export const setStageStatusSchema = z.object({
+  stageId: cuidish,
+  // PASSED | FAILED | SKIPPED — starting a stage happens via advanceStage.
+  status: z.enum(["PASSED", "FAILED", "SKIPPED"]),
+  remarks: text.default(""),
+}).strict();
+
+export const addCandidateStageSchema = z.object({
+  candidateId: cuidish,
+  label: z.string().trim().min(1, "Stage label is required.").max(120),
+  stageType: z.enum(HIRING_STAGE_TYPES).default("CUSTOM"),
+  // Insert before this stage's sort order (null = append at the end).
+  beforeStageId: cuidish.nullable().optional(),
+}).strict();
+
+export const decideCandidateSchema = z.object({
+  candidateId: cuidish,
+  decision: z.enum(["REJECT", "WITHDRAW", "REACTIVATE"]),
+  // Required for REJECT — it lands in the rejection email (R3).
+  reason: z.string().trim().max(2_000),
+}).strict();
+
+export const deleteStageTemplateSchema = z.object({
+  id: cuidish,
+}).strict();

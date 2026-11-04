@@ -18,7 +18,8 @@ export type ViewKey =
   | "workspace-settings"
   | "bugs"
   | "leave"
-  | "hr";
+  | "hr"
+  | "hiring";
 
 export type AccentTheme = "forest" | "ocean" | "plum" | "ember";
 

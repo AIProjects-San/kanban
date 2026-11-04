@@ -194,3 +194,51 @@ describe("HR module leave models are declared", () => {
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Recruitment module R1 (docs/RECRUITMENT_MODULE_PLAN.md §2) — the pipeline
+// schema contract: unique candidate email, per-candidate stage uniqueness,
+// cascade deletion, and the template-edit snapshot guarantee.
+// ---------------------------------------------------------------------------
+
+describe("Recruitment R1 models are declared", () => {
+  it("Candidate enforces one pipeline record per person (unique email)", () => {
+    const block = modelBlock("Candidate");
+    expect(block).toMatch(/email\s+String\s+@unique/);
+    expect(block).toMatch(/userId\s+String\?/); // set on hire (R6)
+  });
+
+  it("CandidateStage is unique per candidate+stageKey and cascades with its candidate", () => {
+    const block = modelBlock("CandidateStage");
+    expect(block).toMatch(/@@unique\(\[candidateId,\s*stageKey\]\)/);
+    expect(block).toMatch(/onDelete:\s*Cascade/);
+  });
+
+  it("CandidateStage snapshots the template (label + stageType are plain copies)", () => {
+    const block = modelBlock("CandidateStage");
+    expect(block).toMatch(/label\s+String\b/);          // copy, no @relation
+    expect(block).toMatch(/stageType\s+String\s+@default\("CUSTOM"\)/);
+    expect(block).toMatch(/rating\s+Int\?/);            // R2 scorecard slot
+  });
+
+  it("HiringStageConfig carries the template vocabulary + active flag", () => {
+    const block = modelBlock("HiringStageConfig");
+    expect(block).toMatch(/key\s+String\s+@unique/);
+    expect(block).toMatch(/isActive\s+Boolean\s+@default\(true\)/);
+    expect(block).toMatch(/sortOrder\s+Int\s+@default\(0\)/);
+  });
+
+  it("indexes the hot hiring query paths (status, ownerUserId, candidateId)", () => {
+    const block = modelBlock("CandidateStage");
+    expect(block).toMatch(/@@index\(\[candidateId\]\)/);
+    expect(block).toMatch(/@@index\(\[ownerUserId\]\)/);
+    expect(block).toMatch(/@@index\(\[status\]\)/);
+    expect(modelBlock("Candidate")).toMatch(/@@index\(\[status\]\)/);
+  });
+
+  it("the hiring_foundation migration exists with a down.sql rollback (repo convention)", () => {
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261111000000_hiring_foundation");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+  });
+});

@@ -79,6 +79,11 @@ const HRView = dynamic(() => import("@/components/views/hr-view").then(m => ({ d
   loading: () => <div className="p-6 text-sm text-muted-foreground">Loading HR console…</div>,
 });
 
+const HiringView = dynamic(() => import("@/components/views/hiring-view").then(m => ({ default: m.HiringView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading hiring pipeline…</div>,
+});
+
 interface AppShellProps {
   data: {
     projects: ProjectT[];
@@ -282,6 +287,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
             )}
             {view === "leave" && <LeaveView currentUser={user} />}
             {view === "hr" && <HRView currentUser={user} />}
+            {view === "hiring" && <HiringView currentUser={user} />}
           </div>
         </main>
       </div>

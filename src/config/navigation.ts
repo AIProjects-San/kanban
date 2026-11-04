@@ -13,6 +13,7 @@ import {
   Bug,
   CalendarDays,
   Briefcase,
+  UserPlus,
 } from "lucide-react";
 // Type-only import — erased at runtime, so the store may import this module
 // (for group bookkeeping) without creating a require cycle.
@@ -101,6 +102,10 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       // HR console (queue / types & policies) needs hr:view (Admin, Manager, HR).
       { key: "hr", label: "HR Console", paletteLabel: "HR", icon: Briefcase, shortcut: "G R", shortcutKey: "r", permission: "hr:view" },
+      // Recruitment pipeline (docs/RECRUITMENT_MODULE_PLAN.md) — hiring:view
+      // (Admin, HR, Manager-as-interviewer). Inside the HR group so MEMBER
+      // never sees the group at all (e2e contract).
+      { key: "hiring", label: "Hiring", paletteLabel: "Hiring pipeline", icon: UserPlus, shortcut: "G I", shortcutKey: "i", permission: "hiring:view" },
     ],
   },
   {

@@ -105,6 +105,8 @@ async function main() {
   await db.departmentConfig.deleteMany();
   await db.projectAssignment.deleteMany();
   await db.workspace.deleteMany();
+  await db.candidate.deleteMany();
+  await db.hiringStageConfig.deleteMany();
 
   // -----------------------------------------------------------------
   // Workspace settings
@@ -1397,6 +1399,110 @@ async function main() {
   }
 
 
+
+  // -----------------------------------------------------------------
+  // Recruitment module — hiring pipeline seed (docs/RECRUITMENT_MODULE_PLAN.md).
+  // Stage template defaults mirror the researched 7-step funnel (§1.2A);
+  // candidates snapshot the template exactly like createCandidate does.
+  // -----------------------------------------------------------------
+  const STAGE_TEMPLATE = [
+    { key: "screening", label: "Application Screening", stageType: "SCREENING", ownerRole: "HR", description: "Resume + phone screen; reduce the pool", sortOrder: 10 },
+    { key: "interview_1", label: "Interview 1 — Technical", stageType: "INTERVIEW", ownerRole: "MANAGER", description: "Role suitability, structured (STAR)", sortOrder: 20 },
+    { key: "interview_2", label: "Interview 2 — HR & Culture", stageType: "INTERVIEW", ownerRole: "HR", description: "Values, communication, team fit", sortOrder: 30 },
+    { key: "assessment", label: "Assessment / Work Sample", stageType: "ASSESSMENT", ownerRole: "HR", description: "Optional work sample or test task", sortOrder: 40 },
+    { key: "bg_check", label: "Background Check", stageType: "BG_CHECK", ownerRole: "HR", description: "Trigger on offer acceptance (research B)", sortOrder: 50 },
+    { key: "documents", label: "Document Collection", stageType: "DOCUMENTS", ownerRole: "HR", description: "ID, bank, education, experience letters", sortOrder: 60 },
+    { key: "offer", label: "Offer & Signature", stageType: "OFFER", ownerRole: "HR", description: "Offer letter + e-signature", sortOrder: 70 },
+  ];
+  for (const s of STAGE_TEMPLATE) {
+    await db.hiringStageConfig.create({ data: s });
+  }
+
+  const managerIdForInterviews = managerUser.id;
+  const hrUserId = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? null;
+  // (stageKey, status) per candidate — the timeline shape per person.
+  const CANDIDATES = [
+    {
+      fullName: "Nadia Petrova", email: "nadia.petrova@example.com", phone: "+64 21 555 0101",
+      position: "Senior Frontend Engineer", department: "ENGINEERING", source: "Referral",
+      notes: "Strong React + a11y background; referred by Ingrid.",
+      progress: [["screening", "PASSED"], ["interview_1", "PASSED"], ["interview_2", "IN_PROGRESS"]],
+    },
+    {
+      fullName: "Sam Whitaker", email: "sam.whitaker@example.com", phone: "+64 22 555 0102",
+      position: "Backend Engineer", department: "ENGINEERING", source: "Job board",
+      notes: "Go + Postgres; take-home pending.",
+      progress: [["screening", "PASSED"], ["interview_1", "IN_PROGRESS"]],
+    },
+    {
+      fullName: "Priyanka Menon", email: "priyanka.menon@example.com", phone: "+64 27 555 0103",
+      position: "Product Designer", department: "DESIGN", source: "Website",
+      notes: "Great portfolio; second loop to schedule.",
+      progress: [["screening", "PASSED"], ["interview_1", "PASSED"], ["interview_2", "PASSED"], ["assessment", "IN_PROGRESS"]],
+    },
+    {
+      fullName: "Tomas Eriksen", email: "tomas.eriksen@example.com", phone: "+64 3 555 0104",
+      position: "QA Engineer", department: "ENGINEERING", source: "Agency",
+      notes: "Screening call done — scheduling tech interview.",
+      progress: [["screening", "PASSED"], ["interview_1", "PENDING"]],
+    },
+    {
+      fullName: "Aisha Rahman", email: "aisha.rahman@example.com", phone: "+64 21 555 0105",
+      position: "Content Strategist", department: "MARKETING", source: "Referral",
+      notes: "Fresh applicant.",
+      progress: [["screening", "IN_PROGRESS"]],
+    },
+    {
+      fullName: "Vikram Singh", email: "vikram.singh@example.com", phone: "+64 29 555 0106",
+      position: "DevOps Engineer", department: "ENGINEERING", source: "Job board",
+      notes: "Withdrew — accepted another offer.",
+      status: "WITHDRAWN",
+      progress: [["screening", "PASSED"], ["interview_1", "PASSED"]],
+    },
+    {
+      fullName: "Elena Moreau", email: "elena.moreau@example.com", phone: "+64 22 555 0107",
+      position: "Backend Engineer", department: "ENGINEERING", source: "Job board",
+      notes: "Rejected after technical loop — fundamentals gap.",
+      status: "REJECTED",
+      rejectReason: "Technical depth below the bar for the seniority level.",
+      progress: [["screening", "PASSED"], ["interview_1", "FAILED"]],
+    },
+  ];
+  for (const c of CANDIDATES) {
+    await db.candidate.create({
+      data: {
+        fullName: c.fullName,
+        email: c.email,
+        phone: c.phone,
+        position: c.position,
+        department: c.department,
+        source: c.source,
+        notes: c.notes,
+        status: c.status ?? "ACTIVE",
+        rejectReason: c.rejectReason ?? "",
+        createdById: demoUser.id,
+        decidedAt: c.status && c.status !== "ACTIVE" ? addDays(TODAY, -2) : null,
+        stages: {
+          create: STAGE_TEMPLATE.map((t) => {
+            const own = (c.progress ?? []).find(([k]) => k === t.key);
+            const status = own ? own[1] : "PENDING";
+            return {
+              stageKey: t.key,
+              label: t.label,
+              stageType: t.stageType,
+              ownerUserId: t.ownerRole === "MANAGER" ? managerIdForInterviews : hrUserId,
+              status,
+              remarks: "",
+              sortOrder: t.sortOrder,
+              startedAt: status !== "PENDING" ? addDays(TODAY, -5) : null,
+              completedAt: status === "PASSED" || status === "FAILED" ? addDays(TODAY, -3) : null,
+            };
+          }),
+        },
+      },
+    });
+  }
+  console.log(`  ✓ Hiring: ${STAGE_TEMPLATE.length}-stage template + ${CANDIDATES.length} candidates (5 active, 1 rejected, 1 withdrawn)`);
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);
 }

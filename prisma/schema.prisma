@@ -900,3 +900,104 @@ model OnboardingTask {
   @@index([checklistId])
   @@index([assigneeId])
 }
+
+// ---------------------------------------------------------------------------
+// Recruitment module (docs/RECRUITMENT_MODULE_PLAN.md).
+//
+// Same philosophy as the HR models above: relation-light (plain string FKs to
+// User), SQLite-compatible types, names resolved via bulk lookups. The only
+// relation is Candidate → CandidateStage (cascade), because a stage instance
+// has no meaning without its candidate.
+//
+// Configurability contract (user decision 2026-11-04): the workspace stage
+// TEMPLATE (HiringStageConfig) is fully editable — add/rename/reorder/retype
+// stages per company. Every candidate SNAPSHOTS the template at creation time
+// (CandidateStage.label/stageType are copies), so template edits never rewrite
+// a candidate's history; per-candidate override = SKIPPED stages or extra
+// custom stages added to one person.
+// ---------------------------------------------------------------------------
+
+// A stage in the workspace's hiring pipeline template. ownerRole is the
+// DEFAULT owner (display hint; concrete per-candidate owner is
+// CandidateStage.ownerUserId — e.g. the assigned interviewer).
+model HiringStageConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  // SCREENING | INTERVIEW | ASSESSMENT | BG_CHECK | DOCUMENTS | OFFER | CUSTOM
+  stageType   String   @default("CUSTOM")
+  // HR | MANAGER | ADMIN — who drives this stage by default.
+  ownerRole   String   @default("HR")
+  description String   @default("")
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// A person moving through the pipeline. Email is unique — one pipeline record
+// per person (re-applicants are handled by reopening, not duplicating).
+// status: ACTIVE → HIRED | REJECTED | WITHDRAWN. userId is set when the
+// candidate joins and their employee account is created (R6).
+model Candidate {
+  id           String    @id @default(cuid())
+  fullName     String
+  email        String    @unique
+  phone        String    @default("")
+  // Free-text job title applied for (e.g. "Senior Frontend Engineer").
+  position     String    @default("")
+  // DepartmentConfig key (ENGINEERING | DESIGN | ...) — "" = unclassified.
+  department   String    @default("")
+  // Where the applicant came from: referral / job board / website / agency…
+  source       String    @default("")
+  resumeUrl    String    @default("")
+  notes        String    @default("")
+  status       String    @default("ACTIVE")
+  // Required when status = REJECTED (validation-enforced) — the reason is also
+  // merged into the rejection email (R3).
+  rejectReason String    @default("")
+  decidedAt    DateTime?
+  decidedById  String?
+  createdById  String    @default("")
+  userId       String?
+  joinedAt     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  stages CandidateStage[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+// One instantiated stage on one candidate. label/stageType are SNAPSHOTS of
+// the template at candidate-creation time. status: PENDING → IN_PROGRESS →
+// PASSED | FAILED, plus SKIPPED (per-candidate override). rating is the 1–5
+// scorecard score (R2 interview scorecards; validated 1..5 when present).
+model CandidateStage {
+  id          String    @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  // Template key snapshotted — unique per candidate so a stage can exist once.
+  stageKey    String
+  label       String
+  stageType   String    @default("CUSTOM")
+  // Concrete owner (e.g. the assigned interviewer); null = the default owner
+  // role from the template drives it.
+  ownerUserId String?
+  status      String    @default("PENDING")
+  scheduledAt DateTime?
+  remarks     String    @default("")
+  rating      Int?
+  sortOrder   Int       @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([candidateId, stageKey])
+  @@index([candidateId])
+  @@index([ownerUserId])
+  @@index([status])
+}

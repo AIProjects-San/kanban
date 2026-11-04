@@ -36,7 +36,13 @@ export type Permission =
   | "hr:admin"
   | "leave:request"
   | "review:manage"
-  | "onboarding:manage";
+  | "onboarding:manage"
+  // Recruitment module (docs/RECRUITMENT_MODULE_PLAN.md §3) — HR-driven:
+  // HR + ADMIN drive the pipeline; MANAGERs see the board because they are
+  // interviewers (R2 assigns them stages), but cannot create/advance.
+  | "hiring:view"
+  | "hiring:manage"
+  | "hiring:config";
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ADMIN: [
@@ -48,6 +54,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "audit:view",
     "bug:create", "bug:edit:any", "bug:edit:own", "bug:delete", "bug:assign",
     "hr:view", "hr:admin", "leave:request", "review:manage", "onboarding:manage",
+    "hiring:view", "hiring:manage", "hiring:config",
   ],
   MANAGER: [
     "task:create", "task:edit:any", "task:edit:own",
@@ -58,6 +65,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "audit:view",
     "bug:create", "bug:edit:any", "bug:edit:own", "bug:assign",
     "hr:view", "leave:request", "review:manage",
+    "hiring:view",
   ],
   MEMBER: [
     "task:create", "task:edit:own",
@@ -75,6 +83,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "settings:edit", "analytics:view", "team:view",
     "leave:request",
     "hr:view", "hr:admin", "review:manage", "onboarding:manage",
+    "hiring:view", "hiring:manage", "hiring:config",
   ],
 };
 
@@ -121,6 +130,9 @@ export const ALL_PERMISSIONS: { key: Permission; label: string; description: str
   { key: "leave:request", label: "Request leave", description: "Submit time-off requests and see own balances" },
   { key: "review:manage", label: "Manage reviews", description: "Create performance review cycles for direct reports" },
   { key: "onboarding:manage", label: "Manage onboarding", description: "Create and assign onboarding checklists" },
+  { key: "hiring:view", label: "View hiring pipeline", description: "See the candidate board and stage timelines (interviewers included)" },
+  { key: "hiring:manage", label: "Manage hiring", description: "Create candidates, advance stages and decide outcomes in the recruitment pipeline" },
+  { key: "hiring:config", label: "Configure hiring", description: "Edit the workspace hiring stage template and document types" },
 ];
 
 export function hasPermission(role: Role | undefined | null, permission: Permission): boolean {

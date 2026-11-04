@@ -52,6 +52,18 @@ keystroke-reachable. Groups below match the sidebar.
 - **HR Console** (`G R`) — leave request queue with approve/reject, leave types &
   policies administration, employee directory, performance review cycles, and
   onboarding checklists with per-task progress.
+- **Hiring** (`G I`, gated by `hiring:view`) — the recruitment pipeline
+  ([plan](docs/RECRUITMENT_MODULE_PLAN.md)): a configurable stage board
+  (screening → interviews → assessment → background check → documents → offer,
+  fully editable per company) with candidates as cards. HR/ADMIN manage the
+  pipeline (advance / skip / fail stages, add per-candidate custom stages,
+  reject **with a stored reason** or withdraw), MANAGERs get an interviewer's
+  read view. Candidates snapshot the template at creation, so template edits
+  never rewrite history. Rejected / withdrawn / hired pools sit behind a status
+  filter. Every hiring mutation lands in the audit log. (Interview
+  scheduling + scorecards, rejection emails via an auditable outbox, document
+  checklists, the offer builder + e-signature, auto employee creation on
+  joining, and full payroll follow in milestones R2–R8.)
 
 **Administration**
 - **Users** (`G U`, admin) — create (login + directory entry in one action), edit,
@@ -149,7 +161,7 @@ contains **no credential literals**; the seed refuses to run without it):
 CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR: lint →
 typecheck → coverage-gated unit tests → production build → bundle budget →
 dependency audit → **e2e** on a seeded ephemeral PostgreSQL 16 with headless
-Chrome (64 scenarios across 11 feature files: login & lockout, RBAC, tasks,
+Chrome (69 scenarios across 12 feature files: login & lockout, RBAC, tasks, hiring,
 messaging, a11y, HR leave/directory/reviews/onboarding, QA hardening).
 
 ## Keyboard shortcuts
@@ -160,6 +172,7 @@ messaging, a11y, HR leave/directory/reviews/onboarding, QA hardening).
 | `G P` / `G T` / `G B` | Projects / Tasks / Bugs |
 | `G M` / `G C` / `G V` | Team / Calendar / Leave |
 | `G R` | HR Console (needs `hr:view`) |
+| `G I` | Hiring pipeline (needs `hiring:view`) |
 | `G U` / `G W` / `G L` | Users / Workspace Config / Audit Log (admin) |
 | `G S` / `G H` | Settings / Help |
 | `⌘K` / `Ctrl K` | Command palette |
@@ -223,7 +236,7 @@ src/
   lib/                 # pure logic (rbac, hierarchy, jwt, validation, …)
   styles/              # tokens.css + globals.css
 prisma/                # schema (37 models) + migrations + seed
-e2e/                   # Cucumber + Selenium suite (11 feature files)
+e2e/                   # Cucumber + Selenium suite (12 feature files)
 scripts/               # seed, gates (bundle/audit/prod-smoke), load tests
 docs/                  # the documentation set below
 deploy/                # Caddy/nginx TLS configs, sandbox preview helper
@@ -234,7 +247,7 @@ deploy/                # Caddy/nginx TLS configs, sandbox preview helper
 | Layer | Tool | Scale |
 |-------|------|-------|
 | Unit / integration | Vitest + jsdom (82 files) | **1484 tests**, coverage-gated |
-| Browser E2E | Cucumber + Selenium | 64 scenarios / 11 feature files |
+| Browser E2E | Cucumber + Selenium | 69 scenarios / 12 feature files |
 | Production smoke | `test:prodsmoke` | health, headers, CSP, credential flow |
 | Load | k6 + `scripts/load-smoke.mjs` | p95 budgets incl. a 100k-row dataset (`scripts/seed-load.js`) |
 
@@ -277,6 +290,7 @@ inventory and the honest list of accepted risks.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Deployment runbook (docker compose, upgrades, rollback) |
 | [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) | Launch-readiness review: findings, fixes, gates, load results |
 | [`docs/HR_MODULE_PLAN.md`](docs/HR_MODULE_PLAN.md) | HR module plan & delivery record (leave, directory, reviews, onboarding) |
+| [`docs/RECRUITMENT_MODULE_PLAN.md`](docs/RECRUITMENT_MODULE_PLAN.md) | Recruitment & joining-formalities plan: researched process, data model, milestones R1–R8 (hiring → offers → payroll) |
 | [`docs/BACKUP_RECOVERY.md`](docs/BACKUP_RECOVERY.md) | RPO/RTO targets, restore procedures, drill schedule |
 | [`docs/STATUS_AND_ONCALL.md`](docs/STATUS_AND_ONCALL.md) | Status page + on-call runbooks |
 | [`docs/DB_REGION_DECISION.md`](docs/DB_REGION_DECISION.md) | Supabase region decision & measurement plan |

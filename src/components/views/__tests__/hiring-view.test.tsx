@@ -1,0 +1,132 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+
+// ---------------------------------------------------------------------------
+// Recruitment R1 — Hiring board view tests (docs/RECRUITMENT_MODULE_PLAN.md §6).
+//
+//   • HR — full board: columns per active stage, cards at their current
+//     stage, manage controls (Add candidate) + template editor visible.
+//   • MANAGER — interviewer view: board visible, manage/config controls
+//     hidden (hiring:view only).
+//   • Status filter — REJECTED pool shows the rejection reason.
+//   • Opening a candidate renders the stage timeline + advance button.
+// ---------------------------------------------------------------------------
+
+const { getHiringBoard, getHiringPermissions, advanceStage } = vi.hoisted(() => ({
+  getHiringBoard: vi.fn(),
+  getHiringPermissions: vi.fn(),
+  advanceStage: vi.fn(),
+}));
+
+vi.mock("@/server-actions/hiring", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server-actions/hiring")>()),
+  getHiringBoard,
+  getHiringPermissions,
+  advanceStage,
+}));
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The detail/create/template modals are covered by their own suites; stub
+// them so this file pins the BOARD contract only.
+vi.mock("@/components/ui/candidate-modal", () => ({
+  CandidateModal: () => <div data-testid="candidate-modal-stub" />,
+}));
+vi.mock("@/components/ui/candidate-detail-modal", () => ({
+  CandidateDetailModal: () => <div data-testid="candidate-detail-stub" />,
+}));
+vi.mock("@/components/ui/hiring-stage-modal", () => ({
+  HiringStageModal: () => <div data-testid="stage-modal-stub" />,
+}));
+
+import { HiringView } from "@/components/views/hiring-view";
+import type { CandidateT, HiringStageConfigT } from "@/lib/types";
+
+const STAGES: HiringStageConfigT[] = [
+  { id: "tpl-1", key: "screening", label: "Application Screening", stageType: "SCREENING", ownerRole: "HR", description: "", sortOrder: 10, isActive: true },
+  { id: "tpl-2", key: "interview_1", label: "Interview 1 — Technical", stageType: "INTERVIEW", ownerRole: "MANAGER", description: "", sortOrder: 20, isActive: true },
+  { id: "tpl-3", key: "old", label: "Old stage", stageType: "CUSTOM", ownerRole: "HR", description: "", sortOrder: 80, isActive: false },
+];
+
+function cand(overrides: Partial<CandidateT>): CandidateT {
+  return {
+    id: "cand-1", fullName: "Nadia Petrova", email: "nadia@example.com", phone: "",
+    position: "Senior Frontend Engineer", department: "ENGINEERING", source: "Referral",
+    resumeUrl: "", notes: "", status: "ACTIVE", rejectReason: "", decidedAt: null,
+    createdById: "u-admin", userId: null, joinedAt: null,
+    createdAt: new Date().toISOString(),
+    stages: [
+      { id: "st-1", stageKey: "screening", label: "Application Screening", stageType: "SCREENING", ownerUserId: null, ownerName: null, status: "PASSED", scheduledAt: null, remarks: "", rating: null, sortOrder: 10, startedAt: null, completedAt: null },
+      { id: "st-2", stageKey: "interview_1", label: "Interview 1 — Technical", stageType: "INTERVIEW", ownerUserId: "u-mgr", ownerName: "Ingrid", status: "IN_PROGRESS", scheduledAt: null, remarks: "", rating: null, sortOrder: 20, startedAt: null, completedAt: null },
+    ],
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  getHiringBoard.mockResolvedValue({
+    ok: true,
+    data: { stages: STAGES, candidates: [cand({})] },
+  });
+  getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: true, canConfig: true } });
+});
+
+describe("HiringView: HR (full manage)", () => {
+  it("renders one column per ACTIVE template stage with counts and the candidate card at its current stage", async () => {
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
+    expect(screen.getByTestId("stage-column-interview_1")).toBeTruthy();
+    // Inactive template stages never render as columns.
+    expect(screen.queryByTestId("stage-column-old")).toBeNull();
+    // Nadia's current stage is interview_1 (IN_PROGRESS).
+    const col = screen.getByTestId("stage-column-interview_1");
+    expect(col.querySelector('[data-testid="candidate-card"]')).toBeTruthy();
+    expect(screen.getByText("Nadia Petrova")).toBeTruthy();
+  });
+
+  it("shows the manage + config controls (hiring:manage / hiring:config)", async () => {
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    expect(await screen.findByTestId("add-candidate-btn")).toBeTruthy();
+    expect(screen.getByTestId("stage-template-btn")).toBeTruthy();
+  });
+
+  it("the REJECTED pool shows the rejection reason", async () => {
+    getHiringBoard.mockResolvedValue({
+      ok: true,
+      data: {
+        stages: STAGES,
+        candidates: [cand({ status: "REJECTED", rejectReason: "Depth below bar" })],
+      },
+    });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    fireEvent.click(await screen.findByTestId("hiring-filter-rejected"));
+    expect(await screen.findByText(/Depth below bar/)).toBeTruthy();
+  });
+});
+
+describe("HiringView: MANAGER (interviewer, view-only)", () => {
+  it("renders the board but hides manage/config controls", async () => {
+    getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: false, canConfig: false } });
+    render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
+    expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
+    expect(screen.queryByTestId("add-candidate-btn")).toBeNull();
+    expect(screen.queryByTestId("stage-template-btn")).toBeNull();
+    expect(screen.getByText(/interviewer view/)).toBeTruthy();
+  });
+});
+
+describe("HiringView: empty template", () => {
+  it("explains that no stages are configured", async () => {
+    getHiringBoard.mockResolvedValue({ ok: true, data: { stages: [], candidates: [] } });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    expect(await screen.findByText(/No active stages in the template/)).toBeTruthy();
+  });
+
+  it("surfaces a board fetch error as a toast", async () => {
+    getHiringBoard.mockResolvedValue({ ok: false, code: "AUTH", error: "denied" });
+    const { toast } = await import("sonner");
+    render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("denied"));
+  });
+});

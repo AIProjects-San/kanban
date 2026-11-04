@@ -91,7 +91,17 @@ export type AuditAction =
   | "onboarding.created"
   | "onboarding.task_added"
   | "onboarding.task_done"
-  | "onboarding.task_undone";
+  | "onboarding.task_undone"
+  // Recruitment module lifecycle (docs/RECRUITMENT_MODULE_PLAN.md)
+  | "hiring.candidate_created"
+  | "hiring.candidate_updated"
+  | "hiring.candidate_deleted"
+  | "hiring.stage_advanced"
+  | "hiring.stage_status_changed"
+  | "hiring.stage_added"
+  | "hiring.decided"
+  | "hiring.stage_template_saved"
+  | "hiring.stage_template_deleted";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -184,6 +194,16 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "onboarding.task_added": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
+
+  "hiring.candidate_created": { icon: UserPlus, cls: "text-primary bg-primary/10" },
+  "hiring.candidate_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "hiring.candidate_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "hiring.stage_advanced": { icon: ArrowRightLeft, cls: "text-amber-500 bg-amber-500/10" },
+  "hiring.stage_status_changed": { icon: ArrowRightLeft, cls: "text-indigo-500 bg-indigo-500/10" },
+  "hiring.stage_added": { icon: Plus, cls: "text-indigo-500 bg-indigo-500/10" },
+  "hiring.decided": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hiring.stage_template_saved": { icon: Settings, cls: "text-purple-500 bg-purple-500/10" },
+  "hiring.stage_template_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with
@@ -220,6 +240,7 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   WORKSPACE: { label: "Workspace", cls: "bg-purple-500/10 text-purple-700" },
   CONFIG: { label: "Config", cls: "bg-violet-500/10 text-violet-700" },
   BUG: { label: "Bug", cls: "bg-red-500/10 text-red-700" },
+  CANDIDATE: { label: "Candidate", cls: "bg-teal-500/10 text-teal-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -246,6 +267,7 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "tasks", label: "Tasks", types: ["TASK"] },
   { key: "projects", label: "Projects", types: ["PROJECT"] },
   { key: "bugs", label: "Bugs", types: ["BUG"] },
+  { key: "hiring", label: "Hiring", types: ["CANDIDATE"] },
   { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },

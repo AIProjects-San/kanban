@@ -184,7 +184,22 @@ Execute each group per persona. ✅ = pass criterion.
 | AUD-3 | Entity history | Open a task's edit modal → expand history | Last ≤ 50 entries for that task only |
 | AUD-4 | Access control | MEMBER calls `getAuditLogs` in console | Rejected (audit:view required) |
 
-### 2.13 Personalisation & UX (UX)
+### 2.13 Hiring pipeline (HIRE) — Recruitment R1 (docs/RECRUITMENT_MODULE_PLAN.md)
+
+| ID | Scenario | Steps | Expected |
+|----|----------|-------|----------|
+| HIRE-1 | Board renders (HR) | Sign in as `remy@fernly.app` → Hiring (`G I`) | Columns for every seeded active stage; candidate cards sit at their current stage; counts per column |
+| HIRE-2 | MEMBER gated | Sign in as `member@fernly.app` | No "Hiring" nav item at all (HR group hidden); `G I` does nothing |
+| HIRE-3 | MANAGER view-only | Sign in as `manager@fernly.app` → Hiring | Board visible with "interviewer view" hint; no Add-candidate / Stages controls |
+| HIRE-4 | Add candidate | HR → Add candidate → fill the form | Card appears in the first column; detail shows the full template timeline; audit entry "hiring.candidate_created" |
+| HIRE-5 | Advance stage | Open a candidate → "Pass <stage>" | Current stage PASSED with date; next stage IN_PROGRESS; card moves column |
+| HIRE-6 | Skip / fail stage | Skip an upcoming stage; mark another failed | Stage SKIPPED/FAILED; card reflects the next open stage; audit entries written |
+| HIRE-7 | Reject needs a reason | Reject with an empty reason, then with one | Empty reason blocked; with a reason the card leaves the board, appears under the Rejected filter with the reason shown |
+| HIRE-8 | Withdraw / reactivate | Withdraw a candidate, then reactivate | Status flips; reactivated candidate returns to the board at its last stage |
+| HIRE-9 | Template edit is non-destructive | Stages editor → rename a stage → open an existing candidate | Template renamed; the existing candidate's timeline keeps the OLD snapshotted label |
+| HIRE-10 | Config gating | As MANAGER open Hiring | "Stages" editor button hidden (no `hiring:config`) |
+
+### 2.14 Personalisation & UX (UX)
 
 | ID | Scenario | Steps | Expected |
 |----|----------|-------|----------|
@@ -198,7 +213,7 @@ Execute each group per persona. ✅ = pass criterion.
 | UX-8 | Sidebar accordion | Expand a nav group, then another | Only one group open at a time; the previous collapses; reloading keeps the current view's group expanded; the icon-rail toggle is remembered |
 | UX-9 | Project detail modal | Open a project card | Wide modal; Members + History collapsed by default, expandable; roster shows staffing count |
 
-### 2.14 Regression pack (run after any security-touching change)
+### 2.15 Regression pack (run after any security-touching change)
 
 AUTH-5, AUTH-10, RBAC-6, RBAC-7, TASK-8/10, ANL-2/3/4, HR-2/3, MSG-4/6/7, USR-8,
 AUD-4 — these mirror the automated security suite; they exist as manual steps for

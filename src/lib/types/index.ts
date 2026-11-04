@@ -306,3 +306,54 @@ export const EMPTY_DASHBOARD_DATA: DashboardData = {
   managedUserIds: [],
   effectivePermissions: [],
 };
+
+// ---------------------------------------------------------------------------
+// Recruitment module types (docs/RECRUITMENT_MODULE_PLAN.md).
+// ---------------------------------------------------------------------------
+
+export interface HiringStageConfigT {
+  id: string;
+  key: string;
+  label: string;
+  stageType: string;
+  ownerRole: string;
+  description: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface CandidateStageT {
+  id: string;
+  stageKey: string;
+  label: string;
+  stageType: string;
+  ownerUserId: string | null;
+  ownerName: string | null;
+  status: string;
+  scheduledAt: string | null;
+  remarks: string;
+  rating: number | null;
+  sortOrder: number;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface CandidateT {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  position: string;
+  department: string;
+  source: string;
+  resumeUrl: string;
+  notes: string;
+  status: string;
+  rejectReason: string;
+  decidedAt: string | null;
+  createdById: string;
+  userId: string | null;
+  joinedAt: string | null;
+  createdAt: string;
+  stages: CandidateStageT[];
+}
