@@ -11,9 +11,8 @@ import {
 } from "lucide-react";
 import { useApp } from "@/store/app-store";
 import { navLeaves } from "@/config/navigation";
-import { hasPermission, type Role } from "@/lib/rbac";
+import { usePermissions } from "@/hooks/use-permissions";
 import { ACCENTS } from "@/lib/constants";
-import { useAppSession } from "@/hooks/use-app-session";
 
 interface CmdItem {
   id: string;
@@ -31,9 +30,10 @@ export function CommandPalette() {
     dark, setDark, setAccent,
   } = useApp();
   const [query, setQuery] = useState("");
-  const { data: session } = useAppSession();
-  const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
-  const canManageRoles = hasPermission(role, "role:manage");
+  // PR-64 — `can` uses the server-computed effective permissions (static ∪
+  // DB ceiling), so role-permission saves reflect for logged-in users.
+  const { can } = usePermissions();
+  const canManageRoles = can("role:manage");
 
   // Every close path (Escape, ⌘K toggle, item action, backdrop click) goes
   // through this helper so the search box always resets — no effect needed
@@ -66,7 +66,7 @@ export function CommandPalette() {
     // drift apart. Role-gated entries are filtered by the same permission
     // the sidebar applies per leaf.
     const nav = navLeaves()
-      .filter((l) => !l.permission || hasPermission(role, l.permission))
+      .filter((l) => !l.permission || can(l.permission))
       .map((l) => ({ key: l.key, label: l.paletteLabel ?? l.label, icon: l.icon }));
     return [
       ...nav.map((n) => ({
@@ -126,7 +126,7 @@ export function CommandPalette() {
         };
       }),
     ];
-  }, [setView, closeCmdk, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, role]);
+  }, [setView, closeCmdk, openTaskModal, openProjectModal, openUserModal, dark, setDark, setAccent, canManageRoles, can]);
 
   const filtered = items.filter((i) =>
     i.label.toLowerCase().includes(query.toLowerCase())

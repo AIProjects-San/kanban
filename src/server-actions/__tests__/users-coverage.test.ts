@@ -93,6 +93,13 @@ vi.mock("@/lib/auth-revoke", () => ({
   revokeUserSessionsIfActive: (...a: unknown[]) => revokeUserSessionsIfActiveMock(...a),
 }));
 
+// PR-64 — getMyPermissions (live RBAC) delegates to the config-loader; the
+// loader has its own suite (config-loader.test.ts), so mock it here.
+const getEffectivePermissionsMock = vi.fn();
+vi.mock("@/lib/config-loader", () => ({
+  getEffectivePermissions: (...a: unknown[]) => getEffectivePermissionsMock(...a),
+}));
+
 import {
   getUserProfile,
   updateUserSettings,
@@ -102,6 +109,7 @@ import {
   updateUser,
   deleteUser,
   signOutAllDevices,
+  getMyPermissions,
 } from "@/server-actions/users";
 // The mocked module's class — toResult() instanceof-checks against THIS
 // constructor, so rejections must be real instances of it.
@@ -168,6 +176,24 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // getUserProfile — line 39
 // ---------------------------------------------------------------------------
+
+describe("getMyPermissions (PR-64 live RBAC)", () => {
+  it("returns the effective set for the signed-in user's role", async () => {
+    getSessionOrThrowMock.mockResolvedValue({ userId: "u-1", role: "MEMBER", name: "M", email: "m@x.co" });
+    getEffectivePermissionsMock.mockResolvedValue(["task:edit:own", "hr:view"]);
+    const perms = expectOk(await getMyPermissions());
+    expect(perms).toEqual(["task:edit:own", "hr:view"]);
+    expect(getEffectivePermissionsMock).toHaveBeenCalledWith("MEMBER");
+  });
+
+  it("anonymous callers get a sign-in error, not a permission list", async () => {
+    getSessionOrThrowMock.mockRejectedValue(
+      new AuthorizationError("You must be signed in."),
+    );
+    expectErr(await getMyPermissions(), /signed in/i);
+    expect(getEffectivePermissionsMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("getUserProfile not-found branch", () => {
   it("returns null when the account row is missing (line 39)", async () => {

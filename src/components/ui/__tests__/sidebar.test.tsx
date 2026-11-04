@@ -53,6 +53,8 @@ function resetStore(view = "dashboard") {
     sidebarRail: false,
     collapsedGroups: bootCollapsedFor(view),
     cmdkOpen: false,
+    // PR-64 — fresh permission state per test (null = static fallback).
+    effectivePermissions: null,
   });
   localStorage.clear();
 }
@@ -197,6 +199,55 @@ describe("Sidebar: collapsible groups (smart minimal)", () => {
     for (const label of ["Overview", "Work", "People", "Administration", "General"]) {
       expect(headerOf(label).getAttribute("aria-expanded")).toBe("false");
     }
+  });
+});
+
+describe("Sidebar: PR-64 live RBAC (effective permissions)", () => {
+  it("a DB-granted permission reveals the gated group for a logged-in MEMBER", () => {
+    useSession.mockReturnValue({
+      data: { user: { id: "u-member", role: "MEMBER" } },
+      isPending: false,
+      error: null,
+    });
+    resetStore();
+    // The admin granted MEMBER hr:view in the role editor; the
+    // getMyPermissions poll delivered the effective set to the store.
+    act(() => {
+      useApp.getState().setEffectivePermissions([
+        "task:edit:own", "hr:view", "leave:request",
+      ]);
+    });
+    render(<Sidebar />);
+    // HR Console (hr:view) is now reachable…
+    expect(screen.getAllByText("HR").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("HR Console").length).toBeGreaterThan(0);
+    // …while a permission still missing keeps its gate (audit:view).
+    expect(screen.queryByText("Audit Log")).toBeNull();
+  });
+
+  it("removing a DB grant hides the gated item again (no re-login)", () => {
+    useSession.mockReturnValue({
+      data: { user: { id: "u-member", role: "MEMBER" } },
+      isPending: false,
+      error: null,
+    });
+    resetStore();
+    act(() => {
+      useApp.getState().setEffectivePermissions([
+        "task:edit:own", "hr:view", "audit:view",
+      ]);
+    });
+    const { unmount } = render(<Sidebar />);
+    expect(screen.getAllByText("Audit Log").length).toBeGreaterThan(0);
+    unmount();
+
+    // The admin revokes audit:view; the next poll shrinks the set.
+    resetStore();
+    act(() => {
+      useApp.getState().setEffectivePermissions(["task:edit:own", "hr:view"]);
+    });
+    render(<Sidebar />);
+    expect(screen.queryByText("Audit Log")).toBeNull();
   });
 });
 

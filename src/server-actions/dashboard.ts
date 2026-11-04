@@ -11,6 +11,7 @@ import { db } from "@/lib/db";
 import { getSession, AuthorizationError } from "./auth-guard";
 import { getScopedProjectIds, getWorkspaceLimit } from "./shared";
 import { getSubtreeUserIds } from "@/lib/hierarchy";
+import { getEffectivePermissions } from "@/lib/config-loader";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 import { toResult } from "./result";
@@ -320,6 +321,12 @@ export async function getDashboardData(): Promise<DashboardData> {
       ? Array.from(await getSubtreeUserIds(currentUserId))
       : [];
 
+  // PR-64 — effective permissions (static floor ∪ DB ceiling) for the
+  // signed-in role. Seeds the client permission store; the getMyPermissions
+  // poll keeps it fresh so an admin's role-permission save reflects for
+  // already-logged-in users without a re-login.
+  const effectivePermissions = await getEffectivePermissions(role);
+
   // Prisma returns plain strings for status/priority/tag columns; every
   // write path in this app only ever stores the enum values defined in
   // lib/types, so the narrowing cast below is safe at runtime.
@@ -411,6 +418,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       projectIds: scopedProjectIds ? Array.from(scopedProjectIds) : null,
     },
     managedUserIds,
+    effectivePermissions,
   } as DashboardData;
 }
 

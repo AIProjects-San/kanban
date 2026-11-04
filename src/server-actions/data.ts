@@ -61,6 +61,9 @@ export {
   updateUser,
   deleteUser,
   getUserByEmail,
+  // PR-64 — live RBAC refresh: effective permissions for the signed-in
+  // user (polled by AppShell so role-permission saves reflect immediately).
+  getMyPermissions,
 } from "./users";
 // Board enhancement — task-level time log (required vs spent) + Task ↔ Bug
 // link reads used by the task modal.

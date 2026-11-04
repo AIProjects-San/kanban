@@ -291,6 +291,11 @@ export interface DashboardData {
    *  scoped analytics). ADMIN decides with the blanket permission, MEMBER
    *  with assignee/owner checks that need no hierarchy. */
   managedUserIds?: string[];
+  /** PR-64 — effective permissions (static floor ∪ DB ceiling) for the
+   *  signed-in user's role. Seeds the client permission store so an
+   *  admin's role-permission save reflects for logged-in users without a
+   *  re-login; refreshed by the getMyPermissions poll thereafter. */
+  effectivePermissions?: string[];
 }
 
 export const EMPTY_DASHBOARD_DATA: DashboardData = {
@@ -299,4 +304,5 @@ export const EMPTY_DASHBOARD_DATA: DashboardData = {
   stats: { total: 0, ended: 0, running: 0, pending: 0, paused: 0, weeklyCompletion: 0, projectEndedPct: 0 },
   scope: { isMember: false, projectIds: null },
   managedUserIds: [],
+  effectivePermissions: [],
 };

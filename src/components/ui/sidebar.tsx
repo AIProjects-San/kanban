@@ -9,11 +9,10 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { useApp } from "@/store/app-store";
-import { hasPermission, type Role } from "@/lib/rbac";
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { appSignOut } from "@/hooks/use-app-session"; // PR-48 — flag-aware (v4 wrapper or Better Auth)
 import { APP } from "@/config/app";
-import { useAppSession } from "@/hooks/use-app-session";
 import {
   NAV_GROUPS,
   type NavGroup,
@@ -50,17 +49,20 @@ export function Sidebar() {
     collapsedGroups,
     toggleGroup,
   } = useApp();
-  const { data: session } = useAppSession();
-  const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
+  const { can } = usePermissions();
 
   // RBAC — same gates as before (navigation.ts carries them now):
   // hr:view (HR Console), audit:view (Audit Log), role:manage (Users,
   // Workspace Config). A group whose children are ALL gated away for this
   // role is hidden entirely (MEMBER sees no Administration/HR sections).
+  // PR-64 — `can` consults the server-computed effective permissions (static
+  // floor ∪ DB ceiling), so an admin granting a role a gated permission
+  // (e.g. hr:view for MEMBER) reveals the item for logged-in users without a
+  // re-login.
   const visibleGroups = NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) => !item.permission || hasPermission(role, item.permission)
+      (item) => !item.permission || can(item.permission)
     ),
   })).filter((group) => group.items.length > 0);
 

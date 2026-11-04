@@ -21,7 +21,7 @@ import { ProjectsView } from "@/components/views/projects-view";
 import { TeamView } from "@/components/views/team-view";
 import { SettingsView } from "@/components/views/settings-view";
 import { LoginScreen } from "@/components/auth/login-screen";
-import { markAllNotificationsRead } from "@/server-actions/data";
+import { markAllNotificationsRead, getMyPermissions } from "@/server-actions/data";
 import type {
   ProjectT, TaskT, TeamMemberT, CalendarEventT, NotificationT, ReminderT, TimeEntryT, MessageT,
 } from "@/lib/types";
@@ -96,6 +96,8 @@ interface AppShellProps {
     scope?: { isMember: boolean; projectIds: string[] | null };
     /** PR-61 — MANAGER reporting subtree (user ids); empty for other roles. */
     managedUserIds?: string[];
+    /** PR-64 — effective permissions (static ∪ DB ceiling) for the SSR user. */
+    effectivePermissions?: string[];
   };
   user: {
     id: string;
@@ -122,7 +124,7 @@ interface AppShellProps {
 
 export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
   const { data: session, status } = useAppSession();
-  const { view, refreshTick, setAccent, setDark } = useApp();
+  const { view, refreshTick, setAccent, setDark, setEffectivePermissions } = useApp();
   const refresh = useRefresh();
   useKeyboardShortcuts();
 
@@ -138,6 +140,37 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
       setDark(user.settings.dark);
     }
   }, [user?.settings, user?.settings?.accent, user?.settings?.dark, setAccent, setDark]);
+
+  // PR-64 — live RBAC refresh. Seed the client permission store from the
+  // SSR payload (correct first paint), then poll so an admin's role-
+  // permission save reflects for ALREADY-LOGGED-IN users within seconds:
+  // bumpConfigCache() makes the server side fresh the moment Save is
+  // clicked; this closes the client loop. Skips ticks while the tab is
+  // hidden and re-checks on focus.
+  useEffect(() => {
+    setEffectivePermissions(data.effectivePermissions ?? []);
+  }, [data.effectivePermissions, setEffectivePermissions]);
+
+  useEffect(() => {
+    // No point polling the login screen (the action 401s anyway) — after a
+    // sign-in the page reloads and remounts the shell.
+    if (!user) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (document.hidden) return;
+      const res = await getMyPermissions();
+      if (!cancelled && res.ok) setEffectivePermissions(res.data);
+    };
+    void tick(); // immediate first check (session may differ from SSR user)
+    const interval = setInterval(() => { void tick(); }, 10_000);
+    const onVisible = () => { if (!document.hidden) void tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [setEffectivePermissions, user]);
 
   // Not authenticated → show login.
   //

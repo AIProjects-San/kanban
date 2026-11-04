@@ -43,6 +43,15 @@ interface AppState {
   collapsedGroups: string[];
   toggleGroup: (groupId: string) => void;
 
+  // PR-64 — effective permissions for the signed-in user's role (static
+  // floor ∪ DB ceiling), as computed by the SERVER. Seeded from the SSR
+  // dashboard payload and refreshed by the getMyPermissions poll, so an
+  // admin's role-permission save reflects for already-logged-in users
+  // without a re-login. null = not loaded yet → usePermissions falls back
+  // to the static matrix (unit tests, pre-hydration renders).
+  effectivePermissions: string[] | null;
+  setEffectivePermissions: (permissions: string[]) => void;
+
   // Command palette
   cmdkOpen: boolean;
   setCmdkOpen: (open: boolean) => void;
@@ -177,6 +186,9 @@ export const useApp = create<AppState>((set) => ({
         ? accordionCollapsed(groupId)
         : [...s.collapsedGroups, groupId],
     })),
+
+  effectivePermissions: null,
+  setEffectivePermissions: (permissions) => set({ effectivePermissions: permissions }),
 
   cmdkOpen: false,
   setCmdkOpen: (cmdkOpen) => set({ cmdkOpen }),

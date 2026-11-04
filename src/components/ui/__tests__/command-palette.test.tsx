@@ -148,6 +148,20 @@ describe("command palette: role gating", () => {
       expect(paletteLabels()).not.toContain("Go to Audit Log");
     });
   });
+
+  it("PR-64: a DB-granted permission (effective set) reveals the gated entry without re-login", async () => {
+    useSession.mockReturnValue({ data: { user: { id: "u-member", role: "MEMBER" } }, isPending: false, error: null });
+    // The admin granted MEMBER audit:view in the role editor; the poll
+    // delivered the effective set to the store.
+    useApp.setState({ effectivePermissions: ["task:edit:own", "audit:view"] });
+    render(<CommandPalette />);
+    await waitFor(() => {
+      expect(paletteLabels()).toContain("Go to Audit Log");
+    });
+    // Other role:manage-gated entries stay hidden for this member.
+    expect(paletteLabels()).not.toContain("Go to Users");
+    useApp.setState({ effectivePermissions: null });
+  });
 });
 
 describe("command palette: query filtering", () => {

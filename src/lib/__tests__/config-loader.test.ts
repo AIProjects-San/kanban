@@ -63,6 +63,7 @@ vi.mock("@/lib/db", () => ({
 import {
   getWorkspaceConfig,
   hasPermissionDb,
+  getEffectivePermissions,
   bumpConfigCache,
   _resetConfigCacheForTests,
 } from "@/lib/config-loader";
@@ -261,6 +262,78 @@ describe("hasPermissionDb", () => {
 
   it("returns false for unknown roles", async () => {
     expect(await hasPermissionDb("SUPERUSER", "task:create")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR-64 — the effective list (static floor ∪ DB ceiling) the server ships
+// to the client so role-permission saves reflect for logged-in users.
+// ---------------------------------------------------------------------------
+
+describe("getEffectivePermissions (PR-64)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bumpConfigCache();
+    stubEmptyTables();
+  });
+
+  it("equals the static matrix when the Role table is empty (fallback config)", async () => {
+    const perms = await getEffectivePermissions("MEMBER");
+    expect(perms).toContain("task:edit:own");
+    expect(perms).not.toContain("hr:view");
+  });
+
+  it("unions the DB ceiling on top of the static floor", async () => {
+    // DB: MEMBER additionally holds hr:view (admin granted it in the editor).
+    // The db mock shares one findMany across models — dispatch on the Role
+    // query's include shape; every other config table stays empty.
+    findMany.mockImplementation(async (args: { include?: { permissions?: unknown } }) =>
+      args?.include?.permissions
+        ? [
+            {
+              id: "role-member", key: "MEMBER", label: "Member", description: "",
+              iconName: "Shield", badgeClass: "", isSystem: true, sortOrder: 0,
+              permissions: [{ permission: { key: "hr:view" } }],
+            },
+          ]
+        : [],
+    );
+    const perms = await getEffectivePermissions("MEMBER");
+    // Floor still applies…
+    expect(perms).toContain("task:edit:own");
+    // …and the DB grant rides on top.
+    expect(perms).toContain("hr:view");
+    // Union dedupes (a DB row re-listing a floor perm must not duplicate).
+    expect(new Set(perms).size).toBe(perms.length);
+  });
+
+  it("a custom role with no static floor returns exactly its DB permissions", async () => {
+    findMany.mockImplementation(async (args: { include?: { permissions?: unknown } }) =>
+      args?.include?.permissions
+        ? [
+            {
+              id: "role-contractor", key: "CONTRACTOR", label: "Contractor", description: "",
+              iconName: "Shield", badgeClass: "", isSystem: false, sortOrder: 9,
+              permissions: [{ permission: { key: "task:create" } }, { permission: { key: "message:send" } }],
+            },
+          ]
+        : [],
+    );
+    expect(await getEffectivePermissions("CONTRACTOR")).toEqual([
+      "task:create",
+      "message:send",
+    ]);
+  });
+
+  it("an unknown role with no DB row yields an empty list (deny-safe)", async () => {
+    expect(await getEffectivePermissions("GHOST")).toEqual([]);
+  });
+
+  it("falls back to the static floor when the config tables are unreadable", async () => {
+    findMany.mockRejectedValue(new Error("config db down"));
+    const perms = await getEffectivePermissions("MEMBER");
+    expect(perms).toContain("task:edit:own");
+    expect(perms).not.toContain("hr:view");
   });
 });
 

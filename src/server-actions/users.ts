@@ -11,6 +11,7 @@ import { db } from "@/lib/db";
 import { getSession, getSessionOrThrow, requirePermission, requirePermissionForTarget, AuthorizationError } from "./auth-guard";
 import { revokeUserSessionsIfActive } from "@/lib/auth-revoke";
 import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/rbac";
+import { getEffectivePermissions } from "@/lib/config-loader";
 import { assertNoCycle } from "@/lib/hierarchy";
 import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/password";
 import { assertPasswordNotBreached } from "@/lib/breach-check";
@@ -58,6 +59,21 @@ export async function getUserProfile(userId: string) {
         }
       : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// PR-64 — effective permissions for the signed-in user (static floor ∪ DB
+// ceiling). The AppShell polls this so an admin's role-permission save
+// reflects for ALREADY-LOGGED-IN users within seconds: bumpConfigCache()
+// makes the server side fresh at save time, this action carries it to open
+// tabs (which then re-render nav items and permission-gated buttons).
+// ---------------------------------------------------------------------------
+
+export async function getMyPermissions(): Promise<ActionResult<string[]>> {
+  return toResult(async () => {
+    const auth = await getSessionOrThrow();
+    return getEffectivePermissions(auth.role);
+  });
 }
 
 // ---------------------------------------------------------------------------

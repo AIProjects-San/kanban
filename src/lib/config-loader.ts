@@ -421,3 +421,30 @@ export async function hasPermissionDb(
   if (!role) return false;
   return role.permissions.includes(permission);
 }
+
+// PR-64 — the effective permission list for a role: static floor ∪ DB
+// ceiling. This is the exact union the server enforces per request
+// (auth-guard's hasPermissionEnforced); shipping it to the client (SSR
+// payload + getMyPermissions poll) is what makes an admin's role-permission
+// save reflect for ALREADY-LOGGED-IN users without a re-login — the client
+// used to consult only the static matrix, so DB-granted capabilities never
+// appeared (nav items, buttons) until the next deploy.
+//
+// Deny-safe: if the config tables are unreadable, fall back to the static
+// floor (same contract as hasPermissionEnforced) — a Role-table outage must
+// not take the dashboard SSR down with it.
+export async function getEffectivePermissions(role: string): Promise<string[]> {
+  const floor = ROLE_PERMISSIONS[role as keyof typeof ROLE_PERMISSIONS] ?? [];
+  try {
+    const config = await getWorkspaceConfig();
+    const dbRole = config.roles.find((r) => r.key === role);
+    if (!dbRole) return [...floor];
+    return [...new Set([...floor, ...dbRole.permissions])];
+  } catch (err) {
+    logWarn("[config] effective-permission lookup failed; static floor only", {
+      metric: "effective_permissions_fallback",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [...floor];
+  }
+}
