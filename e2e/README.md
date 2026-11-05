@@ -13,7 +13,7 @@ login never has to be diagnosed from a timeout alone.
 
 ## What is covered
 
-**93 scenarios across 14 feature files:**
+**95 scenarios across 15 feature files:**
 
 | Feature file | Scenarios |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -29,6 +29,7 @@ login never has to be diagnosed from a timeout alone.
 | `hiring.feature` (22) | HR sees board + manage controls, manager view-only, member gated, HR advances a stage, rejection requires a reason; R3: select candidate (offer-prep banner), reject with email lands in the outbox, seeded outbox row visible, manager never sees the outbox, selected-pool chip counts; R4: joining formalities of a selected candidate (checklist + BGV vendor), request a document from the checklist, doc-type editor config-gated; R5: HR builds an offer for a selected candidate (live CTC), offers panel lists records, manager never sees the panel; R6: HR sends the offer + the candidate signs on the public `/offer/<token>` page, HR marks the signed candidate joined (hired summary); R8: the funnel panel shows stage metrics + the offer accept rate; P0-6: a duplicate rejection email on the same day is blocked, HR sees the mail-config warning while no provider is configured |
 | `payroll.feature` (5) | HR sees the seeded runs (LOCKED + OPEN) and structures; payslip list shows the LOP hint; payslip editor shows the live net; HR edits loss-of-pay days and saves; HR creates next month's run and locks it; managers never see the Payroll leaf |
 | `my-payslips.feature` (3) | payslip self-service (persona-audit P0-1/D-02): member sees their own finalized payslips and opens one read-only with print; the OPEN current month never appears; the dashboard shows the latest-payslip card |
+| `my-interviews.feature` (2) | interviewer self-service (persona-audit P0-5/D-04): member with no assignments sees the empty surface and never the Hiring leaf; HR assigns a member as interviewer and the member fills their own scorecard from My Interviews |
 | `hr-qa-hardening.feature` (2) | regression pack from the HR QA audit: approving past the remaining balance is refused; a next-year request is not blocked by this year's balance |
 | `zzz-login-lockout.feature` (1) | 5 failures block the 6th attempt (runs last so its lockout state can't pollute other scenarios) |
 

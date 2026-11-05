@@ -12,6 +12,7 @@ import {
   Settings2,
   Bug,
   CalendarDays,
+  CalendarClock,
   Briefcase,
   UserPlus,
   Landmark,
@@ -96,6 +97,14 @@ export const NAV_GROUPS: NavGroup[] = [
       // Leave is self-service for every role (docs/HR_MODULE_PLAN.md) — and
       // lives under People so the "HR" label never reaches MEMBER.
       { key: "leave", label: "Leave", icon: CalendarDays, shortcut: "G V", shortcutKey: "v" },
+      // Interviewer self-service (persona-audit P0-5 / D-04) — every role
+      // sees their OWN assigned interview stages + fills their own scorecard
+      // (own data, like Leave/My Payslips — deliberately NOT permission-gated;
+      // getMyInterviews scopes to the caller's rows in the WHERE clause).
+      // Lives under People so MEMBER never needs the HR group. The Hiring
+      // board itself stays hiring:view (ADMIN/HR/MANAGER) — candidate PII
+      // (D-12 direction) must not reach every member.
+      { key: "my-interviews", label: "My Interviews", icon: CalendarClock, shortcut: "G J", shortcutKey: "j" },
       // Payslip self-service (persona-audit P0-1 / D-02) — every role sees
       // their OWN payslips from LOCKED runs; deliberately NOT permission-
       // gated (own data, like Leave). The full Payroll console stays

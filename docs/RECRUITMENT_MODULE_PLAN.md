@@ -343,12 +343,29 @@ Rippling, and a P0/P1/P2 backlog.
   outbox row is SKIPPED (no provider) instead of claiming delivery, and the
   join toast tells HR to relay the sign-in email manually.
 
-**Top open items (P0):** member-interviewer access, joiner lockout without a
-mail provider, statutory decision (build vs reposition). The full backlog
-(39 open items) is in the report's Section 6; mail-config surfacing closed
-below.
+**Top open items (P0):** joiner lockout without a mail provider, statutory
+decision (build vs reposition). The full backlog (39 open items) is in the
+report's Section 6; payslip self-service, mail-config surfacing and
+member-interviewer access closed below.
 
 **Post-audit P0 fixes:**
+- **P0-5 — member interviewer access (D-04), FIXED.** The scheduler's
+  interviewer picker offers the whole directory, but `saveScorecard` and
+  `getMyInterviews` gated on `hiring:view` — which MEMBER lacks — so a plain
+  member assigned as an interviewer could not see the assignment, open the
+  candidate, or submit the scorecard the process was waiting on; the
+  `isOwner` scorecard exception was dead code for exactly the user it was
+  written for. Fix (the scoped Greenhouse/Keka-style interviewer surface,
+  same shape as the P0-1 My-Payslips pattern): both actions now
+  authenticate via `getSessionOrThrow` and scope to the caller's OWN
+  assigned stages — `saveScorecard`'s existing `isOwner || hiring:manage`
+  check is the actual policy; `getMyInterviews`' WHERE clause is the whole
+  policy. New "My Interviews" view in the People nav group (no permission
+  gate — own data like Leave/My Payslips) with the inline scorecard form;
+  G J shortcut. The Hiring board, funnel, outbox and offers stay
+  `hiring:view` (ADMIN/HR/MANAGER) — candidate PII (the D-12 direction)
+  never reaches plain members, and the alternative one-line fix (granting
+  MEMBER `hiring:view`) would have regressed exactly that.
 - **P0-1 — employee payslip self-service (D-02), FIXED.** New
   `getMyPayslips()` server action (session-scoped, zero inputs, own data
   only) + "My Payslips" view in the People nav group + dashboard card.

@@ -94,7 +94,7 @@ describe("Sidebar: grouping + RBAC", () => {
 
   it("renders every leaf somewhere for ADMIN", () => {
     render(<Sidebar />);
-    for (const leaf of ["Dashboard", "Analytics", "Projects", "Tasks", "Bugs", "Team", "Calendar", "Leave", "My Payslips", "HR Console", "Users", "Workspace Config", "Audit Log", "Settings", "Help"]) {
+    for (const leaf of ["Dashboard", "Analytics", "Projects", "Tasks", "Bugs", "Team", "Calendar", "Leave", "My Interviews", "My Payslips", "HR Console", "Users", "Workspace Config", "Audit Log", "Settings", "Help"]) {
       expect(screen.getAllByText(leaf).length).toBeGreaterThan(0);
     }
   });
@@ -120,6 +120,12 @@ describe("Sidebar: grouping + RBAC", () => {
     // role sees their OWN payslips. The full Payroll leaf must stay hidden.
     expect(screen.getAllByText("My Payslips").length).toBeGreaterThan(0);
     expect(screen.queryByText("Payroll")).toBeNull();
+    // …and interviewer self-service (persona-audit P0-5 / D-04): a MEMBER
+    // assigned as an interviewer reaches their own stages + scorecard from
+    // the People group — while the Hiring board leaf itself stays hidden
+    // (no hiring:view; candidate PII must not reach every member).
+    expect(screen.getAllByText("My Interviews").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Hiring")).toBeNull();
   });
 
   it("shows Administration with only Audit Log for MANAGER", () => {

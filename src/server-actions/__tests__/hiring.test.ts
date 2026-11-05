@@ -27,8 +27,10 @@ const db = vi.hoisted(() => {
 vi.mock("@/lib/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
+const getSessionOrThrowMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
   requirePermission: (...a: unknown[]) => requirePermissionMock(...a),
+  getSessionOrThrow: (...a: unknown[]) => getSessionOrThrowMock(...a),
   AuthorizationError: class AuthorizationError extends Error {
     readonly digest = "AuthorizationError";
     constructor(m: string) { super(m); this.name = "AuthorizationError"; }
@@ -157,6 +159,10 @@ function candidateWithStages(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   requirePermissionMock.mockResolvedValue(HR_AUTH);
+  // P0-5 — the session-scoped actions (getMyInterviews / saveScorecard)
+  // authenticate via getSessionOrThrow; default to the HR identity, with
+  // individual tests swapping in the MEMBER-interviewer fixture.
+  getSessionOrThrowMock.mockResolvedValue(HR_AUTH);
   db.hiringStageConfig.findMany.mockImplementation(async ({ where }: { where?: { isActive?: boolean } } = {}) =>
     where?.isActive === true ? TEMPLATE.filter((t) => t.isActive) : TEMPLATE,
   );
@@ -569,6 +575,7 @@ describe("scheduleInterview", () => {
 describe("saveScorecard", () => {
   it("the assigned interviewer may fill their own scorecard", async () => {
     requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    getSessionOrThrowMock.mockResolvedValue(MANAGER_AUTH);
     db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
     const res = await saveScorecard({
       stageId: "st-2", rating: 4, strengths: "Great depth", concerns: "Little backend",
@@ -585,16 +592,36 @@ describe("saveScorecard", () => {
   });
 
   it("a MEMBER who is not the owner is refused", async () => {
-    requirePermissionMock.mockImplementation(async (p: string) => {
-      if (p === "hiring:manage") {
-        throw new (class extends Error { digest = "AuthorizationError"; })("denied");
-      }
-      return MEMBER_AUTH;
-    });
+    getSessionOrThrowMock.mockResolvedValue(MEMBER_AUTH);
     db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
     const res = await saveScorecard({ stageId: "st-2", rating: 5 });
     expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("assigned interviewer");
     expect(db.candidateStage.update).not.toHaveBeenCalled();
+  });
+
+  it("P0-5 (D-04) — a MEMBER who IS the assigned interviewer saves their own scorecard without hiring:view", async () => {
+    // The persona-audit defect: HR assigns a plain member as interviewer,
+    // but the old requirePermission("hiring:view") gate rejected them before
+    // the isOwner exception could apply — dead code for exactly the user the
+    // exception was written for. Now session-scoped: the MEMBER-interviewer
+    // reaches the isOwner check and passes.
+    getSessionOrThrowMock.mockResolvedValue(MEMBER_AUTH);
+    db.candidateStage.findUnique.mockResolvedValue({ ...INTERVIEW_STAGE, ownerUserId: "u-diego" });
+    const res = await saveScorecard({
+      stageId: "st-2", rating: 5, strengths: "Sharp systems thinking",
+      concerns: "None observed", recommendation: "STRONG_HIRE", remarks: "Would hire again",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.candidateStage.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "st-2" },
+        data: expect.objectContaining({ rating: 5, recommendation: "STRONG_HIRE" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "hiring.scorecard_saved", actor: expect.objectContaining({ userId: "u-diego" }) }),
+    );
   });
 
   it("rejects an out-of-range rating at validation", async () => {
@@ -617,6 +644,7 @@ describe("saveScorecard", () => {
 describe("getMyInterviews", () => {
   it("scopes strictly to the caller's own open INTERVIEW stages on ACTIVE candidates", async () => {
     requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    getSessionOrThrowMock.mockResolvedValue(MANAGER_AUTH);
     db.candidateStage.findMany.mockResolvedValue([
       {
         id: "st-2", stageLabel: undefined, label: "Interview 1 — Technical", candidateId: "cand-1",
@@ -641,6 +669,27 @@ describe("getMyInterviews", () => {
       expect(res.data[0].candidateName).toBe("Nadia Petrova");
       expect(res.data[0].stageLabel).toBe("Interview 1 — Technical");
     }
+  });
+
+  it("P0-5 (D-04) — a MEMBER (no hiring:view) still gets their own assignments — the WHERE is the whole policy", async () => {
+    // The old gate (requirePermission("hiring:view")) rejected member
+    // interviewers before the self-scoping WHERE could run; now any signed-in
+    // user's own rows come back and nothing else.
+    getSessionOrThrowMock.mockResolvedValue(MEMBER_AUTH);
+    db.candidateStage.findMany.mockResolvedValue([
+      {
+        id: "st-9", label: "Interview 2 — HR & Culture", candidateId: "cand-7",
+        status: "PENDING", scheduledAt: null, rating: null, recommendation: null,
+        candidate: { id: "cand-7", fullName: "Tomas Eriksen", position: "QA Engineer", status: "ACTIVE" },
+      },
+    ]);
+    const res = await getMyInterviews();
+    expect(res.ok).toBe(true);
+    expect(requirePermissionMock).not.toHaveBeenCalled();
+    expect(db.candidateStage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ ownerUserId: "u-diego" }) }),
+    );
+    if (res.ok) expect(res.data[0].candidateName).toBe("Tomas Eriksen");
   });
 });
 

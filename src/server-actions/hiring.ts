@@ -8,6 +8,12 @@
 //   hiring:view   — read the board + templates (ADMIN, HR, MANAGER)
 //   hiring:manage — candidate CRUD, advance stages, decide (ADMIN, HR)
 //   hiring:config — stage-template editor (ADMIN, HR)
+//   (session-only — no permission) the member-interviewer self-service
+//   surface (persona-audit P0-5 / D-04): getMyInterviews + saveScorecard
+//   are scoped to the caller's OWN assigned stages via getSessionOrThrow,
+//   mirroring getMyPayslips. A MEMBER who is assigned as an interviewer can
+//   see their own interviews and fill their own scorecard without holding
+//   hiring:view — the board, funnel, outbox and offers stay gated.
 //
 // Configurability contract: candidates snapshot the template at creation
 // (label/stageType copied), so template edits never rewrite history. The
@@ -19,7 +25,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import crypto from "node:crypto";
 import { db } from "@/lib/db";
-import { requirePermission, AuthorizationError } from "./auth-guard";
+import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import type {
   CandidateT,
@@ -873,7 +879,13 @@ export async function scheduleInterview(input: unknown): Promise<ActionResult<{ 
 
 export async function saveScorecard(input: unknown): Promise<ActionResult<{ ok: true }>> {
   return toResult(async () => {
-    const auth = await requirePermission("hiring:view");
+    // Persona-audit P0-5 (D-04) — session-only auth: the isOwner check below
+    // is the actual policy (the assigned interviewer may fill their OWN
+    // scorecard; everyone else needs hiring:manage). Requiring hiring:view
+    // here made that owner-exception dead code for MEMBER interviewers —
+    // the scheduler offers members in the picker, so the exception must be
+    // reachable. Mirrors getMyPayslips' session-scoped pattern.
+    const auth = await getSessionOrThrow();
     const data = parseOrThrow(scorecardSchema, input);
     const stage = await db.candidateStage.findUnique({
       where: { id: data.stageId },
@@ -914,7 +926,10 @@ export async function saveScorecard(input: unknown): Promise<ActionResult<{ ok: 
 }
 
 /** Interviewer self-service: my assigned, still-open interview stages (any
- * signed-in user — the WHERE clause scopes to the caller's own rows). */
+ * signed-in user — the WHERE clause scopes to the caller's own rows).
+ * Persona-audit P0-5 (D-04): previously gated on hiring:view, which locked
+ * MEMBER interviewers out of their own assignments entirely; now
+ * session-scoped like getMyPayslips — own data, no permission needed. */
 export async function getMyInterviews(): Promise<
   ActionResult<
     Array<{
@@ -931,7 +946,8 @@ export async function getMyInterviews(): Promise<
   >
 > {
   return toResult(async () => {
-    const auth = await requirePermission("hiring:view");
+    // Session-scoped (see docblock) — the WHERE below is the entire policy.
+    const auth = await getSessionOrThrow();
     const rows = await db.candidateStage.findMany({
       where: {
         ownerUserId: auth.userId,

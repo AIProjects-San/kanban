@@ -21,7 +21,8 @@ export type ViewKey =
   | "hr"
   | "hiring"
   | "payroll"
-  | "my-payslips";
+  | "my-payslips"
+  | "my-interviews";
 
 export type AccentTheme = "forest" | "ocean" | "plum" | "ember";
 
