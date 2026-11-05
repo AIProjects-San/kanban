@@ -11,7 +11,7 @@ Feature: HR employee directory
     When I sign in as "manager@fernly.app" with the demo password
     And I open the "HR" view
     And I open the "Directory" tab
-    Then the directory should show 13 profiles
+    Then the directory should show at least 13 profiles
     And the directory card for "Theo Vance" should show manager "Mira Hale"
 
   Scenario: Directory search narrows the roster

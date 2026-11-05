@@ -17,11 +17,14 @@ Then("the hiring board should show the stage column {string}", async function (k
 
 When("I open the candidate card {string}", async function (name) {
   const driver = await this.getDriver();
+  // CI-stabilization: dev-mode server actions can lag well past 15 s under
+  // the 2-core CI runner's load — the board shell renders (heading) while
+  // getHiringBoard's response is still in flight. 30 s absorbs it.
   const card = await driver.wait(
     until.elementLocated(
       By.xpath(`//*[@data-testid="candidate-card"]//*[contains(text(), "${name}")]`),
     ),
-    15_000,
+    30_000,
     `candidate card "${name}" not found on the board`,
   );
   // Click the card itself so the click doesn't land on an inner element.
@@ -145,11 +148,14 @@ When("I confirm the rejection", async function () {
 
 Then("the email outbox should show a recorded email to {string}", async function (address) {
   const driver = await this.getDriver();
+  // CI-stabilization: 30 s — the outbox panel is manage-gated data that
+  // lags the view shell on a loaded dev server (same class as the card
+  // waits above).
   const row = await driver.wait(
     until.elementLocated(
       By.xpath(`//*[@data-testid="outbox-row"]//*[contains(text(), "${address}")]`),
     ),
-    15_000,
+    30_000,
     `no outbox row for "${address}"`,
   );
   assert.ok(row, `outbox row for ${address} found`);
@@ -415,14 +421,16 @@ Then("the funnel panel should show stage metrics", async function () {
     15_000,
     "funnel panel did not render",
   );
+  // CI-stabilization: the stage rows render as soon as the panel mounts but
+  // their CONTENT ("avg days" header + counts) arrives with the analytics
+  // fetch — asserting on getText() immediately after the row wait raced the
+  // data and failed deterministically in CI. Poll the text itself.
   await driver.wait(
-    until.elementLocated(By.css('[data-testid^="funnel-stage-"]')),
-    10_000,
-    "no stage metrics rows rendered",
+    async () => (await panel.getText()).includes("avg days"),
+    30_000,
+    "stage metrics header never appeared",
   );
   const text = await panel.getText();
-  // "in progress / passed / avg days" header + at least one row with counts.
-  assert.ok(text.includes("avg days"), `stage metrics header missing: ${text.slice(0, 200)}`);
   assert.ok(/\d+\s*\/\s*\d+/.test(text), `stage metrics should carry counts: ${text.slice(0, 200)}`);
 });
 

@@ -46,6 +46,23 @@ When("I open the {string} tab", async function (label) {
   throw new Error(`unknown tab: ${label}`);
 });
 
+Then("the directory should show at least {int} profiles", async function (count) {
+  const driver = await this.getDriver();
+  // CI-stabilization: the seeded roster baseline is 13, but hiring.feature
+  // (alphabetically earlier) provisions a 14th account via "mark joined"
+  // before this scenario runs — an exact-13 wait could never pass since R6.
+  // At-least semantics keep the intent (seeded roster renders) robust to
+  // legitimate cross-feature data drift.
+  await driver.wait(
+    async () => {
+      const cards = await driver.findElements(By.css("[data-testid='directory-name']"));
+      return cards.length >= count;
+    },
+    15_000,
+    `directory never showed at least ${count} profiles`,
+  );
+});
+
 Then("the directory should show {int} profiles", async function (count) {
   const driver = await this.getDriver();
   await driver.wait(

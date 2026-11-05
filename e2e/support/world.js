@@ -63,14 +63,27 @@ class CustomWorld {
       10_000,
       "login email field did not appear",
     );
-    await emailInput.clear();
+    // CI-stabilization: the naive `element.clear()` is a plain value wipe —
+    // on a React CONTROLLED input (SEED_DEMO pre-fills the demo password)
+    // React can re-render the old state value back between clear() and
+    // sendKeys, producing "password+password" submissions. Those 401s charge
+    // the brute-force throttle budgets (5 per email / IP per 15 min), which
+    // eventually 429-locks entire roles out mid-suite — the "bad window"
+    // that reproducibly failed clusters of scenarios. Clear through the
+    // native prototype setter + input event so React state empties too.
+    await driver.executeScript(
+      `const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+       for (const el of [arguments[0], arguments[1]]) {
+         setter.call(el, '');
+         el.dispatchEvent(new Event('input', { bubbles: true }));
+       }`,
+      emailInput,
+      await driver.findElement(By.css('input[type="password"]')),
+    );
     await emailInput.sendKeys(email);
-    // Clear the password field too — in SEED_DEMO mode the login form is
-    // PRE-FILLED with the demo password, and sendKeys APPENDS. Without the
-    // clear, every e2e sign-in submitted password+password and got a 401
-    // ("Invalid credentials") that looked like an auth bug.
+    // The password field: sendKeys APPENDS, and it is now deterministically
+    // empty after the React-aware clear above.
     const passwordInput = await driver.findElement(By.css('input[type="password"]'));
-    await passwordInput.clear();
     await passwordInput.sendKeys(password);
     await driver.findElement(By.css('button[type="submit"]')).click();
     // Empty credentials never leave the page (native `required` validation
@@ -138,13 +151,25 @@ After(async function ({ result, pickle }) {
         );
         const toastTexts = [];
         for (const t of toasts) toastTexts.push(await t.getText());
+        // CI-stabilization: also capture the BROWSER console (SEVERE errors,
+        // chunk-fetch failures, hydration crashes) — a blank main area with a
+        // rendered shell is invisible without it.
+        let consoleLines = [];
+        try {
+          const logs = await this.driver.manage().logs().get("browser");
+          consoleLines = logs.map((l) => `${l.level.name} ${l.message.slice(0, 300)}`);
+        } catch {
+          // Not all drivers support log retrieval — never mask the failure.
+        }
         fs.writeFileSync(
           path.join(dir, `${slug}-${stamp}.png`),
           Buffer.from(image, "base64"),
         );
         fs.writeFileSync(
           path.join(dir, `${slug}-${stamp}.state.txt`),
-          `url: ${url}\nh1: ${h1}\ntoasts: ${JSON.stringify(toastTexts)}\n`,
+          `url: ${url}\nh1: ${h1}\ntoasts: ${JSON.stringify(toastTexts)}\n` +
+            `console (${consoleLines.length} entries):\n` +
+            consoleLines.slice(0, 30).join("\n") + "\n",
         );
       } catch (e) {
         // Artifact capture must never mask the original failure.

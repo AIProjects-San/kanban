@@ -3,6 +3,14 @@
 Browser end-to-end tests driven by [Cucumber.js](https://cucumber.io/docs/installation/javascript/)
 and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 
+## Failure artifacts
+
+Failed scenarios write a screenshot + a state file (URL, main h1, live toasts,
+and the captured browser console — SEVERE errors, chunk-fetch failures,
+Fast Refresh rebuilds) into `e2e/artifacts/`. CI uploads the folder with every
+run; the console capture exists precisely so a blank main area or a stuck
+login never has to be diagnosed from a timeout alone.
+
 ## What is covered
 
 **93 scenarios across 14 feature files:**
