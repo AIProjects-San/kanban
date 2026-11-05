@@ -7,37 +7,11 @@ const { By, until } = require("selenium-webdriver");
 const assert = require("node:assert");
 
 // Secret hygiene (docs/SECURITY.md): the demo password's only home is .env
-// (NEXT_PUBLIC_DEMO_PASSWORD). Cucumber does not load .env itself, so the
-// helper below parses it. Feature files say "with the demo password" —
-// they must never contain the literal credential.
-const fs = require("node:fs");
-const path = require("node:path");
-
-function loadDemoPassword() {
-  if (process.env.NEXT_PUBLIC_DEMO_PASSWORD) return process.env.NEXT_PUBLIC_DEMO_PASSWORD;
-  const envPath = path.join(__dirname, "..", "..", ".env");
-  try {
-    const line = fs
-      .readFileSync(envPath, "utf8")
-      .split("\n")
-      .find((l) => l.startsWith("NEXT_PUBLIC_DEMO_PASSWORD="));
-    // Strip surrounding quotes — dotenv and shell sourcing both do this, so
-    // a quoted .env value (`PASSWORD="x"`) must not leak the quote chars
-    // into the login form (bcrypt mismatch → 401 → limiter exhaustion).
-    const value = line
-      ? line.slice("NEXT_PUBLIC_DEMO_PASSWORD=".length).trim().replace(/^["'](.*)["']$/, "$1")
-      : "";
-    if (value) return value;
-  } catch {
-    /* fall through to the error below */
-  }
-  throw new Error(
-    "e2e: NEXT_PUBLIC_DEMO_PASSWORD is not set — add it to .env " +
-      "(see .env.example) or export it before `bun run test:e2e`.",
-  );
-}
-
-const DEMO_PASSWORD = loadDemoPassword();
+// (NEXT_PUBLIC_DEMO_PASSWORD), resolved once in the shared support module
+// so EVERY step that needs the credential uses the same source (CI sets
+// NEXT_PUBLIC_DEMO_PASSWORD, never DEMO_PASSWORD — see
+// e2e/support/demo-password.js for the regression this centralized).
+const { DEMO_PASSWORD } = require("../support/demo-password.js");
 
 const CREDENTIALS = {
   "demo@fernly.app": DEMO_PASSWORD,
@@ -69,15 +43,17 @@ When("I sign in as {string} with the correct password", async function (email) {
 
 // Explicit-password variant — used by the rejected-login scenarios (wrong
 // password, unknown email, empty credentials) where the credential must NOT
-// be the demo password.
+// be the demo password. expectSuccess:false keeps the tolerant outcome for
+// these (a toast IS the expected result), while every positive sign-in now
+// fails fast when rejected (see world.js login()).
 When("I sign in as {string} with password {string}", async function (email, password) {
   this.lastEmail = email;
-  await this.login(email, password);
+  await this.login(email, password, { expectSuccess: false });
 });
 
 When("I fail to sign in as {string} {int} times", async function (email, times) {
   for (let i = 0; i < times; i++) {
-    await this.login(email, "definitely-wrong");
+    await this.login(email, "definitely-wrong", { expectSuccess: false });
     await this.logout();
   }
 });

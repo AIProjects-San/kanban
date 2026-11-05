@@ -148,12 +148,21 @@ When("I confirm the rejection", async function () {
 
 Then("the email outbox should show a recorded email to {string}", async function (address) {
   const driver = await this.getDriver();
-  // CI-stabilization: 30 s — the outbox panel is manage-gated data that
-  // lags the view shell on a loaded dev server (same class as the card
-  // waits above).
+  // CI-stabilization round 3 — XPath fix: this step NEVER matched, in any
+  // run, local or CI. `contains(text(), X)` evaluates only the FIRST text
+  // node of the element, but the address span is JSX
+  // `to {m.toAddress}{m.candidateName ? \u00b7 ${...} : ""}` — React emits
+  // "to ", the address, and the name as SEPARATE adjacent text nodes, so
+  // `text()` is the node-set ["to ", address, ...] and contains() only sees
+  // "to ". The row renders, the wait times out anyway, the scenario fails
+  // and its retry poisons the next attempt. `contains(., X)` compares the
+  // element's FULL string value (all descendant text) — the standard XPath
+  // pattern for JSX-fragmented text.
+  // 30 s — the outbox panel is manage-gated data that lags the view shell
+  // on a loaded dev server (same class as the card waits above).
   const row = await driver.wait(
     until.elementLocated(
-      By.xpath(`//*[@data-testid="outbox-row"]//*[contains(text(), "${address}")]`),
+      By.xpath(`//*[@data-testid="outbox-row"]//*[contains(., "${address}")]`),
     ),
     30_000,
     `no outbox row for "${address}"`,
@@ -273,12 +282,54 @@ When("I sign out and back in as {string}", async function (email) {
   await driver.wait(until.elementLocated(By.css('input[type="email"]')), 10_000);
   const emailInput = await driver.findElement(By.css('input[type="email"]'));
   const passInput = await driver.findElement(By.css('input[type="password"]'));
-  await emailInput.clear();
+  // CI-stabilization round 3: two bugs fixed here —
+  // 1) The password came from process.env.DEMO_PASSWORD (never set in CI,
+  //    which only defines NEXT_PUBLIC_DEMO_PASSWORD), silently falling back
+  //    to the literal "fernly123" while CI seeds a different value → a
+  //    deterministic 401 on every re-login (the R4 config-gate scenario in
+  //    both prior runs). Use the shared resolver, exactly like the primary
+  //    sign-in step.
+  // 2) element.clear() on a React CONTROLLED input (SEED_DEMO pre-fills the
+  //    demo password) can have React re-render the stale state value back
+  //    between clear() and sendKeys, producing "old+new" submissions — the
+  //    same class of bug world.js's login() documents. Clear through the
+  //    native prototype setter + input event so React state empties too.
+  const { DEMO_PASSWORD } = require("../support/demo-password.js");
+  await driver.executeScript(
+    `const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+     for (const el of arguments) {
+       setter.call(el, '');
+       el.dispatchEvent(new Event('input', { bubbles: true }));
+     }`,
+    emailInput,
+    passInput,
+  );
   await emailInput.sendKeys(email);
-  await passInput.clear();
-  const { DEMO_PASSWORD } = process.env;
-  await passInput.sendKeys(DEMO_PASSWORD || "fernly123");
+  await passInput.sendKeys(DEMO_PASSWORD);
   await driver.findElement(By.css('button[type="submit"]')).click();
+  // These are always CORRECT credentials — a rejection here is a failure of
+  // this step (env misconfiguration or a fill race), never an outcome to
+  // tolerate: fail fast with the toast text instead of letting the scenario
+  // continue unauthenticated (world.js login()'s expectSuccess contract).
+  const sawShell = await driver.wait(
+    async () => {
+      const shell = await driver.findElements(By.css("nav, [data-testid='sidebar']"));
+      if (shell.length > 0) return "shell";
+      const toast = await driver.findElements(By.css("[data-sonner-toast], [role='alert']"));
+      if (toast.length > 0) return "toast";
+      return false;
+    },
+    15_000,
+    "neither the app shell nor a login error appeared after re-login",
+  );
+  if (sawShell === "toast") {
+    let toastText = "";
+    try {
+      const toasts = await driver.findElements(By.css("[data-sonner-toast], [role='alert']"));
+      if (toasts.length) toastText = (await toasts[0].getText()).slice(0, 120);
+    } catch { /* best-effort */ }
+    throw new Error(`re-login as "${email}" was REJECTED (${toastText || "error toast"})`);
+  }
   await driver.sleep(2_000);
 });
 
@@ -416,21 +467,40 @@ Then("the candidate detail should show the hired summary", async function () {
 
 Then("the funnel panel should show stage metrics", async function () {
   const driver = await this.getDriver();
-  const panel = await driver.wait(
-    until.elementLocated(By.css('[data-testid="hiring-funnel"]')),
-    15_000,
-    "funnel panel did not render",
-  );
-  // CI-stabilization: the stage rows render as soon as the panel mounts but
-  // their CONTENT ("avg days" header + counts) arrives with the analytics
-  // fetch — asserting on getText() immediately after the row wait raced the
-  // data and failed deterministically in CI. Poll the text itself.
+  // CI-stabilization round 3: poll by RE-LOCATING the panel on every
+  // iteration. The previous version resolved the panel WebElement once and
+  // then polled getText() on that handle — but the app-shell remounts the
+  // active view subtree (key={`${view}-${refreshTick}`}) on any refresh
+  // tick, which DETACHES the old panel node. getText() on the detached
+  // handle then throws StaleElementReferenceException on every poll and
+  // driver.wait swallows it until the timeout — the failure screenshot
+  // showed a fully-rendered funnel ("Stages — in progress / passed / avg
+  // days" plainly visible) while the step still reported "stage metrics
+  // header never appeared". findElements + a fresh getText each iteration
+  // is immune: the re-query always targets the CURRENT DOM node.
   await driver.wait(
-    async () => (await panel.getText()).includes("avg days"),
+    async () => {
+      const panels = await driver.findElements(By.css('[data-testid="hiring-funnel"]'));
+      if (panels.length === 0) return false;
+      try {
+        // CI-stabilization round 3 — case-insensitive: the header renders
+        // with CSS `uppercase`, so getText() (innerText) yields
+        // "STAGES — IN PROGRESS / PASSED / AVG DAYS" — the previous
+        // case-sensitive includes("avg days") could never match. The step
+        // failed in EVERY run, local and CI, while the screenshot showed a
+        // fully rendered funnel.
+        return (await panels[0].getText()).toLowerCase().includes("avg days");
+      } catch {
+        // Stale between locate and read — the next poll re-locates.
+        return false;
+      }
+    },
     30_000,
     "stage metrics header never appeared",
   );
-  const text = await panel.getText();
+  const text = await driver
+    .wait(until.elementLocated(By.css('[data-testid="hiring-funnel"]')), 15_000)
+    .getText();
   assert.ok(/\d+\s*\/\s*\d+/.test(text), `stage metrics should carry counts: ${text.slice(0, 200)}`);
 });
 

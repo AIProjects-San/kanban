@@ -3,6 +3,26 @@
 Browser end-to-end tests driven by [Cucumber.js](https://cucumber.io/docs/installation/javascript/)
 and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 
+## Running the whole suite / a subset
+
+CI runs everything through `bun run test:e2e` (`cucumber.cjs` globs
+`e2e/features/**/*.feature`). To run ONE feature locally without editing
+the config — beware that CLI arguments MERGE with the config paths, so a
+bare `cucumber-js e2e/features/x.feature` silently runs the whole suite:
+
+```bash
+E2E_ONLY=e2e/features/hiring.feature bunx cucumber-js -c e2e/cucumber.only.cjs
+```
+
+`e2e/cucumber.only.cjs` is the default profile with `paths` sourced from
+`E2E_ONLY`. Local runs need Chrome + a matching chromedriver (Selenium
+Manager resolves both; set `CHROME_BIN` for a non-standard binary), a
+seeded database (`SEED_DEMO=1 bun run db:seed`) and the dev server up.
+Run a subset BEFORE the lockout feature has charged the sign-in throttle
+when chaining runs — the 15-minute window is per email+IP and a second
+suite launched inside it will 429-cluster exactly like a real
+brute-force lockout would.
+
 ## Failure artifacts
 
 Failed scenarios write a screenshot + a state file (URL, main h1, live toasts,

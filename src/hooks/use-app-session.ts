@@ -26,6 +26,20 @@ export interface AppSession {
 
 /**
  * Session hook: { data, status } in the shape the UI components expect.
+ *
+ * Status precedence (persona-audit CI stabilization round 3):
+ * 1. A session the client still holds → "authenticated" — EVEN IF the
+ *    latest background refetch errored. better-auth's session atom keeps
+ *    `data` and sets `error` on a transient network failure; the previous
+ *    mapping checked `error` first, so a single failed get-session fetch
+ *    (entirely possible under load) flipped the whole app to the login
+ *    screen mid-view, unmounting whatever the user was looking at and
+ *    detaching every DOM node an e2e step was holding.
+ * 2. A definitive auth rejection (401/403) → "unauthenticated" — the
+ *    session is genuinely gone; the shell must fall back to login.
+ * 3. Any other error (network/5xx) with no data yet → "loading": hold the
+ *    shell; the store retries on refocus/mount.
+ * 4. Clean resolve with no session → "unauthenticated".
  */
 export function useAppSession(): {
   data: AppSession | null;
@@ -36,19 +50,29 @@ export function useAppSession(): {
     | { user: { id: string; name?: string; email?: string; role?: string } }
     | null
     | undefined;
+  const authError = error as { status?: number } | null | undefined;
+  const sessionUser = session?.user?.id ?? null;
+  const definitiveReject =
+    !!authError && (authError.status === 401 || authError.status === 403);
+  const status: AppSessionStatus = sessionUser
+    ? "authenticated"
+    : definitiveReject
+      ? "unauthenticated"
+      : isPending || authError
+        ? "loading"
+        : "unauthenticated";
   return {
-    data:
-      session?.user?.id
-        ? {
-            user: {
-              id: session.user.id,
-              name: session.user.name ?? "",
-              email: session.user.email ?? "",
-              role: session.user.role ?? "MEMBER",
-            },
-          }
-        : null,
-    status: error ? "unauthenticated" : isPending ? "loading" : "authenticated",
+    data: sessionUser
+      ? {
+          user: {
+            id: session!.user.id,
+            name: session!.user.name ?? "",
+            email: session!.user.email ?? "",
+            role: session!.user.role ?? "MEMBER",
+          },
+        }
+      : null,
+    status,
   };
 }
 

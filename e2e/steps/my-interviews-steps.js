@@ -2,8 +2,9 @@
 // The member side runs as member@fernly.app (Theo Vance) — the persona that
 // was assignable as an interviewer but locked out of the Hiring module
 // entirely before this fix. Retry-safety: scenario 1 is read-only; scenario 2
-// is self-contained on Tomas Eriksen (untouched by every other scenario —
-// the R2 scheduler e2e only OPENS his schedule form, never submits), so a
+// resolves Tomas Eriksen's current pool at run time ("I open the pool
+// containing" — the R3 select scenario moves him to Selected under the CI
+// feature ordering, while an isolated run starts from the fresh seed), so a
 // cucumber retry re-runs cleanly (scheduling again would hit the
 // same-interviewer conflict guard, so the retry first closes any stale
 // modal and re-opens the card).
@@ -33,6 +34,31 @@ function tomorrowTen() {
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// ---------------------------------------------------------------------------
+// Shared with the hiring feature's candidate coverage — resolves which
+// status pool a candidate currently lives in, so a scenario stays valid
+// regardless of what EARLIER scenarios did to the candidate (CI ordering
+// runs hiring.feature first; an isolated run starts from the fresh seed).
+// ---------------------------------------------------------------------------
+const POOL_KEYS = ["ACTIVE", "SELECTED", "REJECTED", "WITHDRAWN", "HIRED"];
+
+When("I open the pool containing {string}", async function (name) {
+  const driver = await this.getDriver();
+  for (const key of POOL_KEYS) {
+    const chips = await driver.findElements(
+      By.css(`[data-testid="hiring-filter-${key.toLowerCase()}"]`),
+    );
+    if (chips.length === 0) continue;
+    await chips[0].click();
+    await driver.sleep(300);
+    const cards = await driver.findElements(
+      By.xpath(`//*[@data-testid="candidate-card"]//*[contains(text(), "${name}")]`),
+    );
+    if (cards.length > 0) return;
+  }
+  throw new Error(`candidate card "${name}" not found in any pool`);
+});
 
 Then("my interviews list should show the assignment empty state", async function () {
   const driver = await this.getDriver();

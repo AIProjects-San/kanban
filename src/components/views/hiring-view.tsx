@@ -98,19 +98,28 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
       setCanManage(permRes.data.canManage);
       setCanConfig(permRes.data.canConfig);
       setMailConfigured(permRes.data.mailConfigured ?? true);
-      // R3 — outbox is gated behind hiring:manage; skip the fetch otherwise
-      // so MANAGERs never trigger a permission-denied error path.
-      if (permRes.data.canManage) {
-        const obx = await getMailOutbox();
-        if (obx.ok) setOutbox(obx.data);
-        const offers = await getOfferRecords();
-        if (offers.ok) setOffers(offers.data);
-      }
     }
-    const mine = await getMyInterviews();
-    if (mine.ok) setMyInterviews(mine.data);
-    const fn = await getHiringFunnel();
-    if (fn.ok) setFunnel(fn.data);
+    // CI-stabilization round 3: the four secondary panels used to load
+    // STRICTLY SEQUENTIALLY (outbox → offers → my interviews → funnel), so
+    // on a slow dev-mode runner the funnel — last in the chain — could land
+    // past the e2e steps' 30 s data windows (the R3 outbox / R8 funnel
+    // scenarios timed out in CI while the board itself rendered). The four
+    // calls are independent reads: fire them in parallel and the whole view
+    // converges in ~one round-trip instead of four.
+    const canManage = permRes.ok ? permRes.data.canManage : false;
+    const notAllowed = async () => ({ ok: false as const, error: "permission" });
+    const [obxRes, offersRes, mineRes, fnRes] = await Promise.all([
+      // R3 — outbox + offers are gated behind hiring:manage; skip the fetch
+      // otherwise so MANAGERs never trigger a permission-denied error path.
+      canManage ? getMailOutbox() : notAllowed(),
+      canManage ? getOfferRecords() : notAllowed(),
+      getMyInterviews(),
+      getHiringFunnel(),
+    ]);
+    if (obxRes.ok) setOutbox(obxRes.data);
+    if (offersRes.ok) setOffers(offersRes.data);
+    if (mineRes.ok) setMyInterviews(mineRes.data);
+    if (fnRes.ok) setFunnel(fnRes.data);
     setLoaded(true);
   }, []);
 
