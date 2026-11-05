@@ -128,7 +128,12 @@ jobs:
   e2e:
     name: e2e (cucumber + selenium)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # CI-stabilization: the suite grew to 93 scenarios (R1..R8 + payslip
+    # self-service + P0-6) and observed runs take ~19.5 min on 2-core
+    # runners before retries of flaky scenarios; 20 min was the binding
+    # wall (observed cancellations). 30 min gives headroom without
+    # hiding genuine hangs.
+    timeout-minutes: 30
     needs: verify
     services:
       postgres:

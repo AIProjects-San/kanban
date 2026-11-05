@@ -5,7 +5,7 @@ and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 
 ## What is covered
 
-**92 scenarios across 14 feature files:**
+**93 scenarios across 14 feature files:**
 
 | Feature file | Scenarios |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -18,7 +18,7 @@ and [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/).
 | `hr-directory.feature` (6) | roster + search, manager read-only, admin edits, member self-serves contact fields, member blocked |
 | `hr-reviews.feature` (7) | manager's subtree queue, out-of-chain invisible, self-assessment, manager/HR/skip-level completion, employee acknowledgement |
 | `hr-onboarding.feature` (6) | seeded checklists + progress, create from template, add task, auto-complete on last tick, hire self-serves, outsider blocked |
-| `hiring.feature` (20) | HR sees board + manage controls, manager view-only, member gated, HR advances a stage, rejection requires a reason; R3: select candidate (offer-prep banner), reject with email lands in the outbox, seeded outbox row visible, manager never sees the outbox, selected-pool chip counts; R4: joining formalities of a selected candidate (checklist + BGV vendor), request a document from the checklist, doc-type editor config-gated; R5: HR builds an offer for a selected candidate (live CTC), offers panel lists records, manager never sees the panel; R6: HR sends the offer + the candidate signs on the public `/offer/<token>` page, HR marks the signed candidate joined (hired summary); R8: the funnel panel shows stage metrics + the offer accept rate |
+| `hiring.feature` (22) | HR sees board + manage controls, manager view-only, member gated, HR advances a stage, rejection requires a reason; R3: select candidate (offer-prep banner), reject with email lands in the outbox, seeded outbox row visible, manager never sees the outbox, selected-pool chip counts; R4: joining formalities of a selected candidate (checklist + BGV vendor), request a document from the checklist, doc-type editor config-gated; R5: HR builds an offer for a selected candidate (live CTC), offers panel lists records, manager never sees the panel; R6: HR sends the offer + the candidate signs on the public `/offer/<token>` page, HR marks the signed candidate joined (hired summary); R8: the funnel panel shows stage metrics + the offer accept rate; P0-6: a duplicate rejection email on the same day is blocked, HR sees the mail-config warning while no provider is configured |
 | `payroll.feature` (5) | HR sees the seeded runs (LOCKED + OPEN) and structures; payslip list shows the LOP hint; payslip editor shows the live net; HR edits loss-of-pay days and saves; HR creates next month's run and locks it; managers never see the Payroll leaf |
 | `my-payslips.feature` (3) | payslip self-service (persona-audit P0-1/D-02): member sees their own finalized payslips and opens one read-only with print; the OPEN current month never appears; the dashboard shows the latest-payslip card |
 | `hr-qa-hardening.feature` (2) | regression pack from the HR QA audit: approving past the remaining balance is refused; a next-year request is not blocked by this year's balance |

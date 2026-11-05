@@ -48,10 +48,16 @@ Then("my payslip viewer should be read-only with a print button", async function
     0,
     "self-service payslip viewer must never offer a save button (read-only)",
   );
-  // The modal description states the run status — LOCKED, the paid record.
+  // The payslip-modal testid is on the inner form; the uppercase run status
+  // lives in the modal HEADER description (outside the form). What the form
+  // itself states, in sentence case, is the locked-record footer note:
+  // "The run is locked — this slip is the paid, immutable record." —
+  // CI-stabilization: match case-insensitively (the old uppercase
+  // includes("LOCKED") could never pass and this scenario never went green
+  // in CI).
   const modal = await driver.findElement(By.css('[data-testid="payslip-modal"]'));
   const text = await modal.getText();
-  assert.ok(text.includes("LOCKED"), `viewer should state the LOCKED run status, got: ${text.slice(0, 120)}`);
+  assert.ok(/locked/i.test(text), `viewer should state the locked run status, got: ${text.slice(0, 120)}`);
 });
 
 Then("my payslip list should not include the current open month", async function () {

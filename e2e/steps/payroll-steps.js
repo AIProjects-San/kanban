@@ -23,13 +23,16 @@ Then("the payroll view should show runs for at least {int} months", async functi
 
 Then("the payroll view should show a LOCKED run and an OPEN run", async function () {
   const driver = await this.getDriver();
+  // CI-stabilization: `^=` is CSS-only syntax and made these XPath queries
+  // invalid (InvalidSelectorError) — payroll e2e never passed in CI. XPath
+  // 1.0 spells it starts-with(@attr, "prefix").
   await driver.wait(
-    until.elementLocated(By.xpath('//*[@data-testid^="run-row-"]//*[contains(text(), "LOCKED")]')),
+    until.elementLocated(By.xpath('//*[starts-with(@data-testid, "run-row-")]//*[contains(text(), "LOCKED")]')),
     15_000,
     "no LOCKED run rendered",
   );
   await driver.wait(
-    until.elementLocated(By.xpath('//*[@data-testid^="run-row-"]//*[contains(text(), "OPEN")]')),
+    until.elementLocated(By.xpath('//*[starts-with(@data-testid, "run-row-")]//*[contains(text(), "OPEN")]')),
     15_000,
     "no OPEN run rendered",
   );
@@ -105,8 +108,17 @@ When("I create a payroll run for next month", async function () {
     until.elementLocated(By.css('[data-testid="new-run-period"]')),
     10_000,
   );
+  // CI-stabilization: assigning `.value` directly defeats React's value
+  // tracker on controlled inputs — onChange never fires, the period stays
+  // at its default, and the create duplicates the existing month. Use the
+  // native prototype setter (the same trick as setReactInputValue in
+  // hr-steps.js) so the dispatched input event registers as a real change.
   await driver.executeScript(
-    "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input', { bubbles: true })); arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('input', { bubbles: true }));
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
     input,
     this.payrollPeriod,
   );
