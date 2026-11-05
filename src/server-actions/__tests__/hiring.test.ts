@@ -175,10 +175,12 @@ beforeEach(() => {
   db.user.findMany.mockResolvedValue([{ id: "u-mgr", name: "Ingrid" }]);
   db.calendarEvent.create.mockResolvedValue({ id: "ev-1" });
   db.reminder.create.mockResolvedValue({ id: "rem-1" });
-  // R3 — outbox + mailer defaults.
+  // R3 — outbox + mailer defaults. findFirst null = no duplicate send
+  // today (the D-18 guard's happy path; individual tests override it).
   db.mailOutbox.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ob-1", ...data }));
   db.mailOutbox.update.mockResolvedValue({});
   db.mailOutbox.findMany.mockResolvedValue([]);
+  db.mailOutbox.findFirst.mockResolvedValue(null);
   createMailerMock.mockReset();
   createMailerMock.mockReturnValue({ sendMail: vi.fn().mockResolvedValue({ delivered: true, messageId: "re-test-1" }) });
   // R4 — joining-formalities defaults.
@@ -471,12 +473,25 @@ describe("getHiringPermissions", () => {
     requirePermissionMock.mockResolvedValue(HR_AUTH);
     const hrRes = await getHiringPermissions();
     expect(hrRes.ok).toBe(true);
-    if (hrRes.ok) expect(hrRes.data).toEqual({ canManage: true, canConfig: true });
+    if (hrRes.ok) expect(hrRes.data).toEqual({ canManage: true, canConfig: true, mailConfigured: false });
 
     requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
     const mgrRes = await getHiringPermissions();
     expect(mgrRes.ok).toBe(true);
-    if (mgrRes.ok) expect(mgrRes.data).toEqual({ canManage: false, canConfig: false });
+    if (mgrRes.ok) expect(mgrRes.data).toEqual({ canManage: false, canConfig: false, mailConfigured: false });
+  });
+
+  // P0-6 (D-05/D-18) — the probe feeds the hiring view's first-run warning,
+  // so the mailConfigured flag must mirror the mailer factory's env truth.
+  it("reports mailConfigured true when RESEND_API_KEY is set", async () => {
+    vi.stubEnv("RESEND_API_KEY", "re_test_key");
+    try {
+      const res = await getHiringPermissions();
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.data.mailConfigured).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -707,6 +722,7 @@ describe("R3 — rejection email outbox", () => {
       sendEmail: true, emailRemarks: "We encourage you to apply again next quarter.",
     });
     expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.mailStatus).toBe("SENT");
     // The row is created QUEUED before the send attempt (audit-first).
     expect(db.mailOutbox.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -736,6 +752,7 @@ describe("R3 — rejection email outbox", () => {
     db.candidate.findUnique.mockResolvedValue(candidateWithStages());
     const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: true });
     expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.mailStatus).toBe("SKIPPED");
     expect(db.mailOutbox.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "SKIPPED", providerMessageId: "" }),
     }));
@@ -747,6 +764,7 @@ describe("R3 — rejection email outbox", () => {
     db.candidate.findUnique.mockResolvedValue(candidateWithStages());
     const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: true });
     expect(res.ok).toBe(true); // best-effort: the decision stands, the outbox carries the failure
+    if (res.ok) expect(res.data.mailStatus).toBe("FAILED");
     expect(db.candidate.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "REJECTED" }) }),
     );
@@ -759,6 +777,7 @@ describe("R3 — rejection email outbox", () => {
     db.candidate.findUnique.mockResolvedValue(candidateWithStages());
     const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x" });
     expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.mailStatus).toBeNull();
     expect(db.mailOutbox.create).not.toHaveBeenCalled();
     expect(createMailerMock).not.toHaveBeenCalled();
   });
@@ -769,6 +788,71 @@ describe("R3 — rejection email outbox", () => {
       candidateId: "cand-1", decision: "WITHDRAW", reason: "", sendEmail: true, emailRemarks: "hi",
     });
     expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.mailStatus).toBeNull();
+    expect(db.mailOutbox.create).not.toHaveBeenCalled();
+    // The D-18 guard is REJECT-scoped — WITHDRAW must never trip it.
+    expect(db.mailOutbox.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-18 (P0-6) — duplicate-email guard: one outbox send per candidate + kind
+// + UTC day, BLOCKING semantics (the decision itself is refused before any
+// state mutation, so a blocked duplicate never half-applies).
+// ---------------------------------------------------------------------------
+
+describe("D-18 — duplicate rejection email guard", () => {
+  it("blocks a second REJECTION email to the same candidate on the same UTC day — nothing is mutated", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.mailOutbox.findFirst.mockResolvedValue({ id: "ob-dup" }); // earlier send today
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: true });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("already sent");
+      expect(res.error).toContain("Nadia Petrova");
+      expect(res.error).toContain("Uncheck");
+    }
+    // Blocking semantics: the guard runs BEFORE the candidate update, so the
+    // decision is not half-applied and no outbox row/mailer call happens.
+    expect(db.candidate.update).not.toHaveBeenCalled();
+    expect(db.mailOutbox.create).not.toHaveBeenCalled();
+    expect(createMailerMock).not.toHaveBeenCalled();
+  });
+
+  it("scopes the guard to the same UTC day — the where clause is bounded by its start", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: true });
+    expect(res.ok).toBe(true);
+    const where = db.mailOutbox.findFirst.mock.calls[0][0]?.where as {
+      candidateId: string; kind: string; createdAt: { gte: Date };
+    };
+    expect(where.candidateId).toBe("cand-1");
+    expect(where.kind).toBe("REJECTION");
+    const gte = where.createdAt.gte;
+    const now = new Date();
+    expect(gte.getUTCHours()).toBe(0);
+    expect(gte.getUTCMinutes()).toBe(0);
+    expect(gte.getUTCSeconds()).toBe(0);
+    expect(gte.getUTCFullYear()).toBe(now.getUTCFullYear());
+    expect(gte.getUTCMonth()).toBe(now.getUTCMonth());
+    expect(gte.getUTCDate()).toBe(now.getUTCDate());
+  });
+
+  it("yesterday's send does not block today's (guard window is one day)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    // findFirst returning null stands for "no row at/after start of today".
+    db.mailOutbox.findFirst.mockResolvedValue(null);
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: true });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.mailStatus).toBe("SENT");
+  });
+
+  it("an opted-out rejection never consults the guard", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.mailOutbox.findFirst.mockResolvedValue({ id: "ob-dup" }); // would block
+    const res = await decideCandidate({ candidateId: "cand-1", decision: "REJECT", reason: "x", sendEmail: false });
+    expect(res.ok).toBe(true);
+    expect(db.mailOutbox.findFirst).not.toHaveBeenCalled();
     expect(db.mailOutbox.create).not.toHaveBeenCalled();
   });
 });

@@ -439,3 +439,71 @@ Then("the funnel panel should show the offer accept rate", async function () {
     `accept rate should render as a percentage or the em-dash, got: "${text}"`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// P0-6 (D-05/D-18, persona-audit) — mail delivery truth + first-run guidance.
+// ---------------------------------------------------------------------------
+
+// Local copy of the hr-steps toast helper (sonner toasts render with
+// [data-sonner-toast]); keyword match is case-insensitive.
+async function waitForHiringToast(driver, keyword, timeout = 10_000) {
+  const target = keyword.toLowerCase();
+  await driver.wait(
+    async () => {
+      const toasts = await driver.findElements(By.css("[data-sonner-toast]"));
+      for (const t of toasts) {
+        const text = (await t.getText()).toLowerCase();
+        if (text.includes(target)) return true;
+      }
+      return false;
+    },
+    timeout,
+    `no toast mentioning "${keyword}" appeared`,
+  );
+}
+
+Then("a toast should mention {string}", async function (keyword) {
+  const driver = await this.getDriver();
+  await waitForHiringToast(driver, keyword);
+});
+
+When("I reactivate the candidate", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid="reactivate-btn"]')),
+    10_000,
+    "reactivate button did not render (candidate not in a reactivatable pool?)",
+  );
+  await btn.click();
+  // The board reloads via onChanged; give the ACTIVE re-render a beat so the
+  // subsequent reject flow finds its button.
+  await driver.sleep(800);
+});
+
+Then("the mail config warning should be visible", async function () {
+  const driver = await this.getDriver();
+  const banner = await driver.wait(
+    until.elementLocated(By.css('[data-testid="mail-config-warning"]')),
+    10_000,
+    "mail-config warning banner did not render (provider configured?)",
+  );
+  const text = await banner.getText();
+  assert.ok(
+    text.includes("Email delivery is off"),
+    `banner should explain the off state, got: "${text.slice(0, 120)}"`,
+  );
+});
+
+When("I close the candidate detail modal", async function () {
+  const driver = await this.getDriver();
+  await driver
+    .findElement(By.xpath(`//div[@role='dialog']//button[@aria-label='Close dialog']`))
+    .click();
+  // Wait for the dialog (and its backdrop) to unmount so later clicks on
+  // board controls are never intercepted.
+  await driver.wait(
+    async () => (await driver.findElements(By.css("div[role='dialog']"))).length === 0,
+    10_000,
+    "the candidate detail modal did not close after clicking X",
+  );
+});

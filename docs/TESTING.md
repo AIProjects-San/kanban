@@ -203,6 +203,9 @@ Execute each group per persona. ✅ = pass criterion.
 | HIRE-12 | Double-booking refused | Schedule the same interviewer twice within the same hour | Second attempt refused with a naming conflict message; no second calendar event |
 | HIRE-13 | Scorecard (interviewer) | Sign in as the assigned interviewer (manager@fernly.app) → Hiring → open the candidate → Fill scorecard | Rating 1–5, strengths, concerns, recommendation save and render read-only; HR sees them too |
 | HIRE-14 | My interviews panel | Sign in as manager@fernly.app → Hiring | "Your upcoming interviews" panel lists assigned stages with dates; hidden when empty |
+| HIRE-15 | Rejection toast tells the mail truth (P0-6/D-05) | HR → open an ACTIVE candidate → Reject → reason → "Email the candidate" ON → Confirm | Toast mirrors the outbox row: SENT → success "sent and recorded in the outbox"; no provider → warning "NOT delivered … Recorded as skipped"; provider error → error "FAILED to send — see the outbox". Without the toggle: plain "Candidate rejected." — never a delivery claim |
+| HIRE-16 | Duplicate email blocked per day (P0-6/D-18) | HR → reject+email a candidate; reactivate; reject+email again the same day | Second send BLOCKED with "A rejection email was already sent to <name> today … Uncheck 'Email the candidate' …"; the candidate stays ACTIVE (no half-applied decision); unchecking the toggle and confirming succeeds |
+| HIRE-17 | Mail-config warning banners (P0-6) | (no `RESEND_API_KEY`) HR → Hiring; ADMIN → Workspace Config → General | Amber banner above the outbox: "Email delivery is off — … (set RESEND_API_KEY)"; same guidance in the settings General tab; both disappear once a provider is configured |
 
 ### 2.14 Personalisation & UX (UX)
 

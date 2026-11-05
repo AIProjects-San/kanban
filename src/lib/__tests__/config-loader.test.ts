@@ -225,6 +225,27 @@ describe("getWorkspaceConfig — DB-driven values", () => {
   });
 });
 
+describe("getWorkspaceConfig — mail section (P0-6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bumpConfigCache();
+    stubEmptyTables();
+    vi.unstubAllEnvs();
+  });
+
+  it("reports unconfigured (provider none) when RESEND_API_KEY is unset", async () => {
+    const config = await getWorkspaceConfig();
+    expect(config.mail).toEqual({ configured: false, provider: "none" });
+  });
+
+  it("reports configured (provider resend) when RESEND_API_KEY is set", async () => {
+    vi.stubEnv("RESEND_API_KEY", "re_test_key");
+    bumpConfigCache(); // env is read inside the loader — drop any cached copy
+    const config = await getWorkspaceConfig();
+    expect(config.mail).toEqual({ configured: true, provider: "resend" });
+  });
+});
+
 describe("getWorkspaceConfig — caching", () => {
   beforeEach(() => {
     vi.clearAllMocks();

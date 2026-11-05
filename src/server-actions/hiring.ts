@@ -476,9 +476,13 @@ export async function addCandidateStage(input: unknown): Promise<ActionResult<{ 
 // R3: SELECT moves the candidate to the SELECTED pool (offer prep), and
 // REJECT can queue a rejection email (MailOutbox + provider send). The
 // internal `reason` is audit-only; the email carries HR-approved remarks.
+// P0-6 (D-05/D-18, persona-audit): the action returns the real mail status
+// so the UI can tell the truth about delivery, and a duplicate-email guard
+// (one outbox send per candidate + kind + UTC day) blocks a same-day repeat
+// BEFORE any state mutation.
 // ---------------------------------------------------------------------------
 
-export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok: true }>> {
+export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok: true; mailStatus: string | null }>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
     const data = parseOrThrow(decideCandidateSchema, input);
@@ -486,6 +490,8 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
       where: { id: data.candidateId },
     });
     if (!candidate) throw new AuthorizationError("Candidate not found.");
+
+    let mailStatus: string | null = null;
 
     if (data.decision === "REACTIVATE") {
       if (
@@ -533,6 +539,15 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
       if (data.decision === "REJECT" && data.reason.trim().length === 0) {
         throw new AuthorizationError("A rejection reason is required.");
       }
+
+      // D-18 (P0-6) — duplicate-email guard: run BEFORE the candidate update
+      // so a blocked duplicate never half-applies the decision (the update is
+      // not inside a transaction with the email send). Blocking semantics per
+      // the fix decision: HR unchecks "Email the candidate" and retries.
+      if (data.decision === "REJECT" && data.sendEmail) {
+        await assertNoDuplicateOutboxEmail(candidate.id, "REJECTION", candidate.fullName);
+      }
+
       await db.candidate.update({
         where: { id: candidate.id },
         data: {
@@ -554,18 +569,20 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
       // R3 — opt-in rejection email: queue the MailOutbox row, attempt the
       // send, and record the outcome (SENT / SKIPPED / FAILED). A provider
       // outage must not fail the decision itself — the failure lands in the
-      // outbox where HR can see it.
+      // outbox where HR can see it. P0-6: the status travels back to the UI
+      // so the toast can mirror it honestly.
       if (data.decision === "REJECT" && data.sendEmail) {
-        await queueCandidateEmail({
+        const sent = await queueCandidateEmail({
           kind: "REJECTION",
           candidate: { id: candidate.id, fullName: candidate.fullName, email: candidate.email, position: candidate.position },
           remarks: data.emailRemarks,
           auth,
         });
+        mailStatus = sent.status;
       }
     }
     revalidatePath("/");
-    return { ok: true };
+    return { ok: true, mailStatus };
   });
 }
 
@@ -575,15 +592,45 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
 
 type EmailActor = { userId: string; name: string; role: string };
 
+/** D-18 (P0-6) — duplicate-email guard: at most one outbox send per
+ * (candidate, kind, UTC day). Application-level check-then-act — the same
+ * pattern as the interview clash check in scheduleInterview; the natural
+ * writers are already single-shot (offers are DRAFT→SENT one-way, markJoined
+ * is idempotent), so the exposed surface is REJECTION (reactivate → re-reject
+ * same day). UTC day boundary keeps it deterministic and testable; the
+ * check-then-create race window is bounded by the sequential HR UI. */
+async function assertNoDuplicateOutboxEmail(
+  candidateId: string,
+  kind: string,
+  candidateName: string,
+): Promise<void> {
+  const now = new Date();
+  const startOfUtcDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dup = await db.mailOutbox.findFirst({
+    where: { candidateId, kind, createdAt: { gte: startOfUtcDay } },
+    select: { id: true },
+  });
+  if (dup) {
+    throw new AuthorizationError(
+      `A ${kind.toLowerCase()} email was already sent to ${candidateName} today — at most one per candidate per day. ` +
+        `Uncheck "Email the candidate" to record the decision without another send, or retry tomorrow.`,
+    );
+  }
+}
+
 /** Compose → persist QUEUED → attempt delivery → resolve the row to
- * SENT / SKIPPED / FAILED. Never throws (best-effort like the password-reset
- * mail path): the outbox row is the error surface for HR. */
+ * SENT / SKIPPED / FAILED. Never throws for provider failures (best-effort
+ * like the password-reset mail path): the outbox row is the error surface
+ * for HR. Throws only on the D-18 duplicate guard (belt-and-braces — the
+ * decideCandidate-level check already runs before any state mutation). */
 async function queueCandidateEmail(input: {
   kind: "REJECTION";
   candidate: { id: string; fullName: string; email: string; position: string };
   remarks: string;
   auth: EmailActor;
 }): Promise<{ outboxId: string; status: string }> {
+  // D-18 — keep the invariant true for any future caller of this helper too.
+  await assertNoDuplicateOutboxEmail(input.candidate.id, input.kind, input.candidate.fullName);
   const config = await getWorkspaceConfig();
   const email = composeRejectionEmail({
     candidateName: input.candidate.fullName,
@@ -915,13 +962,18 @@ export async function getMyInterviews(): Promise<
 // ---------------------------------------------------------------------------
 
 export async function getHiringPermissions(): Promise<
-  ActionResult<{ canManage: boolean; canConfig: boolean }>
+  ActionResult<{ canManage: boolean; canConfig: boolean; mailConfigured: boolean }>
 > {
   return toResult(async () => {
     const auth = await requirePermission("hiring:view");
     const canManage = hasPermission(auth.role, "hiring:manage");
     const canConfig = hasPermission(auth.role, "hiring:config");
-    return { canManage, canConfig };
+    // P0-6 (D-05/D-18) — first-run guidance: the hiring view warns when no
+    // transactional mail provider is wired. Same env source of truth as the
+    // mailer factory (lib/mailer.ts createMailer), so the banner can never
+    // disagree with what actually happens on a send.
+    const mailConfigured = Boolean(process.env.RESEND_API_KEY);
+    return { canManage, canConfig, mailConfigured };
   });
 }
 

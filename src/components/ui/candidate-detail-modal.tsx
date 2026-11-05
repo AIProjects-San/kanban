@@ -219,11 +219,26 @@ export function CandidateDetailModal({
       toast.error("A rejection reason is required.");
       return;
     }
-    const okDone = await run(
-      () => decideCandidate({ candidateId: c.id, decision: "REJECT", reason, sendEmail, emailRemarks }),
-      sendEmail ? "Candidate rejected — rejection email queued." : "Candidate rejected.",
-    );
-    if (okDone) { setRejectOpen(false); setSendEmail(false); setEmailRemarks(""); }
+    setBusy(true);
+    const res = await decideCandidate({ candidateId: c.id, decision: "REJECT", reason, sendEmail, emailRemarks });
+    setBusy(false);
+    if (!res.ok) { toast.error(res.error ?? "Action failed."); return; }
+    // P0-6 (D-05) — the toast mirrors the outbox row's truth: SENT / SKIPPED
+    // (no provider) / FAILED (provider error). No email requested → the
+    // plain decision confirmation.
+    if (sendEmail) {
+      if (res.data.mailStatus === "SENT") {
+        toast.success("Candidate rejected — rejection email sent and recorded in the outbox.");
+      } else if (res.data.mailStatus === "FAILED") {
+        toast.error("Candidate rejected, but the rejection email FAILED to send — see the outbox for the error.");
+      } else {
+        toast.warning("Candidate rejected — the rejection email was NOT delivered (no mail provider configured). Recorded as skipped in the outbox.");
+      }
+    } else {
+      toast.success("Candidate rejected.");
+    }
+    onChanged();
+    setRejectOpen(false); setSendEmail(false); setEmailRemarks("");
   };
 
   // R3 — the hire decision: ACTIVE → SELECTED (offer prep pointer).

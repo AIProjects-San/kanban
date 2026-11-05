@@ -173,6 +173,20 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
   return (
     <Section icon={Settings2} title="General" description="Workspace-level defaults and policies">
       <div className="space-y-4">
+        {/* P0-6 (D-05/D-18) — first-run guidance: candidate emails are silently
+            recorded as SKIPPED until a mail provider is wired. Surfaced here so
+            the workspace admin learns WHY sends never arrive. */}
+        {!config.mail.configured && (
+          <div
+            className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-600"
+            data-testid="mail-config-banner"
+          >
+            <span className="font-semibold">No mail provider configured.</span>{" "}
+            Offer, welcome and rejection emails are recorded as <span className="font-semibold">skipped</span> in the audited outbox — nothing is actually delivered.{" "}
+            Set <code className="rounded bg-amber-500/15 px-1 py-0.5 text-xs">RESEND_API_KEY</code>{" "}
+            (and optionally <code className="rounded bg-amber-500/15 px-1 py-0.5 text-xs">MAIL_FROM</code>) in the server environment to enable delivery.
+          </div>
+        )}
         <Field label="Workspace name">
           <input className="f-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </Field>
@@ -275,11 +289,13 @@ function ConfigListEditor({
     taskTags: "taskTagConfig",
     priorities: "priorityConfig",
     departments: "departmentConfig",
-    // WorkspaceConfig carries three more keys that this editor never
-    // reaches (workspace settings + role/permission management have
-    // their own editors). The record must still be exhaustive; we map
-    // them to a placeholder table that will never be hit at runtime.
+    // WorkspaceConfig carries four more keys that this editor never
+    // reaches (workspace settings, the computed mail section, and
+    // role/permission management have their own editors/surfaces). The
+    // record must still be exhaustive; we map them to a placeholder table
+    // that will never be hit at runtime.
     workspace: "taskStatusConfig",
+    mail: "taskStatusConfig",
     roles: "taskStatusConfig",
     permissions: "taskStatusConfig",
   };

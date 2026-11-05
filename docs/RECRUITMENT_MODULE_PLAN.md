@@ -344,8 +344,9 @@ Rippling, and a P0/P1/P2 backlog.
   join toast tells HR to relay the sign-in email manually.
 
 **Top open items (P0):** member-interviewer access, joiner lockout without a
-mail provider, statutory decision (build vs reposition), mail-config
-surfacing. The full backlog (39 open items) is in the report's Section 6.
+mail provider, statutory decision (build vs reposition). The full backlog
+(39 open items) is in the report's Section 6; mail-config surfacing closed
+below.
 
 **Post-audit P0 fixes:**
 - **P0-1 — employee payslip self-service (D-02), FIXED.** New
@@ -356,3 +357,19 @@ surfacing. The full backlog (39 open items) is in the report's Section 6.
   runs on the same locked-only basis per calendar year. The full Payroll
   console stays `payroll:manage` (ADMIN+HR). Also fixed the G N / G I
   keyboard-shortcut shadowing found in review.
+- **P0-6 — mail delivery truth + first-run guidance (D-05/D-18), FIXED.**
+  `decideCandidate` now returns the rejection `mailStatus` and the toast
+  mirrors the outbox row's truth (SENT / SKIPPED-no-provider / FAILED) —
+  completing what `sendOffer`/`markJoined` started in 1d7f246. Duplicate
+  sends are blocked server-side: at most one outbox email per (candidate,
+  kind, UTC day) — checked BEFORE the candidate update so a blocked
+  duplicate never half-applies the decision; the actionable error tells HR
+  to uncheck "Email the candidate" (blocking semantics per the fix
+  decision; sendOffer is DRAFT→SENT one-way and markJoined is idempotent,
+  so the guard's exposed surface is rejections after a reactivate).
+  First-run guidance: `getHiringPermissions` carries `mailConfigured`
+  (same env truth as the mailer factory) and the hiring view warns above
+  the outbox while `RESEND_API_KEY` is unset; the workspace config's
+  General tab carries the same banner for the admin. Unit + component tests
+  added; e2e: duplicate-block scenario (self-contained on the untouched
+  seeded candidate) + mail-config warning scenario.

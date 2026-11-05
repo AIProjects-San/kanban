@@ -99,8 +99,21 @@ export interface WorkspaceSettingsT {
   dashboardNotifLimit: number;
 }
 
+/** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
+ * computed from the environment (the mailer factory's source of truth), NOT
+ * a DB setting. Drives the first-run guidance banners until RESEND_API_KEY
+ * is set. Env is fixed per process, so the 10 s cache can never serve a
+ * stale provider state. */
+export interface MailConfigT {
+  /** True when a transactional provider is wired (RESEND_API_KEY set). */
+  configured: boolean;
+  /** Provider label — "resend" when configured, "none" otherwise. */
+  provider: "resend" | "none";
+}
+
 export interface WorkspaceConfig {
   workspace: WorkspaceSettingsT;
+  mail: MailConfigT;
   taskStatuses: TaskStatusConfigT[];
   projectStatuses: ProjectStatusConfigT[];
   eventTypes: EventTypeConfigT[];
@@ -228,6 +241,12 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
   ]);
 
   const config: WorkspaceConfig = {
+    // P0-6 — computed, non-DB section (see MailConfigT above).
+    mail: {
+      configured: Boolean(process.env.RESEND_API_KEY),
+      provider: process.env.RESEND_API_KEY ? "resend" : "none",
+    },
+
     workspace: workspace
       ? {
           name: workspace.name,

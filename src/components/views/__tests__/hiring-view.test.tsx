@@ -86,7 +86,7 @@ beforeEach(() => {
     ok: true,
     data: { stages: STAGES, candidates: [cand({})] },
   });
-  getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: true, canConfig: true } });
+  getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: true, canConfig: true, mailConfigured: true } });
   getMyInterviews.mockResolvedValue({ ok: true, data: [] });
   getMailOutbox.mockResolvedValue({ ok: true, data: [] });
   getOfferRecords.mockResolvedValue({ ok: true, data: [] });
@@ -137,13 +137,45 @@ describe("HiringView: HR (full manage)", () => {
 
 describe("HiringView: MANAGER (interviewer, view-only)", () => {
   it("renders the board but hides manage/config controls", async () => {
-    getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: false, canConfig: false } });
+    getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: false, canConfig: false, mailConfigured: true } });
     render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
     expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
     expect(screen.queryByTestId("add-candidate-btn")).toBeNull();
     expect(screen.queryByTestId("stage-template-btn")).toBeNull();
     expect(screen.queryByTestId("doc-type-btn")).toBeNull();
     expect(screen.getByText(/interviewer view/)).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0-6 (D-05/D-18) — first-run guidance: HR (hiring:manage) sees a warning
+// above the outbox until a mail provider is wired; managers never do (they
+// cannot send, and the outbox itself is manage-gated).
+// ---------------------------------------------------------------------------
+
+describe("HiringView: P0-6 mail-config warning", () => {
+  it("shows the warning banner when mail is not configured (canManage)", async () => {
+    getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: true, canConfig: true, mailConfigured: false } });
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const banner = await screen.findByTestId("mail-config-warning");
+    expect(banner.textContent).toContain("Email delivery is off");
+    expect(banner.textContent).toContain("RESEND_API_KEY");
+    // The outbox panel the banner explains is right below it.
+    expect(screen.getByTestId("email-outbox")).toBeTruthy();
+  });
+
+  it("hides the banner when a provider is configured", async () => {
+    render(<HiringView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    expect(await screen.findByTestId("email-outbox")).toBeTruthy();
+    expect(screen.queryByTestId("mail-config-warning")).toBeNull();
+  });
+
+  it("never shows the banner for a view-only interviewer (MANAGER)", async () => {
+    getHiringPermissions.mockResolvedValue({ ok: true, data: { canManage: false, canConfig: false, mailConfigured: false } });
+    render(<HiringView currentUser={{ id: "u-mgr", name: "Ingrid", role: "MANAGER" }} />);
+    expect(await screen.findByTestId("stage-column-screening")).toBeTruthy();
+    expect(screen.queryByTestId("mail-config-warning")).toBeNull();
+    expect(screen.queryByTestId("email-outbox")).toBeNull();
   });
 });
 

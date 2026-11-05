@@ -148,3 +148,32 @@ Feature: Hiring pipeline (Recruitment R1)
     And I open the "Hiring" view
     Then the funnel panel should show stage metrics
     And the funnel panel should show the offer accept rate
+
+  # P0-6 (D-05/D-18, persona-audit) — mail delivery truth + first-run guidance.
+  # Nadia is untouched by every other scenario, so this is self-contained:
+  # first reject+email lands in the outbox, then the same-day repeat is
+  # BLOCKED (server-side guard) with the actionable error toast.
+  Scenario: A duplicate rejection email on the same day is blocked (D-18)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the candidate card "Nadia Petrova"
+    And I try to reject the candidate
+    And I fill the rejection reason with "Loop feedback below bar"
+    And I toggle the rejection email on
+    And I confirm the rejection
+    Then a toast should mention "NOT delivered"
+    And the email outbox should show a recorded email to "nadia.petrova@example.com"
+    When I close the candidate detail modal
+    And I open the "Rejected" pool
+    And I open the candidate card "Nadia Petrova"
+    And I reactivate the candidate
+    And I try to reject the candidate
+    And I fill the rejection reason with "Second attempt"
+    And I toggle the rejection email on
+    And I confirm the rejection
+    Then a toast should mention "already sent"
+
+  Scenario: HR sees the mail-config warning while no provider is configured (P0-6)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the mail config warning should be visible

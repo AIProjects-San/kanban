@@ -258,7 +258,7 @@ describe("CandidateDetailModal: R3 decisions", () => {
   });
 
   it("reject with the email toggle submits sendEmail + remarks", async () => {
-    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true } });
+    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true, mailStatus: "SENT" } });
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
@@ -282,10 +282,18 @@ describe("CandidateDetailModal: R3 decisions", () => {
         }),
       ),
     );
+    // P0-6 (D-05) — a delivered email toasts success with the truth.
+    const { toast } = await import("sonner");
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringContaining("rejection email sent and recorded in the outbox"),
+      ),
+    );
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 
   it("reject without the toggle sends no email flags (defaults)", async () => {
-    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true } });
+    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true, mailStatus: null } });
     render(
       <CandidateDetailModal
         open candidate={cand([stage({})])} canManage
@@ -300,6 +308,83 @@ describe("CandidateDetailModal: R3 decisions", () => {
         expect.objectContaining({ decision: "REJECT", reason: "Not a fit", sendEmail: false }),
       ),
     );
+    // No email requested → the plain confirmation, never a delivery claim.
+    const { toast } = await import("sonner");
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Candidate rejected."),
+    );
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0-6 (D-05/D-18) — rejection toast tells the delivery truth (SENT /
+// SKIPPED / FAILED mirrors the outbox row) and the D-18 duplicate guard
+// error surfaces as a toast instead of silently half-applying.
+// ---------------------------------------------------------------------------
+
+describe("CandidateDetailModal: P0-6 rejection mail truth", () => {
+  async function rejectWithEmail(mailStatus: string) {
+    decideCandidate.mockResolvedValue({ ok: true, data: { ok: true, mailStatus } });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("reject-btn"));
+    fireEvent.change(screen.getByTestId("reject-reason"), { target: { value: "x" } });
+    fireEvent.click(screen.getByTestId("reject-email-toggle"));
+    fireEvent.click(screen.getByTestId("reject-confirm"));
+    await waitFor(() => expect(decideCandidate).toHaveBeenCalled());
+    const { toast } = await import("sonner");
+    return { toast };
+  }
+
+  it("SKIPPED (no provider) warns that the email was NOT delivered", async () => {
+    const { toast } = await rejectWithEmail("SKIPPED");
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith(
+        expect.stringContaining("rejection email was NOT delivered"),
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("FAILED (provider error) errors and points at the outbox", async () => {
+    const { toast } = await rejectWithEmail("FAILED");
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("FAILED to send"),
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it("a D-18 duplicate block surfaces the server error as a toast", async () => {
+    decideCandidate.mockResolvedValue({
+      ok: false,
+      error: "A rejection email was already sent to Nadia Petrova today — at most one per candidate per day. Uncheck \"Email the candidate\" to record the decision without another send, or retry tomorrow.",
+    });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})])} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer={false}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("reject-btn"));
+    fireEvent.change(screen.getByTestId("reject-reason"), { target: { value: "dup" } });
+    fireEvent.click(screen.getByTestId("reject-email-toggle"));
+    fireEvent.click(screen.getByTestId("reject-confirm"));
+    const { toast } = await import("sonner");
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("already sent"),
+      ),
+    );
+    // The rejection form stays open for the retry (onChanged never fired).
+    expect(onChanged).not.toHaveBeenCalled();
   });
 });
 

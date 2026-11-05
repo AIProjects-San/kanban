@@ -58,6 +58,10 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
   const [candidates, setCandidates] = useState<CandidateT[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [canConfig, setCanConfig] = useState(false);
+  // P0-6 (D-05/D-18) — mail-provider truth from the permission probe; drives
+  // the first-run warning above the outbox (defaults true so a stale probe
+  // never flashes the banner — the real action always returns the field).
+  const [mailConfigured, setMailConfigured] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>("ACTIVE");
   const [createOpen, setCreateOpen] = useState(false);
@@ -93,6 +97,7 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
     if (permRes.ok) {
       setCanManage(permRes.data.canManage);
       setCanConfig(permRes.data.canConfig);
+      setMailConfigured(permRes.data.mailConfigured ?? true);
       // R3 — outbox is gated behind hiring:manage; skip the fetch otherwise
       // so MANAGERs never trigger a permission-denied error path.
       if (permRes.data.canManage) {
@@ -433,7 +438,22 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
 
       {/* R3 — audited email outbox (hiring:manage only) */}
       {canManage && (
-        <div className="rounded-lg border border-border" data-testid="email-outbox">
+        <>
+          {/* P0-6 (D-05/D-18) — first-run guidance: tells HR WHY every send lands
+              as SKIPPED before they send one, instead of after. The parent
+              column's space-y-5 provides the gap to the outbox below. */}
+          {!mailConfigured && (
+            <div
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 flex items-start gap-2"
+              data-testid="mail-config-warning"
+            >
+              <Mail size={14} className="shrink-0 mt-0.5" />
+              <span>
+                <span className="font-semibold">Email delivery is off</span> — no mail provider is configured (set <span className="font-mono text-xs">RESEND_API_KEY</span>). Every candidate send below is recorded as skipped; copy signing links and share them manually.
+              </span>
+            </div>
+          )}
+          <div className="rounded-lg border border-border" data-testid="email-outbox">
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
             <Mail size={14} className="text-sky-500" />
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -491,7 +511,8 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
               </div>
             )}
           </div>
-        </div>
+          </div>
+        </>
       )}
 
       {/* Modals */}
