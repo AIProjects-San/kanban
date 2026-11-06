@@ -14,5 +14,5 @@ Feature: Brute-force lockout
 
   Scenario: 5 failures block the 6th attempt
     When I fail to sign in as "member@fernly.app" 5 times
-    And I sign in as "member@fernly.app" with the correct password
+    And I attempt to sign in as "member@fernly.app" with the correct password
     Then I should still be on the login screen

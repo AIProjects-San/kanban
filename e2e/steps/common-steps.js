@@ -41,6 +41,15 @@ When("I sign in as {string} with the correct password", async function (email) {
   await this.login(email, CREDENTIALS[email]);
 });
 
+// Attempt variant — used by the brute-force lockout scenario, where the
+// CORRECT password is still expected to be REJECTED (the 5 prior failures
+// exhausted the throttle): the tolerant outcome contract, with the
+// "still on the login screen" assertion carrying the actual expectation.
+When("I attempt to sign in as {string} with the correct password", async function (email) {
+  this.lastEmail = email;
+  await this.login(email, CREDENTIALS[email], { expectSuccess: false });
+});
+
 // Explicit-password variant — used by the rejected-login scenarios (wrong
 // password, unknown email, empty credentials) where the credential must NOT
 // be the demo password. expectSuccess:false keeps the tolerant outcome for
