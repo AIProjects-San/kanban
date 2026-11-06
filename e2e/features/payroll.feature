@@ -45,7 +45,7 @@ Feature: Payroll (Recruitment R7)
     And I mark "Hana Park" "HALF_DAY" on the next working day
     And I open the "Payroll" view
     And I create a payroll run for next month
-    Then the payslip list should show the LOP hint "1.5d" marked auto for "Hana Park"
+    Then the payslip list should show the LOP hint "1.5d" marked "auto" for "Hana Park"
     When I open the payslip for "Hana Park"
     Then the payslip provenance note should say the LOP was auto-derived
 
