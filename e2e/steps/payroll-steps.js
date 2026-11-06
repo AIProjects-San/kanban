@@ -6,12 +6,37 @@
 const { When, Then } = require("@cucumber/cucumber");
 const { By, until } = require("selenium-webdriver");
 const assert = require("node:assert");
+const { iso } = require("./hr-steps");
+const { isHoliday } = require("../support/holidays");
+const { markOn } = require("./hr-attendance-steps");
 
 /** Next month as "YYYY-MM" from the browser clock (stable within the run). */
 function nextMonth() {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** The first working (non-holiday) Monday of next month — F1.4's auto-LOP
+ * e2e date. Falls forward day-by-day past seeded holidays so the derivation
+ * always charges the marked days no matter when CI runs. */
+function firstWorkingMondayOfNextMonth() {
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  while (d.getUTCDay() !== 1) d.setUTCDate(d.getUTCDate() + 1);
+  while (isHoliday(d) || d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
+}
+
+/** The next working day strictly after `from` (skips weekends + holidays). */
+function nextWorkingDayAfter(from) {
+  const d = new Date(from.getTime() + 86_400_000);
+  while (isHoliday(d) || d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
 }
 
 Then("the payroll view should show runs for at least {int} months", async function (min) {
@@ -166,5 +191,55 @@ Then("the new run should be locked", async function () {
     ),
     15_000,
     `run ${this.payrollPeriod} did not render as LOCKED`,
+  );
+});
+
+// --- F1.4: auto-derived LOP from attendance marks -------------------------
+
+When("I mark {string} {string} on the first working Monday of next month", async function (userName, status) {
+  const day1 = firstWorkingMondayOfNextMonth();
+  this.e2eLopDay1 = day1;
+  await markOn(this, userName, status, day1);
+});
+
+When("I mark {string} {string} on the next working day", async function (userName, status) {
+  assert.ok(this.e2eLopDay1, "no first working Monday was marked in this scenario");
+  const day2 = nextWorkingDayAfter(this.e2eLopDay1);
+  await markOn(this, userName, status, day2);
+});
+
+Then("the payslip list should show the LOP hint {string} marked {string} for {string}", async function (hint, provenance, name) {
+  const driver = await this.getDriver();
+  // The newly created run is the newest period → selected by default.
+  const row = await driver.wait(
+    until.elementLocated(
+      By.xpath(`//*[@data-testid="payslip-row"]//*[contains(text(), "${name}")]`),
+    ),
+    15_000,
+    `no payslip row for "${name}"`,
+  );
+  const slip = await row.findElement(By.xpath('ancestor::*[@data-testid="payslip-row"]'));
+  const text = await slip.getText();
+  assert.ok(
+    text.includes(`LOP ${hint}`),
+    `payslip should show "LOP ${hint}", got: ${text}`,
+  );
+  assert.ok(
+    text.includes(`(${provenance})`),
+    `payslip should tag the LOP "(${provenance})", got: ${text}`,
+  );
+});
+
+Then("the payslip provenance note should say the LOP was auto-derived", async function () {
+  const driver = await this.getDriver();
+  const note = await driver.wait(
+    until.elementLocated(By.css('[data-testid="payslip-lop-source"]')),
+    10_000,
+    "no LOP provenance note rendered",
+  );
+  const text = await note.getText();
+  assert.ok(
+    /Auto-derived/i.test(text),
+    `provenance note should say Auto-derived, got: ${text}`,
   );
 });

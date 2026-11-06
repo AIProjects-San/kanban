@@ -36,7 +36,8 @@ import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseComponents } from "@/lib/offer-math";
-import { workingDaysInPeriod } from "@/lib/working-days";
+import { workingDaysInPeriod, type HolidayLookup } from "@/lib/working-days";
+import { deriveLopDays, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
 import { getHolidayLookup } from "./hr-shared";
 import {
   monthlyEarningsFromStructure,
@@ -44,6 +45,7 @@ import {
   withLopLine,
   daysInPeriod,
   parsePayslipLines,
+  round2,
   type PayslipLine,
 } from "@/lib/payroll-math";
 // ---------------------------------------------------------------------------
@@ -214,6 +216,73 @@ function slipNumber(period: string, seq: number): string {
   return `PS-${period}-${String(seq).padStart(3, "0")}`;
 }
 
+// ---------------------------------------------------------------------------
+// F1.4 — attendance→LOP derivation fetch
+// (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1)
+// ---------------------------------------------------------------------------
+
+/** Per-user loss-of-pay days for a period, derived from attendance marks
+ * (ABSENT / HALF_DAY) and approved leave (paid types shield the day, unpaid
+ * types charge it — lib/lop-derivation.ts has the exact per-day semantics).
+ * Charges only working days (weekends/holidays never charge); days with no
+ * record and no leave charge 0. Runs at run/slip CREATION only — the value
+ * is then a snapshot on the payslip (F1.1's never-re-derived discipline). */
+async function deriveLopDaysForUsers(
+  userIds: string[],
+  period: string,
+  holidays: HolidayLookup,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (userIds.length === 0) return result;
+  const [y, m] = period.split("-").map(Number);
+  if (!y || !m || m < 1 || m > 12) return result;
+  const start = new Date(Date.UTC(y, m - 1, 1));
+  const end = new Date(Date.UTC(y, m, 0));
+
+  const [marks, leaveRows] = await Promise.all([
+    db.attendanceRecord.findMany({
+      where: {
+        userId: { in: userIds },
+        date: { gte: start, lte: end },
+        status: { in: ["ABSENT", "HALF_DAY"] },
+      },
+      select: { userId: true, date: true, status: true },
+    }),
+    db.leaveRequest.findMany({
+      where: {
+        userId: { in: userIds },
+        status: "APPROVED",
+        startDate: { lte: end },
+        endDate: { gte: start },
+      },
+      select: { userId: true, startDate: true, endDate: true, leaveTypeId: true },
+    }),
+  ]);
+
+  // Paid flag per leave type. A missing type row (deleted type) defaults to
+  // paid — never dock pay off missing master data.
+  const typeIds = [...new Set(leaveRows.map((r) => r.leaveTypeId))];
+  const types = typeIds.length > 0
+    ? await db.leaveType.findMany({ where: { id: { in: typeIds } }, select: { id: true, paid: true } })
+    : [];
+  const paidByType = new Map(types.map((t) => [t.id, t.paid]));
+
+  const byUser = new Map<string, { marks: LopAttendanceMark[]; spans: LopLeaveSpan[] }>();
+  for (const u of userIds) byUser.set(u, { marks: [], spans: [] });
+  for (const mk of marks) byUser.get(mk.userId)?.marks.push({ date: mk.date, status: mk.status });
+  for (const lr of leaveRows) {
+    byUser.get(lr.userId)?.spans.push({
+      startDate: lr.startDate,
+      endDate: lr.endDate,
+      paid: paidByType.get(lr.leaveTypeId) ?? true,
+    });
+  }
+  for (const [u, { marks: userMarks, spans }] of byUser) {
+    result.set(u, deriveLopDays(period, holidays, userMarks, spans));
+  }
+  return result;
+}
+
 /** The runs list (newest period first) with per-run totals. */
 export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
   return toResult(async () => {
@@ -243,7 +312,9 @@ export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
 }
 
 /** Create a monthly run and snapshot every ACTIVE structure into payslips
- * (monthly = annual ÷ 12). One run per period (unique). */
+ * (monthly = annual ÷ 12). One run per period (unique). F1.4: each slip's
+ * loss-of-pay days are pre-derived from attendance + unpaid leave
+ * (lopSource AUTO) and the LOP deduction line is materialized at creation. */
 export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
@@ -268,6 +339,18 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     );
     const runWorkingDays = workingDaysInPeriod(data.period, periodHolidays);
 
+    // F1.4 — derive each payslip's loss-of-pay days from attendance marks
+    // (ABSENT / HALF_DAY) + unpaid approved leave, charged only on working
+    // days of the period. Snapshot semantics: the value is written once at
+    // creation (lopSource AUTO); corrections afterwards go through a manual
+    // HR override in updatePayslip, never a silent re-derivation.
+    const lopByUser = await deriveLopDaysForUsers(
+      structures.map((s) => s.userId),
+      data.period,
+      periodHolidays,
+    );
+    const autoLopCount = [...lopByUser.values()].filter((v) => v > 0).length;
+
     const run = await db.payrollRun.create({
       data: {
         period: data.period,
@@ -277,12 +360,20 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
         payslips: {
           create: structures.map((s, i) => {
             const earnings = monthlyEarningsFromStructure(parseComponents(s.components));
-            const { gross, net } = payslipTotals(earnings, []);
+            const lopDays = lopByUser.get(s.userId) ?? 0;
+            // The auto LOP line is materialized at creation (net totals are
+            // honest immediately — no per-slip save needed to see the dock).
+            const deductions = lopDays > 0
+              ? withLopLine([], payslipTotals(earnings, []).gross, lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
+              : [];
+            const { gross, net } = payslipTotals(earnings, deductions);
             return {
               userId: s.userId,
               slipNo: slipNumber(data.period, i + 1),
               earnings: JSON.stringify(earnings),
-              deductions: "[]",
+              deductions: JSON.stringify(deductions),
+              lopDays,
+              lopSource: "AUTO",
               gross,
               net,
             };
@@ -298,7 +389,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures.`,
+      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}.`,
     });
     revalidatePath("/");
     return { id: run.id, payslipCount: run.payslips.length };
@@ -357,6 +448,7 @@ export async function getPayrollRun(runId: string): Promise<ActionResult<{ run: 
         deductions: parsePayslipLines(p.deductions),
         note: p.note,
         lopDays: p.lopDays,
+        lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
         gross: p.gross,
         net: p.net,
         ytdNet: ytdByUser.get(p.userId) ?? p.net,
@@ -382,7 +474,9 @@ export async function getPayrollRun(runId: string): Promise<ActionResult<{ run: 
 
 /** Edit one payslip's lines while the run is OPEN. The LOP deduction line is
  * auto-managed from lopDays (gross × days / days-in-period); manual
- * deduction lines are kept as entered. gross/net recomputed server-side. */
+ * deduction lines are kept as entered. gross/net recomputed server-side.
+ * F1.4: changing lopDays flips lopSource to MANUAL (an audited override of
+ * the run-creation derivation); saving the same value keeps the provenance. */
 export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: true }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
@@ -408,16 +502,24 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     // F1.1: the denominator is the run's holiday-aware working-day count
     // when present (created post-F1.1), else the calendar month length —
     // matching what computeLop divides by below.
+    // F1.4: halves are legal (HALF_DAY attendance) — round to 2 decimals so
+    // float dust from the editor can never flip the changed-value check.
+    const lopDays = round2(data.lopDays);
     const runWorkingDays = slip.run.workingDays;
     const periodDays = runWorkingDays > 0 ? runWorkingDays : daysInPeriod(slip.run.period);
-    if (data.lopDays > periodDays) {
+    if (lopDays > periodDays) {
       throw new AuthorizationError(
-        `Loss-of-pay days (${data.lopDays}) can't exceed the ${periodDays} working days of ${slip.run.period}.`,
+        `Loss-of-pay days (${lopDays}) can't exceed the ${periodDays} working days of ${slip.run.period}.`,
       );
     }
+    // F1.4 — provenance: a changed value is a manual override of the
+    // run-creation derivation; an unchanged save keeps whatever the slip
+    // already carries (AUTO or a previous MANUAL).
+    const lopDaysChanged = lopDays !== slip.lopDays;
+    const lopSource = lopDaysChanged ? "MANUAL" : (slip.lopSource === "MANUAL" ? "MANUAL" : "AUTO");
     const grossBefore = slip.gross;
     const netBefore = slip.net;
-    const deductions = withLopLine(data.deductions, payslipTotals(data.earnings, []).gross, data.lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
+    const deductions = withLopLine(data.deductions, payslipTotals(data.earnings, []).gross, lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
     const { gross, net } = payslipTotals(data.earnings, deductions);
     if (net < 0) {
       const totalDeductions = gross - net;
@@ -430,7 +532,8 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
       data: {
         earnings: JSON.stringify(data.earnings),
         deductions: JSON.stringify(deductions),
-        lopDays: data.lopDays,
+        lopDays,
+        lopSource,
         note: data.note,
         gross,
         net,
@@ -442,7 +545,7 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
       entityType: "PAYSLIP",
       entityId: slip.id,
       entityLabel: slip.slipNo,
-      detail: `${auth.name} updated payslip ${slip.slipNo}${data.lopDays > 0 ? ` (LOP ${data.lopDays} day${data.lopDays === 1 ? "" : "s"})` : ""}: gross ${grossBefore.toFixed(2)} → ${gross.toFixed(2)}, net ${netBefore.toFixed(2)} → ${net.toFixed(2)}.`,
+      detail: `${auth.name} updated payslip ${slip.slipNo}${lopDays > 0 ? ` (LOP ${lopDays} day${lopDays === 1 ? "" : "s"}${lopDaysChanged ? `, manually set — the ${slip.lopSource === "MANUAL" ? "previous" : "auto-derived"} value was ${slip.lopDays} day${slip.lopDays === 1 ? "" : "s"}` : ""})` : ""}: gross ${grossBefore.toFixed(2)} → ${gross.toFixed(2)}, net ${netBefore.toFixed(2)} → ${net.toFixed(2)}.`,
     });
     revalidatePath("/");
     return { ok: true };
@@ -450,7 +553,10 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
 }
 
 /** Add one employee's payslip to an OPEN run (joins mid-period — the
- * structure snapshot happens at add time, then HR adjusts/LOP-prorates). */
+ * structure snapshot happens at add time, then HR adjusts/LOP-prorates).
+ * F1.4: loss-of-pay days are derived from the attendance/unpaid-leave facts
+ * already recorded for the period (a fresh joiner's pre-join days have no
+ * records, so they charge 0 — pre-join prorating stays a manual HR call). */
 export async function addPayslip(input: unknown): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
@@ -469,34 +575,38 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
     if (!structure) throw new AuthorizationError("No active salary structure for this employee — create one first.");
     const count = await db.payslip.count({ where: { runId: run.id } });
     const earnings = monthlyEarningsFromStructure(parseComponents(structure.components));
-    const { gross, net } = payslipTotals(earnings, []);
+    // F1.4 — same derivation as createPayrollRun, for this one joiner.
+    const [py, pm] = run.period.split("-").map(Number);
+    const periodHolidays = await getHolidayLookup(
+      new Date(Date.UTC(py, pm - 1, 1)),
+      new Date(Date.UTC(py, pm, 0)),
+    );
+    const lopByUser = await deriveLopDaysForUsers([data.userId], run.period, periodHolidays);
+    const lopDays = lopByUser.get(data.userId) ?? 0;
+    const deductions = lopDays > 0
+      ? withLopLine([], payslipTotals(earnings, []).gross, lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
+      : [];
+    const { gross, net } = payslipTotals(earnings, deductions);
+    const createData = {
+      runId: run.id,
+      userId: data.userId,
+      slipNo: slipNumber(run.period, count + 1),
+      earnings: JSON.stringify(earnings),
+      deductions: JSON.stringify(deductions),
+      lopDays,
+      lopSource: "AUTO",
+      gross,
+      net,
+    };
     let slip;
     try {
-      slip = await db.payslip.create({
-        data: {
-          runId: run.id,
-          userId: data.userId,
-          slipNo: slipNumber(run.period, count + 1),
-          earnings: JSON.stringify(earnings),
-          deductions: "[]",
-          gross,
-          net,
-        },
-      });
+      slip = await db.payslip.create({ data: createData });
     } catch (err) {
       if (isUniqueConstraintError(err)) {
         // Two HR users racing: recompute the sequence from the live count.
         const recount = await db.payslip.count({ where: { runId: run.id } });
         slip = await db.payslip.create({
-          data: {
-            runId: run.id,
-            userId: data.userId,
-            slipNo: slipNumber(run.period, recount + 1),
-            earnings: JSON.stringify(earnings),
-            deductions: "[]",
-            gross,
-            net,
-          },
+          data: { ...createData, slipNo: slipNumber(run.period, recount + 1) },
         });
       } else {
         throw err;
@@ -616,6 +726,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         deductions: parsePayslipLines(p.deductions),
         note: p.note,
         lopDays: p.lopDays,
+        lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
         gross: p.gross,
         net: p.net,
         ytdNet: ytdBySlip.get(p.id) ?? p.net,

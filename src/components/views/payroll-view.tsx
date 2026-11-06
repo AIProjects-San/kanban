@@ -261,7 +261,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                   <span className="block truncate font-medium">{p.userName}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     gross {money(p.gross)} · deductions {money(p.gross - p.net)}
-                    {p.lopDays > 0 ? ` · LOP ${p.lopDays}d` : ""}
+                    {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}
                   </span>
                 </span>
                 <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {money(p.ytdNet)}</span>

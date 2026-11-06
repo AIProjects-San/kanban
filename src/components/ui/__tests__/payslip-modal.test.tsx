@@ -29,7 +29,7 @@ function payslip(overrides: Partial<PayslipT> = {}): PayslipT {
       { key: "transport", label: "Transport Allowance", amount: 200 },
     ],
     deductions: [],
-    note: "", lopDays: 0, gross: 6_700, net: 6_700, ytdNet: 13_400,
+    note: "", lopDays: 0, lopSource: "AUTO", gross: 6_700, net: 6_700, ytdNet: 13_400,
     ...overrides,
   };
 }
@@ -64,6 +64,30 @@ describe("PayslipModal (OPEN run)", () => {
     expect(lop.textContent).toContain("$446.67");
     await waitFor(() =>
       expect(screen.getByTestId("payslip-totals").textContent).toContain("$6,253.33"),
+    );
+  });
+
+  it("F1.4 — half-day LOP values type and compute correctly (1.5 days)", async () => {
+    render(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    // Decimal typing exercises the string-state input: "1", "1.", "1.5".
+    const input = screen.getByTestId("payslip-lop-days") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "1" } });
+    fireEvent.change(input, { target: { value: "1.5" } });
+    expect(input.value).toBe("1.5");
+    // 6,700 × 1.5 / 30 = 335 → net 6,365.00.
+    const lop = await screen.findByTestId("payslip-lop-amount");
+    expect(lop.textContent).toContain("$335.00");
+    await waitFor(() =>
+      expect(screen.getByTestId("payslip-totals").textContent).toContain("$6,365.00"),
+    );
+  });
+
+  it("F1.4 — the provenance note reflects lopSource (AUTO → derived, MANUAL → override)", async () => {
+    const { rerender } = render(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.getByTestId("payslip-lop-source").textContent).toContain("Auto-derived");
+    rerender(<PayslipModal payslip={payslip({ lopSource: "MANUAL" })} onClose={onClose} onChanged={onChanged} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("payslip-lop-source").textContent).toContain("Manually set"),
     );
   });
 
@@ -115,5 +139,25 @@ describe("PayslipModal (LOCKED run)", () => {
     expect(totals.textContent).toContain("$6,253.33");
     expect(screen.getByTestId("payslip-print")).toBeTruthy();
     expect(updatePayslip).not.toHaveBeenCalled();
+  });
+
+  it("F1.4 — the paid record shows the read-only LOP provenance note", () => {
+    const locked = payslip({
+      runStatus: "LOCKED",
+      lopDays: 1,
+      lopSource: "AUTO",
+      deductions: [{ key: "lop", label: "Loss of pay (1 day)", amount: 223.33 }],
+      net: 6_476.67,
+    });
+    render(<PayslipModal payslip={locked} onClose={onClose} onChanged={onChanged} />);
+    const note = screen.getByTestId("payslip-lop-source");
+    expect(note.textContent).toContain("Loss of pay: 1 day");
+    expect(note.textContent).toContain("auto-derived");
+  });
+
+  it("F1.4 — a locked slip with zero LOP days shows no provenance box", () => {
+    const locked = payslip({ runStatus: "LOCKED", lopDays: 0 });
+    render(<PayslipModal payslip={locked} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.queryByTestId("payslip-lop-source")).toBeNull();
   });
 });

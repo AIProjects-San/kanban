@@ -216,6 +216,42 @@ ON_LEAVE → cancel removal) + unit tests in
 `hr-leave.test.ts`. Design source:
 `docs/Fernly_HR_Payroll_Enhancement_Plan.md` §7.1 (F1.3).
 
+## 7c. Feature F1.4 — Attendance→LOP derivation (enhancement plan Phase 1)
+
+`createPayrollRun` (and `addPayslip` for mid-period joiners) pre-computes each
+payslip's loss-of-pay days from the facts already recorded for the period:
+attendance marks (ABSENT = the day's working fraction, HALF_DAY = half of it)
+plus approved **unpaid** leave (`LeaveType.paid = false` — the flag already
+existed since the leave-types epic; F1.4 is its first payroll consumer).
+Migration `20261119000000_attendance_lop_derivation`: `Payslip.lopSource`
+(AUTO | MANUAL, default AUTO) + `Payslip.lopDays` and `PayrollRun.workingDays`
+widened Int→Float (HALF_DAY charges 0.5 days; a half-day holiday makes the
+working-day denominator fractional — the Int declaration was a latent F1.1
+type lie that Postgres, the canonical provider, would have rejected).
+
+Per-day semantics live in the pure `lib/lop-derivation.ts` (`deriveLopDays`,
+100% unit-covered): weekends and full holidays never charge; approved leave
+**wins over attendance marks** — an unpaid type charges the working fraction,
+a paid type shields the day (a contradictory ABSENT mark on paid leave can
+never dock pay or double-charge); days with no record and no leave charge 0
+(absence of data is not absence — no auto-absent sweep). The derivation runs
+once at creation and the value is then a snapshot on the payslip (F1.1's
+never-re-derived discipline); later corrections go through a manual HR
+override in `updatePayslip`, which flips `lopSource` to MANUAL and records
+the override (old value + provenance) in the audit trail. The auto LOP
+deduction line is materialized at creation, so run net totals are honest
+immediately. UI: the payslip editor's LOP box takes halves (step 0.5, string
+state so typing "1.5" works) and shows the provenance note; locked slips and
+My Payslips show a read-only honesty note; the payroll list hint tags every
+LOP as `(auto)` or `(manual)`. Seed derives the current-month run (Hana's
+ABSENT showcase mark → AUTO; Yuki's 1 day stays a MANUAL override, keeping
+the $319.05 hr-holidays e2e pin). e2e `payroll.feature` (mark ABSENT +
+HALF_DAY on working days of next month → run creation derives "LOP 1.5d
+(auto)" + the provenance note) + unit tests in
+`src/lib/__tests__/lop-derivation.test.ts` and the F1.4 blocks of
+`src/server-actions/__tests__/payroll.test.ts`. Design source:
+`docs/Fernly_HR_Payroll_Enhancement_Plan.md` §7.1 (F1.4).
+
 ## 8. Cross-cutting checklist (touched once, kept in sync)
 
 - `lib/rbac.ts` (+ `rbac.test.ts`), `lib/types`, `lib/config` (leave/review/onboarding

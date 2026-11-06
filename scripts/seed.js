@@ -1355,10 +1355,30 @@ async function main() {
     takenAttendance.add(key);
     attendanceRows.push({ userId, date: d, status, inTime, outTime, note, source: "MANUAL" });
   }
+  // F1.4 — Hana (a salary-structure holder) gets an ABSENT working day so
+  // the current-month OPEN run has a genuine AUTO-derived LOP example next
+  // to Yuki's manual showcase day. workday(TODAY, -2) is a guaranteed Mon-Fri
+  // date, but NOT holiday-aware — when it lands on a seeded holiday the
+  // derivation honestly charges 0 (that date-dependence is correct behavior,
+  // not flakiness: nothing asserts Hana's LOP).
+  {
+    const hanaId = userByName.get("Hana Park");
+    if (hanaId) {
+      const d = workday(TODAY, -2);
+      const key = `${hanaId}|${dayKeyOf(d)}`;
+      if (!takenAttendance.has(key)) {
+        takenAttendance.add(key);
+        attendanceRows.push({
+          userId: hanaId, date: d, status: "ABSENT", inTime: null, outTime: null,
+          note: "No show — auto-LOP showcase", source: "MANUAL",
+        });
+      }
+    }
+  }
   if (attendanceRows.length > 0) {
     await db.attendanceRecord.createMany({ data: attendanceRows });
   }
-  console.log(`  ✓ F1.3 attendance: ${attendanceRows.length} rows (derived ON_LEAVE from approved leave + current-month showcase marks)`);
+  console.log(`  ✓ F1.3 attendance: ${attendanceRows.length} rows (derived ON_LEAVE from approved leave + current-month showcase marks incl. Hana's F1.4 auto-LOP day)`);
 
   // -------------------------------------------------------------------------
   // HR module seed — employee directory (docs/HR_MODULE_PLAN.md §5).
@@ -1948,8 +1968,70 @@ async function main() {
       },
     });
 
-    // This month: OPEN, with one LOP day deduction (Yuki, 1 day) and a
-    // performance bonus line for Hana (edit-in-action showcase).
+    // This month: OPEN. F1.4 — every structure holder's LOP days are derived
+    // from attendance + unpaid approved leave (mirror of
+    // src/lib/lop-derivation.ts + deriveLopDaysForUsers in
+    // src/server-actions/payroll.ts — "seed mirrors production math");
+    // Yuki's showcase 1 day is then applied as a MANUAL override (keeping the
+    // hr-holidays e2e pin: 6,700 × 1 / 21 = 319.05), and Hana's derived day
+    // (her seeded ABSENT mark) rides along as lopSource AUTO. Hana also gets
+    // a performance bonus line (edit-in-action showcase).
+    const monthStart = new Date(Date.UTC(TODAY.getFullYear(), TODAY.getMonth(), 1));
+    const monthEnd = new Date(Date.UTC(TODAY.getFullYear(), TODAY.getMonth() + 1, 0));
+    const [attMarks, leaveSpans] = await Promise.all([
+      db.attendanceRecord.findMany({
+        where: { date: { gte: monthStart, lte: monthEnd }, status: { in: ["ABSENT", "HALF_DAY"] } },
+        select: { userId: true, date: true, status: true },
+      }),
+      db.leaveRequest.findMany({
+        where: { status: "APPROVED", startDate: { lte: monthEnd }, endDate: { gte: monthStart } },
+        select: { userId: true, startDate: true, endDate: true, leaveTypeId: true },
+      }),
+    ]);
+    const spanTypeIds = [...new Set(leaveSpans.map((r) => r.leaveTypeId))];
+    const spanTypes = spanTypeIds.length > 0
+      ? await db.leaveType.findMany({ where: { id: { in: spanTypeIds } }, select: { id: true, paid: true } })
+      : [];
+    const paidByType = new Map(spanTypes.map((t) => [t.id, t.paid]));
+    // Mirror of lib/lop-derivation.ts deriveLopDays — per working day:
+    // approved leave wins (paid → 0, unpaid → the working fraction), else
+    // ABSENT → fraction, HALF_DAY → half of it; weekends/full holidays
+    // never charge; half-day holidays count 0.5. Rounded to 2 decimals.
+    const deriveLopDays = (userId, period) => {
+      const [y, m] = period.split("-").map(Number);
+      const start = new Date(Date.UTC(y, m - 1, 1));
+      const end = new Date(Date.UTC(y, m, 0));
+      const markByDay = new Map(attMarks.filter((a) => a.userId === userId).map((a) => [a.date.toISOString().slice(0, 10), a.status]));
+      const spans = leaveSpans
+        .filter((r) => r.userId === userId)
+        .map((r) => ({
+          start: r.startDate, end: r.endDate,
+          paid: paidByType.get(r.leaveTypeId) ?? true,
+        }));
+      let total = 0;
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        const dow = cursor.getUTCDay();
+        if (dow !== 0 && dow !== 6) {
+          const key = cursor.toISOString().slice(0, 10);
+          const hol = holidayKeyMap.get(key);
+          const wf = hol ? (hol.isHalfDay ? 0.5 : 0) : 1;
+          if (wf > 0) {
+            const span = spans.find((s) => cursor >= s.start && cursor <= s.end);
+            if (span) {
+              if (!span.paid) total += wf;
+            } else if (markByDay.get(key) === "ABSENT") {
+              total += wf;
+            } else if (markByDay.get(key) === "HALF_DAY") {
+              total += wf / 2;
+            }
+          }
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+      return Math.round(total * 100) / 100;
+    };
+    let autoLopCount = 0;
     await db.payrollRun.create({
       data: {
         period: thisPeriod,
@@ -1959,16 +2041,27 @@ async function main() {
         payslips: {
           create: structures.map((s, i) => {
             const earnings = monthlyLines(s.components);
-            let deductions = [];
-            let lopDays = 0;
+            // F1.4 derivation first …
+            let lopDays = deriveLopDays(s.user.id, thisPeriod);
+            let lopSource = "AUTO";
+            if (lopDays > 0) autoLopCount += 1;
+            // … then Yuki's showcase override (manual edit-in-action example,
+            // pinned by the hr-holidays e2e).
             if (s.user.name === "Yuki Tanaka") {
               lopDays = 1;
-              const gross = round2(earnings.reduce((sum, l) => sum + l.amount, 0));
-              const lop = round2((gross * 1) / thisWorkingDays);
-              deductions = [{ key: "lop", label: "Loss of pay (1 day)", amount: lop }];
+              lopSource = "MANUAL";
             }
             if (s.user.name === "Hana Park") {
               earnings.push({ key: "bonus", label: "Q4 performance bonus", amount: 500 });
+            }
+            // LOP line last, from the FINAL earnings — mirrors production,
+            // where updatePayslip recomputes the auto line against the
+            // submitted (bonus-inclusive) gross.
+            let deductions = [];
+            if (lopDays > 0) {
+              const grossForLop = round2(earnings.reduce((sum, l) => sum + l.amount, 0));
+              const lop = round2((grossForLop * lopDays) / thisWorkingDays);
+              deductions = [{ key: "lop", label: `Loss of pay (${lopDays} day${lopDays === 1 ? "" : "s"})`, amount: lop }];
             }
             const { gross, net } = totals(earnings, deductions);
             return {
@@ -1977,6 +2070,7 @@ async function main() {
               earnings: JSON.stringify(earnings),
               deductions: JSON.stringify(deductions),
               lopDays,
+              lopSource,
               gross,
               net,
             };
@@ -1984,7 +2078,7 @@ async function main() {
         },
       },
     });
-    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (1 LOP day, 1 bonus line)`);
+    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line)`);
   }
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);

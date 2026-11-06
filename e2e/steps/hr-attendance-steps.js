@@ -213,3 +213,7 @@ Then("my attendance calendar should show no {string} on the far-future Monday", 
     `my ${iso(monday)} should no longer be ${status}, got "${actual}"`,
   );
 });
+
+// F1.4 — shared marking flow for the payroll feature's auto-LOP scenario
+// (cross-file import follows the hr-attendance → hr-steps precedent).
+module.exports = { markOn, browseGridToMonthOf };

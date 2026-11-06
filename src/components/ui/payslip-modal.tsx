@@ -7,6 +7,8 @@
 // deduction line. LOCKED runs render the same modal read-only as the
 // print-friendly slip (the .print-area class scopes window.print() to the
 // slip; the chrome buttons are .no-print).
+// F1.4 — the LOP box carries a provenance note: lopSource AUTO = derived at
+// run creation from attendance + unpaid leave; MANUAL = an HR override.
 
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Lock, Plus, Printer, Trash2 } from "lucide-react";
@@ -43,16 +45,20 @@ export function PayslipModal({
 }) {
   const [earnings, setEarnings] = useState<PayslipLineT[]>([]);
   const [deductions, setDeductions] = useState<PayslipLineT[]>([]);
-  const [lopDays, setLopDays] = useState(0);
+  // F1.4 — string state so typing "1.5" works (a controlled number input
+  // swallows the decimal point: "1." parses to 1 and React snaps the DOM
+  // back to "1"). Parsed once for math, clamped 0–31, rounded to 2 decimals.
+  const [lopDaysInput, setLopDaysInput] = useState("0");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (payslip) { setEarnings(payslip.earnings.map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDays(payslip.lopDays); setNote(payslip.note); }
+    if (payslip) { setEarnings(payslip.earnings.map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDaysInput(String(payslip.lopDays)); setNote(payslip.note); }
   }, [payslip]);
 
   const editable = payslip?.runStatus === "OPEN";
+  const lopDays = Math.max(0, Math.min(31, Math.round((Number(lopDaysInput) || 0) * 100) / 100));
 
   const totals = useMemo(() => {
     if (!editable && payslip) {
@@ -156,14 +162,14 @@ export function PayslipModal({
         {lineEditor(earnings, setEarnings, "earnings")}
 
         {/* LOP — days in, pro-rated money out (edit affordance only) */}
-        {editable && (
+        {editable ? (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 flex items-center gap-3 flex-wrap">
-            <Field label="Loss-of-pay days (pro-rated: gross × days ÷ days in month)">
+            <Field label="Loss-of-pay days (pro-rated: gross × days ÷ working days — halves allowed)">
               <input
-                type="number" min={0} max={31} step={1}
+                type="number" min={0} max={31} step={0.5}
                 className="f-input text-xs w-20"
-                value={lopDays}
-                onChange={(e) => setLopDays(Math.max(0, Math.min(31, Math.round(Number(e.target.value) || 0))))}
+                value={lopDaysInput}
+                onChange={(e) => setLopDaysInput(e.target.value)}
                 data-testid="payslip-lop-days"
               />
             </Field>
@@ -172,8 +178,19 @@ export function PayslipModal({
                 LOP deduction: <strong>{money(totals.lop)}</strong> (auto line)
               </div>
             )}
+            <div className="w-full text-[0.6875rem] text-muted-foreground" data-testid="payslip-lop-source">
+              {p.lopSource === "AUTO"
+                ? "Auto-derived at run creation from attendance (absent / half-day) and unpaid leave — saving a different value records a manual override."
+                : "Manually set by HR — overrides the run-creation derivation."}
+            </div>
           </div>
-        )}
+        ) : p.lopDays > 0 ? (
+          // F1.4 — read-only honesty note on the paid record: where the
+          // docked days came from.
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700" data-testid="payslip-lop-source">
+            Loss of pay: {p.lopDays} day{p.lopDays === 1 ? "" : "s"} · {p.lopSource === "AUTO" ? "auto-derived from attendance and unpaid leave" : "manually set by HR"}
+          </div>
+        ) : null}
 
         {lineEditor(deductions, setDeductions, "deductions")}
 

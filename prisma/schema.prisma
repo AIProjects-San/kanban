@@ -1267,9 +1267,10 @@ model PayrollRun {
   // F1.1 — working days in the period (Mon–Fri minus holiday-calendar
   // entries, half-days = 0.5), denormalized at creation from the holiday
   // calendar and never re-derived: payslip LOP math divides by THIS number.
+  // Float because a half-day holiday makes the count fractional (0.5).
   // 0 = run created before F1.1 (column default) — readers fall back to the
   // calendar length of the month (lib/payroll-math.ts daysInPeriod).
-  workingDays Int      @default(0)
+  workingDays Float    @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -1297,7 +1298,16 @@ model Payslip {
   // Optional per-slip note shown on the printed slip.
   note       String    @default("")
   // Loss-of-pay days in the period (drives the auto LOP deduction line).
-  lopDays    Int       @default(0)
+  // Float (F1.4): HALF_DAY attendance and half-day holidays charge 0.5-day
+  // (and 0.25-day) fractions.
+  lopDays    Float     @default(0)
+  // F1.4 — provenance of lopDays. AUTO: derived at run creation from
+  // attendance (ABSENT/HALF_DAY) + unpaid approved leave, using the run's
+  // holiday-aware denominator; never re-derived afterwards (snapshot
+  // discipline — later attendance edits are corrected via a manual
+  // override, not a silent re-derivation). MANUAL: an HR override saved
+  // through updatePayslip (audited).
+  lopSource  String    @default("AUTO")
   gross      Float     @default(0)
   net        Float     @default(0)
   createdAt  DateTime  @default(now())

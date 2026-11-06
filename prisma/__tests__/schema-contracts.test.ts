@@ -337,13 +337,18 @@ describe("Recruitment R1 models are declared", () => {
     expect(run).toMatch(/period\s+String\s+@unique/);
     expect(run).toMatch(/status\s+String\s+@default\("OPEN"\)/);
     expect(run).toMatch(/lockedAt\s+DateTime\?/);
+    // F1.1 denormalized denominator; Float since F1.4 (half-day holidays
+    // make the count fractional).
+    expect(run).toMatch(/workingDays\s+Float\s+@default\(0\)/);
 
     const slip = modelBlock("Payslip");
     expect(slip).toMatch(/runId\s+String\b/);
     expect(slip).toMatch(/slipNo\s+String\s+@unique/);
     expect(slip).toMatch(/earnings\s+String\s+@default\("\[\]"\)/);
     expect(slip).toMatch(/deductions\s+String\s+@default\("\[\]"\)/);
-    expect(slip).toMatch(/lopDays\s+Int\s+@default\(0\)/);
+    // F1.4 — Float (HALF_DAY charges 0.5) + the AUTO/MANUAL provenance flag.
+    expect(slip).toMatch(/lopDays\s+Float\s+@default\(0\)/);
+    expect(slip).toMatch(/lopSource\s+String\s+@default\("AUTO"\)/);
     expect(slip).toMatch(/gross\s+Float\s+@default\(0\)/);
     expect(slip).toMatch(/net\s+Float\s+@default\(0\)/);
     expect(slip).toMatch(/@@unique\(\[runId,\s*userId\]\)/);
@@ -351,5 +356,14 @@ describe("Recruitment R1 models are declared", () => {
     const dir = resolve(repoRoot, "prisma", "migrations", "20261117000000_hiring_payroll");
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+    // F1.4 — the attendance→LOP derivation migration (provenance column +
+    // Int→Float widenings) is committed with its down path.
+    const f14 = resolve(repoRoot, "prisma", "migrations", "20261119000000_attendance_lop_derivation");
+    expect(existsSync(resolve(f14, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(f14, "down.sql"))).toBe(true);
+    const f14up = readFileSync(resolve(f14, "migration.sql"), "utf8");
+    expect(f14up).toMatch(/ALTER TABLE "Payslip" ADD COLUMN "lopSource" TEXT NOT NULL DEFAULT 'AUTO'/);
+    expect(f14up).toMatch(/ALTER TABLE "Payslip" ALTER COLUMN "lopDays" SET DATA TYPE DOUBLE PRECISION/);
+    expect(f14up).toMatch(/ALTER TABLE "PayrollRun" ALTER COLUMN "workingDays" SET DATA TYPE DOUBLE PRECISION/);
   });
 });

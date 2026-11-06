@@ -558,7 +558,9 @@ export interface PayrollRunT {
 /** R7 — one employee's payslip in a run. Lines are monthly amounts;
  * ytdNet accumulates the same-year periods up to and including this one.
  * runWorkingDays (F1.1) mirrors the run's holiday-aware denominator so the
- * editor's live LOP preview matches the server's stored math. */
+ * editor's live LOP preview matches the server's stored math.
+ * lopSource (F1.4): AUTO = lopDays was derived at run creation from
+ * attendance + unpaid leave; MANUAL = an HR override (audited). */
 export interface PayslipT {
   id: string;
   runId: string;
@@ -573,6 +575,7 @@ export interface PayslipT {
   deductions: PayslipLineT[];
   note: string;
   lopDays: number;
+  lopSource: "AUTO" | "MANUAL";
   gross: number;
   net: number;
   ytdNet: number;

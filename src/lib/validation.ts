@@ -708,7 +708,9 @@ export const updatePayslipSchema = z.object({
   payslipId: cuidish,
   earnings: z.array(payslipLineSchema).max(40),
   deductions: z.array(payslipLineSchema).max(40),
-  lopDays: z.number().int().min(0).max(31).default(0),
+  // F1.4: fractional days are legal — HALF_DAY attendance derives 0.5 (and
+  // HALF_DAY on a half-day holiday 0.25); the server rounds to 2 decimals.
+  lopDays: z.number().min(0).max(31).default(0),
   note: z.string().trim().max(500).default(""),
 }).strict();
 

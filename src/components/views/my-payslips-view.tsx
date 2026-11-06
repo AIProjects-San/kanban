@@ -115,7 +115,7 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
                 <span className="block truncate font-medium">{monthLabel(p.runPeriod)}</span>
                 <span className="block truncate text-xs text-muted-foreground">
                   gross {money(p.gross)} · deductions {money(Math.round((p.gross - p.net) * 100) / 100)}
-                  {p.lopDays > 0 ? ` · LOP ${p.lopDays}d` : ""}
+                  {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}
                 </span>
               </span>
               <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {money(p.ytdNet)}</span>
