@@ -36,6 +36,8 @@ import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseComponents } from "@/lib/offer-math";
+import { workingDaysInPeriod } from "@/lib/working-days";
+import { getHolidayLookup } from "./hr-shared";
 import {
   monthlyEarningsFromStructure,
   payslipTotals,
@@ -234,6 +236,7 @@ export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
       payslipCount: r.payslips.length,
       totalGross: Math.round(r.payslips.reduce((s, p) => s + p.gross, 0) * 100) / 100,
       totalNet: Math.round(r.payslips.reduce((s, p) => s + p.net, 0) * 100) / 100,
+      workingDays: r.workingDays,
       createdAt: r.createdAt.toISOString(),
     }));
   });
@@ -253,11 +256,24 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       throw new AuthorizationError("No active salary structures — create at least one before running payroll.");
     }
 
+    // F1.1 — the run's holiday-aware LOP denominator, denormalized at
+    // creation and never re-derived: Mon–Fri days of the period minus
+    // holiday-calendar entries (half-days 0.5). An empty calendar yields the
+    // plain Mon–Fri count — only PRE-F1.1 rows carry 0, and readers fall
+    // back to the calendar month length for those (daysInPeriod).
+    const [y, m] = data.period.split("-").map(Number);
+    const periodHolidays = await getHolidayLookup(
+      new Date(Date.UTC(y, m - 1, 1)),
+      new Date(Date.UTC(y, m, 0)),
+    );
+    const runWorkingDays = workingDaysInPeriod(data.period, periodHolidays);
+
     const run = await db.payrollRun.create({
       data: {
         period: data.period,
         status: "OPEN",
         createdById: auth.userId,
+        workingDays: runWorkingDays,
         payslips: {
           create: structures.map((s, i) => {
             const earnings = monthlyEarningsFromStructure(parseComponents(s.components));
@@ -332,6 +348,7 @@ export async function getPayrollRun(runId: string): Promise<ActionResult<{ run: 
         runId: run.id,
         runPeriod: run.period,
         runStatus: run.status as "OPEN" | "LOCKED",
+        runWorkingDays: run.workingDays,
         userId: p.userId,
         userName: userMap.get(p.userId) ?? "Unknown",
         jobTitle: jobMap.get(p.userId) ?? "",
@@ -355,6 +372,7 @@ export async function getPayrollRun(runId: string): Promise<ActionResult<{ run: 
         payslipCount: payslips.length,
         totalGross: Math.round(payslips.reduce((s, p) => s + p.gross, 0) * 100) / 100,
         totalNet: Math.round(payslips.reduce((s, p) => s + p.net, 0) * 100) / 100,
+        workingDays: run.workingDays,
         createdAt: run.createdAt.toISOString(),
       },
       payslips,
@@ -371,7 +389,7 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     const data = parseOrThrow(updatePayslipSchema, input);
     const slip = await db.payslip.findUnique({
       where: { id: data.payslipId },
-      include: { run: { select: { id: true, period: true, status: true } } },
+      include: { run: { select: { id: true, period: true, status: true, workingDays: true } } },
     });
     if (!slip) throw new AuthorizationError("Payslip not found.");
     if (slip.run.status !== "OPEN") {
@@ -384,18 +402,22 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
       throw new AuthorizationError("Line keys must be unique (the loss-of-pay key is reserved).");
     }
     // Payroll invariants (P0 fix, persona-audit PT-P0-2): LOP days can never
-    // exceed the calendar length of the run period, and total deductions can
-    // never exceed gross — otherwise a payslip can be saved with negative net
-    // pay (verified live: 31 LOP days in a 30-day month produced net −$223.33).
-    const periodDays = daysInPeriod(slip.run.period);
+    // exceed the period's day count, and total deductions can never exceed
+    // gross — otherwise a payslip can be saved with negative net pay
+    // (verified live: 31 LOP days in a 30-day month produced net −$223.33).
+    // F1.1: the denominator is the run's holiday-aware working-day count
+    // when present (created post-F1.1), else the calendar month length —
+    // matching what computeLop divides by below.
+    const runWorkingDays = slip.run.workingDays;
+    const periodDays = runWorkingDays > 0 ? runWorkingDays : daysInPeriod(slip.run.period);
     if (data.lopDays > periodDays) {
       throw new AuthorizationError(
-        `Loss-of-pay days (${data.lopDays}) can't exceed the ${periodDays} days of ${slip.run.period}.`,
+        `Loss-of-pay days (${data.lopDays}) can't exceed the ${periodDays} working days of ${slip.run.period}.`,
       );
     }
     const grossBefore = slip.gross;
     const netBefore = slip.net;
-    const deductions = withLopLine(data.deductions, payslipTotals(data.earnings, []).gross, data.lopDays, slip.run.period);
+    const deductions = withLopLine(data.deductions, payslipTotals(data.earnings, []).gross, data.lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
     const { gross, net } = payslipTotals(data.earnings, deductions);
     if (net < 0) {
       const totalDeductions = gross - net;
@@ -559,7 +581,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
     const [slips, profile] = await Promise.all([
       db.payslip.findMany({
         where: { userId: auth.userId, run: { status: "LOCKED" } },
-        include: { run: { select: { period: true } } },
+        include: { run: { select: { period: true, workingDays: true } } },
       }),
       db.employeeProfile.findUnique({
         where: { userId: auth.userId },
@@ -585,6 +607,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         runId: p.runId,
         runPeriod: p.run.period,
         runStatus: "LOCKED" as const,
+        runWorkingDays: p.run.workingDays,
         userId: auth.userId,
         userName: auth.name,
         jobTitle: profile?.jobTitle ?? "",

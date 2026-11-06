@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
-    "payrollRun", "payslip", "auditLog",
+    "payrollRun", "payslip", "auditLog", "holidayCalendarEntry",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -126,6 +126,9 @@ beforeEach(() => {
   db.salaryStructure.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-new", ...data }));
   db.salaryStructure.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-1", ...data }));
   db.salaryStructure.updateMany.mockResolvedValue({ count: 0 });
+  // F1.1 — createPayrollRun reads the period's holiday entries; default to
+  // an empty calendar (denominator falls back to the calendar month length).
+  db.holidayCalendarEntry.findMany.mockResolvedValue([]);
   db.payrollRun.findMany.mockResolvedValue([]);
   db.payrollRun.findUnique.mockResolvedValue(null);
   db.payrollRun.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -262,6 +265,34 @@ describe("R7 — payroll runs", () => {
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "payroll.run_created" }));
   });
 
+  it("createPayrollRun denormalizes the holiday-aware working-day count (F1.1)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    // Labour Day Mon 2026-10-26: October 2026 has 22 Mon–Fri days − 1 = 21
+    // working days.
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2026-10-26T00:00:00.000Z"), isHalfDay: false },
+    ]);
+    const res = await createPayrollRun({ period: "2026-10" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as { data: { workingDays: number } };
+    expect(createArg.data.workingDays).toBe(21);
+    // And the period's holiday range is what was read.
+    const where = db.holidayCalendarEntry.findMany.mock.calls[0][0].where;
+    expect(where.date.gte).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+    expect(where.date.lte).toEqual(new Date("2026-10-31T00:00:00.000Z"));
+  });
+
+  it("createPayrollRun with an empty calendar stores the plain Mon–Fri count", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as { data: { workingDays: number } };
+    // No holidays seeded — working-day semantics still apply: November 2026
+    // has 21 Mon–Fri days (vs the 30-day calendar length pre-F1.1 runs used).
+    expect(createArg.data.workingDays).toBe(21);
+  });
+
   it("getPayrollRuns aggregates totals and names the locker", async () => {
     db.payrollRun.findMany.mockResolvedValue([
       { ...OPEN_RUN, payslips: [{ gross: 6_700, net: 6_700 }] },
@@ -355,8 +386,42 @@ describe("R7 — payslips", () => {
       lopDays: 31,
     });
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error).toMatch(/can't exceed the 30 days of 2026-11/);
+    // F1.1 — the cap is now the run's working-day count when the run carries
+    // one (this fixture run has none → calendar length fallback, but the
+    // message says "working days" either way).
+    if (!res.ok) expect(res.error).toMatch(/can't exceed the 30 working days of 2026-11/);
     expect(db.payslip.update).not.toHaveBeenCalled();
+  });
+
+  it("updatePayslip caps LOP days by the run's working-day count and divides by it (F1.1)", async () => {
+    // A post-F1.1 run for 2026-11 with a holiday calendar behind it: 21
+    // working days denormalized at creation.
+    db.payslip.findUnique.mockResolvedValue(payslipRow({ run: { ...OPEN_RUN, workingDays: 21 } }));
+    const res = await updatePayslip({
+      payslipId: "ps-1",
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 1,
+    });
+    expect(res.ok).toBe(true);
+    const updateArg = db.payslip.update.mock.calls[0][0] as {
+      data: { deductions: string; gross: number; net: number };
+    };
+    const lines = JSON.parse(updateArg.data.deductions) as Array<{ key: string; amount: number }>;
+    const lop = lines.find((l) => l.key === "lop");
+    // 6,700 × 1 / 21 = 319.05 — the holiday-aware denominator, not 30.
+    expect(lop?.amount).toBe(319.05);
+    expect(updateArg.data.net).toBe(6_380.95);
+
+    // The cap uses the same denominator: 22 days in a 21-working-day period.
+    const over = await updatePayslip({
+      payslipId: "ps-1",
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 22,
+    });
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.error).toMatch(/can't exceed the 21 working days of 2026-11/);
   });
 
   it("updatePayslip rejects a deduction set that would make net pay negative (persona-audit P0 fix)", async () => {

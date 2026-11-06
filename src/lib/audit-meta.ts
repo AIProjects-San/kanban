@@ -82,6 +82,11 @@ export type AuditAction =
   | "leave.cancelled"
   | "leave.type_created"
   | "leave.type_updated"
+  // F1.1 — holiday calendar lifecycle
+  // (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1)
+  | "hr.holiday_created"
+  | "hr.holiday_updated"
+  | "hr.holiday_deleted"
   // HR module — performance review lifecycle (docs/HR_MODULE_PLAN.md §6)
   | "review.created"
   | "review.updated"
@@ -216,6 +221,9 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.cancelled": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "leave.type_created": { icon: Plus, cls: "text-primary bg-primary/10" },
   "leave.type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.holiday_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
+  "hr.holiday_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 
   "review.created": { icon: Plus, cls: "text-primary bg-primary/10" },
   "review.updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },

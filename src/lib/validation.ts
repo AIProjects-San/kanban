@@ -339,6 +339,24 @@ export const leaveTypeSchema = z.object({
 export const updateLeaveTypeSchema = leaveTypeSchema.partial();
 
 // ---------------------------------------------------------------------------
+// F1.1 — holiday calendar (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1).
+// One entry per date; kind is labeling (both kinds exclude the date from
+// working-day counting). Label is optional — a bare date is a valid off-day.
+// ---------------------------------------------------------------------------
+
+export const holidayEntrySchema = z.object({
+  id: cuidish.optional(),
+  date: isoDateStr,
+  label: z.string().trim().max(80).default(""),
+  kind: z.enum(["PUBLIC", "WEEKLY_OFF"]).default("PUBLIC"),
+  isHalfDay: z.boolean().default(false),
+}).strict();
+
+export const deleteHolidayEntrySchema = z.object({
+  id: cuidish,
+}).strict();
+
+// ---------------------------------------------------------------------------
 // HR module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
 // `notes` is HR-only and excluded from the self-service schema on purpose.
 // ---------------------------------------------------------------------------

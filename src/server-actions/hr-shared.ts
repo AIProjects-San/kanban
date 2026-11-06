@@ -6,12 +6,21 @@
 
 import { db } from "@/lib/db";
 import { logError } from "@/lib/observability";
+import type { HolidayT } from "@/lib/types";
+import {
+  dayKey,
+  holidayLookupFrom,
+  workingDaysBetween,
+  type HolidayLookup,
+} from "@/lib/working-days";
 import { AuthorizationError } from "./auth-guard";
 
 // ---------------------------------------------------------------------------
 // Working-day math. Dates travel as "yyyy-mm-dd" strings from the client
 // and are normalized to UTC midnight so day arithmetic is timezone-stable
-// regardless of the server's TZ. Weekends (Sat/Sun) never count as leave.
+// regardless of the server's TZ. Weekends (Sat/Sun) never count as leave;
+// holiday-calendar entries remove weekdays too (F1.1) — see
+// lib/working-days.ts for the exact semantics.
 // ---------------------------------------------------------------------------
 
 export function parseDay(s: string): Date {
@@ -33,18 +42,44 @@ export function daysBetween(a: Date, b: Date): number {
 }
 
 /**
- * Count Mon–Fri days in [start, end] inclusive. The canonical leave "days"
- * number — denormalized onto the request at creation and never re-derived.
+ * Count Mon–Fri days in [start, end] inclusive. Holiday-free variant kept
+ * for call sites with no range lookup (and for the unit tests that pin the
+ * plain weekend rule) — the canonical leave "days" number is denormalized
+ * onto the request at creation and never re-derived.
  */
 export function workingDays(start: Date, end: Date): number {
-  let count = 0;
-  const cursor = new Date(start.getTime());
-  while (cursor.getTime() <= end.getTime()) {
-    const dow = cursor.getUTCDay(); // 0 Sun … 6 Sat
-    if (dow !== 0 && dow !== 6) count += 1;
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return count;
+  return workingDaysBetween(start, end);
+}
+
+// ---------------------------------------------------------------------------
+// F1.1 — holiday-calendar access. One read per range; the lookup feeds
+// workingDaysBetween (leave counting) and workingDaysInPeriod (payroll
+// denominators). Rows are date-only UTC-midnight values, so inclusive
+// gte/lte bounds on the same convention match exactly.
+// ---------------------------------------------------------------------------
+
+export async function getHolidayLookup(start: Date, end: Date): Promise<HolidayLookup> {
+  const rows = await db.holidayCalendarEntry.findMany({
+    where: { date: { gte: start, lte: end } },
+    select: { date: true, isHalfDay: true },
+  });
+  return holidayLookupFrom(rows);
+}
+
+/** Holiday entries as client-shaped rows ("yyyy-mm-dd" + label), used by the
+ * Leave view's live preview. Returns the compact projection, not Dates. */
+export async function getHolidayRows(start: Date, end: Date): Promise<HolidayT[]> {
+  const rows = await db.holidayCalendarEntry.findMany({
+    where: { date: { gte: start, lte: end } },
+    orderBy: { date: "asc" },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    date: dayKey(r.date),
+    label: r.label,
+    kind: r.kind as HolidayT["kind"],
+    isHalfDay: r.isHalfDay,
+  }));
 }
 
 /** Today at UTC midnight — the reference point for notice checks. */

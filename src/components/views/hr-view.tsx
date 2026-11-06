@@ -8,7 +8,7 @@
 // Directory / Reviews / Onboarding tabs arrive with features 2–4.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks } from "lucide-react";
+import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -25,6 +25,7 @@ import {
 import { DirectoryTab } from "./hr-directory";
 import { ReviewsTab } from "./hr-reviews";
 import { OnboardingTab } from "./hr-onboarding";
+import { HolidaysTab } from "./hr-holidays";
 
 interface CurrentUser {
   id: string;
@@ -32,7 +33,7 @@ interface CurrentUser {
   role: string;
 }
 
-type Tab = "requests" | "types" | "directory" | "reviews" | "onboarding";
+type Tab = "requests" | "types" | "holidays" | "directory" | "reviews" | "onboarding";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
@@ -94,6 +95,11 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
             <Settings2 size={13} /> Types &amp; Policies
           </TabButton>
         )}
+        {canAdmin && (
+          <TabButton active={tab === "holidays"} onClick={() => setTab("holidays")}>
+            <CalendarDays size={13} /> Holidays
+          </TabButton>
+        )}
         <TabButton active={tab === "directory"} onClick={() => setTab("directory")}>
           <Briefcase size={13} /> Directory
         </TabButton>
@@ -115,6 +121,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
       {tab === "types" && canAdmin && (
         <TypesTab types={types} onChanged={load} />
       )}
+      {tab === "holidays" && canAdmin && <HolidaysTab />}
       {tab === "directory" && <DirectoryTab />}
       {tab === "reviews" && <ReviewsTab />}
       {tab === "onboarding" && <OnboardingTab />}

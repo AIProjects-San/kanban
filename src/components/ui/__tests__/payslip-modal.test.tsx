@@ -21,7 +21,7 @@ import type { PayslipT } from "@/lib/types";
 
 function payslip(overrides: Partial<PayslipT> = {}): PayslipT {
   return {
-    id: "ps-1", runId: "run-1", runPeriod: "2026-11", runStatus: "OPEN",
+    id: "ps-1", runId: "run-1", runPeriod: "2026-11", runStatus: "OPEN", runWorkingDays: 0,
     userId: "u-yuki", userName: "Yuki Tanaka", jobTitle: "Data Engineer",
     slipNo: "PS-2026-11-001",
     earnings: [

@@ -142,17 +142,20 @@ async function waitForNoDialog(driver) {
  * Request `workingDaysCount` Mon–Fri days starting from a Monday at least
  * `daysOut` days from today. The end date walks forward until the requested
  * number of working days (inclusive of both range ends) is covered — the
- * server counts working days the same way (hr-shared.ts workingDays).
+ * server counts working days the same way (hr-shared.ts workingDays),
+ * including the F1.1 holiday exclusions (e2e/support/holidays.js mirrors
+ * the seeded calendar so the walk and the server always agree).
  */
 When(
   "I request {string} from a Monday {int} days out for {int} working days with reason {string}",
   async function (typeName, daysOut, workingDaysCount, reason) {
+    const { isHoliday } = require("../support/holidays");
     const monday = mondayAtLeast(daysOut);
     const end = new Date(monday.getTime());
     let counted = 0;
     for (;;) {
       const dow = end.getUTCDay();
-      if (dow !== 0 && dow !== 6) counted += 1;
+      if (dow !== 0 && dow !== 6 && !isHoliday(end)) counted += 1;
       if (counted >= workingDaysCount) break;
       end.setUTCDate(end.getUTCDate() + 1);
     }

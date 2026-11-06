@@ -11,9 +11,10 @@ import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
 import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/config";
-import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT } from "@/lib/types";
+import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { getMyLeaveData, createLeaveRequest, cancelLeaveRequest } from "@/server-actions/hr-leave";
+import { holidayLookupFrom, workingDaysBetween } from "@/lib/working-days";
 import { useApp } from "@/store/app-store";
 
 interface CurrentUser {
@@ -22,29 +23,27 @@ interface CurrentUser {
   role: string;
 }
 
-function workingDaysBetween(a: string, b: string): number {
-  if (!a || !b) return 0;
-  const start = new Date(`${a}T00:00:00.000Z`).getTime();
-  const end = new Date(`${b}T00:00:00.000Z`).getTime();
-  if (end < start) return 0;
-  let count = 0;
-  for (let t = start; t <= end; t += 86_400_000) {
-    const dow = new Date(t).getUTCDay();
-    if (dow !== 0 && dow !== 6) count += 1;
-  }
-  return count;
-}
-
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
     day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
   });
 }
 
+/** Holiday entries inside a range, for the preview's exclusion note. */
+function holidaysInRange(
+  start: string,
+  end: string,
+  holidays: HolidayT[],
+): HolidayT[] {
+  if (!start || !end || end < start) return [];
+  return holidays.filter((h) => h.date >= start && h.date <= end);
+}
+
 export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
   const [balances, setBalances] = useState<LeaveBalanceT[]>([]);
   const [requests, setRequests] = useState<LeaveRequestT[]>([]);
   const [types, setTypes] = useState<LeaveTypeT[]>([]);
+  const [holidays, setHolidays] = useState<HolidayT[]>([]);
   const [year, setYear] = useState<number>(new Date().getUTCFullYear());
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -56,6 +55,7 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
       setBalances(res.data.balances);
       setRequests(res.data.requests);
       setTypes(res.data.types);
+      setHolidays(res.data.holidays);
       setYear(res.data.year);
     } else {
       toast.error(res.error);
@@ -183,6 +183,7 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
         onClose={() => setShowForm(false)}
         types={types}
         balances={balances}
+        holidays={holidays}
         balanceYear={year}
         onCreated={async () => {
           setShowForm(false);
@@ -222,12 +223,15 @@ function CancelRequestButton({
 }
 
 function RequestFormModal({
-  open, onClose, types, balances, balanceYear, onCreated,
+  open, onClose, types, balances, holidays, balanceYear, onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   types: LeaveTypeT[];
   balances: LeaveBalanceT[];
+  /** F1.1 — the workspace holiday calendar (±1 year around now), so the
+   * live preview matches the server's holiday-aware day counting. */
+  holidays: HolidayT[];
   /** The calendar year `balances` were loaded for (the view's year selector). */
   balanceYear: number;
   onCreated: () => Promise<void>;
@@ -241,7 +245,22 @@ function RequestFormModal({
 
   const selectedType = types.find((t) => t.id === typeId);
   const selectedBalance = balances.find((b) => b.leaveTypeId === typeId);
-  const days = useMemo(() => workingDaysBetween(startDate, endDate), [startDate, endDate]);
+  // F1.1 — holiday-aware preview: same math as the server's createLeaveRequest
+  // (lib/working-days.ts), so the number the member sees is the number that
+  // gets denormalized onto the request.
+  const holidayMap = useMemo(() => holidayLookupFrom(holidays), [holidays]);
+  const days = useMemo(() => {
+    if (!startDate || !endDate || endDate < startDate) return 0;
+    return workingDaysBetween(
+      new Date(`${startDate}T00:00:00.000Z`),
+      new Date(`${endDate}T00:00:00.000Z`),
+      holidayMap,
+    );
+  }, [startDate, endDate, holidayMap]);
+  const rangeHolidays = useMemo(
+    () => holidaysInRange(startDate, endDate, holidays),
+    [startDate, endDate, holidays],
+  );
   const endBeforeStart = Boolean(startDate && endDate && endDate < startDate);
   // QA-7: the balances in `balances` are for `balanceYear` (the view's
   // year). A range starting in a different year is validated by the server
@@ -343,13 +362,18 @@ function RequestFormModal({
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">
             {days > 0
-              ? `${days} working day${days === 1 ? "" : "s"} (weekends excluded)`
+              ? `${days} working day${days === 1 ? "" : "s"} (weekends${rangeHolidays.length > 0 ? " and holidays" : ""} excluded)`
               : endBeforeStart
                 ? "End date is before the start date"
                 : startDate && endDate
-                  ? "That range contains no working days (Mon–Fri)"
+                  ? "That range contains no working days (Mon–Fri, holidays excluded)"
                   : "Pick a date range"}
           </span>
+          {rangeHolidays.length > 0 && days > 0 && (
+            <span className="text-[0.6875rem] text-muted-foreground truncate max-w-[14rem]">
+              {rangeHolidays.map((h) => h.label || h.date).join(", ")}
+            </span>
+          )}
           {selectedBalance && days > 0 && crossYear && (
             <span className="text-muted-foreground tabular-nums">
               {startYear} entitlement applies — the server validates on submit

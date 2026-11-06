@@ -30,6 +30,17 @@ export type BugResolution =
 export type LeaveStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 export type LeaveDecision = "APPROVE" | "REJECT";
 
+/** F1.1 — one holiday-calendar entry, client-shaped ("yyyy-mm-dd"). kind is
+ * labeling (PUBLIC = statutory/national, WEEKLY_OFF = scheduled non-working
+ * day); both kinds are excluded from working-day counting. */
+export interface HolidayT {
+  id: string;
+  date: string;
+  label: string;
+  kind: "PUBLIC" | "WEEKLY_OFF";
+  isHalfDay: boolean;
+}
+
 export interface LeaveTypeT {
   id: string;
   name: string;
@@ -494,7 +505,9 @@ export interface SalaryStructureT {
 }
 
 /** R7 — one monthly payroll period. status: OPEN (editable) → LOCKED (paid,
- * immutable). Totals are aggregated across the run's payslips. */
+ * immutable). Totals are aggregated across the run's payslips. workingDays
+ * (F1.1) is the holiday-aware LOP denominator denormalized at creation
+ * (0 = pre-F1.1 run → readers fall back to the calendar month length). */
 export interface PayrollRunT {
   id: string;
   period: string;
@@ -504,16 +517,20 @@ export interface PayrollRunT {
   payslipCount: number;
   totalGross: number;
   totalNet: number;
+  workingDays: number;
   createdAt: string;
 }
 
 /** R7 — one employee's payslip in a run. Lines are monthly amounts;
- * ytdNet accumulates the same-year periods up to and including this one. */
+ * ytdNet accumulates the same-year periods up to and including this one.
+ * runWorkingDays (F1.1) mirrors the run's holiday-aware denominator so the
+ * editor's live LOP preview matches the server's stored math. */
 export interface PayslipT {
   id: string;
   runId: string;
   runPeriod: string;
   runStatus: "OPEN" | "LOCKED";
+  runWorkingDays: number;
   userId: string;
   userName: string;
   jobTitle: string;

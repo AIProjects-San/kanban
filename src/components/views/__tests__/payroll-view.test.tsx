@@ -45,17 +45,17 @@ import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
 const RUNS: PayrollRunT[] = [
   {
     id: "run-1", period: "2026-11", status: "OPEN", lockedBy: null, lockedAt: null,
-    payslipCount: 3, totalGross: 20_100, totalNet: 19_600, createdAt: "2026-11-01T00:00:00.000Z",
+    payslipCount: 3, totalGross: 20_100, totalNet: 19_600, workingDays: 21, createdAt: "2026-11-01T00:00:00.000Z",
   },
   {
     id: "run-0", period: "2026-10", status: "LOCKED", lockedBy: "Remy", lockedAt: "2026-11-03T00:00:00.000Z",
-    payslipCount: 3, totalGross: 19_600, totalNet: 19_600, createdAt: "2026-10-01T00:00:00.000Z",
+    payslipCount: 3, totalGross: 19_600, totalNet: 19_600, workingDays: 21, createdAt: "2026-10-01T00:00:00.000Z",
   },
 ];
 
 const PAYSLIPS: PayslipT[] = [
   {
-    id: "ps-1", runId: "run-1", runPeriod: "2026-11", runStatus: "OPEN",
+    id: "ps-1", runId: "run-1", runPeriod: "2026-11", runStatus: "OPEN", runWorkingDays: 0,
     userId: "u-yuki", userName: "Yuki Tanaka", jobTitle: "Data Engineer",
     slipNo: "PS-2026-11-001",
     earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],

@@ -64,7 +64,15 @@ export function PayslipModal({
       return { gross: payslip.gross, lop, manualDeductions: manual, net: payslip.net };
     }
     const gross = payslipTotals(earnings, []).gross;
-    const lop = computeLop(gross, lopDays, payslip?.runPeriod ?? "2026-01");
+    // F1.1 — divide by the run's holiday-aware working-day count when the
+    // run carries one (post-F1.1 runs), so the live preview matches the
+    // server's stored LOP math exactly.
+    const lop = computeLop(
+      gross,
+      lopDays,
+      payslip?.runPeriod ?? "2026-01",
+      payslip && payslip.runWorkingDays > 0 ? payslip.runWorkingDays : undefined,
+    );
     const manualDeductions = deductions.reduce((s, l) => s + l.amount, 0);
     return { gross, lop, manualDeductions, net: Math.round((gross - lop - manualDeductions) * 100) / 100 };
   }, [editable, payslip, earnings, deductions, lopDays]);

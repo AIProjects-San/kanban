@@ -65,6 +65,21 @@ describe("payroll-math", () => {
     expect(computeLop(0, 3, "2026-11")).toBe(0);
   });
 
+  it("computeLop divides by the F1.1 working-day denominator when given", () => {
+    // November 2026: 21 working days (holiday calendar) vs 30 calendar days.
+    // 6,000 × 3 / 21 = 857.14 (2dp).
+    expect(computeLop(6_000, 3, "2026-11", 21)).toBe(857.14);
+    // A non-positive override falls back to the calendar length (pre-F1.1
+    // runs store workingDays = 0).
+    expect(computeLop(6_000, 3, "2026-11", 0)).toBe(600);
+    expect(computeLop(6_000, 3, "2026-11", -1)).toBe(600);
+  });
+
+  it("withLopLine accepts the working-day denominator too", () => {
+    const lop = withLopLine([], 6_000, 3, "2026-11", 21).find((l) => l.key === LOP_LINE_KEY);
+    expect(lop?.amount).toBe(857.14);
+  });
+
   it("withLopLine adds, replaces and removes the auto LOP line without touching manual lines", () => {
     const manual = [{ key: "tax", label: "Tax", amount: 100 }];
     const withLop = withLopLine(manual, 6_000, 2, "2026-11");

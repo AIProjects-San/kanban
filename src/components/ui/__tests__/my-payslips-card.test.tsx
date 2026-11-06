@@ -16,7 +16,7 @@ import { MyPayslipsCard } from "@/components/ui/my-payslips-card";
 import type { PayslipT } from "@/lib/types";
 
 const LATEST: PayslipT = {
-  id: "ps-26-10", runId: "run-0", runPeriod: "2026-10", runStatus: "LOCKED",
+  id: "ps-26-10", runId: "run-0", runPeriod: "2026-10", runStatus: "LOCKED", runWorkingDays: 0,
   userId: "u-yuki", userName: "Yuki Tanaka", jobTitle: "Data Engineer",
   slipNo: "PS-2026-10-002",
   earnings: [{ key: "basic", label: "Basic Salary", amount: 6_500 }],

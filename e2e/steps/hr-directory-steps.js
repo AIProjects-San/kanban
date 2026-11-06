@@ -43,6 +43,22 @@ When("I open the {string} tab", async function (label) {
     await driver.wait(until.elementsLocated(By.css("[data-testid='hr-onboarding']")), 10_000, "onboarding tab did not render");
     return;
   }
+  if (label === "Holidays") {
+    // F1.1 — the holiday calendar tab (hr-holidays.tsx). It renders either
+    // entries or the empty-state text; wait for the section header.
+    const tab = await driver.wait(
+      until.elementLocated(By.xpath(`//button[contains(normalize-space(.), "Holidays")]`)),
+      10_000,
+      "Holidays tab button not found",
+    );
+    await driver.executeScript("arguments[0].click();", tab);
+    await driver.wait(
+      until.elementLocated(By.xpath("//*[contains(text(), 'Holiday calendar')]")),
+      10_000,
+      "holiday calendar tab did not render",
+    );
+    return;
+  }
   throw new Error(`unknown tab: ${label}`);
 });
 

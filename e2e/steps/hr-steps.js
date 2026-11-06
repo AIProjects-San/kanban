@@ -25,11 +25,25 @@ function todayUTC() {
   return d;
 }
 
-/** The first Monday at least `daysOut` days from today (UTC). */
+/** The first Monday at least `daysOut` days from today (UTC).
+ * F1.1: skips weeks whose following 10 days contain a seeded holiday — the
+ * fixed-date calendar would otherwise make day-count assertions depend on
+ * which day CI runs (a holiday inside "Mon → following Tuesday" changes the
+ * denormalized `days`). */
 function mondayAtLeast(daysOut) {
+  const { hasHolidayInRange } = require("../support/holidays");
   const d = todayUTC();
   d.setUTCDate(d.getUTCDate() + daysOut);
-  while (d.getUTCDay() !== 1) d.setUTCDate(d.getUTCDate() + 1);
+  while (d.getUTCDay() !== 1 || hasHolidayInRange(d, dayAfter(d, 10))) {
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
+}
+
+/** `base` + `n` days, UTC-midnight (helper for mondayAtLeast's window). */
+function dayAfter(base, n) {
+  const d = new Date(base.getTime());
+  d.setUTCDate(d.getUTCDate() + n);
   return d;
 }
 

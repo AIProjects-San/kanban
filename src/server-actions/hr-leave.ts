@@ -20,7 +20,7 @@ import { logError } from "@/lib/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { LEAVE_STATUS_LABELS } from "@/lib/config";
-import type { LeaveStatus, LeaveRequestT, LeaveTypeT, LeaveBalanceT } from "@/lib/types";
+import type { LeaveStatus, LeaveRequestT, LeaveTypeT, LeaveBalanceT, HolidayT } from "@/lib/types";
 import {
   createLeaveRequestSchema,
   decideLeaveRequestSchema,
@@ -32,9 +32,9 @@ import {
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+import { workingDaysBetween } from "@/lib/working-days";
 import {
   parseDay,
-  workingDays,
   daysBetween,
   todayUTC,
   getApproverIdsFor,
@@ -42,6 +42,8 @@ import {
   getOrCreateBalance,
   getOrCreateBalancesBatch,
   findOverlappingActiveRequest,
+  getHolidayLookup,
+  getHolidayRows,
 } from "./hr-shared";
 
 // ---------------------------------------------------------------------------
@@ -55,13 +57,14 @@ export async function getMyLeaveData(): Promise<
     types: LeaveTypeT[];
     year: number;
     canManage: boolean;
+    holidays: HolidayT[];
   }>
 > {
   return toResult(async () => {
     const auth = await requirePermission("leave:request");
     const year = todayUTC().getUTCFullYear();
 
-    const [types, requests] = await Promise.all([
+    const [types, requests, holidays] = await Promise.all([
       db.leaveType.findMany({
         where: { active: true },
         orderBy: { name: "asc" },
@@ -74,6 +77,13 @@ export async function getMyLeaveData(): Promise<
         // is a paginated-list concern, not a self-service view concern.
         take: 200,
       }),
+      // F1.1 — the live request preview needs the calendar around "now":
+      // past entries for the history list, future entries for new requests.
+      // One bounded read (±1 year) instead of the whole table.
+      getHolidayRows(
+        new Date(Date.UTC(year - 1, 0, 1)),
+        new Date(Date.UTC(year + 1, 11, 31)),
+      ),
     ]);
 
     // PR-19 — balances for every active type in ONE batched read (+ a rare
@@ -153,6 +163,7 @@ export async function getMyLeaveData(): Promise<
       })),
       year,
       canManage: hasPermission(auth.role as never, "hr:view"),
+      holidays,
     };
   });
 }
@@ -265,9 +276,13 @@ export async function createLeaveRequest(input: {
     if (daysBetween(start, end) < 0) {
       throw new AuthorizationError("The end date must be on or after the start date.");
     }
-    const days = workingDays(start, end);
+    // F1.1 — holiday-aware count: weekends never count, holiday-calendar
+    // entries on weekdays are excluded (half-days count 0.5). Denormalized
+    // onto the request below and never re-derived.
+    const holidays = await getHolidayLookup(start, end);
+    const days = workingDaysBetween(start, end, holidays);
     if (days <= 0) {
-      throw new AuthorizationError("That range contains no working days (Mon–Fri).");
+      throw new AuthorizationError("That range contains no working days (Mon–Fri, holidays excluded).");
     }
 
     // Policy guard rails — each check rejects with a specific message so the

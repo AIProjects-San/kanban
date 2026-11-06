@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
-    "user", "auditLog", "notification",
+    "user", "auditLog", "notification", "holidayCalendarEntry",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -114,6 +114,9 @@ beforeEach(() => {
   db.leaveRequest.create.mockResolvedValue({ id: "lr-1" });
   db.leaveRequest.update.mockResolvedValue({});
   db.leaveBalance.findUnique.mockResolvedValue(BALANCE);
+  // F1.1 — holiday calendar reads default to empty (holiday-free math);
+  // individual tests seed entries to pin the exclusion behavior.
+  db.holidayCalendarEntry.findMany.mockResolvedValue([]);
   // PR-19 — getMyLeaveData now reads balances in ONE batched findMany
   // (+ createMany materialization for missing rows).
   db.leaveBalance.findMany.mockResolvedValue([{ leaveTypeId: "lt-annual", ...BALANCE }]);
@@ -249,6 +252,66 @@ describe("createLeaveRequest", () => {
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({ action: "leave.requested", entityType: "LEAVE_REQUEST", entityId: "lr-1" }),
     );
+  });
+
+  it("excludes a holiday-calendar entry from the request's day count (F1.1)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // 2027-06-07 (Mon) .. 2027-06-09 (Wed) = 3 working days; King's
+    // Birthday (Mon 2027-06-07) removes Monday → 2 days.
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2027-06-07T00:00:00.000Z"), isHalfDay: false },
+    ]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual",
+      startDate: "2027-06-07",
+      endDate: "2027-06-09",
+      reason: "Long weekend",
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.days).toBe(2);
+    expect(db.leaveRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ days: 2 }),
+      }),
+    );
+    // The calendar read was scoped to the request's range.
+    const where = db.holidayCalendarEntry.findMany.mock.calls[0][0].where;
+    expect(where.date.gte).toEqual(new Date("2027-06-07T00:00:00.000Z"));
+    expect(where.date.lte).toEqual(new Date("2027-06-09T00:00:00.000Z"));
+  });
+
+  it("counts a half-day holiday as 0.5 working days (F1.1)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // Wed 2027-06-09 alone: 1 working day, but a half-day holiday → 0.5.
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2027-06-09T00:00:00.000Z"), isHalfDay: true },
+    ]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual",
+      startDate: "2027-06-09",
+      endDate: "2027-06-09",
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.days).toBe(0.5);
+  });
+
+  it("rejects a range whose every working day is a holiday (F1.1)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2027-06-07T00:00:00.000Z"), isHalfDay: false },
+      { date: new Date("2027-06-08T00:00:00.000Z"), isHalfDay: false },
+    ]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual",
+      startDate: "2027-06-07",
+      endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/no working days/i);
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown or inactive leave type", async () => {

@@ -54,26 +54,32 @@ export function payslipTotals(earnings: PayslipLine[], deductions: PayslipLine[]
   return { gross, net: round2(gross - lineSum(deductions)) };
 }
 
-/** Pro-rated loss-of-pay amount for the period: gross × days / periodDays. */
-export function computeLop(gross: number, lopDays: number, period: string): number {
+/** Pro-rated loss-of-pay amount: gross × days / periodDays.
+ * `workingDays` (F1.1) is the run's holiday-aware denominator — when omitted
+ * or non-positive (pre-F1.1 runs, empty calendar) the calendar length of the
+ * month is used, preserving the historical behavior. */
+export function computeLop(gross: number, lopDays: number, period: string, workingDays?: number): number {
   if (lopDays <= 0 || gross <= 0) return 0;
-  return round2((gross * lopDays) / daysInPeriod(period));
+  const denom = workingDays && workingDays > 0 ? workingDays : daysInPeriod(period);
+  return round2((gross * lopDays) / denom);
 }
 
 /** The auto-managed LOP deduction line key (replaced, never duplicated). */
 export const LOP_LINE_KEY = "lop";
 
 /** Replace (or remove) the LOP deduction line for the given inputs; manual
- * deduction lines are preserved untouched. */
+ * deduction lines are preserved untouched. `workingDays` (F1.1) overrides
+ * the denominator — see computeLop. */
 export function withLopLine(
   deductions: PayslipLine[],
   gross: number,
   lopDays: number,
   period: string,
+  workingDays?: number,
 ): PayslipLine[] {
   const rest = deductions.filter((l) => l.key !== LOP_LINE_KEY);
   if (lopDays <= 0) return rest;
-  const amount = computeLop(gross, lopDays, period);
+  const amount = computeLop(gross, lopDays, period, workingDays);
   if (amount <= 0) return rest;
   return [...rest, { key: LOP_LINE_KEY, label: `Loss of pay (${lopDays} day${lopDays === 1 ? "" : "s"})`, amount }];
 }

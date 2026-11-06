@@ -112,6 +112,7 @@ async function main() {
   await db.offerRecord.deleteMany();
   await db.salaryStructure.deleteMany();
   await db.payrollRun.deleteMany(); // cascades payslips
+  await db.holidayCalendarEntry.deleteMany();
 
   // -----------------------------------------------------------------
   // Workspace settings
@@ -1137,6 +1138,79 @@ async function main() {
   //   • Rafael's APPROVED leave covers TODAY+2..TODAY+6 (calendar + time guard)
   // -------------------------------------------------------------------------
   const YEAR = new Date().getUTCFullYear();
+
+  // -------------------------------------------------------------------------
+  // F1.1 — holiday calendar seed (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+  // §7.1). New Zealand national public holidays for the current + next year
+  // (the demo workspace is Pacific/Auckland-based). Observed dates are used
+  // when a holiday falls on a weekend (Mondayisation) — those are the dates
+  // that actually remove working days. Regional anniversary days vary by
+  // region and are deliberately NOT seeded. Sources: govt.nz /
+  // employment.govt.nz holiday date lists (checked 2026-11-06).
+  //
+  // Years beyond this table seed nothing — an empty calendar simply means
+  // Mon–Fri everywhere (the pre-F1.1 behavior).
+  // -------------------------------------------------------------------------
+  const NZ_PUBLIC_HOLIDAYS = {
+    2026: [
+      ["2026-01-01", "New Year's Day"],
+      ["2026-01-02", "Day after New Year's Day"],
+      ["2026-02-06", "Waitangi Day"],
+      ["2026-04-03", "Good Friday"],
+      ["2026-04-06", "Easter Monday"],
+      ["2026-04-27", "ANZAC Day (observed)"],
+      ["2026-06-01", "King's Birthday"],
+      ["2026-07-10", "Matariki"],
+      ["2026-10-26", "Labour Day"],
+      ["2026-12-25", "Christmas Day"],
+      ["2026-12-28", "Boxing Day (observed)"],
+    ],
+    2027: [
+      ["2027-01-01", "New Year's Day"],
+      ["2027-01-04", "Day after New Year's Day (observed)"],
+      ["2027-02-08", "Waitangi Day (observed)"],
+      ["2027-03-26", "Good Friday"],
+      ["2027-03-29", "Easter Monday"],
+      ["2027-04-26", "ANZAC Day (observed)"],
+      ["2027-06-07", "King's Birthday"],
+      ["2027-06-25", "Matariki"],
+      ["2027-10-25", "Labour Day"],
+      ["2027-12-27", "Christmas Day (observed)"],
+      ["2027-12-28", "Boxing Day (observed)"],
+    ],
+  };
+  const holidayEntries = [];
+  for (const y of [YEAR, YEAR + 1]) {
+    for (const [date, label] of NZ_PUBLIC_HOLIDAYS[y] ?? []) {
+      holidayEntries.push({ date: new Date(`${date}T00:00:00.000Z`), label, isHalfDay: false, kind: "PUBLIC" });
+    }
+  }
+  if (holidayEntries.length > 0) {
+    await db.holidayCalendarEntry.createMany({ data: holidayEntries });
+  }
+  console.log(`  ✓ F1.1 holiday calendar: ${holidayEntries.length} NZ public holidays (${YEAR} + ${YEAR + 1})`);
+
+  // Mirror of lib/working-days.ts workingDaysInPeriod — the seed must use
+  // the SAME math as production ("seed mirrors production math"). Half-day
+  // entries count 0.5 (none seeded today, but the mirror must be complete).
+  const holidayKeyMap = new Map(holidayEntries.map((h) => [h.date.toISOString().slice(0, 10), h]));
+  const workingDaysInPeriod = (period) => {
+    const [y, m] = period.split("-").map(Number);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 0));
+    let count = 0;
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const dow = cursor.getUTCDay();
+      const hol = holidayKeyMap.get(cursor.toISOString().slice(0, 10));
+      if (dow !== 0 && dow !== 6) {
+        if (!hol) count += 1;
+        else if (hol.isHalfDay) count += 0.5;
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return count;
+  };
   const day = (offset) => {
     const d = new Date();
     d.setUTCHours(0, 0, 0, 0);
@@ -1791,6 +1865,10 @@ async function main() {
     const lastMonth = new Date(TODAY.getFullYear(), TODAY.getMonth() - 1, 1);
     const prevPeriod = periodOf(lastMonth);
     const thisPeriod = periodOf(TODAY);
+    // F1.1 — holiday-aware denominators (mirror of createPayrollRun):
+    // stored on the run, and the LOP line divides by them.
+    const prevWorkingDays = workingDaysInPeriod(prevPeriod);
+    const thisWorkingDays = workingDaysInPeriod(thisPeriod);
 
     // Last month: LOCKED (paid).
     await db.payrollRun.create({
@@ -1800,6 +1878,7 @@ async function main() {
         lockedById: hrId,
         lockedAt: addDays(TODAY, -3),
         createdById: hrId,
+        workingDays: prevWorkingDays,
         payslips: {
           create: structures.map((s, i) => {
             const earnings = monthlyLines(s.components);
@@ -1824,6 +1903,7 @@ async function main() {
         period: thisPeriod,
         status: "OPEN",
         createdById: hrId,
+        workingDays: thisWorkingDays,
         payslips: {
           create: structures.map((s, i) => {
             const earnings = monthlyLines(s.components);
@@ -1832,7 +1912,7 @@ async function main() {
             if (s.user.name === "Yuki Tanaka") {
               lopDays = 1;
               const gross = round2(earnings.reduce((sum, l) => sum + l.amount, 0));
-              const lop = round2((gross * 1) / daysIn(thisPeriod));
+              const lop = round2((gross * 1) / thisWorkingDays);
               deductions = [{ key: "lop", label: "Loss of pay (1 day)", amount: lop }];
             }
             if (s.user.name === "Hana Park") {

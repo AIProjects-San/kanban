@@ -812,6 +812,25 @@ model LeaveBalance {
   @@index([userId])
 }
 
+// F1.1 — workspace holiday calendar (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1). One row per date (unique): any entry removes that date from
+// working-day counting (isHalfDay counts it as 0.5). `kind` is labeling —
+// PUBLIC (statutory/national holiday) vs WEEKLY_OFF (a scheduled non-working
+// day such as a company off-day); both are excluded from the count. Dates are
+// UTC-midnight date-only values (LeaveRequest.startDate convention). Seeded
+// with NZ public holidays for the demo workspace (Pacific/Auckland).
+model HolidayCalendarEntry {
+  id        String   @id @default(cuid())
+  date      DateTime @unique
+  label     String   @default("")
+  isHalfDay Boolean  @default(false)
+  kind      String   @default("PUBLIC")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([kind])
+}
+
 // HR Module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
 // One row per user (userId unique): structured job + contact data. The
 // manager display comes from the existing User.managerId org chart — this
@@ -1218,6 +1237,12 @@ model PayrollRun {
   lockedById  String   @default("")
   lockedAt    DateTime?
   createdById String   @default("")
+  // F1.1 — working days in the period (Mon–Fri minus holiday-calendar
+  // entries, half-days = 0.5), denormalized at creation from the holiday
+  // calendar and never re-derived: payslip LOP math divides by THIS number.
+  // 0 = run created before F1.1 (column default) — readers fall back to the
+  // calendar length of the month (lib/payroll-math.ts daysInPeriod).
+  workingDays Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

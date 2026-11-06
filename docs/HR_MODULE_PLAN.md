@@ -171,6 +171,25 @@ Migration `20261106000000_hr_onboarding`. HR creates a checklist from a default
 template; assignees tick tasks; checklist auto-completes when all tasks are done;
 progress percentage on the card. e2e `hr-onboarding.feature` + unit tests.
 
+## 7a. Feature F1.1 — Holiday calendar (enhancement plan Phase 1)
+
+`HolidayCalendarEntry` (date unique, label, isHalfDay, kind PUBLIC/WEEKLY_OFF).
+Migration `20261106100000_holiday_calendar` (+ `PayrollRun.workingDays Int`).
+Semantics: any entry removes its date from working-day counting (half-days
+count 0.5); `kind` is labeling only. Consumers: `lib/working-days.ts`
+(`workingDaysBetween` / `workingDaysInPeriod` — pure, shared by server and
+client) feeds `createLeaveRequest` day counting, the Leave view's live
+preview, and the payroll LOP denominator (`createPayrollRun` denormalizes
+the period's working days onto the run; payslip math divides by it, falling
+back to calendar month length only for pre-F1.1 runs with 0). Admin CRUD at
+the HR console "Holidays" tab (hr:admin — same gate as Types & Policies;
+no new permission, no new nav leaf). Seed: NZ public holidays for the
+current + next year (observed dates when Mondayised; regional anniversary
+days deliberately excluded). e2e `hr-holidays.feature` + unit tests;
+relative-date helpers in the e2e suite skip holiday weeks so day-count
+assertions stay deterministic. Design source:
+`docs/Fernly_HR_Payroll_Enhancement_Plan.md` §7.1.
+
 ## 8. Cross-cutting checklist (touched once, kept in sync)
 
 - `lib/rbac.ts` (+ `rbac.test.ts`), `lib/types`, `lib/config` (leave/review/onboarding
