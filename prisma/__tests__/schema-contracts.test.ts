@@ -357,13 +357,17 @@ describe("Recruitment R1 models are declared", () => {
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
     // F1.4 — the attendance→LOP derivation migration (provenance column +
-    // Int→Float widenings) is committed with its down path.
+    // Int→Float widenings) is committed with its down path. Clause-level
+    // assertions: Prisma emits multi-clause ALTER TABLE statements (SET
+    // DEFAULT + SET DATA TYPE), so the type changes ride continuation lines.
     const f14 = resolve(repoRoot, "prisma", "migrations", "20261119000000_attendance_lop_derivation");
     expect(existsSync(resolve(f14, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(f14, "down.sql"))).toBe(true);
     const f14up = readFileSync(resolve(f14, "migration.sql"), "utf8");
-    expect(f14up).toMatch(/ALTER TABLE "Payslip" ADD COLUMN "lopSource" TEXT NOT NULL DEFAULT 'AUTO'/);
-    expect(f14up).toMatch(/ALTER TABLE "Payslip" ALTER COLUMN "lopDays" SET DATA TYPE DOUBLE PRECISION/);
-    expect(f14up).toMatch(/ALTER TABLE "PayrollRun" ALTER COLUMN "workingDays" SET DATA TYPE DOUBLE PRECISION/);
+    expect(f14up).toMatch(/ADD COLUMN\s+"lopSource" TEXT NOT NULL DEFAULT 'AUTO'/);
+    expect(f14up).toMatch(/ALTER COLUMN "lopDays" SET DEFAULT 0/);
+    expect(f14up).toMatch(/ALTER COLUMN "lopDays" SET DATA TYPE DOUBLE PRECISION/);
+    expect(f14up).toMatch(/ALTER COLUMN "workingDays" SET DEFAULT 0/);
+    expect(f14up).toMatch(/ALTER COLUMN "workingDays" SET DATA TYPE DOUBLE PRECISION/);
   });
 });
