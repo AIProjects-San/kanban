@@ -16,12 +16,16 @@ Feature: HR QA hardening
     days — not blindly debited into a negative "days left". Assertions
     are RELATIVE (deltas from a noted baseline) so the scenario holds
     both on a fresh seed (20 available) and after the hr-leave feature
-    has run (18 available).
+    has run (18 available). The far request is pinned to the SAME year
+    as the near one (F1.1's holiday-week skipping can push a far-future
+    Monday across the year boundary, where it would debit the next
+    year's balance — QA-7 territory — and never trip this guard); when
+    the year end leaves no room the scenario reports pending.
     When I sign in as "member@fernly.app" with the demo password
     And I open the "Leave" view
     Then I note the current leave balance for "Annual Leave"
     When I request "Annual Leave" from a Monday 14 days out for 12 working days with reason "QA overdraft near"
-    And I request "Annual Leave" from a Monday 42 days out for 12 working days with reason "QA overdraft far"
+    And I request "Annual Leave" from a Monday 42 days out for 12 working days in the same year as my last request with reason "QA overdraft far"
     And I sign out
     And I sign in as "demo@fernly.app" with the demo password
     And I open the "HR" view

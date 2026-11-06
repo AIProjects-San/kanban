@@ -146,41 +146,124 @@ async function waitForNoDialog(driver) {
  * including the F1.1 holiday exclusions (e2e/support/holidays.js mirrors
  * the seeded calendar so the walk and the server always agree).
  */
+/** Shared body of the QA request steps: compute a working-day range from
+ * `monday`, submit it, and fail loudly when the client-side balance guard
+ * kept the form open (precondition break, not a timing issue). Stashes the
+ * range on the world for the same-year step below. */
+async function qaRequestRange(world, typeName, monday, workingDaysCount, reason) {
+  const { isHoliday } = require("../support/holidays");
+  const end = new Date(monday.getTime());
+  let counted = 0;
+  for (;;) {
+    const dow = end.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !isHoliday(end)) counted += 1;
+    if (counted >= workingDaysCount) break;
+    end.setUTCDate(end.getUTCDate() + 1);
+  }
+  const { submitRange } = require("./hr-steps");
+  await waitForNoDialog(await world.getDriver());
+  await submitRange(world, typeName, monday, end, reason);
+  world.lastE2ERangeEnd = end;
+  world.lastE2EYear = monday.getUTCFullYear();
+  // The client-side balance guard disables the submit button when the
+  // requested days exceed the CURRENT year's remaining balance — a click
+  // on a disabled button silently does nothing and the request is never
+  // submitted. Fail loudly instead of letting the scenario drift into an
+  // unrelated timeout two steps later.
+  const driver = await world.getDriver();
+  const stillOpen = await driver.findElements(By.css("#leave-type"));
+  if (stillOpen.length > 0) {
+    const balText = await driver
+      .findElement(By.xpath(`//span[contains(@class, "tabular-nums")]`))
+      .getText()
+      .catch(() => "(balance text not found)");
+    throw new Error(
+      `leave form still open after submit — the button was likely disabled by the balance guard (${balText}). ` +
+        `Precondition broken: check for leftover APPROVED requests debiting the balance.`,
+    );
+  }
+}
+
 When(
   "I request {string} from a Monday {int} days out for {int} working days with reason {string}",
   async function (typeName, daysOut, workingDaysCount, reason) {
-    const { isHoliday } = require("../support/holidays");
-    const monday = mondayAtLeast(daysOut);
-    const end = new Date(monday.getTime());
-    let counted = 0;
-    for (;;) {
-      const dow = end.getUTCDay();
-      if (dow !== 0 && dow !== 6 && !isHoliday(end)) counted += 1;
-      if (counted >= workingDaysCount) break;
-      end.setUTCDate(end.getUTCDate() + 1);
-    }
-    const { submitRange } = require("./hr-steps");
-    await waitForNoDialog(await this.getDriver());
-    await submitRange(this, typeName, monday, end, reason);
-    // The client-side balance guard disables the submit button when the
-    // requested days exceed the CURRENT year's remaining balance — a click
-    // on a disabled button silently does nothing and the request is never
-    // submitted. Fail loudly instead of letting the scenario drift into an
-    // unrelated timeout two steps later.
-    const driver = await this.getDriver();
-    const stillOpen = await driver.findElements(By.css("#leave-type"));
-    if (stillOpen.length > 0) {
-      const balText = await driver
-        .findElement(By.xpath(`//span[contains(@class, "tabular-nums")]`))
-        .getText()
-        .catch(() => "(balance text not found)");
-      throw new Error(
-        `leave form still open after submit — the button was likely disabled by the balance guard (${balText}). ` +
-          `Precondition broken: check for leftover APPROVED requests debiting the balance.`,
-      );
-    }
+    await qaRequestRange(this, typeName, mondayAtLeast(daysOut), workingDaysCount, reason);
   },
 );
+
+/**
+ * Same as above, but GUARANTEES the request starts in the same UTC year as
+ * the scenario's previous Monday-based request. F1.1's holiday-week
+ * skipping can push a far-future Monday across the year boundary — and a
+ * cross-year request debits the NEXT year's balance (QA-7 behavior), which
+ * silently breaks the QA-1 overdraft premise of "two requests together
+ * exceeding ONE year's balance". When the year jumped, try candidate
+ * Mondays of the anchor year walking back from its end (a holiday-week
+ * START is fine — the day-count walk skips inner holidays, and only the
+ * start year matters for the balance); a candidate whose range overlaps
+ * another feature's leftover active request is rejected at the form, which
+ * reads as "still open" and moves on to the previous Monday. When no
+ * candidate works (suite running close to year end), the scenario reports
+ * pending — the overdraft guard itself stays pinned by the hr-leave unit
+ * tests, and QA-7 covers the cross-year behavior.
+ */
+When(
+  "I request {string} from a Monday {int} days out for {int} working days in the same year as my last request with reason {string}",
+  async function (typeName, daysOut, workingDaysCount, reason) {
+    assert.ok(this.lastE2EYear, "no previous Monday-based request was made in this scenario");
+    const anchorYear = this.lastE2EYear;
+    const prevEnd = this.lastE2ERangeEnd;
+    let monday = mondayAtLeast(daysOut);
+    if (monday.getUTCFullYear() === anchorYear) {
+      await qaRequestRange(this, typeName, monday, workingDaysCount, reason);
+      return;
+    }
+    // Year jumped — walk candidate Mondays of the anchor year, newest first.
+    let candidate = new Date(Date.UTC(anchorYear, 11, 31));
+    while (candidate.getUTCDay() !== 1) candidate.setUTCDate(candidate.getUTCDate() - 1);
+    for (let tries = 0; tries < 10; tries += 1) {
+      if (candidate.getTime() > prevEnd.getTime()) {
+        const submitted = await tryQARange(this, typeName, candidate, workingDaysCount, reason);
+        if (submitted) return;
+      }
+      candidate.setUTCDate(candidate.getUTCDate() - 7);
+    }
+    return "pending";
+  },
+);
+
+/** One submit attempt that may legitimately be rejected (overlap with a
+ * leftover active request). Returns true when the request was submitted;
+ * on rejection closes the form and returns false so the caller can try an
+ * earlier Monday. */
+async function tryQARange(world, typeName, monday, workingDaysCount, reason) {
+  const { isHoliday } = require("../support/holidays");
+  const end = new Date(monday.getTime());
+  let counted = 0;
+  for (;;) {
+    const dow = end.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !isHoliday(end)) counted += 1;
+    if (counted >= workingDaysCount) break;
+    end.setUTCDate(end.getUTCDate() + 1);
+  }
+  const { submitRange } = require("./hr-steps");
+  const driver = await world.getDriver();
+  await waitForNoDialog(driver);
+  await submitRange(world, typeName, monday, end, reason);
+  const stillOpen = await driver.findElements(By.css("#leave-type"));
+  if (stillOpen.length === 0) {
+    world.lastE2ERangeEnd = end;
+    world.lastE2EYear = monday.getUTCFullYear();
+    return true;
+  }
+  // Rejected at the form (overlap / balance) — close it and report.
+  const close = await driver.findElement(
+    By.xpath(`//div[@role='dialog']//button[@aria-label='Close dialog']`),
+  );
+  await close.click();
+  await driver.sleep(400);
+  return false;
+}
 
 /** Drive the Decide → Approve path WITHOUT waiting for a success toast. */
 When("I try to approve the request with reason {string}", async function (reason) {
