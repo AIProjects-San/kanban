@@ -282,7 +282,14 @@ describe("createLeaveRequest", () => {
       ...ANNUAL_TYPE,
       policy: { ...ANNUAL_TYPE.policy, minNoticeDays: 5 },
     });
-    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(1), endDate: isoDay(2) });
+    // The range must ALWAYS contain working days: a 2-day window starting
+    // "tomorrow" lands on a weekend whenever the suite runs on a Friday
+    // (UTC), the "no working days" guard then fires ahead of the notice
+    // check and this test fails on the calendar, not the policy. A 7-day
+    // window straddles >= 5 working days on every weekday the suite can
+    // start on, and its start is still 1 day out — well inside the 5-day
+    // notice minimum the assertion targets.
+    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(1), endDate: isoDay(7) });
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/notice/i);
   });
