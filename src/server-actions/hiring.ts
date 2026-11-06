@@ -1889,7 +1889,7 @@ export async function declineOffer(input: { token: string }): Promise<ActionResu
 /** Mark a signed candidate as Joined: creates the employee's account
  * (deterministic email), EmployeeProfile, roster entry, and onboarding
  * checklist, then queues the welcome email. Idempotent per candidate. */
-export async function markJoined(input: { candidateId: string }): Promise<ActionResult<{ userId: string; email: string; mailStatus: string }>> {
+export async function markJoined(input: { candidateId: string }): Promise<ActionResult<{ userId: string; email: string; mailStatus: string; workspaceName: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
     const candidateId = String(input?.candidateId ?? "").trim();
@@ -2019,6 +2019,9 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
       detail: `${auth.name} marked "${candidate.fullName}" as joined — account ${email} created with onboarding checklist + welcome email (${wstatus}).`,
     });
     revalidatePath("/");
-    return { userId: user.id, email, mailStatus: wstatus };
+    // workspaceName rides along for the day-one handout (persona-audit
+    // D-03): HR prints the joiner's sign-in instructions — the sheet needs
+    // the workspace's display name alongside the account email.
+    return { userId: user.id, email, mailStatus: wstatus, workspaceName: config.workspace.name };
   });
 }

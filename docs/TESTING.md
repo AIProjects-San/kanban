@@ -209,6 +209,13 @@ Execute each group per persona. ✅ = pass criterion.
 | HIRE-18 | Member-interviewer self-service (P0-5/D-04) | HR → open a candidate at an INTERVIEW stage → Schedule → pick a MEMBER (e.g. Theo Vance) as interviewer → Confirm; sign in as that member | The member's sidebar shows "My Interviews" (People group) and NEVER "Hiring"; the view lists the assigned stage with candidate name, stage label and slot; the empty state explains the assignment rule when nothing is assigned |
 | HIRE-19 | Member scorecard (P0-5/D-04) | As the assigned MEMBER interviewer → My Interviews → Fill scorecard (rating, recommendation, strengths, concerns, remarks) → Save | Scorecard saves server-side (only the assigned interviewer or HR/admin may write it — a non-assigned member is refused with "Only the assigned interviewer…"); the saved card renders read-only in the member's list; HR sees it on the candidate timeline too |
 | HIRE-20 | Member stays off the board (P0-5/D-04) | As the assigned MEMBER interviewer try to reach hiring surfaces (nav, G I, /hiring data) | The Hiring leaf and G I shortcut do nothing for MEMBER (no hiring:view); getHiringBoard/outbox/offers all refuse; the member only ever sees their own assignments |
+| HIRE-21 | Joiner day-one handout (P0-4/D-03) | (no `RESEND_API_KEY`) HR → Selected pool → open a candidate with a SIGNED offer → Mark joined | Join toast warns the welcome email was NOT delivered and points at the printout; the **day-one handout** modal opens automatically: the joiner's sign-in email, the app URL, numbered set-password steps ("Forgot password?" → reset email), the admin starter-password fallback while no provider is configured, and the five first-two-weeks checklist tasks; a "not delivered — hand this to the joiner" warning sits at the top; Print / save PDF produces the sheet only (print-area). With a provider configured (SENT) the same sheet opens without the warning |
+
+#### Payroll scope (PAY) — pre-statutory positioning (ADR-014)
+
+| ID | Scenario | Steps | Expected |
+|----|----------|-------|----------|
+| PAY-1 | Pre-statutory scope banner (P0-3/D-06) | ADMIN or HR → Payroll (`G Y`) | A permanent amber banner (`statutory-scope-banner`) states the scope: "Pre-statutory payroll" — gross → net from structures and manual deduction lines only; **no** PF, ESI, professional tax, TDS, Form 16 or investment-declaration computation or filing; statutory deductions as manual lines or via your compliance provider; decision record `docs/DECISIONS.md` ADR-014. Renders in every environment (deliberately not env-gated) |
 
 ### 2.14 Personalisation & UX (UX)
 

@@ -464,3 +464,55 @@ static benchmark cards (on-time delivery, cycle time) are unaffected by scope.
 Unit tests pin every role×scope allow/deny combination; the manual plan
 (ANL-2/3/4 in `TESTING.md`) mirrors them. Documented in `ARCHITECTURE.md` §4
 and the PRD (FR-N2).
+
+---
+
+## ADR-014 — Payroll is pre-statutory by design; we position honestly instead of half-implementing India compliance
+
+**Date:** 2026-11-06 · **Status:** ACCEPTED · **Type:** product / compliance
+
+**Context.** The persona acceptance assessment
+(`docs/Fernly_Persona_Acceptance_Assessment.md`, finding **D-06**, backlog
+**P0-3**) verified in code that Fernly ships **zero statutory payroll
+computation**: no PF/ESI/professional-tax/TDS lines, no Form 16, no
+investment declarations, no registers — while the offer/salary model is
+CTC-shaped after an India design basis (Basic/HRA/special-allowance
+components, PF 12% and gratuity 4.81% researched in
+`RECRUITMENT_MODULE_PLAN.md`) and the seed ships NZ KiwiSaver. The accountant
+persona (B3) judged the gap disqualifying for a paid product; the backlog
+forced a decision: **build** the statutory engine (effort **L**, 1–2+ weeks)
+or **reposition** payroll as pre-statutory.
+
+**Analysis.**
+
+| Criterion | Build now | Reposition now |
+|---|---|---|
+| Correctness risk | Wage ceilings (PF ₹15,000 cap, ESI ₹21,000), slab-based PT/TDS, Apr–Mar FY, state variations — easy to get subtly wrong; a wrong statutory number is worse than none | None — states the truth |
+| Effort | L (1–2+ weeks minimum, plus per-jurisdiction maintenance forever) | S |
+| Demand signal | No paying customer has asked for it | Same |
+| Half-built danger | Real: shipping "PF" without ECR files or Form 16 creates a false compliance promise — the exact class of defect the audit flagged (D-05) | None |
+
+**Decision.** Reposition. Payroll is honestly **pre-statutory**:
+structures → runs → payslips (gross → net, LOP, lock-when-paid) stay; the
+statutory layer is explicitly **not** built. This is stated where payroll is
+used — a permanent banner in the Payroll view (`statutory-scope-banner`,
+visible in every demo: "does not compute or file PF, ESI, professional tax,
+TDS, Form 16 or investment declarations; enter statutory deductions as
+manual lines or run them through your compliance provider") — and in the
+README. Statutory amounts can still be **entered** as manual deduction lines
+(the component model supports fixed/%-of-basic deductions), which is
+correct for a pre-statutory tracker, but Fernly never computes, validates or
+files them.
+
+**Revisit triggers** (either starts the L-effort build as a scoped project):
+a paying customer needs India statutory computation; or the Apr–Mar FY YTD
+basis (P1/D-10) is scheduled — statutory and fiscal-year work share the same
+payroll-math core. Until then: no statutory claims in sales material, demos
+or docs; the CTC offer math stays a compensation-design tool, not a
+compliance statement.
+
+**Consequences.** No `statutory` computation lands in `src/lib/payroll-math.ts`
+without superseding this ADR. The banner text is tested
+(`payroll-view.test.tsx`) so the positioning cannot silently regress. The
+India-CTC research in `RECRUITMENT_MODULE_PLAN.md` remains background for the
+future build, not a promise.

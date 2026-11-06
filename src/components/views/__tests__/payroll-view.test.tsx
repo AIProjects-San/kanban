@@ -99,6 +99,18 @@ describe("PayrollView", () => {
     expect(locked).toContain("locked by Remy");
   });
 
+  // Persona-audit D-06 / P0-3 (ADR-014): the pre-statutory scope must be
+  // stated where payroll is used — permanent, in every environment.
+  it("states the pre-statutory scope permanently (D-06, ADR-014)", async () => {
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const banner = await screen.findByTestId("statutory-scope-banner");
+    const text = banner.textContent ?? "";
+    expect(text).toContain("Pre-statutory payroll");
+    expect(text).toContain("PF, ESI, professional tax, TDS, Form 16, investment declarations");
+    expect(text).toContain("manual deduction lines");
+    expect(text).toContain("ADR-014");
+  });
+
   it("only OPEN runs offer the lock button (with a confirm step)", async () => {
     render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
     await screen.findByTestId("run-row-2026-11");

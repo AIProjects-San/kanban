@@ -598,6 +598,56 @@ describe("CandidateDetailModal: R6 joining", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
+  // Persona-audit D-03 / P0-4 — the SKIPPED welcome email must not leave the
+  // joiner locked out: the printable day-one handout opens with the sign-in
+  // email + set-password instructions (the durable artifact HR hands over).
+  it("a SKIPPED welcome email opens the day-one handout with set-password instructions (D-03)", async () => {
+    markJoined.mockResolvedValue({
+      ok: true,
+      data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SKIPPED", workspaceName: "Fernly Workspace" },
+    });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer
+      />,
+    );
+    fireEvent.click(screen.getByTestId("mark-joined-btn"));
+    const handout = await screen.findByTestId("joiner-handout");
+    // The joiner's sign-in email is the one thing HR must relay.
+    expect(screen.getByTestId("joiner-handout-email").textContent).toContain("nadia.petrova@fernly.app");
+    // Set-password instructions: the "Forgot password?" self-service path…
+    expect(handout.textContent).toContain("Set your password");
+    expect(handout.textContent).toContain("Forgot password?");
+    // …and the admin starter-password fallback while no provider is configured.
+    expect(handout.textContent).toContain("administrator sets you a starter password");
+    // The not-delivered warning + the workspace name + the print affordance.
+    expect(screen.getByTestId("joiner-handout-warning").textContent).toContain("not delivered");
+    expect(handout.textContent).toContain("Fernly Workspace");
+    expect(screen.getByTestId("joiner-handout-print")).toBeTruthy();
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("a SENT welcome email still offers the handout — without the not-delivered warning (D-03)", async () => {
+    markJoined.mockResolvedValue({
+      ok: true,
+      data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SENT", workspaceName: "Fernly Workspace" },
+    });
+    render(
+      <CandidateDetailModal
+        open candidate={cand([stage({})], { status: "SELECTED", decidedAt: "2026-11-10T00:00:00.000Z" })} canManage
+        onClose={onClose} onChanged={onChanged} onEdit={onEdit} onBuildOffer={onBuildOffer} currentUserId="u-hr" hasSignedOffer
+      />,
+    );
+    fireEvent.click(screen.getByTestId("mark-joined-btn"));
+    const handout = await screen.findByTestId("joiner-handout");
+    expect(handout.textContent).toContain("Set your password");
+    expect(handout.textContent).toContain("nadia.petrova@fernly.app");
+    expect(screen.queryByTestId("joiner-handout-warning")).toBeNull();
+    // The admin fallback is only relevant while mail cannot arrive.
+    expect(handout.textContent).not.toContain("administrator sets you a starter password");
+  });
+
   it("a HIRED candidate shows the joined date + onboarding pointer (no joined button)", () => {
     render(
       <CandidateDetailModal

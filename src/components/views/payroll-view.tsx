@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { CalendarPlus, Landmark, Loader2, Lock, Plus, Wallet } from "lucide-react";
+import { CalendarPlus, Landmark, Loader2, Lock, Plus, Scale, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -135,6 +135,27 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
             <Plus size={15} /> Salary structure
           </button>
         </div>
+      </div>
+
+      {/* D-06 (P0-3, persona-audit) — statutory positioning, stated where
+          payroll is used. The honest scope of this console: gross → net from
+          structures + manual deduction lines; statutory computation (PF/ESI/
+          PT/TDS, Form 16, declarations) is deliberately NOT built — the
+          decision record is docs/DECISIONS.md ADR-014. Permanent (not
+          env-gated): the scope statement must be visible in every demo.
+          The parent's space-y-5 provides the gap to the form below. */}
+      <div
+        className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 flex items-start gap-2"
+        data-testid="statutory-scope-banner"
+      >
+        <Scale size={14} className="shrink-0 mt-0.5" />
+        <span>
+          <span className="font-semibold">Pre-statutory payroll.</span>{" "}
+          Fernly computes gross → net from your structures and manual deduction lines — it does{" "}
+          <span className="font-semibold">not</span> compute or file statutory amounts (PF, ESI, professional
+          tax, TDS, Form 16, investment declarations). Enter statutory deductions as manual lines or run
+          them through your compliance provider. Decision record: <span className="font-mono text-xs">docs/DECISIONS.md</span> (ADR-014).
+        </span>
       </div>
 
       {/* New run */}

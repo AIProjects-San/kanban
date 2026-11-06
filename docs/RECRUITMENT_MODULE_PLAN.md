@@ -343,12 +343,42 @@ Rippling, and a P0/P1/P2 backlog.
   outbox row is SKIPPED (no provider) instead of claiming delivery, and the
   join toast tells HR to relay the sign-in email manually.
 
-**Top open items (P0):** joiner lockout without a mail provider, statutory
-decision (build vs reposition). The full backlog (39 open items) is in the
-report's Section 6; payslip self-service, mail-config surfacing and
-member-interviewer access closed below.
+**Top open items (P0):** none — the last two (joiner lockout without a mail
+provider, statutory decision) closed below. The full backlog (39 open items,
+P1/P2) is in the report's Section 6; payslip self-service, mail-config
+surfacing and member-interviewer access closed earlier in this section.
 
 **Post-audit P0 fixes:**
+- **P0-4 — joiner lockout without a mail provider (D-03), FIXED.** The
+  account is created with a random one-time password that is never emailed,
+  and both the welcome mail and the password-reset mail are provider-gated —
+  with no `RESEND_API_KEY` the joiner had nothing to type and nothing in
+  their inbox. The mail-config banners (hiring view + Workspace Config,
+  P0-6) and the honest join toast were already in; the missing piece from
+  the fix direction was the **onboarding printout**. `markJoined` now also
+  returns the workspace name and the candidate modal opens a printable
+  **day-one handout** (print-area scoped, same mechanics as the payslip
+  print): the joiner's sign-in email, the app URL, numbered set-password
+  steps ("Forgot password?" → the reset email), the admin starter-password
+  fallback while no provider is configured, and the five first-two-weeks
+  checklist tasks. When the welcome mail was SKIPPED or FAILED the sheet
+  carries a prominent "not delivered — hand this to the joiner" warning;
+  the SKIPPED toast now points HR at the printout instead of only telling
+  them to relay the email verbally. Manual case HIRE-21 in `TESTING.md`.
+- **P0-3 — statutory decision: build or reposition (D-06), DECIDED —
+  reposition.** Recorded as **ADR-014** in `docs/DECISIONS.md`: payroll is
+  pre-statutory by design. Building the India statutory engine (PF/ESI/PT/
+  TDS with wage ceilings, Form 16, declarations, Apr–Mar FY) is an L-effort
+  project with permanent per-jurisdiction maintenance; shipping it
+  half-built would create exactly the false-promise defect class the audit
+  flagged (D-05). Instead the scope is stated where payroll is used: a
+  permanent banner in the Payroll view (`statutory-scope-banner`) —
+  "Pre-statutory payroll … does not compute or file PF, ESI, professional
+  tax, TDS, Form 16 or investment declarations; enter statutory deductions
+  as manual lines or run them through your compliance provider" — plus the
+  README positioning. Revisit triggers (a paying customer needing India
+  statutory, or scheduling the Apr–Mar FY YTD work D-10) would open the
+  build as a scoped project. Manual case PAY scope check in `TESTING.md`.
 - **P0-5 — member interviewer access (D-04), FIXED.** The scheduler's
   interviewer picker offers the whole directory, but `saveScorecard` and
   `getMyInterviews` gated on `hiring:view` — which MEMBER lacks — so a plain

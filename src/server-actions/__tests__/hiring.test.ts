@@ -1595,6 +1595,8 @@ describe("R6 — markJoined", () => {
     if (res.ok) {
       expect(res.data.email).toBe("nadia.petrova@fernly.app");
       expect(res.data.userId).toBe("u-new");
+      // D-03 (P0-4) — the workspace name rides along for the day-one handout.
+      expect(res.data.workspaceName).toBe("Fernly Workspace");
     }
 
     // 1 — the User account: deterministic email, MEMBER role, hashed password.

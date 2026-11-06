@@ -43,6 +43,7 @@ import {
 } from "@/server-actions/hiring";
 import { getDirectory } from "@/server-actions/hr-directory";
 import { SCORECARD_RECOMMENDATIONS } from "@/lib/validation";
+import { JoinerHandoutModal, type JoinerHandout } from "./joiner-handout";
 
 const STAGE_STATUS_ICON: Record<string, React.ReactNode> = {
   PENDING: <CircleDashed size={15} className="text-muted-foreground" />,
@@ -154,6 +155,12 @@ export function CandidateDetailModal({
   const [bgNotes, setBgNotes] = useState("");
   const [bgReportRef, setBgReportRef] = useState("");
 
+  // D-03 (P0-4) — the joiner's day-one handout state: set right after a
+  // successful markJoined so HR can print the sign-in instructions (the
+  // account email + "Forgot password?" steps) instead of relying on a
+  // provider-gated welcome email that may have been SKIPPED.
+  const [joinHandout, setJoinHandout] = useState<JoinerHandout | null>(null);
+
   const loadInterviewers = useCallback(async () => {
     if (interviewers.length > 0) return;
     const res = await getDirectory();
@@ -170,6 +177,7 @@ export function CandidateDetailModal({
       setCardStage(null);
       setSendEmail(false); setEmailRemarks("");
       setDocAction(null); setDocInput(""); setBgFormOpen(false); setBgVendor(""); setBgNotes(""); setBgReportRef("");
+      setJoinHandout(null);
     }
   }, [open]);
 
@@ -248,6 +256,9 @@ export function CandidateDetailModal({
   // R6 — SELECTED + SIGNED offer → employee account + onboarding checklist.
   // The created account email is the one thing HR must relay to the hire
   // (the welcome email carries it too, when a mail provider is configured).
+  // D-03 — the toast is transient, so the handout modal carries the durable
+  // copy: printable sign-in email + set-password steps + first-two-weeks
+  // checklist, with the not-delivered warning when the mail was SKIPPED.
   const join = async () => {
     setBusy(true);
     const res = await markJoined({ candidateId: c.id });
@@ -256,8 +267,15 @@ export function CandidateDetailModal({
     if (res.data.mailStatus === "SENT") {
       toast.success(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist. Welcome email sent.`);
     } else {
-      toast.warning(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist. BUT the welcome email was NOT delivered (no mail provider configured) — tell the hire their sign-in email; they set a password via "Forgot password?".`);
+      toast.warning(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist. BUT the welcome email was NOT delivered (no mail provider configured) — print the day-one handout and give the hire their sign-in email; they set a password via "Forgot password?".`);
     }
+    setJoinHandout({
+      name: c.fullName,
+      position: c.position,
+      email: res.data.email,
+      workspaceName: res.data.workspaceName ?? "Fernly",
+      mailStatus: res.data.mailStatus,
+    });
     onChanged();
   };
 
@@ -397,6 +415,7 @@ export function CandidateDetailModal({
     s.rating !== null || s.strengths !== "" || s.concerns !== "" || s.recommendation !== null;
 
   return (
+    <>
     <Modal open={open} onClose={onClose} title={c.fullName} description={`${c.position || "Position n/a"}${c.department ? ` · ${c.department}` : ""}`} size="xl">
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Left — profile */}
@@ -953,5 +972,10 @@ export function CandidateDetailModal({
         </div>
       </div>
     </Modal>
+    {/* D-03 — printable day-one handout (opens after a successful join).
+        Sibling of the outer modal, not a child: both use portals + focus
+        traps, and a nested trap would fight the handout's own. */}
+    <JoinerHandoutModal handout={joinHandout} onClose={() => setJoinHandout(null)} />
+    </>
   );
 }

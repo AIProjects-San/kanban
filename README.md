@@ -91,7 +91,12 @@ keystroke-reachable. Groups below match the sidebar.
   (monthly = annual ÷ 12), per-slip earnings/deduction editing while the
   run is OPEN with pro-rated loss-of-pay (days in → money out), lock-when-
   paid finality, YTD net totals, sequential slip numbers, and a
-  print-friendly slip view. Funnel analytics (R8): the Hiring board carries
+  print-friendly slip view. Payroll is **pre-statutory by design** (ADR-014
+  in `docs/DECISIONS.md`): no PF, ESI, professional tax, TDS, Form 16 or
+  investment declarations are computed or filed — statutory amounts can be
+  entered as manual deduction lines, but compliance stays with your
+  provider. Employees self-serve their own payslips from LOCKED runs under
+  People → "My Payslips". Funnel analytics (R8): the Hiring board carries
   a recruitment-funnel panel — pool totals (active / selected / hired /
   rejected / withdrawn), per-stage load + velocity (avg days in stage over
   started instances), and the offer accept rate over decided offers.
