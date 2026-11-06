@@ -315,7 +315,7 @@ function RequestFormModal({
             <div className="flex items-end">
               <p className="text-[0.6875rem] text-muted-foreground pb-2">
                 Max {selectedType.policy.maxConsecutiveDays} consecutive days ·{" "}
-                {selectedType.policy.minNoticeDays} day(s) notice
+                {selectedType.policy.minNoticeDays} working day(s) notice
                 {selectedType.requiresDoc ? " · documentation required" : ""}
               </p>
             </div>

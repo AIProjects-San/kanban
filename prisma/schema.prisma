@@ -812,6 +812,62 @@ model LeaveBalance {
   @@index([userId])
 }
 
+// F1.2 — append-only leave ledger (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1, benchmark: frappe/hrms Leave Ledger Entry). THE source of truth for
+// every balance mutation; LeaveBalance above is a derived cache that is
+// re-synced from the ledger aggregate inside the same transaction as every
+// ledger write, so the two can never disagree for longer than one mutation.
+//
+// Semantics (signed `delta`, all rows immutable — corrections are new
+// reversal rows, never edits or deletes):
+//   • GRANT   +entitlement when a LeaveBalance row is materialized from the
+//     policy default (the year-start grant; earned-leave accrual in F2.4
+//     will add monthly GRANT rows).
+//   • CARRY   +carry-over at year rollover (F2.4 writer; reserved here so
+//     the projection already understands it).
+//   • CONSUME −days on approval; +days with isReversal=true when an
+//     approved request is cancelled (the undo of that consumption).
+//   • EXPIRE  −days at year end for balances above maxCarryOver (F2.4).
+//   • ADJUST  ±manual/drift reconciliation (e.g. the F1.2 backfill trues
+//     legacy `used` against APPROVED-request days).
+//
+// Invariants (pinned in src/lib/__tests__/leave-ledger.test.ts and the
+// hr-leave action tests):
+//   LeaveBalance.used       == -Σ(delta of CONSUME)   [reversals included]
+//   LeaveBalance.entitled   ==  Σ(delta of GRANT)
+//   LeaveBalance.carriedOver==  Σ(delta of CARRY)
+//   available (any guard)   ==  Σ(delta of ALL rows)  — one aggregate query
+//
+// sourceType/sourceId is a polymorphic pointer (LEAVE_REQUEST, POLICY,
+// BALANCE_IMPORT, …) — deliberately NOT a FK, mirroring LeaveRequest's
+// plain-string references: ledger rows outlive their sources (a cancelled
+// request's rows must survive to tell the story).
+model LeaveLedgerEntry {
+  id          String   @id @default(cuid())
+  userId      String
+  leaveTypeId String
+  year        Int
+  // Signed day delta: positive grants/carry/reversals, negative
+  // consumption/expiry. Float, not Int — half-day semantics (F1.1) make
+  // 0.5-day consumption a first-class value.
+  delta       Float
+  // GRANT | CARRY | CONSUME | EXPIRE | ADJUST — see the block comment above.
+  entryType   String
+  // LEAVE_REQUEST | POLICY | BALANCE_IMPORT | MIGRATION — what wrote the row.
+  sourceType  String   @default("")
+  // Id of the row sourceType points at ("" when sourceless).
+  sourceId    String   @default("")
+  note        String   @default("")
+  // True on a row that undoes a prior row (cancel-of-approval). The
+  // benchmark's is_reversal discipline: the pair is self-describing.
+  isReversal  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId, leaveTypeId, year])
+  @@index([sourceType, sourceId])
+  @@index([createdAt])
+}
+
 // F1.1 — workspace holiday calendar (docs/Fernly_HR_Payroll_Enhancement_Plan.md
 // §7.1). One row per date (unique): any entry removes that date from
 // working-day counting (isHalfDay counts it as 0.5). `kind` is labeling —
