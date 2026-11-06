@@ -30,18 +30,24 @@ Then("the HR console should not show a {string} tab", async function (tabLabel) 
 // Year browsing + reads
 // ---------------------------------------------------------------------------
 
-When("I browse the holiday calendar to {int}", async function (year) {
-  const driver = await this.getDriver();
-  const current = new Date().getUTCFullYear();
-  const steps = current - year;
-  assert.ok(steps >= 0, "the step only walks backwards (previous-year arrows)");
+/** Walk the Holidays tab to `year` from wherever it was left (the tab opens
+ * on the current UTC year; scenarios may chain browses — e.g. 2026 then
+ * 2027 — so the world remembers the last year shown). */
+async function browseToYear(world, year) {
+  const driver = await world.getDriver();
+  const from = world.e2eHolidayYear ?? new Date().getUTCFullYear();
+  world.e2eHolidayYear = year;
+  const forward = year > from;
+  const steps = Math.abs(year - from);
   for (let i = 0; i < steps; i += 1) {
-    const prev = await driver.wait(
-      until.elementLocated(By.css('button[aria-label^="Previous year"]')),
+    const arrow = await driver.wait(
+      until.elementLocated(
+        By.css(`button[aria-label^="${forward ? "Next" : "Previous"} year"]`),
+      ),
       10_000,
-      "no previous-year arrow",
+      `no ${forward ? "next" : "previous"}-year arrow`,
     );
-    await prev.click();
+    await arrow.click();
     await driver.sleep(400);
   }
   // The year label sits next to the arrows; wait until it shows the target.
@@ -51,6 +57,15 @@ When("I browse the holiday calendar to {int}", async function (year) {
     `the calendar did not browse to ${year}`,
   );
   await driver.sleep(400); // entries reload per year change
+}
+
+When("I browse the holiday calendar to {int}", async function (year) {
+  await browseToYear(this, year);
+});
+
+When("I browse the holiday calendar to the year of that Monday", async function () {
+  assert.ok(this.e2eHolidayMonday, "no far-future Monday was marked in this scenario");
+  await browseToYear(this, this.e2eHolidayMonday.getUTCFullYear());
 });
 
 Then("the holiday calendar should show {string}", async function (label) {
@@ -66,11 +81,12 @@ Then("the holiday calendar should show {string}", async function (label) {
 
 Then("the holiday calendar should show exactly one entry for {string}", async function (date) {
   const driver = await this.getDriver();
-  const rows = await driver.findElements(By.css('[data-testid="holiday-row"]'));
-  const texts = [];
-  for (const r of rows) texts.push(await r.getText());
-  const matches = texts.filter((t) => t.includes(date));
-  assert.strictEqual(matches.length, 1, `expected exactly one entry for ${date}, got ${matches.length}`);
+  // Rows render dates in en-GB display order (25/12/2026) — match the row's
+  // data-date attribute (ISO) instead of the human-formatted text.
+  const rows = await driver.findElements(
+    By.css(`[data-testid="holiday-row"][data-date="${date}"]`),
+  );
+  assert.strictEqual(rows.length, 1, `expected exactly one entry for ${date}, got ${rows.length}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -217,18 +233,16 @@ When("I submit the filled request with reason {string}", async function (reason)
 
 Then("the payslip editor should show a loss-of-pay line of ${float}", async function (amount) {
   const driver = await this.getDriver();
-  await driver.wait(
-    until.elementLocated(
-      By.xpath(`//*[@data-testid="payslip-modal"]//*[contains(text(), "Loss of pay")]`),
-    ),
+  // The OPEN-run editor renders the LOP deduction with a testid (the visible
+  // label is hyphenated "Loss-of-pay days", so a text match would miss).
+  const line = await driver.wait(
+    until.elementLocated(By.css('[data-testid="payslip-lop-amount"]')),
     10_000,
     "no loss-of-pay line in the payslip editor",
   );
-  const modalText = await driver
-    .findElement(By.css('[data-testid="payslip-modal"]'))
-    .getText();
+  const text = await line.getText();
   assert.ok(
-    modalText.includes(String(amount)),
-    `the payslip editor should show a $${amount} loss-of-pay line (working-day denominator), got:\n${modalText}`,
+    text.includes(String(amount)),
+    `the payslip editor should show a $${amount} loss-of-pay line (working-day denominator), got:\n${text}`,
   );
 });

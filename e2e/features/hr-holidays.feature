@@ -8,8 +8,10 @@ Feature: Holiday calendar (F1.1)
   shapes what is created afterwards.
 
   Scenarios share the seeded database IN FILE ORDER. This file sorts before
-  hr-leave.feature, so the far-future holiday added in the exclusion
-  scenario is deleted again before the file ends.
+  hr-leave.feature, so the exclusion scenario fully undoes its writes before
+  the file ends: the far-future holiday is deleted and the member's request
+  is cancelled (hr-leave counts PENDING requests exactly, so a leftover
+  request would break its assertions).
 
   Background:
     Given the app is running
@@ -54,10 +56,12 @@ Feature: Holiday calendar (F1.1)
     Then the request form should preview 1 working day with holidays excluded
     And I submit the filled request with reason "E2E holiday exclusion"
     Then a request with reason "E2E holiday exclusion" should appear as Pending in my requests
+    And I cancel my request with reason "E2E holiday exclusion"
     And I sign out
     And I sign in as "demo@fernly.app" with the demo password
     And I open the "HR" view
     And I open the "Holidays" tab
+    And I browse the holiday calendar to the year of that Monday
     And I delete the holiday labeled "E2E exclusion holiday"
 
   Scenario: The payslip loss-of-pay line divides by the run's working days
