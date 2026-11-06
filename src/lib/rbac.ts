@@ -37,6 +37,14 @@ export type Permission =
   | "leave:request"
   | "review:manage"
   | "onboarding:manage"
+  // F1.3 — attendance records (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+  // §7.1): HR/admin marking of daily attendance. A NEW permission,
+  // deliberately NOT hr:admin — the two target the same ADMIN+HR audience
+  // today, but a DB permission ceiling (settings:edit → role permissions)
+  // can diverge them without attendance ever granting leave-type config or
+  // vice versa. Members never write attendance (decision §9.1) — they read
+  // their own month via the self-scoped getMyAttendance.
+  | "attendance:manage"
   // Recruitment module (docs/RECRUITMENT_MODULE_PLAN.md §3) — HR-driven:
   // HR + ADMIN drive the pipeline; MANAGERs see the board because they are
   // interviewers (R2 assigns them stages), but cannot create/advance.
@@ -60,6 +68,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "hr:view", "hr:admin", "leave:request", "review:manage", "onboarding:manage",
     "hiring:view", "hiring:manage", "hiring:config",
     "payroll:manage",
+    "attendance:manage",
   ],
   MANAGER: [
     "task:create", "task:edit:any", "task:edit:own",
@@ -90,6 +99,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "hr:view", "hr:admin", "review:manage", "onboarding:manage",
     "hiring:view", "hiring:manage", "hiring:config",
     "payroll:manage",
+    "attendance:manage",
   ],
 };
 
@@ -140,6 +150,7 @@ export const ALL_PERMISSIONS: { key: Permission; label: string; description: str
   { key: "hiring:manage", label: "Manage hiring", description: "Create candidates, advance stages and decide outcomes in the recruitment pipeline" },
   { key: "hiring:config", label: "Configure hiring", description: "Edit the workspace hiring stage template and document types" },
   { key: "payroll:manage", label: "Manage payroll", description: "Maintain salary structures, run monthly payroll, edit and lock payslips" },
+  { key: "attendance:manage", label: "Manage attendance", description: "Mark and edit daily attendance for everyone in the workspace" },
 ];
 
 export function hasPermission(role: Role | undefined | null, permission: Permission): boolean {

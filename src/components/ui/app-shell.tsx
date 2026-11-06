@@ -99,6 +99,11 @@ const MyInterviewsView = dynamic(() => import("@/components/views/my-interviews-
   loading: () => <div className="p-6 text-sm text-muted-foreground">Loading your interviews…</div>,
 });
 
+const MyAttendanceView = dynamic(() => import("@/components/views/my-attendance-view").then(m => ({ default: m.MyAttendanceView })), {
+  ssr: false,
+  loading: () => <div className="p-6 text-sm text-muted-foreground">Loading your attendance…</div>,
+});
+
 interface AppShellProps {
   data: {
     projects: ProjectT[];
@@ -306,6 +311,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
             {view === "payroll" && <PayrollView currentUser={user} />}
             {view === "my-payslips" && <MyPayslipsView currentUser={user} />}
             {view === "my-interviews" && <MyInterviewsView currentUser={user} />}
+            {view === "my-attendance" && <MyAttendanceView currentUser={user} />}
           </div>
         </main>
       </div>

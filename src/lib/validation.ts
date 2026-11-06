@@ -357,6 +357,37 @@ export const deleteHolidayEntrySchema = z.object({
 }).strict();
 
 // ---------------------------------------------------------------------------
+// F1.3 — attendance records (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1). One record per user per date; HR/admin marking only
+// (attendance:manage — decision §9.1: no member self-marking). The form
+// schema deliberately EXCLUDES ON_LEAVE: that status is derived server-side
+// from approved leave and can never be submitted. inTime/outTime are
+// optional "HH:mm" clock strings (the <input type="time"> native format);
+// when both are present, outTime must be after inTime.
+// ---------------------------------------------------------------------------
+
+const hhmmStr = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Time must be HH:mm (24-hour clock).");
+
+export const attendanceRecordSchema = z.object({
+  id: cuidish.optional(),
+  userId: cuidish,
+  date: isoDateStr,
+  status: z.enum(["PRESENT", "ABSENT", "HALF_DAY", "WFH"]),
+  inTime: hhmmStr.nullable().optional(),
+  outTime: hhmmStr.nullable().optional(),
+  note: z.string().trim().max(500).default(""),
+}).strict().refine(
+  (v) => !(v.inTime && v.outTime && v.outTime <= v.inTime),
+  "Out time must be after in time.",
+);
+
+export const deleteAttendanceRecordSchema = z.object({
+  id: cuidish,
+}).strict();
+
+// ---------------------------------------------------------------------------
 // HR module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
 // `notes` is HR-only and excluded from the self-service schema on purpose.
 // ---------------------------------------------------------------------------

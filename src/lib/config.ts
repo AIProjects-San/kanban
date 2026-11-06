@@ -20,6 +20,7 @@ import type {
   BugResolution,
   LeaveStatus,
   ReviewStatus,
+  AttendanceStatus,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -258,6 +259,45 @@ export const LEAVE_STATUS_TRANSITIONS: Record<LeaveStatus, LeaveStatus[]> = {
   APPROVED: ["CANCELLED"],
   REJECTED: [],
   CANCELLED: [],
+};
+
+// ---------------------------------------------------------------------------
+// F1.3 — attendance status definitions (docs/Fernly_HR_Payroll_Enhancement_
+// Plan.md §7.1). HR/admin marks the first four (attendance:manage);
+// ON_LEAVE is derived from approved leave and never form-submitted.
+// ---------------------------------------------------------------------------
+
+export interface AttendanceStatusDef {
+  key: AttendanceStatus;
+  label: string;
+  badge: string;
+  dot: string;
+}
+
+export const ATTENDANCE_STATUSES: AttendanceStatusDef[] = [
+  { key: "PRESENT", label: "Present", badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { key: "ABSENT", label: "Absent", badge: "bg-red-500/10 text-red-700 dark:text-red-400", dot: "bg-red-500" },
+  { key: "HALF_DAY", label: "Half day", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+  { key: "WFH", label: "WFH", badge: "bg-blue-500/10 text-blue-700 dark:text-blue-400", dot: "bg-blue-500" },
+  { key: "ON_LEAVE", label: "On leave", badge: "bg-violet-500/10 text-violet-700 dark:text-violet-400", dot: "bg-violet-500" },
+];
+
+export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = Object.fromEntries(
+  ATTENDANCE_STATUSES.map((s) => [s.key, s.label]),
+) as Record<AttendanceStatus, string>;
+
+export const ATTENDANCE_STATUS_BADGE: Record<AttendanceStatus, string> = Object.fromEntries(
+  ATTENDANCE_STATUSES.map((s) => [s.key, s.badge]),
+) as Record<AttendanceStatus, string>;
+
+/** Single-letter grid code per status (the HR month grid renders compact
+ * cells — one letter + the badge color, full label on hover). */
+export const ATTENDANCE_STATUS_CODE: Record<AttendanceStatus, string> = {
+  PRESENT: "P",
+  ABSENT: "A",
+  HALF_DAY: "H",
+  WFH: "W",
+  ON_LEAVE: "L",
 };
 
 // ---------------------------------------------------------------------------

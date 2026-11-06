@@ -831,6 +831,33 @@ model HolidayCalendarEntry {
   @@index([kind])
 }
 
+// F1.3 — attendance records (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1). One row per user per date (unique userId+date): HR/admin marks
+// PRESENT / ABSENT / HALF_DAY / WFH at the attendance:manage permission
+// (ADMIN+HR — a NEW permission, deliberately not hr:admin, so a DB
+// permission ceiling can diverge the two); approved leave derives ON_LEAVE
+// rows (source DERIVED — ADR-009 virtual-event precedent). No member
+// self-marking (decision §9.1): WFH is a status HR sets, never a member
+// self-request; card scanning is a future phase. inTime/outTime are
+// optional "HH:mm" clock strings. Dates are UTC-midnight date-only values
+// (LeaveRequest.startDate convention).
+model AttendanceRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  date      DateTime
+  status    String   @default("PRESENT")
+  inTime    String?
+  outTime   String?
+  note      String   @default("")
+  source    String   @default("MANUAL")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@index([date])
+  @@index([status])
+}
+
 // HR Module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
 // One row per user (userId unique): structured job + contact data. The
 // manager display comes from the existing User.managerId org chart — this

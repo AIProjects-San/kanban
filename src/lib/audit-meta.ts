@@ -87,6 +87,12 @@ export type AuditAction =
   | "hr.holiday_created"
   | "hr.holiday_updated"
   | "hr.holiday_deleted"
+  // F1.3 — attendance records lifecycle (derived ON_LEAVE rows are
+  // side effects of leave.approved/leave.cancelled and carry their own
+  // audit entries — no per-row spam).
+  | "hr.attendance_marked"
+  | "hr.attendance_updated"
+  | "hr.attendance_deleted"
   // HR module — performance review lifecycle (docs/HR_MODULE_PLAN.md §6)
   | "review.created"
   | "review.updated"
@@ -224,6 +230,9 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.holiday_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
   "hr.holiday_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "hr.attendance_marked": { icon: ClipboardCheck, cls: "text-emerald-600 bg-emerald-500/10" },
+  "hr.attendance_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.attendance_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 
   "review.created": { icon: Plus, cls: "text-primary bg-primary/10" },
   "review.updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },

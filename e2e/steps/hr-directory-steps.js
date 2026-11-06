@@ -59,6 +59,24 @@ When("I open the {string} tab", async function (label) {
     );
     return;
   }
+  if (label === "Attendance") {
+    // F1.3 — the attendance month grid tab (hr-attendance.tsx). EXACT text
+    // match: the sidebar's "My Attendance" nav leaf also contains the word
+    // "Attendance", and a contains() XPath would click THAT instead of the
+    // console tab.
+    const tab = await driver.wait(
+      until.elementLocated(By.xpath(`//button[normalize-space(.) = "Attendance"]`)),
+      10_000,
+      "Attendance tab button not found",
+    );
+    await driver.executeScript("arguments[0].click();", tab);
+    await driver.wait(
+      until.elementsLocated(By.css("[data-testid='hr-attendance']")),
+      10_000,
+      "attendance tab did not render",
+    );
+    return;
+  }
   throw new Error(`unknown tab: ${label}`);
 });
 

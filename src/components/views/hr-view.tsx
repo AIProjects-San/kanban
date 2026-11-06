@@ -8,7 +8,7 @@
 // Directory / Reviews / Onboarding tabs arrive with features 2–4.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays } from "lucide-react";
+import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -26,6 +26,7 @@ import { DirectoryTab } from "./hr-directory";
 import { ReviewsTab } from "./hr-reviews";
 import { OnboardingTab } from "./hr-onboarding";
 import { HolidaysTab } from "./hr-holidays";
+import { AttendanceTab } from "./hr-attendance";
 
 interface CurrentUser {
   id: string;
@@ -33,7 +34,7 @@ interface CurrentUser {
   role: string;
 }
 
-type Tab = "requests" | "types" | "holidays" | "directory" | "reviews" | "onboarding";
+type Tab = "requests" | "types" | "holidays" | "attendance" | "directory" | "reviews" | "onboarding";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
@@ -46,6 +47,8 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
   const [requests, setRequests] = useState<LeaveRequestT[]>([]);
   const [types, setTypes] = useState<LeaveTypeT[]>([]);
   const [canAdmin, setCanAdmin] = useState(false);
+  // F1.3 — the Attendance tab's gate (attendance:manage; NOT hr:admin).
+  const [canManageAttendance, setCanManageAttendance] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
@@ -54,6 +57,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
       setRequests(res.data.requests);
       setTypes(res.data.types);
       setCanAdmin(res.data.canAdmin);
+      setCanManageAttendance(res.data.canManageAttendance);
     } else {
       toast.error(res.error);
     }
@@ -100,6 +104,11 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
             <CalendarDays size={13} /> Holidays
           </TabButton>
         )}
+        {canManageAttendance && (
+          <TabButton active={tab === "attendance"} onClick={() => setTab("attendance")}>
+            <CalendarCheck size={13} /> Attendance
+          </TabButton>
+        )}
         <TabButton active={tab === "directory"} onClick={() => setTab("directory")}>
           <Briefcase size={13} /> Directory
         </TabButton>
@@ -122,6 +131,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
         <TypesTab types={types} onChanged={load} />
       )}
       {tab === "holidays" && canAdmin && <HolidaysTab />}
+      {tab === "attendance" && canManageAttendance && <AttendanceTab />}
       {tab === "directory" && <DirectoryTab />}
       {tab === "reviews" && <ReviewsTab />}
       {tab === "onboarding" && <OnboardingTab />}

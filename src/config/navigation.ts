@@ -17,6 +17,7 @@ import {
   UserPlus,
   Landmark,
   Wallet,
+  CalendarCheck,
 } from "lucide-react";
 // Type-only import — erased at runtime, so the store may import this module
 // (for group bookkeeping) without creating a require cycle.
@@ -111,6 +112,13 @@ export const NAV_GROUPS: NavGroup[] = [
       // payroll:manage — "My Payslips" must never match a "Payroll"
       // substring assertion in e2e (sidebar contracts).
       { key: "my-payslips", label: "My Payslips", icon: Wallet, shortcut: "G N", shortcutKey: "n" },
+      // Attendance self-service read (F1.3) — every role sees their OWN
+      // marked days; deliberately NOT permission-gated (own data, like
+      // Leave/My Payslips — getMyAttendance scopes to the caller in the
+      // WHERE clause). No self-marking (decision §9.1): the view is
+      // read-only and points corrections at HR. Marking lives in the HR
+      // console's Attendance tab (attendance:manage).
+      { key: "my-attendance", label: "My Attendance", icon: CalendarCheck, shortcut: "G K", shortcutKey: "k" },
     ],
   },
   {

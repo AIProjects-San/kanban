@@ -41,6 +41,40 @@ export interface HolidayT {
   isHalfDay: boolean;
 }
 
+/** F1.3 — attendance status (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+ * §7.1). HR/admin sets PRESENT/ABSENT/HALF_DAY/WFH (attendance:manage);
+ * ON_LEAVE rows are DERIVED from approved leave, never form-submitted. No
+ * member self-marking (decision §9.1) — WFH included. */
+export type AttendanceStatus = "PRESENT" | "ABSENT" | "HALF_DAY" | "WFH" | "ON_LEAVE";
+/** How a row came to be: HR/admin marking, a future bulk import, or
+ * derivation from an approved leave request (ADR-009 virtual-event
+ * precedent — cancelling that leave removes the derived rows again). */
+export type AttendanceSource = "MANUAL" | "IMPORT" | "DERIVED";
+
+/** One attendance record, client-shaped ("yyyy-mm-dd" date, "HH:mm" times). */
+export interface AttendanceT {
+  id: string;
+  userId: string;
+  userName: string;
+  date: string;
+  status: AttendanceStatus;
+  inTime: string | null;
+  outTime: string | null;
+  note: string;
+  source: AttendanceSource;
+}
+
+/** The HR console's month grid payload: the roster, everyone's records for
+ * the month, and the month's holiday entries (so the grid can shade
+ * non-working columns). */
+export interface AttendanceMonthT {
+  year: number;
+  month: number; // 1–12
+  members: { userId: string; userName: string }[];
+  records: AttendanceT[];
+  holidays: { date: string; label: string }[];
+}
+
 export interface LeaveTypeT {
   id: string;
   name: string;

@@ -20,8 +20,11 @@ const {
 
 Then("the HR console should not show a {string} tab", async function (tabLabel) {
   const driver = await this.getDriver();
+  // EXACT text match — a contains() check would also match the sidebar's
+  // self-scoped leaves (e.g. "My Attendance" contains "Attendance"), which
+  // every role legitimately has.
   const tabs = await driver.findElements(
-    By.xpath(`//button[contains(normalize-space(.), "${tabLabel}")]`),
+    By.xpath(`//button[normalize-space(.) = "${tabLabel}"]`),
   );
   assert.strictEqual(tabs.length, 0, `the "${tabLabel}" tab should not be visible`);
 });

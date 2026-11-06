@@ -1,0 +1,267 @@
+"use server";
+
+// ---------------------------------------------------------------------------
+// F1.3 — attendance records server actions
+// (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1).
+//
+// RBAC: marking/upsert/delete and the HR month grid are `attendance:manage`
+// (ADMIN + HR — a NEW permission, deliberately not hr:admin, so the DB
+// permission ceiling can diverge the two). getMyAttendance is the
+// self-scoped read: the CURRENT user's own month, resolved from the session
+// with no member inputs (the getMyPayslips convention). Members never write
+// attendance — decision §9.1: no self-marking, WFH is a status HR sets.
+//
+// ON_LEAVE rows are derived server-side from approved leave
+// (hr-leave.ts decideLeaveRequest → deriveOnLeaveAttendance) and removed
+// again on cancel — the form schema rejects the status outright.
+//
+// Upsert semantics mirror the F1.1 holiday calendar: `id` present → update
+// (the date may move); absent → create. A (userId, date) pair already taken
+// by ANOTHER record rejects with a message naming the person and date
+// (QA-18 convention). One record per person per day.
+// ---------------------------------------------------------------------------
+
+import { revalidatePath } from "next/cache";
+import { db } from "@/lib/db";
+import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
+import type { AttendanceT, AttendanceMonthT, AttendanceStatus, AttendanceSource } from "@/lib/types";
+import type { ActionResult } from "@/lib/action-result";
+import { attendanceRecordSchema, deleteAttendanceRecordSchema, parseOrThrow } from "@/lib/validation";
+import { logAudit } from "./shared";
+import { toResult, isUniqueConstraintError } from "./result";
+import { parseDay } from "./hr-shared";
+
+/** Clamp/normalize a (year, month) pair; invalid input falls back to the
+ * current UTC month (getHolidayCalendar's year convention). */
+function normalizeMonth(
+  yearInput: number | undefined,
+  monthInput: number | undefined,
+): { year: number; month: number } {
+  const now = new Date();
+  const y = Number(yearInput);
+  const m = Number(monthInput);
+  return {
+    year: Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : now.getUTCFullYear(),
+    month: Number.isInteger(m) && m >= 1 && m <= 12 ? m : now.getUTCMonth() + 1,
+  };
+}
+
+function monthBounds(year: number, month: number): { start: Date; end: Date } {
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1)),
+    end: new Date(Date.UTC(year, month, 0)),
+  };
+}
+
+/** Serialize one row for the client (dates → "yyyy-mm-dd"). */
+function serializeAttendance(
+  r: {
+    id: string;
+    userId: string;
+    date: Date;
+    status: string;
+    inTime: string | null;
+    outTime: string | null;
+    note: string;
+    source: string;
+  },
+  userName: string,
+): AttendanceT {
+  return {
+    id: r.id,
+    userId: r.userId,
+    userName,
+    date: r.date.toISOString().slice(0, 10),
+    status: r.status as AttendanceStatus,
+    inTime: r.inTime,
+    outTime: r.outTime,
+    note: r.note,
+    source: r.source as AttendanceSource,
+  };
+}
+
+/** The HR console Attendance tab payload: roster + everyone's records for
+ * one month + the month's holiday entries (the grid shades non-working
+ * columns). PR-21 hard caps on both roster reads (a 500+ workspace is a
+ * paginated-list concern, not a single-grid concern). */
+export async function getAttendanceMonth(
+  yearInput?: number,
+  monthInput?: number,
+): Promise<ActionResult<AttendanceMonthT>> {
+  return toResult(async () => {
+    await requirePermission("attendance:manage");
+    const { year, month } = normalizeMonth(yearInput, monthInput);
+    const { start, end } = monthBounds(year, month);
+
+    const [users, records, holidays] = await Promise.all([
+      db.user.findMany({
+        where: { deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+        take: 500,
+      }),
+      db.attendanceRecord.findMany({
+        where: { date: { gte: start, lte: end } },
+        orderBy: { date: "asc" },
+      }),
+      db.holidayCalendarEntry.findMany({
+        where: { date: { gte: start, lte: end } },
+        select: { date: true, label: true },
+        orderBy: { date: "asc" },
+      }),
+    ]);
+    const names = new Map(users.map((u) => [u.id, u.name]));
+
+    return {
+      year,
+      month,
+      members: users.map((u) => ({ userId: u.id, userName: u.name })),
+      records: records.map((r) => serializeAttendance(r, names.get(r.userId) ?? "(former user)")),
+      holidays: holidays.map((h) => ({ date: h.date.toISOString().slice(0, 10), label: h.label })),
+    };
+  });
+}
+
+/** Create or update one record. `id` present → update (the date may move);
+ * absent → create. Editing a DERIVED row converts it to MANUAL — an explicit
+ * HR decision always outranks the derivation. */
+export async function upsertAttendanceRecord(input: {
+  id?: string;
+  userId: string;
+  date: string;
+  status: "PRESENT" | "ABSENT" | "HALF_DAY" | "WFH";
+  inTime?: string | null;
+  outTime?: string | null;
+  note?: string;
+}): Promise<ActionResult<{ id: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("attendance:manage");
+    const data = parseOrThrow(attendanceRecordSchema, input);
+
+    const target = await db.user.findUnique({
+      where: { id: data.userId },
+      select: { id: true, name: true, deletedAt: true },
+    });
+    if (!target || target.deletedAt) throw new AuthorizationError("Member not found.");
+
+    const date = parseDay(data.date);
+    const payload = {
+      userId: data.userId,
+      date,
+      status: data.status,
+      inTime: data.inTime ?? null,
+      outTime: data.outTime ?? null,
+      note: data.note,
+      // An explicit HR save is MANUAL by definition — including when it
+      // overwrites a DERIVED row (source is part of the edit, never a
+      // form input).
+      source: "MANUAL" as const,
+    };
+
+    if (data.id) {
+      const existing = await db.attendanceRecord.findUnique({ where: { id: data.id } });
+      if (!existing) throw new AuthorizationError("Attendance record not found.");
+      if (existing.userId !== data.userId) {
+        throw new AuthorizationError(
+          "An attendance record cannot move between people — delete it and mark the other member instead.",
+        );
+      }
+      try {
+        const updated = await db.attendanceRecord.update({ where: { id: data.id }, data: payload });
+        await logAudit({
+          actor: auth,
+          action: "hr.attendance_updated",
+          entityType: "ATTENDANCE_RECORD",
+          entityId: updated.id,
+          entityLabel: `${target.name} · ${data.date} · ${data.status}`,
+          detail: `${auth.name} updated ${target.name}'s attendance on ${data.date} to ${data.status}.${data.note ? ` — ${data.note}` : ""}`,
+        });
+        revalidatePath("/");
+        return { id: updated.id };
+      } catch (e) {
+        if (isUniqueConstraintError(e)) {
+          throw new AuthorizationError(
+            `${target.name} already has an attendance record for ${data.date} — one record per person per day. Edit the existing record instead.`,
+          );
+        }
+        throw e;
+      }
+    }
+
+    try {
+      const created = await db.attendanceRecord.create({ data: payload });
+      await logAudit({
+        actor: auth,
+        action: "hr.attendance_marked",
+        entityType: "ATTENDANCE_RECORD",
+        entityId: created.id,
+        entityLabel: `${target.name} · ${data.date} · ${data.status}`,
+        detail: `${auth.name} marked ${target.name} ${data.status} on ${data.date}.${data.note ? ` — ${data.note}` : ""}`,
+      });
+      revalidatePath("/");
+      return { id: created.id };
+    } catch (e) {
+      if (isUniqueConstraintError(e)) {
+        throw new AuthorizationError(
+          `${target.name} already has an attendance record for ${data.date} — one record per person per day. Edit the existing record instead.`,
+        );
+      }
+      throw e;
+    }
+  });
+}
+
+/** Remove one record. Deleting a DERIVED ON_LEAVE row is allowed — HR is
+ * explicitly overriding the derivation for that day (re-approving/re-deriving
+ * is NOT undone; a future approval would simply re-derive). */
+export async function deleteAttendanceRecord(input: {
+  id: string;
+}): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("attendance:manage");
+    const data = parseOrThrow(deleteAttendanceRecordSchema, input);
+
+    const existing = await db.attendanceRecord.findUnique({ where: { id: data.id } });
+    if (!existing) throw new AuthorizationError("Attendance record not found.");
+    const owner = await db.user.findUnique({
+      where: { id: existing.userId },
+      select: { name: true },
+    });
+
+    await db.attendanceRecord.delete({ where: { id: data.id } });
+    await logAudit({
+      actor: auth,
+      action: "hr.attendance_deleted",
+      entityType: "ATTENDANCE_RECORD",
+      entityId: data.id,
+      entityLabel: `${owner?.name ?? "(former user)"} · ${existing.date.toISOString().slice(0, 10)} · ${existing.status}`,
+      detail: `${auth.name} removed ${owner?.name ?? "a former user"}'s ${existing.status} record for ${existing.date.toISOString().slice(0, 10)}.`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+/** Self-scoped month read — the member side of F1.3. Zero member inputs:
+ * the user comes from the session and the WHERE clause is scoped by
+ * construction (getMyPayslips convention). Invalid month input falls back to
+ * the current UTC month. */
+export async function getMyAttendance(
+  yearInput?: number,
+  monthInput?: number,
+): Promise<ActionResult<{ year: number; month: number; records: AttendanceT[] }>> {
+  return toResult(async () => {
+    const auth = await getSessionOrThrow();
+    const { year, month } = normalizeMonth(yearInput, monthInput);
+    const { start, end } = monthBounds(year, month);
+
+    const rows = await db.attendanceRecord.findMany({
+      where: { userId: auth.userId, date: { gte: start, lte: end } },
+      orderBy: { date: "asc" },
+      // PR-21 — hard cap; one person's month cannot exceed 31 rows, this
+      // guards a runaway client loop.
+      take: 400,
+    });
+    return { year, month, records: rows.map((r) => serializeAttendance(r, auth.name)) };
+  });
+}

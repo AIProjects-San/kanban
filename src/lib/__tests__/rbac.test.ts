@@ -230,6 +230,9 @@ describe("permission matrix (full pin)", () => {
     "hiring:manage":      [true, true, false, false],
     "hiring:config":      [true, true, false, false],
     "payroll:manage":     [true, true, false, false],
+    // F1.3 — attendance records: HR/admin marking (docs/Fernly_HR_Payroll_
+    // Enhancement_Plan.md §7.1, decision §9.1: no member self-marking).
+    "attendance:manage":  [true, true, false, false],
   };
 
   const ROLES: Role[] = ["ADMIN", "HR", "MANAGER", "MEMBER"];

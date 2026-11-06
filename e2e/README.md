@@ -33,7 +33,7 @@ login never has to be diagnosed from a timeout alone.
 
 ## What is covered
 
-**95 scenarios across 15 feature files:**
+**99 scenarios across 16 feature files:**
 
 | Feature file | Scenarios |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -42,6 +42,7 @@ login never has to be diagnosed from a timeout alone.
 | `tasks.feature` (3) | create task, drag to another Kanban column, delete task |
 | `messaging.feature` (3) | send message, recipient inbox visibility, third-party inbox isolation |
 | `a11y.feature` (9) | axe WCAG smoke on all primary surfaces (login, dashboard, tasks, team, bugs, calendar, analytics, audit log, settings) |
+| `hr-attendance.feature` (4) | F1.3 attendance records: HR opens the Attendance tab and sees the roster grid; managers see the HR console but not the Attendance tab; HR marks a far-future day and a duplicate record is rejected with a friendly error, then the record is deleted; approved leave derives ON_LEAVE in the member's My Attendance view and cancelling the request removes it again |
 | `hr-leave.feature` (16) | balances + own requests, request form with policy enforcement (weekend block, balance cap, minimum notice, overlap rejection), cancel, chain approval, MEMBER sidebar must not contain the HR group |
 | `hr-directory.feature` (6) | roster + search, manager read-only, admin edits, member self-serves contact fields, member blocked |
 | `hr-reviews.feature` (7) | manager's subtree queue, out-of-chain invisible, self-assessment, manager/HR/skip-level completion, employee acknowledgement |

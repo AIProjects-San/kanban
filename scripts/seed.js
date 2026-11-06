@@ -113,6 +113,7 @@ async function main() {
   await db.salaryStructure.deleteMany();
   await db.payrollRun.deleteMany(); // cascades payslips
   await db.holidayCalendarEntry.deleteMany();
+  await db.attendanceRecord.deleteMany();
 
   // -----------------------------------------------------------------
   // Workspace settings
@@ -1307,6 +1308,57 @@ async function main() {
   await mkRequest("Soren Lindqvist", sickType, -5, -5, "REJECTED", "Ingrid Solberg", { reason: "Migraine", decision: "No medical certificate attached." }, 1);
 
   console.log(`  ✓ HR leave: 3 types + policies, balances for ${allUsers.length} users, ${leaveRequests.length} requests across all statuses (YEAR ${YEAR})`);
+
+  // -------------------------------------------------------------------------
+  // F1.3 — attendance seed (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1).
+  // Two sources, mirroring the production write paths exactly:
+  //   1. DERIVED ON_LEAVE rows for every date of the APPROVED requests
+  //      above (the seed-side twin of deriveOnLeaveAttendance in
+  //      server-actions/hr-shared.ts — dates that already have a record
+  //      are skipped, MANUAL wins; "seed mirrors production math").
+  //   2. A few explicit MANUAL showcase rows around today so the HR grid
+  //      and My Attendance have something to show on a fresh demo DB.
+  // -------------------------------------------------------------------------
+  const attendanceRows = [];
+  const takenAttendance = new Set();
+  const dayKeyOf = (d) => d.toISOString().slice(0, 10);
+  for (const r of leaveRequests) {
+    if (r.status !== "APPROVED") continue;
+    for (let d = new Date(r.startDate); d <= r.endDate; d = new Date(d.getTime() + 86_400_000)) {
+      const norm = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      const key = `${r.userId}|${dayKeyOf(norm)}`;
+      if (takenAttendance.has(key)) continue;
+      takenAttendance.add(key);
+      attendanceRows.push({
+        userId: r.userId,
+        date: norm,
+        status: "ON_LEAVE",
+        note: `Derived from approved ${annualType.name} leave`,
+        source: "DERIVED",
+      });
+    }
+  }
+  const manualAttendance = [
+    ["Yuki Tanaka", -1, "WFH", "09:15", "17:40", "Design review from home"],
+    ["Theo Vance", -1, "PRESENT", "09:00", "17:30", ""],
+    ["Soren Lindqvist", -2, "ABSENT", null, null, "No show — follow-up sent"],
+    ["Amara Diallo", -2, "HALF_DAY", "09:00", "13:00", "Morning only — school pickup"],
+  ];
+  for (const [userName, offset, status, inTime, outTime, note] of manualAttendance) {
+    const userId = userByName.get(userName);
+    if (!userId) continue;
+    const d = day(offset);
+    const key = `${userId}|${dayKeyOf(d)}`;
+    // A derived ON_LEAVE row on the same day wins — one record per person
+    // per day, and the derivation is authoritative for approved leave.
+    if (takenAttendance.has(key)) continue;
+    takenAttendance.add(key);
+    attendanceRows.push({ userId, date: d, status, inTime, outTime, note, source: "MANUAL" });
+  }
+  if (attendanceRows.length > 0) {
+    await db.attendanceRecord.createMany({ data: attendanceRows });
+  }
+  console.log(`  ✓ F1.3 attendance: ${attendanceRows.length} rows (derived ON_LEAVE from approved leave + current-month showcase marks)`);
 
   // -------------------------------------------------------------------------
   // HR module seed — employee directory (docs/HR_MODULE_PLAN.md §5).

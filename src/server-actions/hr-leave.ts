@@ -44,6 +44,8 @@ import {
   findOverlappingActiveRequest,
   getHolidayLookup,
   getHolidayRows,
+  deriveOnLeaveAttendance,
+  removeDerivedOnLeaveAttendance,
 } from "./hr-shared";
 
 // ---------------------------------------------------------------------------
@@ -174,11 +176,14 @@ export async function getMyLeaveData(): Promise<
 // ---------------------------------------------------------------------------
 
 export async function getLeaveQueue(): Promise<
-  ActionResult<{ requests: LeaveRequestT[]; canAdmin: boolean; types: LeaveTypeT[] }>
+  ActionResult<{ requests: LeaveRequestT[]; canAdmin: boolean; canManageAttendance: boolean; types: LeaveTypeT[] }>
 > {
   return toResult(async () => {
     const auth = await requirePermission("hr:view");
     const canAdmin = hasPermission(auth.role as never, "hr:admin");
+    // F1.3 — the Attendance tab's gate. Same ADMIN+HR audience as canAdmin
+    // today, but its OWN permission so a DB ceiling can diverge them.
+    const canManageAttendance = hasPermission(auth.role as never, "attendance:manage");
 
     let visibleUserIds: string[] | null = null;
     if (auth.role === "MANAGER") {
@@ -230,6 +235,7 @@ export async function getLeaveQueue(): Promise<
         createdAt: r.createdAt.toISOString(),
       })),
       canAdmin,
+      canManageAttendance,
       types: types.map((t) => ({
         id: t.id,
         name: t.name,
@@ -460,6 +466,12 @@ export async function decideLeaveRequest(input: {
           where: { userId_leaveTypeId_year: { userId: request.userId, leaveTypeId: request.leaveTypeId, year } },
           data: { used: { increment: request.days } },
         });
+        // F1.3 — approved leave derives ON_LEAVE attendance rows for every
+        // date in range that does not already have a record (an explicit HR
+        // mark wins; re-approval is idempotent). Inside the transaction so a
+        // rolled-back approval never leaves phantom rows. The leave.approved
+        // audit entry below is the decision's record — rows are just state.
+        await deriveOnLeaveAttendance(tx, request, type?.name ?? "Leave");
       });
     } else {
       // QA-16: same guarded write on the reject path — a concurrent
@@ -556,6 +568,11 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
             data: { used: { decrement: Math.min(request.days, balance.used) } },
           });
         }
+        // F1.3 — cancelling approved leave removes its DERIVED ON_LEAVE
+        // rows again (dates still covered by ANOTHER approved request keep
+        // theirs; MANUAL/IMPORT records are never touched). Transactional
+        // with the status flip + refund above.
+        await removeDerivedOnLeaveAttendance(tx, request);
       });
     } else {
       // QA-16: a cancel that read PENDING can race a concurrent approval —

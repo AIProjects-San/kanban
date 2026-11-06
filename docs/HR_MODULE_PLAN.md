@@ -174,7 +174,9 @@ progress percentage on the card. e2e `hr-onboarding.feature` + unit tests.
 ## 7a. Feature F1.1 — Holiday calendar (enhancement plan Phase 1)
 
 `HolidayCalendarEntry` (date unique, label, isHalfDay, kind PUBLIC/WEEKLY_OFF).
-Migration `20261106100000_holiday_calendar` (+ `PayrollRun.workingDays Int`).
+Migration `20261117100000_holiday_calendar` (+ `PayrollRun.workingDays Int`;
+named to sort AFTER `20261117000000_hiring_payroll`, which creates
+PayrollRun — migrate deploy applies in directory-name order).
 Semantics: any entry removes its date from working-day counting (half-days
 count 0.5); `kind` is labeling only. Consumers: `lib/working-days.ts`
 (`workingDaysBetween` / `workingDaysInPeriod` — pure, shared by server and
@@ -189,6 +191,30 @@ days deliberately excluded). e2e `hr-holidays.feature` + unit tests;
 relative-date helpers in the e2e suite skip holiday weeks so day-count
 assertions stay deterministic. Design source:
 `docs/Fernly_HR_Payroll_Enhancement_Plan.md` §7.1.
+
+## 7b. Feature F1.3 — Attendance records (enhancement plan Phase 1)
+
+`AttendanceRecord` (unique userId+date, status PRESENT/ABSENT/HALF_DAY/WFH/
+ON_LEAVE, optional inTime/outTime "HH:mm", note, source MANUAL/IMPORT/DERIVED).
+Migration `20261118000000_attendance_records`. Marking/upsert/delete at a NEW
+`attendance:manage` permission (ADMIN+HR — deliberately not hr:admin, so the
+DB permission ceiling can diverge the two); the HR console "Attendance" tab
+(month grid: one row per member, one column per day, weekends/holidays
+shaded, cell-click to mark/edit). Members never write attendance (decision
+§9.1 — no self-marking, WFH included); their side is the self-scoped
+`getMyAttendance` + the "My Attendance" People view (month picker, calendar,
+status counts, corrections point at HR). Approved leave DERIVES ON_LEAVE rows
+inside the approval transaction (`deriveOnLeaveAttendance` in hr-shared.ts —
+dates with an existing record are skipped, HR's explicit mark wins);
+cancelling removes them again unless another approved request still covers
+the date (`removeDerivedOnLeaveAttendance`). Seed mirrors the derivation
+(Rafael's + Yuki's approved leave) plus a few current-month showcase marks.
+Audit actions `hr.attendance_marked/updated/deleted`. e2e
+`hr-attendance.feature` (grid, RBAC tab gate, duplicate + delete, leave →
+ON_LEAVE → cancel removal) + unit tests in
+`src/server-actions/__tests__/hr-attendance.test.ts` and the F1.3 blocks of
+`hr-leave.test.ts`. Design source:
+`docs/Fernly_HR_Payroll_Enhancement_Plan.md` §7.1 (F1.3).
 
 ## 8. Cross-cutting checklist (touched once, kept in sync)
 

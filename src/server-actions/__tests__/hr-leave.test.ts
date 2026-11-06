@@ -10,6 +10,7 @@ const db = vi.hoisted(() => {
   const models = [
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "user", "auditLog", "notification", "holidayCalendarEntry",
+    "attendanceRecord",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -130,6 +131,10 @@ beforeEach(() => {
   // QA-16: decision/cancel writes are guarded updateMany calls — the happy
   // path matches exactly one row.
   db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
+  // F1.3 — the approve/cancel transactions derive/remove ON_LEAVE attendance
+  // rows; default to "no records" so the derivation no-ops unless a test
+  // seeds rows.
+  db.attendanceRecord.findMany.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -592,6 +597,63 @@ describe("decideLeaveRequest", () => {
       expect.objectContaining({ data: { used: { increment: 2 } } }),
     );
   });
+
+  // -----------------------------------------------------------------------
+  // F1.3 — approving leave derives ON_LEAVE attendance rows (side effect
+  // INSIDE the approval transaction — a rolled-back approval can never
+  // leave phantom rows).
+  // -----------------------------------------------------------------------
+
+  it("F1.3: approving derives ON_LEAVE attendance rows for every uncovered date in range", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.attendanceRecord.findMany.mockResolvedValue([]); // nothing marked yet
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    expect(db.attendanceRecord.createMany).toHaveBeenCalledWith({
+      data: [parseDay(isoDay(7)), parseDay(isoDay(8))].map((d) => ({
+        userId: "u-theo",
+        date: d,
+        status: "ON_LEAVE",
+        note: "Derived from approved Annual Leave leave",
+        source: "DERIVED",
+      })),
+    });
+  });
+
+  it("F1.3: dates that already have ANY record are skipped — an explicit HR mark wins", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // HR already marked day 7 WFH — only day 8 gets derived.
+    db.attendanceRecord.findMany.mockResolvedValue([{ date: parseDay(isoDay(7)) }]);
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    expect(db.attendanceRecord.createMany).toHaveBeenCalledWith({
+      data: [{
+        userId: "u-theo",
+        date: parseDay(isoDay(8)),
+        status: "ON_LEAVE",
+        note: "Derived from approved Annual Leave leave",
+        source: "DERIVED",
+      }],
+    });
+  });
+
+  it("F1.3: rejecting never derives attendance rows", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "REJECT" });
+    expect(res.ok).toBe(true);
+    expect(db.attendanceRecord.createMany).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -719,6 +781,60 @@ describe("cancelLeaveRequest", () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/no longer pending|approved/i);
     expect(db.leaveBalance.update).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // F1.3 — cancelling approved leave removes its DERIVED ON_LEAVE rows
+  // (unless another approved request still covers the date).
+  // -----------------------------------------------------------------------
+
+  it("F1.3: cancelling an APPROVED request removes its derived ON_LEAVE rows", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, status: "APPROVED" });
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 2 });
+    // No other approved request overlaps the range.
+    db.leaveRequest.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { date: parseDay(isoDay(7)) },
+      { date: parseDay(isoDay(8)) },
+    ]);
+
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(true);
+    expect(db.attendanceRecord.deleteMany).toHaveBeenCalledWith({
+      where: {
+        userId: "u-theo",
+        source: "DERIVED",
+        status: "ON_LEAVE",
+        date: { in: [parseDay(isoDay(7)), parseDay(isoDay(8))] },
+      },
+    });
+  });
+
+  it("F1.3: derived rows for dates still covered by ANOTHER approved request survive the cancel", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, status: "APPROVED" });
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 2 });
+    // An overlapping approved request still covers day 7.
+    db.leaveRequest.findMany.mockResolvedValue([
+      { startDate: parseDay(isoDay(7)), endDate: parseDay(isoDay(7)) },
+    ]);
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { date: parseDay(isoDay(7)) },
+      { date: parseDay(isoDay(8)) },
+    ]);
+
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(true);
+    // Only day 8 is deleted; day 7 stays (the other request owns it now).
+    expect(db.attendanceRecord.deleteMany).toHaveBeenCalledWith({
+      where: {
+        userId: "u-theo",
+        source: "DERIVED",
+        status: "ON_LEAVE",
+        date: { in: [parseDay(isoDay(8))] },
+      },
+    });
   });
 });
 

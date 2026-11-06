@@ -4,6 +4,7 @@
 // non-async values and is imported by the hr-* action modules, never by
 // client components.
 
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { logError } from "@/lib/observability";
 import type { HolidayT } from "@/lib/types";
@@ -262,4 +263,97 @@ export async function findOverlappingActiveRequest(
     select: { id: true },
   });
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// F1.3 — attendance derivation (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1, ADR-009 virtual-event precedent). Approved leave auto-marks ON_LEAVE
+// attendance rows; cancelling that leave removes them again unless another
+// approved request still covers the date. Runs INSIDE the caller's
+// transaction so a rolled-back approval/cancel never leaves phantom rows.
+// An explicit HR record (MANUAL/IMPORT) always wins and is never touched.
+// ---------------------------------------------------------------------------
+
+/** Transaction-client surface the derivation helpers need — both the
+ * db.$transaction callback parameter and the plain client satisfy it
+ * structurally (the seed re-implements the same logic without a
+ * transaction). */
+type AttendanceTx = Pick<Prisma.TransactionClient, "attendanceRecord" | "leaveRequest">;
+
+/** Every calendar day in [start, end] inclusive, as UTC-midnight Dates. */
+function eachDay(start: Date, end: Date): Date[] {
+  const days: Date[] = [];
+  for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86_400_000)) {
+    days.push(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())));
+  }
+  return days;
+}
+
+/** Derive ON_LEAVE rows for an approved leave request. Idempotent: dates
+ * that already have ANY record (an explicit HR mark, or a previously
+ * derived row) are skipped — one record per user per day. Returns how many
+ * rows were created (0 on re-approval — the leave.approved audit entry is
+ * the single source of truth for the decision; rows are just state). */
+export async function deriveOnLeaveAttendance(
+  tx: AttendanceTx,
+  request: { userId: string; startDate: Date; endDate: Date },
+  leaveTypeName: string,
+): Promise<number> {
+  const existing = await tx.attendanceRecord.findMany({
+    where: { userId: request.userId, date: { gte: request.startDate, lte: request.endDate } },
+    select: { date: true },
+  });
+  const taken = new Set(existing.map((r) => dayKey(r.date)));
+  const rows = eachDay(request.startDate, request.endDate)
+    .filter((d) => !taken.has(dayKey(d)))
+    .map((d) => ({
+      userId: request.userId,
+      date: d,
+      status: "ON_LEAVE",
+      note: `Derived from approved ${leaveTypeName} leave`,
+      source: "DERIVED",
+    }));
+  if (rows.length === 0) return 0;
+  await tx.attendanceRecord.createMany({ data: rows });
+  return rows.length;
+}
+
+/** Remove the DERIVED ON_LEAVE rows of a cancelled approved request — but
+ * only for dates no OTHER approved request still covers (overlapping
+ * approved requests of different types are legal; their derived rows must
+ * survive). MANUAL/IMPORT records are never touched. Returns how many rows
+ * were removed. */
+export async function removeDerivedOnLeaveAttendance(
+  tx: AttendanceTx,
+  request: { userId: string; startDate: Date; endDate: Date },
+): Promise<number> {
+  // Other approved requests overlapping the cancelled range.
+  const others = await tx.leaveRequest.findMany({
+    where: {
+      userId: request.userId,
+      status: "APPROVED",
+      startDate: { lte: request.endDate },
+      endDate: { gte: request.startDate },
+    },
+    select: { startDate: true, endDate: true },
+  });
+  const stillCovered = new Set<string>();
+  for (const o of others) {
+    for (const d of eachDay(o.startDate, o.endDate)) stillCovered.add(dayKey(d));
+  }
+  const derived = await tx.attendanceRecord.findMany({
+    where: {
+      userId: request.userId,
+      source: "DERIVED",
+      status: "ON_LEAVE",
+      date: { gte: request.startDate, lte: request.endDate },
+    },
+    select: { date: true },
+  });
+  const doomed = derived.filter((r) => !stillCovered.has(dayKey(r.date))).map((r) => r.date);
+  if (doomed.length === 0) return 0;
+  await tx.attendanceRecord.deleteMany({
+    where: { userId: request.userId, source: "DERIVED", status: "ON_LEAVE", date: { in: doomed } },
+  });
+  return doomed.length;
 }

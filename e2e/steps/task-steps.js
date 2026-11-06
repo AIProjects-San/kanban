@@ -23,6 +23,7 @@ const VIEW_HEADINGS = {
   Payroll: "Payroll",
   "My Payslips": "My Payslips",
   "My Interviews": "My Interviews",
+  "My Attendance": "My Attendance",
   Settings: "Settings",
   "Audit Log": "Audit Log",
   Help: "Help",
@@ -76,7 +77,7 @@ When("I open the {string} view", async function (label) {
   // restyles. Keys must mirror the app's shortcut map
   // (src/hooks/use-keyboard-shortcuts.ts + sidebar.tsx): d/t/p/c/a/m/b.
   // Note Team is "m" (G M), not "e".
-  const shortcuts = { Dashboard: "d", Tasks: "t", Projects: "p", Team: "m", Analytics: "a", Calendar: "c", Bugs: "b", Leave: "v", HR: "r", Hiring: "i", Payroll: "y", "My Payslips": "n", "My Interviews": "j", Settings: "s", "Audit Log": "l" };
+  const shortcuts = { Dashboard: "d", Tasks: "t", Projects: "p", Team: "m", Analytics: "a", Calendar: "c", Bugs: "b", Leave: "v", HR: "r", Hiring: "i", Payroll: "y", "My Payslips": "n", "My Interviews": "j", "My Attendance": "k", Settings: "s", "Audit Log": "l" };
   const expected = VIEW_HEADINGS[label];
 
   // The first shortcut can be lost when it lands between the login
