@@ -5,10 +5,10 @@
 | | |
 | --- | --- |
 | Document | `docs/Fernly_HR_Payroll_Parity_Reassessment.md` |
-| Date | 2026-11-06 (evening) |
+| Date | 2026-11-06 (evening) · **F1.4 status update appended after the epic landed (§7.1)** |
 | Status | Current-state assessment — supersedes the gap matrix of `Fernly_HR_Payroll_Enhancement_Plan.md`; the epic plan itself is carried forward with updated status |
 | Scope | Payroll, HR (people, leave, attendance, holidays), Onboarding/Joining, Hiring — benchmarked against Frappe HR |
-| Fernly code state | `5ef0dd1` ("feat(hr): F1.3 attendance records") — CI green (run 42174851202) |
+| Fernly code state | `c68e1c3` ("feat(payroll): F1.4 attendance→LOP derivation" @ `534b2f4` + its CI/e2e follow-up fixes) — CI green (run 42206155692) |
 | Benchmark state | `frappe/hrms` @ `1c28527` (2026-11-06, v17 develop; PR #5607 merge) — 3 days newer than the original plan's `159548fa` |
 | Companion docs | `Fernly_HR_Payroll_Enhancement_Plan.md` (the plan), `HR_MODULE_PLAN.md`, `RECRUITMENT_MODULE_PLAN.md`, `Fernly_Persona_Acceptance_Assessment.md`, `DECISIONS.md` |
 
@@ -16,16 +16,16 @@
 
 ## 1. Executive Summary
 
-This report re-runs the Frappe HR benchmark comparison against the codebase **as it stands today**, after the first two Phase-1 epics landed (`F1.1` holiday calendar @ `58b0fa7`, `F1.3` attendance records @ `5ef0dd1`, CI green at `5ef0dd1`). The benchmark itself was refreshed to the tip of `frappe/hrms` develop (`1c28527`); the three-day delta contains no architectural change to HR or Payroll, so every structural conclusion of the original plan carries over unchanged.
+This report re-runs the Frappe HR benchmark comparison against the codebase **as it stands today**, after the first three Phase-1 epics landed (`F1.1` holiday calendar @ `58b0fa7`, `F1.3` attendance records @ `5ef0dd1`, `F1.4` attendance→LOP derivation @ `534b2f4` — all CI green). The benchmark itself was refreshed to the tip of `frappe/hrms` develop (`1c28527`); the three-day delta contains no architectural change to HR or Payroll, so every structural conclusion of the original plan carries over unchanged.
 
 **What changed since the plan was written:**
 
-1. **Two Phase-1 epics are DONE and verified in code** (not just claimed): holiday-aware working-day math is real and denormalized onto every new leave request and payroll run; attendance records exist with five statuses, HR-only marking, and automatic `ON_LEAVE` derivation from approved leave — all pinned by unit + e2e tests.
-2. **Coverage moved from 9 → 10 parity, 21 → 22 partial, 41 → 39 missing** of 77 benchmarked families. The leave-day and payroll-denominator machinery (L7) and the attendance data foundation (L12) are the two families that crossed a status line.
+1. **Three Phase-1 epics are DONE and verified in code** (not just claimed): holiday-aware working-day math is real and denormalized onto every new leave request and payroll run; attendance records exist with five statuses, HR-only marking, and automatic `ON_LEAVE` derivation from approved leave; and payroll now READS those facts — `createPayrollRun` derives each payslip's loss-of-pay from attendance + unpaid leave with `lopSource` provenance — all pinned by unit + e2e tests.
+2. **Coverage moved from 9 → 10 parity, 21 → 23 partial, 41 → 38 missing** of 77 benchmarked families (the F1.4 update adds P7, the attendance/LWP proration family, to Partial). The leave-day and payroll-denominator machinery (L7) and the attendance data foundation (L12) crossed status lines with F1.1/F1.3; the attendance→payroll link (P7) crossed with F1.4.
 3. **The deep re-read found 19 verifiable defects/risks the original plan did not list** (§6) — mostly concurrency and lifecycle-hygiene items (non-transactional multi-writes, offer-expiry semantics, reschedule orphans, an unassigned-task drift between two copies of the onboarding template). None is a P0-style user-facing lie; all are cheap to fix while riding the next epics.
-4. **The highest-value next move is unchanged and now unblocked:** `F1.4` (attendance → LOP derivation) — both its dependencies (F1.1, F1.3) are green. It converts attendance from display-only data into the payroll's honest input, exactly as the plan specified.
+4. **The highest-value next move is now F1.2 (leave ledger)** — F1.4 landed and CI is green, so the attendance→payroll pipeline is honest end-to-end; the remaining structural debt in the leave domain (mutable balances, `carriedOver` always 0) is the highest-leverage refactor in the plan. It carries a feature-freeze warning (plan §9.1) and folds in F-R4.
 
-The recommended sequence after F1.4 remains the plan's own: **F1.2 (leave ledger — highest leverage, highest risk) → F1.5 (component catalog) → F1.6 (employment lifecycle)**, with the §6 hygiene items folded into the matching epics.
+The recommended sequence after F1.4 remains the plan's own: **F1.2 (leave ledger — highest leverage, highest risk) → F1.5 (component catalog) → F1.6 (employment lifecycle)**, with the §6 hygiene items folded into the matching epics. F1.4 itself landed same-day (`534b2f4` + CI fixes through `c68e1c3`, CI green).
 
 ---
 
@@ -64,7 +64,7 @@ The three-day delta on `hrms` develop contains no change to the HR/Payroll archi
 
 **Actions (11 exports, all `payroll:manage` = ADMIN+HR except `getMyPayslips` which is session-only, self-scoped, zero inputs).** `createPayrollRun` = single nested atomic create (run + all payslips snapshot from ACTIVE structures); `updatePayslip` = OPEN-runs-only, duplicate-line-keys rejected, `lopDays ≤ run.workingDays` (or calendar fallback), server-recomputed gross/net, **negative net rejected**; `addPayslip` = joiner snapshot with one `slipNo` race retry; `lockPayrollRun` = ≥1 payslip required; ESS `getMyPayslips` = **LOCKED runs only** with running calendar-year YTD.
 
-**Verified F1.4 status: NOT implemented** — `createPayrollRun` never queries `attendanceRecord`, `lopDays` defaults to 0, and no `lopSource` field exists anywhere (schema, types, actions). LOP is purely manual HR entry today.
+**Verified F1.4 status at `5ef0dd1`: NOT implemented** — `createPayrollRun` never queried `attendanceRecord`, `lopDays` defaulted to 0, and no `lopSource` field existed anywhere (schema, types, actions). LOP was purely manual HR entry. *(Superseded the same day: F1.4 landed @ `534b2f4` — see §7.1.)*
 
 ### 4.2 HR (`src/server-actions/hr-*.ts`, `src/lib/config.ts`)
 
@@ -103,8 +103,8 @@ Status legend as in the original plan (Parity / Partial / Missing / Out of scope
 | P3 | Component formulas & conditions | AST sandbox eval | FIXED / PERCENT_OF_BASIC | Out of scope (ADR) |
 | P4 | Temporal structure assignment | SSA timeline + opening balances | `effectiveFrom` + retire-on-revision | Partial |
 | P5 | Payroll frequencies | 5 frequencies | monthly only | Partial |
-| P6 | Payment-days proration | 5-setting engine | manual `lopDays`; **F1.1 working-day denominator + half-day holidays** | Partial **(improved)** |
-| P7 | Attendance/LWP-driven proration | Leave/Attendance modes | attendance data now exists (F1.3) **but payroll never reads it — F1.4 unwired** | Missing **(unblocked)** |
+| P6 | Payment-days proration | 5-setting engine | manual `lopDays`; **F1.1 working-day denominator + half-day holidays; F1.4 fractional LOP days (0.5/0.25)** | Partial **(improved)** |
+| P7 | Attendance/LWP-driven proration | Leave/Attendance modes | **F1.4: `createPayrollRun`/`addPayslip` derive `lopDays` from attendance (ABSENT=1, HALF_DAY=0.5) + unpaid leave (leave-wins rule), `lopSource AUTO\|MANUAL` provenance with audited overrides, LOP line materialized at creation** — per-slip corrections stay manual overrides (no attendance-correction loop) | Partial **(was Missing)** |
 | P8 | Slip lifecycle & finality | docstatus + Withheld | OPEN/LOCKED one-way, immutable lines | Partial |
 | P9 | Duplicate-slip idempotency | guards | `@@unique` × 2 + pre-checks | Parity |
 | P10 | YTD/MTD aggregates | YTD+MTD+per-component | calendar-year net YTD, two bases (HR incl. OPEN / ESS LOCKED-only) | Partial |
@@ -174,15 +174,15 @@ F1 Parity (review lifecycle) · F2–F7 Missing/Partial (cycles, KRAs, goals, mu
 
 ### Updated coverage summary
 
-| Status | Plan (pre-F1.1/F1.3) | Now (`5ef0dd1`) |
-| --- | --- | --- |
-| Parity | 9 (12%) | **10** |
-| Partial | 21 (27%) | **22** |
-| Missing | 41 (53%) | **39** |
-| Out of scope | 6 (8%) | 6 |
-| **Total** | **77** | **77** |
+| Status | Plan (pre-F1.1/F1.3) | At `5ef0dd1` (F1.1+F1.3) | Now (`c68e1c3`, +F1.4) |
+| --- | --- | --- | --- |
+| Parity | 9 (12%) | 10 | **10** |
+| Partial | 21 (27%) | 22 | **23** |
+| Missing | 41 (53%) | 39 | **38** |
+| Out of scope | 6 (8%) | 6 | 6 |
+| **Total** | **77** | **77** | **77** |
 
-The operational middle is still where the gap lives — but two of its floor stones (holiday math, attendance data) are now laid, and the next epic (F1.4) is the keystone between them.
+The operational middle is still where the gap lives — but three of its floor stones (holiday math, attendance data, and now the attendance→payroll link) are laid; the next structural move is F1.2 (the leave ledger), the highest-leverage refactor in the plan.
 
 ---
 
@@ -206,7 +206,7 @@ Not in the original plan; every item is verifiable at `5ef0dd1`. Severity: **A**
 | F-R12 | B | **Non-transactional multi-row mutations in hiring**: `advanceStage` (two updates), `addCandidateStage` (sortOrder shift via `Promise.all`), `decideCandidate`, `sendOffer` (status flip before outbox write) | `hiring.ts` respective actions |
 | F-R13 | B | **Static-vs-DB RBAC inconsistency**: `saveScorecard` and `getHiringPermissions` use raw `hasPermission()` (static floor only) while the rest of the module enforces via `requirePermission` (DB ceiling) — a DB-granted `hiring:manage` cannot authorize scorecard-on-behalf | `hiring.ts: saveScorecard/getHiringPermissions` |
 | F-R14 | C | **Dead enum / dead constants**: attendance `IMPORT` source has no writer; `CANDIDATE_STATUSES`/`HIRING_STAGE_STATUSES` exported but unused (and omit SELECTED); schema comment for `Candidate.status` omits SELECTED (doc drift) | `hr-attendance.ts`, `validation.ts`, `schema.prisma` L990 |
-| F-R15 | C | **Attendance grid honesty**: weekend/holiday shading is display-only — the server accepts marks on non-working days; grid capped at 500 members, no pagination | `hr-attendance.ts: upsertAttendanceRecord` |
+| F-R15 | C | **Attendance grid honesty**: weekend/holiday shading is display-only — the server accepts marks on non-working days; grid capped at 500 members, no pagination. *Partially addressed by F1.4: the LOP derivation ignores marks on non-working days (the payroll-honest half); the server-side mark rejection remains deferred* | `hr-attendance.ts: upsertAttendanceRecord` |
 | F-R16 | C | **Outbox email flow hand-rolled ×3**: QUEUED→send→resolve pattern duplicated inline in REJECTION/OFFER/WELCOME paths (only REJECTION routes the shared helper + duplicate guard) | `hiring.ts` |
 | F-R17 | C | **HR module has zero mail side effects and cancel/acknowledge produce no notification at all** (in-app notifications only on request/decision paths) | `hr-leave.ts`, `hr-reviews.ts` |
 | F-R18 | C | **Timezone naïveté in interview events** (server-local HH:MM) vs UTC-day duplicate guard | `hiring.ts: scheduleInterview` |
@@ -225,14 +225,14 @@ Not in the original plan; every item is verifiable at `5ef0dd1`. Severity: **A**
 | F1.1 Holiday calendar | **DONE** (`58b0fa7`, CI green at `0a8e8af`) | Model + working-day math + denormalization + seed + e2e (LOP denominator $319.05 pinned) |
 | F1.2 Leave ledger | Not started | No `LeaveLedgerEntry` anywhere; `carriedOver` always 0. **Highest leverage, highest risk — feature-freeze leave during the epic** (plan §9.1). Fold in F-R4 (notice days → working days) |
 | F1.3 Attendance records | **DONE** (`5ef0dd1`, CI green) | 5 statuses, HR marking, ON_LEAVE derivation both directions, RBAC + self-service read, e2e loop pinned |
-| F1.4 Attendance→LOP derivation | Not started — **now unblocked, recommended next** | `createPayrollRun` must read attendance (`ABSENT`=1, `HALF_DAY`=0.5) + unpaid-leave days (LeaveType `paid=false`), set `lopDays` + `lopSource AUTO|MANUAL`, manual override → MANUAL with audit note |
+| F1.4 Attendance→LOP derivation | **DONE** (`534b2f4` epic + CI fixes `97ab3d6`/`c68e1c3`, CI green run 42206155692) | Pure `lib/lop-derivation.ts` (100% unit-covered: ABSENT=1, HALF_DAY=0.5, unpaid-leave days, leave-wins rule, working-day fractions incl. 0.5/0.25 on half-day holidays); wired into `createPayrollRun` + `addPayslip` with the LOP line materialized at creation; `lopSource AUTO\|MANUAL` with audited manual overrides in `updatePayslip`; migration `20261119000000_attendance_lop_derivation` (also fixes the latent `workingDays` Int lie); payslip modal provenance note + halves-capable input; seed derives the current-month run (Hana AUTO, Yuki MANUAL showcase keeping the $319.05 pin); e2e scenario derives "LOP 1.5d (auto)" from marked ABSENT+HALF_DAY days. **F-R15 fold-in:** the derivation-side guard IS in (non-working days never charge); the server-side mark rejection stays deferred (S-scope kept) |
 | F1.5 Salary component catalog | Not started | Fold in F-R1 (make retire+create one `$transaction`) |
 | F1.6 Employment lifecycle | Not started | Verified absent; probation-review hard gate per decision §9.3 |
 
-### 7.2 Recommended order (unchanged from the plan, now concrete)
+### 7.2 Recommended order (updated after F1.4 landed)
 
-1. **F1.4** (size S) — both dependencies green; converts F1.3's data into payroll honesty. Fold F-R15's server-side guard (reject/mark-warn attendance on non-working days) only if it stays S.
-2. **F1.2** (size M) — the leave ledger refactor, with F-R4 riding along.
+1. ~~**F1.4** (size S)~~ — **DONE** (`534b2f4`, CI green at `c68e1c3`). F-R15's fold-in was scoped down as planned: the payroll side ignores non-working-day marks; the attendance-form server guard (reject/mark-warn on non-working days) stays deferred.
+2. **F1.2** (size M) — the leave ledger refactor, with F-R4 riding along. **Next up.**
 3. **F1.5** (size M) — component catalog, with F-R1 (transactional structure save) riding along.
 4. **F1.6** (size S) — employment lifecycle fields.
 5. Then Phase 2 as written (F2.1 offboarding/FnF … F2.9), with these **new fold-ins**: F-R5+F-R11 into F2.9 (offer approval/expiry work), F-R6+F-R10 into the hiring touchpoint of F2.9, F-R7+F-R8 into F2.1/F2.3's scope discussion (auto-structure-copy on join belongs with PayAdjustment/SSA thinking), F-R2+F-R12 as a standing "transactional writes" task inside the first epic that touches each action, F-R13 as a one-line RBAC fix riding F1.5.
