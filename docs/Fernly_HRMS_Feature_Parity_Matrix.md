@@ -10,7 +10,7 @@
 | Benchmark state | `frappe/hrms` @ `8816102577c92979df49c20a1807b8c7ab948eb3` (`develop` tip, 2026-11-06 14:15 +0530; merge of PR #5608). Delta from the reassessment's `1c28527` is 5 commits / 4 files — appointment-letter UI polish only (Appendix B) |
 | Fernly code state | `bb2e046` (`origin/main`; F1.1–F1.6 all landed — Phase 1 of the plan complete) |
 | Method | Every benchmark artifact at the pin — doctype, child table, single, report, dashboard chart, number card, notification, print format, web form, web page, scheduler job, PWA API method, plus the cross-cutting behaviors (workflow states, validation chains, derivation rules) — is mapped to a Fernly surface or an explicit absence, verified in code (Appendix C lists the Fernly surface inventory) |
-| Companion docs | `Fernly_HR_Payroll_Enhancement_Plan.md` (epics; families P1–P21, L1–L18, E1–E10, R1–R13, F1–F8, X1–X7), `Fernly_HR_Payroll_Parity_Reassessment.md` (findings F-R1–F-R19), `HR_MODULE_PLAN.md`, `RECRUITMENT_MODULE_PLAN.md`, `DECISIONS.md` |
+| Companion docs | `Fernly_HR_Payroll_Enhancement_Plan.md` (epics; families P1–P21, L1–L18, E1–E10, R1–R13, F1–F8, X1–X7), `Fernly_Domain_Modules_Architecture_Plan.md` (module-level assignment of every row — the four logic modules, added 2026-11-07), `Fernly_HR_Payroll_Parity_Reassessment.md` (findings F-R1–F-R19), `HR_MODULE_PLAN.md`, `RECRUITMENT_MODULE_PLAN.md`, `DECISIONS.md` |
 
 ---
 
@@ -526,7 +526,7 @@ Counted over the **314 mapped rows** above (artifacts + behaviors + reports/char
 | **Beyond benchmark** | 1 | <1% | joining formalities — documents + background verification (the day-one handout rides RJ-18) |
 | **Total** | **314** | 100% | |
 
-Family-level (the plan's 77 families, statuses current at `bb2e046` — matches the reassessment): **12 Parity · 23 Partial · 36 Missing · 6 Out of scope**.
+Family-level (the plan's 77 families, statuses current at `bb2e046` — matches the reassessment): **12 Parity · 23 Partial · 36 Missing · 6 Out of scope**. Module-level: every row above is assigned to exactly one of the four domain logic modules — **hr 145 · admin 24 · account 93 · joining 52** — via the domain default plus 20 row-level exceptions, in `Fernly_Domain_Modules_Architecture_Plan.md` §5 (reproducible: `python3 scripts/module_rollup.py`, totals sanity-checked against this section).
 
 Where the row-level gap concentrates (Missing rows by domain): PR 33 · LV 26 · AT 22 · EM 29 · RJ 18 · PF 15 · EX 14 · PL 4. The **operational middle** verdict of the plan is unchanged — Phase 1 laid six floor stones; Phase 2's F2.1 (offboarding & FnF) remains the next structural move, with the joining-module hardening (F2.9, re-sequenced) directly behind it.
 
