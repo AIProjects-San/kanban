@@ -165,9 +165,9 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | LV-B02 | Earned-leave frequency, allocate-on-day, rounding | — | Missing | L11 / F2.4 |
 | LV-B03 | Compensatory-leave worked-holiday validation | — | Missing | L10 |
 | LV-B04 | Carry-forward cap + expiry days (daily job) | `maxCarryOver` knob exists; carriedOver always 0 (no rollover job) — F2.4 writes the EXPIRE/CARRY rows | Partial | L4 / F2.4 |
-| LV-B05 | include-holiday-in-leave-count setting | holidays excluded from counted working days (fixed behavior, not configurable) | Partial | L7 |
-| LV-B06 | allow-negative / over-allocation switches | — (balance guard always) | Missing | L1 |
-| LV-B07 | `applicable_after` days-in-service before leave allowed | — | Missing | L1 |
+| LV-B05 | include-holiday-in-leave-count setting | holidays excluded from counted working days (fixed behavior, not configurable; F2.4 adds `countHolidaysInLeave` per design doc §6) | Partial | L7 / **F2.4** |
+| LV-B06 | allow-negative / over-allocation switches | — (balance guard always; F2.4's policy engine adds `allowNegative` + `negativeFloor` per design doc §4.3) | Missing | L1 / **F2.4** |
+| LV-B07 | `applicable_after` days-in-service before leave allowed | — (F2.4's `minServiceMonths` knob covers this per design doc §4.1) | Missing | L1 / **F2.4** |
 | LV-B08 | Max-consecutive-days walk across adjacent applications | per-request `maxConsecutiveDays` guard; cross-request walk unverified/absent | Partial | L5 |
 | LV-B09 | Block-list validation with department scoping | — | Missing | L8 |
 | LV-B10 | Salary-processed guard (LWP cannot overlap a processed slip) | — | Missing | L5 |

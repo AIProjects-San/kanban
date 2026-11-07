@@ -7,10 +7,10 @@
 | Document | `docs/Fernly_Domain_Modules_Architecture_Plan.md` |
 | Date | 2026-11-07 |
 | Status | Architecture plan — the structural companion to `Fernly_HR_Payroll_Enhancement_Plan.md` (functional epics). Defines the four domain logic modules that will incorporate **every functionality present in Frappe HR**, and the migration track (M0–M4) that builds them without behavior change |
-| Directive | "Plan to incorporate all functionalities present in Frappe HR for HR, Admin, Account and Joining modules. If possible create separate logic modules for each one of it to enhance modularity." (2026-11-07) |
+| Directive | "Plan to incorporate all functionalities present in Frappe HR for HR, Admin, Account and Joining modules. If possible create separate logic modules for each one of it to enhance modularity." (2026-11-07); "All modules should have pure code functions. Some business logic can be configurable from db…" (2026-11-08 — the purity/policy laws, specified in `Fernly_Policy_Engine_Design.md`) |
 | Fernly code state | `e40949e` (`origin/main`; Phase 1 of the enhancement plan complete, matrix landed) |
 | Benchmark | Frappe HR (`frappe/hrms`) @ `88161025` — the 314-row inventory in `Fernly_HRMS_Feature_Parity_Matrix.md` is the functional source of truth this plan assigns module-by-module |
-| Companion docs | `Fernly_HR_Payroll_Enhancement_Plan.md` (epics F1.x–F3.x), `Fernly_HRMS_Feature_Parity_Matrix.md` (row-level truth), `Fernly_HR_Payroll_Parity_Reassessment.md`, `ARCHITECTURE.md`, `CODING_STANDARDS.md`, `DECISIONS.md` (ADR-001…ADR-014) |
+| Companion docs | `Fernly_HR_Payroll_Enhancement_Plan.md` (epics F1.x–F3.x), `Fernly_HRMS_Feature_Parity_Matrix.md` (row-level truth), `Fernly_Policy_Engine_Design.md` (purity law + DB-configurable policy — the *how logic is expressed* companion, 2026-11-08), `Fernly_HR_Payroll_Parity_Reassessment.md`, `ARCHITECTURE.md`, `CODING_STANDARDS.md`, `DECISIONS.md` (ADR-001…ADR-014) |
 
 ---
 
@@ -324,12 +324,15 @@ src/modules/<name>/
   types.ts          # DTOs (plain types; no Prisma-generated types leak out)
   schemas.ts        # zod schemas split from lib/validation.ts by domain
   status.ts         # status vocabularies + transition maps split from lib/config.ts
-  rules/            # pure functions (no Prisma, no session) — the old lib kernels
+  rules/            # pure functions (no Prisma, no session, no clock) — the old lib kernels
+  policy.ts         # loaders: master-data rows → zod-validated Resolved*Policy objects
   services/         # orchestration: validate → guard → transact → audit → notify
   repo.ts           # the module's Prisma access (touches only its own models)
   scheduler.ts      # cron-invoked entry points (admin; hr/account if ever needed)
   __tests__/        # tests colocated, moving with the code
 ```
+
+The `rules/` + `policy.ts` pair is the purity law made flesh (design doc §2): **rules decide, services obey** — a rule is a deterministic function of *(facts, resolved policy, asOf)*; `policy.ts` is the only bridge between master-data rows and the objects rules consume; services do all I/O. Purity is lint-enforced from M0 (§7.1 note, design doc §9).
 
 ### 6.2 Conventions every module inherits (unchanged house style)
 
@@ -341,6 +344,8 @@ src/modules/<name>/
 6. **Statuses stay plain strings + TS literal unions** (house style: no Prisma enums; DB-editable vocabularies stay `*Config` tables owned by admin).
 7. **Transactions** — Prisma interactive transactions in services; savepoint-per-item in every bulk flow (enhancement plan §7.0).
 8. **No `"use server"` inside modules** — the directive lives only in `src/server-actions/**` wrappers (Turbopack constraint, §3.3).
+9. **Purity law (2026-11-08 directive)** — every business decision is a pure function in `rules/`: deterministic, side-effect-free, clock-free (`asOf` injected), randomness-free; services own all I/O. Enforced by the §7.1 purity fences from M0; full spec in `Fernly_Policy_Engine_Design.md` §2.1/§9.
+10. **Policy-as-data law (2026-11-08 directive)** — every organization-variable knob (leave quotas/strategies/negative floor, deduction modes, holiday dates, encashment/FnF slabs) is a DB row behind the existing admin surfaces, never a code constant; code owns the strategy *space* (enums + zod + rules), the DB owns the *instance*. Full model in `Fernly_Policy_Engine_Design.md` §2.2–§6.
 
 ### 6.3 One vertical slice, end to end (the pattern M1–M4 repeats)
 
@@ -420,7 +425,7 @@ House pipeline for every M-epic, identical to the F-epics: plan → review → s
 
 | Epic | Scope | Moves (see Appendix A) | Size | Risk |
 | --- | --- | --- | --- | --- |
-| **M0 Scaffold & fences** | Create the five module skeletons (`index.ts`, `types.ts` stubs, README charter), ESLint fences (§7.1), vitest include/thresholds (§7.2). Zero logic moves — CI proves the fences compile clean against the untouched codebase | none | **S** | trivial |
+| **M0 Scaffold & fences** | Create the five module skeletons (`index.ts`, `types.ts` stubs, README charter), ESLint fences (§7.1) **including the purity fences for `rules/**`** (design doc §9 — no Prisma/services/transport imports, no `Date.now`/`Math.random`), vitest include/thresholds (§7.2). Zero logic moves — CI proves the fences compile clean against the untouched codebase | none | **S** | trivial |
 | **M1 HR module** | Extract hr: five kernels → `hr/rules`; seven action files → `hr/services/*`; hr slices of validation/config/types; action files become thin wrappers; tests move with code | 2,551 action LOC + kernels | **M** | low — kernels already pure; `hr-shared.ts` split is the only real surgery |
 | **M2 Account module** | Extract account: `payroll-math` → `rules`; `payroll.ts` split into structures/runs/slips services; `payroll-components`; the `createStructureFromOffer` seam becomes the explicit joining→account API (still called from joining's action today — the wrapper keeps working until M3) | 949 action LOC + kernel | **M** | low-medium — run locking and LOP derivation are load-bearing; existing payroll tests + e2e hold |
 | **M3 Joining module** | **Split the `hiring.ts` monolith** into pipeline / formalities / offers / provisioning / funnel services; `hr-onboarding.ts` and `offer-math`/`hiring-email` move in; `markJoined` becomes an explicit orchestration over `admin.provisionUser` + `hr` + `account` public APIs | 2,378 action LOC + kernels | **L** | the epic to be careful with — 38 exports, provisioning transaction, public offer-sign page; `hiring.test.ts` + `hiring.feature`/`my-interviews.feature` e2e are the net |
