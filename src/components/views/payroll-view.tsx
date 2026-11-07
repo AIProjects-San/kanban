@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { CalendarPlus, Landmark, Loader2, Lock, Plus, Scale, Wallet } from "lucide-react";
+import { BookOpen, CalendarPlus, Landmark, Loader2, Lock, Plus, Scale, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -24,6 +24,7 @@ import { currentPeriod } from "@/lib/payroll-math";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 import { StructureModal } from "../ui/structure-modal";
 import { PayslipModal } from "../ui/payslip-modal";
+import { ComponentCatalogModal } from "../ui/component-catalog-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -45,6 +46,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [openPayslip, setOpenPayslip] = useState<PayslipT | null>(null);
   const [structureModalOpen, setStructureModalOpen] = useState(false);
   const [editStructure, setEditStructure] = useState<SalaryStructureT | null>(null);
+  // F1.5 — the component catalog manager (same permission surface).
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -131,6 +134,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button className="f-btn f-btn-ghost" onClick={() => setCatalogOpen(true)} data-testid="component-catalog-btn">
+            <BookOpen size={15} /> Component catalog
+          </button>
           <button className="f-btn f-btn-ghost" onClick={() => { setEditStructure(null); setStructureModalOpen(true); }} data-testid="new-structure-btn">
             <Plus size={15} /> Salary structure
           </button>
@@ -322,6 +328,11 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       </div>
 
       {/* Modals */}
+      <ComponentCatalogModal
+        open={catalogOpen}
+        onClose={() => setCatalogOpen(false)}
+        onChanged={load}
+      />
       <StructureModal
         open={structureModalOpen}
         onClose={() => setStructureModalOpen(false)}

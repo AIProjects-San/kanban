@@ -399,7 +399,14 @@ describe("createLeaveRequest", () => {
   it("rejects an overlapping active request", async () => {
     db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
     db.leaveRequest.findFirst.mockResolvedValue({ id: "lr-existing" });
-    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(8) });
+    // Calendar-independent window (same discipline as the notice test
+    // above): a 2-day span at +7 lands on a weekend whenever the suite
+    // runs on a Saturday (UTC) — the "no working days" guard (F1.1) then
+    // fires ahead of the overlap check and this fails on the calendar, not
+    // the policy. A 7-day span always straddles >= 5 working days, starts
+    // past the 1-day notice minimum, and stays under the 15-day consecutive
+    // cap, so the overlap check is what rejects it on every run day.
+    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(13) });
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/overlapping/i);
   });

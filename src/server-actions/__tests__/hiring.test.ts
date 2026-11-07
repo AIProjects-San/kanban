@@ -28,9 +28,13 @@ vi.mock("@/lib/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();
+const checkPermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
   requirePermission: (...a: unknown[]) => requirePermissionMock(...a),
   getSessionOrThrow: (...a: unknown[]) => getSessionOrThrowMock(...a),
+  // F-R13 — the DB-aware probe saveScorecard/getHiringPermissions consult.
+  // Default mock mirrors the static floor: ADMIN/HR hold every hiring perm.
+  checkPermission: (...a: unknown[]) => checkPermissionMock(...a),
   AuthorizationError: class AuthorizationError extends Error {
     readonly digest = "AuthorizationError";
     constructor(m: string) { super(m); this.name = "AuthorizationError"; }
@@ -163,6 +167,11 @@ beforeEach(() => {
   // authenticate via getSessionOrThrow; default to the HR identity, with
   // individual tests swapping in the MEMBER-interviewer fixture.
   getSessionOrThrowMock.mockResolvedValue(HR_AUTH);
+  // F-R13 — checkPermission defaults to the static floor (ADMIN/HR hold the
+  // hiring perms; MANAGER/MEMBER don't); tests can override per-case.
+  checkPermissionMock.mockImplementation(
+    async (role: string, _perm: string) => role === "ADMIN" || role === "HR",
+  );
   db.hiringStageConfig.findMany.mockImplementation(async ({ where }: { where?: { isActive?: boolean } } = {}) =>
     where?.isActive === true ? TEMPLATE.filter((t) => t.isActive) : TEMPLATE,
   );
@@ -598,6 +607,25 @@ describe("saveScorecard", () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("assigned interviewer");
     expect(db.candidateStage.update).not.toHaveBeenCalled();
+  });
+
+  it("F-R13 — a DB-granted hiring:manage authorizes a non-owner (the static floor alone would not)", async () => {
+    // The RBAC inconsistency the deep read found: saveScorecard consulted
+    // the raw static hasPermission(), so a MEMBER whose role gained
+    // hiring:manage through the DB permission editor was still refused.
+    // checkPermission must honor the DB ceiling.
+    getSessionOrThrowMock.mockResolvedValue(MEMBER_AUTH);
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    checkPermissionMock.mockResolvedValue(false); // static floor: MEMBER has nothing
+    const refused = await saveScorecard({ stageId: "st-2", rating: 5 });
+    expect(refused.ok).toBe(false);
+    expect(db.candidateStage.update).not.toHaveBeenCalled();
+
+    checkPermissionMock.mockResolvedValue(true); // DB ceiling grants hiring:manage
+    const allowed = await saveScorecard({ stageId: "st-2", rating: 5 });
+    expect(allowed.ok).toBe(true);
+    expect(checkPermissionMock).toHaveBeenCalledWith("MEMBER", "hiring:manage");
+    expect(db.candidateStage.update).toHaveBeenCalled();
   });
 
   it("P0-5 (D-04) — a MEMBER who IS the assigned interviewer saves their own scorecard without hiring:view", async () => {

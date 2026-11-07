@@ -538,6 +538,23 @@ export interface SalaryStructureT {
   createdAt: string;
 }
 
+/** F1.5 — one catalog row of the salary component vocabulary
+ * (payroll:manage). `code` joins onto OfferComponentT.key; the structure
+ * editor's picker prefills a line from a row. defaultAmount is a SUGGESTION
+ * by mode (FIXED → annual amount; PERCENT_OF_BASIC → percent of basic) —
+ * structures snapshot their own copies, so this never rewrites history. */
+export interface SalaryComponentT {
+  id: string;
+  code: string;
+  label: string;
+  kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION";
+  mode: "FIXED" | "PERCENT_OF_BASIC";
+  defaultAmount: number;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+}
+
 /** R7 — one monthly payroll period. status: OPEN (editable) → LOCKED (paid,
  * immutable). Totals are aggregated across the run's payslips. workingDays
  * (F1.1) is the holiday-aware LOP denominator denormalized at creation

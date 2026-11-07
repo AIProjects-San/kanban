@@ -369,5 +369,33 @@ describe("Recruitment R1 models are declared", () => {
     expect(f14up).toMatch(/ALTER COLUMN "lopDays" SET DATA TYPE DOUBLE PRECISION/);
     expect(f14up).toMatch(/ALTER COLUMN "workingDays" SET DEFAULT 0/);
     expect(f14up).toMatch(/ALTER COLUMN "workingDays" SET DATA TYPE DOUBLE PRECISION/);
+
+    // F1.5 — the salary component catalog: master data for the structure
+    // editor's picker. Snapshot discipline: structures keep their JSON
+    // copies, so the migration is a new table + deterministic backfill from
+    // the JSON sources (templates first, then structures, then offers).
+    const comp = modelBlock("SalaryComponent");
+    expect(comp).toMatch(/code\s+String\s+@unique/);
+    expect(comp).toMatch(/kind\s+String\s+@default\("EARNING"\)/);
+    expect(comp).toMatch(/mode\s+String\s+@default\("FIXED"\)/);
+    expect(comp).toMatch(/defaultAmount\s+Float\s+@default\(0\)/);
+    expect(comp).toMatch(/isActive\s+Boolean\s+@default\(true\)/);
+    expect(comp).toMatch(/@@index\(\[isActive\]\)/);
+    const f15 = resolve(repoRoot, "prisma", "migrations", "20261121000000_salary_component_catalog");
+    expect(existsSync(resolve(f15, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(f15, "down.sql"))).toBe(true);
+    const f15up = readFileSync(resolve(f15, "migration.sql"), "utf8");
+    expect(f15up).toMatch(/CREATE TABLE "SalaryComponent"/);
+    expect(f15up).toMatch(/CREATE UNIQUE INDEX "SalaryComponent_code_key"/);
+    // The deterministic backfill: 'bf-cat-<code>' ids from the three JSON
+    // sources, DISTINCT ON dedup per source (codes repeat across templates
+    // and structures — a bare NOT EXISTS cannot see same-statement rows),
+    // first sighting wins across sources.
+    expect(f15up).toMatch(/'bf-cat-' \|\| d\."code"/);
+    expect(f15up).toMatch(/DISTINCT ON \(elem->>'key'\)/);
+    expect(f15up).toMatch(/FROM "OfferTemplate"/);
+    expect(f15up).toMatch(/FROM "SalaryStructure"/);
+    expect(f15up).toMatch(/FROM "OfferRecord"/);
+    expect(f15up).toMatch(/NOT EXISTS \(\s*SELECT 1 FROM "SalaryComponent"/);
   });
 });

@@ -59,6 +59,20 @@ async function hasPermissionEnforced(
 }
 
 /**
+ * DB-aware permission probe (F-R13): the boolean counterpart of
+ * requirePermission — static floor OR DB ceiling, cached identically.
+ * Use this wherever a permission is CONSULTED rather than required (owner
+ * exceptions, client capability probes); a raw `hasPermission(role, …)`
+ * from lib/rbac checks the static floor only and silently ignores DB grants.
+ */
+export async function checkPermission(
+  role: Role,
+  permission: Permission,
+): Promise<boolean> {
+  return hasPermissionEnforced(role, permission);
+}
+
+/**
  * Require that the current user has a specific permission.
  * Throws an AuthorizationError if not.
  */

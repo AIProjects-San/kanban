@@ -1932,7 +1932,36 @@ async function main() {
   // -----------------------------------------------------------------
   await db.salaryStructure.deleteMany();
   await db.payrollRun.deleteMany(); // cascades payslips
+  await db.salaryComponent.deleteMany();
   {
+    // F1.5 — the salary component catalog: the curated vocabulary behind the
+    // structure editor's picker. Seeded with every code the demo workspace
+    // actually pays (structure lines + Hana's bonus payslip line) plus one
+    // retired row to show the lifecycle — mirroring what the F1.5 migration
+    // backfills on a production DB (templates + structures first-sighting).
+    const CATALOG_SEEDS = [
+      { code: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", defaultAmount: 84_000, sortOrder: 10 },
+      { code: "housing", label: "Housing Allowance", kind: "EARNING", mode: "FIXED", defaultAmount: 12_000, sortOrder: 20 },
+      { code: "transport", label: "Transport Allowance", kind: "EARNING", mode: "FIXED", defaultAmount: 2_400, sortOrder: 30 },
+      { code: "bonus", label: "Performance Bonus", kind: "EARNING", mode: "FIXED", defaultAmount: 6_000, sortOrder: 40 },
+      { code: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", defaultAmount: 3, sortOrder: 50 },
+      { code: "student_loan", label: "Student Loan Repayment", kind: "DEDUCTION", mode: "FIXED", defaultAmount: 2_600, sortOrder: 60 },
+      // A retired definition: still readable in the catalog list (struck
+      // through), never offered by the picker. Structures that used it keep
+      // their snapshot copies regardless.
+      { code: "relocation", label: "Relocation Allowance", kind: "EARNING", mode: "FIXED", defaultAmount: 5_000, isActive: false, sortOrder: 70 },
+    ];
+    await db.salaryComponent.createMany({
+      data: CATALOG_SEEDS.map((c) => ({
+        code: c.code,
+        label: c.label,
+        kind: c.kind,
+        mode: c.mode,
+        defaultAmount: c.defaultAmount,
+        isActive: c.isActive ?? true,
+        sortOrder: c.sortOrder,
+      })),
+    });
     const round2 = (n) => Math.round(n * 100) / 100;
     const hrId = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
     const STRUCTURE_SEEDS = [
@@ -2142,7 +2171,7 @@ async function main() {
         },
       },
     });
-    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line)`);
+    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line) + F1.5 component catalog (7 definitions, 1 retired)`);
   }
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);

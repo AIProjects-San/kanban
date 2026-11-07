@@ -12,8 +12,9 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
-import type { OfferComponentT, SalaryStructureT } from "@/lib/types";
+import type { OfferComponentT, SalaryComponentT, SalaryStructureT } from "@/lib/types";
 import { createStructureFromOffer, saveSalaryStructure } from "@/server-actions/payroll";
+import { getSalaryComponents } from "@/server-actions/payroll-components";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 
 const KIND_LABEL: Record<string, string> = {
@@ -42,11 +43,39 @@ export function StructureModal({
   const [notes, setNotes] = useState("");
   const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
+  // F1.5 — the component catalog feeding the picker (loaded on open; a
+  // failed load degrades to the blank-line path, never blocks the editor).
+  const [catalog, setCatalog] = useState<SalaryComponentT[]>([]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); }
+    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setCatalog([]); }
   }, [open, edit]);
+
+  // F1.5 — catalog for the picker, loaded when the modal opens. The setState
+  // rides an async callback (not a synchronous effect write), and a failed
+  // load just leaves the picker hidden (blank-line path still works).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void getSalaryComponents().then((res) => {
+      if (!cancelled && res.ok) setCatalog(res.data);
+    });
+    return () => { cancelled = true; };
+  }, [open]);
+
+  // Catalog rows worth offering: active, and not already on the structure
+  // (one line per code — the duplicate would just confuse the math).
+  const offerable = useMemo(
+    () => catalog.filter((c) => c.isActive && !components.some((x) => x.key === c.code)),
+    [catalog, components],
+  );
+
+  const addFromCatalog = (code: string) => {
+    const row = catalog.find((c) => c.code === code);
+    if (!row) return;
+    setComponents((prev) => [...prev, { key: row.code, label: row.label, kind: row.kind, mode: row.mode, amount: row.defaultAmount }]);
+  };
 
   const annual = useMemo(() => computeOffer(components), [components]);
   const monthlyGross = Math.round((annual.earnings / 12) * 100) / 100;
@@ -162,8 +191,31 @@ export function StructureModal({
             </div>
           ))}
           <button type="button" className="f-btn f-btn-ghost text-xs" onClick={() => setComponents((prev) => [...prev, { key: "", label: "", kind: "EARNING", mode: "FIXED", amount: 0 }])} data-testid="structure-add-component">
-            <Plus size={13} /> Add component
+            <Plus size={13} /> Add blank component
           </button>
+          {/* F1.5 — the catalog picker: prefills a line from a curated
+              definition (amount editable — the catalog row is a suggestion). */}
+          {catalog.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <select
+                className="f-input text-xs w-auto"
+                value=""
+                onChange={(e) => { if (e.target.value) addFromCatalog(e.target.value); }}
+                aria-label="Add from catalog"
+                data-testid="structure-catalog-picker"
+                disabled={offerable.length === 0}
+              >
+                <option value="">
+                  {offerable.length === 0 ? "Catalog fully used" : "Add from catalog…"}
+                </option>
+                {offerable.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.label} ({c.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Live totals */}

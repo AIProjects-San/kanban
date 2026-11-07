@@ -700,6 +700,26 @@ export const saveSalaryStructureSchema = z.object({
   isActive: z.boolean().default(true),
 }).strict();
 
+// F1.5 — the salary component catalog (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1). `code` follows the OfferComponent.key convention (lowercase snake)
+// so catalog rows and structure lines join on it. defaultAmount is a
+// suggestion by mode: FIXED → annual amount; PERCENT_OF_BASIC → percent of
+// the basic anchor (same dual meaning as OfferComponent.amount).
+export const saveSalaryComponentSchema = z.object({
+  id: cuidish.optional(),
+  code: z.string().trim().min(1, "A code is required.").max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
+  label: z.string().trim().min(1, "A label is required.").max(120),
+  kind: z.enum(OFFER_COMPONENT_KINDS),
+  mode: z.enum(OFFER_COMPONENT_MODES),
+  defaultAmount: z.number().min(0).max(100_000_000),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(9_999).default(0),
+}).strict();
+
+export const deleteSalaryComponentSchema = z.object({
+  id: cuidish,
+}).strict();
+
 export const createPayrollRunSchema = z.object({
   period: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM)."),
 }).strict();

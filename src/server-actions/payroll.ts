@@ -35,7 +35,7 @@ import {
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
-import { parseComponents } from "@/lib/offer-math";
+import { parseComponents, type OfferComponent } from "@/lib/offer-math";
 import { workingDaysInPeriod, type HolidayLookup } from "@/lib/working-days";
 import { deriveLopDays, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
 import { getHolidayLookup } from "./hr-shared";
@@ -143,11 +143,18 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
       row = await db.salaryStructure.update({ where: { id: data.id }, data: payload });
     } else {
       // One ACTIVE structure per employee: retire the previous one.
-      await db.salaryStructure.updateMany({
-        where: { userId: data.userId, isActive: true },
-        data: { isActive: false },
+      // F-R1: retire + create in ONE transaction — two separate writes could
+      // leave an employee with zero ACTIVE structures between them (silently
+      // dropping them from every future run). The transaction makes the
+      // hand-off atomic: either the new row exists and the old one is
+      // retired, or neither happened.
+      row = await db.$transaction(async (tx) => {
+        await tx.salaryStructure.updateMany({
+          where: { userId: data.userId, isActive: true },
+          data: { isActive: false },
+        });
+        return tx.salaryStructure.create({ data: payload });
       });
-      row = await db.salaryStructure.create({ data: payload });
     }
     await logAudit({
       actor: auth,
@@ -182,18 +189,58 @@ export async function createStructureFromOffer(input: { userId: string }): Promi
     if (!offer) throw new AuthorizationError("No signed offer found for this employee.");
     const components = parseComponents(offer.components);
     if (components.length === 0) throw new AuthorizationError("The signed offer has no components to copy.");
-    await db.salaryStructure.updateMany({
-      where: { userId, isActive: true },
-      data: { isActive: false },
+
+    // F1.5 — map the offer's lines through the component catalog: for codes
+    // the catalog knows, the structure line takes the catalog's canonical
+    // label/kind/mode (the offer snapshot keeps its own copy verbatim — the
+    // appointment letter never rewrites); the AMOUNT always stays the offer's
+    // actual, never the catalog's suggestion. Codes the catalog has never
+    // seen are auto-registered (with the offer's sighting as the suggested
+    // amount) so the catalog converges on everything actually in use — the
+    // structure editor's picker then offers them next time.
+    const catalogRows = await db.salaryComponent.findMany({
+      select: { code: true, label: true, kind: true, mode: true },
     });
-    const row = await db.salaryStructure.create({
-      data: {
-        userId,
-        components: offer.components,
-        notes: `Copied from the signed offer (${offer.templateLabel || "custom"}).`,
-        isActive: true,
-        createdById: auth.userId,
-      },
+    const catalogByCode = new Map(catalogRows.map((r) => [r.code, r]));
+    const toRegister = components.filter((c) => !catalogByCode.has(c.key));
+    const mapped = components.map((c) => {
+      const cat = catalogByCode.get(c.key);
+      return cat
+        ? { ...c, label: cat.label, kind: cat.kind as OfferComponent["kind"], mode: cat.mode as OfferComponent["mode"] }
+        : c;
+    });
+
+    // F-R1: retire + create (+ F1.5 auto-registration of unseen codes) in
+    // ONE transaction — a crash between the writes could otherwise leave the
+    // employee with zero ACTIVE structures, silently dropping them from
+    // every future run.
+    const row = await db.$transaction(async (tx) => {
+      for (const c of toRegister) {
+        await tx.salaryComponent.create({
+          data: {
+            code: c.key,
+            label: c.label,
+            kind: c.kind,
+            mode: c.mode,
+            defaultAmount: c.amount,
+            isActive: true,
+            sortOrder: 1000,
+          },
+        });
+      }
+      await tx.salaryStructure.updateMany({
+        where: { userId, isActive: true },
+        data: { isActive: false },
+      });
+      return tx.salaryStructure.create({
+        data: {
+          userId,
+          components: JSON.stringify(mapped),
+          notes: `Copied from the signed offer (${offer.templateLabel || "custom"}).`,
+          isActive: true,
+          createdById: auth.userId,
+        },
+      });
     });
     await logAudit({
       actor: auth,
@@ -201,7 +248,7 @@ export async function createStructureFromOffer(input: { userId: string }): Promi
       entityType: "SALARY_STRUCTURE",
       entityId: row.id,
       entityLabel: candidate.fullName,
-      detail: `${auth.name} copied ${candidate.fullName}'s signed offer (${offer.templateLabel || "custom"}) into a salary structure.`,
+      detail: `${auth.name} copied ${candidate.fullName}'s signed offer (${offer.templateLabel || "custom"}) into a salary structure${toRegister.length > 0 ? `, auto-registering ${toRegister.length} new component code(s): ${toRegister.map((c) => c.key).join(", ")}` : ""}.`,
     });
     revalidatePath("/");
     return { id: row.id };

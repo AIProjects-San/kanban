@@ -13,6 +13,7 @@ import {
   CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
+  BookOpen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -145,7 +146,10 @@ export type AuditAction =
   | "payroll.run_created"
   | "payroll.payslip_updated"
   | "payroll.payslip_added"
-  | "payroll.run_locked";
+  | "payroll.run_locked"
+  | "payroll.component_created"
+  | "payroll.component_updated"
+  | "payroll.component_deleted";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -280,6 +284,9 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.payslip_updated": { icon: FilePenLine, cls: "text-amber-500 bg-amber-500/10" },
   "payroll.payslip_added": { icon: FilePlus2, cls: "text-indigo-500 bg-indigo-500/10" },
   "payroll.run_locked": { icon: Lock, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.component_created": { icon: BookOpen, cls: "text-teal-500 bg-teal-500/10" },
+  "payroll.component_updated": { icon: BookOpen, cls: "text-teal-500 bg-teal-500/10" },
+  "payroll.component_deleted": { icon: BookOpen, cls: "text-rose-500 bg-rose-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

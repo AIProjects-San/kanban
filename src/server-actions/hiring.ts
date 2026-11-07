@@ -25,8 +25,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import crypto from "node:crypto";
 import { db } from "@/lib/db";
-import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { requirePermission, getSessionOrThrow, AuthorizationError, checkPermission } from "./auth-guard";
 import type {
   CandidateT,
   CandidateStageT,
@@ -894,8 +893,10 @@ export async function saveScorecard(input: unknown): Promise<ActionResult<{ ok: 
     if (!stage) throw new AuthorizationError("Stage not found.");
     // The assigned interviewer may fill their OWN scorecard; everyone else
     // needs hiring:manage (HR-driven — HR can record on behalf).
+    // F-R13: checkPermission (DB ceiling) — a DB-granted hiring:manage can
+    // authorize on behalf; the raw static hasPermission() ignored grants.
     const isOwner = stage.ownerUserId === auth.userId;
-    if (!isOwner && !hasPermission(auth.role, "hiring:manage")) {
+    if (!isOwner && !(await checkPermission(auth.role, "hiring:manage"))) {
       throw new AuthorizationError("Only the assigned interviewer or an HR/admin can fill this scorecard.");
     }
     if (stage.candidate.status !== "ACTIVE") {
@@ -982,8 +983,10 @@ export async function getHiringPermissions(): Promise<
 > {
   return toResult(async () => {
     const auth = await requirePermission("hiring:view");
-    const canManage = hasPermission(auth.role, "hiring:manage");
-    const canConfig = hasPermission(auth.role, "hiring:config");
+    // F-R13: DB-aware probes — the client's capability buttons must reflect
+    // DB grants (hiring:manage/hiring:config), not the static floor alone.
+    const canManage = await checkPermission(auth.role, "hiring:manage");
+    const canConfig = await checkPermission(auth.role, "hiring:config");
     // P0-6 (D-05/D-18) — first-run guidance: the hiring view warns when no
     // transactional mail provider is wired. Same env source of truth as the
     // mailer factory (lib/mailer.ts createMailer), so the banner can never

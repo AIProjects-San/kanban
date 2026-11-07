@@ -914,6 +914,36 @@ model AttendanceRecord {
   @@index([status])
 }
 
+// F1.5 — salary component catalog (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1; benchmark: frappe/hrms Salary Component). Master data behind the
+// structure editor's "add from catalog" picker: the curated definitions of
+// every component the workspace pays. `code` is the stable identity and maps
+// 1:1 onto OfferComponent.key — structures keep their OWN copies of each
+// line (snapshot discipline, same as offers vs offer templates), so editing
+// or retiring a catalog row never rewrites history: it only changes what the
+// picker offers next time. defaultAmount is a SUGGESTION by mode (mirrors
+// OfferComponent.amount's dual meaning): FIXED → suggested annual amount;
+// PERCENT_OF_BASIC → percent of the basic anchor. createStructureFromOffer
+// maps offer lines through the catalog (canonical label/kind/mode per code,
+// auto-registering codes it has never seen) so the catalog converges on
+// everything actually in use. CRUD rides payroll:manage (ADMIN+HR) — salary
+// vocabulary is as sensitive as salary itself.
+model SalaryComponent {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  label         String
+  kind          String   @default("EARNING") // EARNING | EMPLOYER_CONTRIBUTION | DEDUCTION
+  mode          String   @default("FIXED")   // FIXED | PERCENT_OF_BASIC
+  defaultAmount Float    @default(0)
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([sortOrder])
+}
+
 // HR Module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
 // One row per user (userId unique): structured job + contact data. The
 // manager display comes from the existing User.managerId org chart — this

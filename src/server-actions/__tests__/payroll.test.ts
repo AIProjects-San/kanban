@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
-    "payrollRun", "payslip", "auditLog", "holidayCalendarEntry",
+    "salaryComponent", "payrollRun", "payslip", "auditLog", "holidayCalendarEntry",
     "attendanceRecord", "leaveRequest", "leaveType",
   ];
   const methods = [
@@ -127,6 +127,13 @@ beforeEach(() => {
   db.salaryStructure.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-new", ...data }));
   db.salaryStructure.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-1", ...data }));
   db.salaryStructure.updateMany.mockResolvedValue({ count: 0 });
+  // F1.5 — the component catalog: empty by default (createStructureFromOffer
+  // then auto-registers every offer code, which the F1.5 tests assert).
+  db.salaryComponent.findMany.mockResolvedValue([]);
+  db.salaryComponent.findUnique.mockResolvedValue(null);
+  db.salaryComponent.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "sc-new", createdAt: new Date(), updatedAt: new Date(), ...data }));
+  db.salaryComponent.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "sc-1", createdAt: new Date(), updatedAt: new Date(), ...data }));
+  db.salaryComponent.delete.mockResolvedValue({ id: "sc-1" });
   // F1.1 — createPayrollRun reads the period's holiday entries; default to
   // an empty calendar (denominator falls back to the calendar month length).
   db.holidayCalendarEntry.findMany.mockResolvedValue([]);
