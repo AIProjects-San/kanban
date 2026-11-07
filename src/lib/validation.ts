@@ -418,6 +418,20 @@ export const employeeProfileSchema = z.object({
   emergencyContactPhone: z.string().trim().max(40).optional(),
   skills: z.string().trim().max(500).optional(),
   notes: z.string().trim().max(2000).optional(),
+  // F1.6 — the three PLAIN employment facts are HR-editable here; the
+  // STATUS itself is deliberately NOT in this schema (.strict() rejects
+  // it): employmentStatus is only writable through the guarded
+  // transitionEmployment action (§9.3 hard gate + audit), never a plain
+  // profile save.
+  probationEndsAt: isoDateish,
+  noticePeriodWeeks: z
+    .number({ message: "Notice period must be a number of weeks." })
+    .int("Notice period must be a whole number of weeks.")
+    .min(0, "Notice period cannot be negative.")
+    .max(52, "Notice period cannot exceed 52 weeks.")
+    .nullable()
+    .optional(),
+  lastWorkingDay: isoDateish,
 }).strict();
 
 export const employeeProfileAdminSchema = employeeProfileSchema; // notes included above
@@ -446,6 +460,18 @@ export const createReviewSchema = z.object({
   title: z.string().trim().min(1, "Title is required.").max(200),
   periodStart: isoDateStr,
   periodEnd: isoDateStr,
+  // F1.6 — probation cycles satisfy the §9.3 hard gate once reviewed;
+  // omitted keeps the pre-existing STANDARD behavior.
+  kind: z.enum(["STANDARD", "PROBATION"]).optional(),
+}).strict();
+
+// F1.6 — employment lifecycle transition input (transitionEmployment).
+// target is never "": un-classifying is not a transition (one-way — EXITED
+// is terminal, and "not tracked" is only the implicit starting state).
+export const employmentTransitionSchema = z.object({
+  target: z.enum(["PROBATION", "ACTIVE", "SUSPENDED", "EXITED"]),
+  probationEndsAt: isoDateish,
+  lastWorkingDay: isoDateish,
 }).strict();
 
 export const selfAssessmentSchema = z.object({

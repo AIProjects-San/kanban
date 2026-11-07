@@ -1450,6 +1450,21 @@ async function main() {
   // org chart (User.managerId) at read time, not from these rows.
   // -------------------------------------------------------------------------
   await db.employeeProfile.deleteMany();
+  // F1.6 — employment lifecycle (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+  // §7.1, decision §9.3). The migration backfills every profile WITH a
+  // recorded hireDate to ACTIVE (a hire date is the strongest available
+  // evidence of present employment); the seed mirrors that. Diego — the
+  // seeded "new hire" with an in-progress onboarding — is the one
+  // PROBATION example so the hard gate is explorable in the preview: HR
+  // confirming him before his pending probation review completes is
+  // refused; once manager@ (Ingrid) completes it, the confirmation passes.
+  const probationSeed = new Map([
+    ["Diego Morales", new Date("2026-12-15T00:00:00.000Z")],
+  ]);
+  const noticeSeed = new Map([
+    ["Mira Hale", 8],
+    ["Ingrid Solberg", 4],
+  ]);
   const profileSeed = [
     ["Mira Hale", "Founder & Workspace Admin", "MANAGEMENT", "2024-01-15", "Auckland, NZ", "+64 21 555 0001", "Strategy, hiring, coffee sourcing"],
     ["Ingrid Solberg", "Engineering Manager", "MANAGEMENT", "2024-03-04", "Oslo, Norway", "+47 405 55 002", "Team leadership, delivery, mentoring"],
@@ -1475,6 +1490,9 @@ async function main() {
         jobTitle,
         department,
         hireDate: new Date(`${hireDate}T00:00:00.000Z`),
+        employmentStatus: probationSeed.has(name) ? "PROBATION" : "ACTIVE",
+        ...(probationSeed.has(name) ? { probationEndsAt: probationSeed.get(name) } : {}),
+        ...(noticeSeed.has(name) ? { noticePeriodWeeks: noticeSeed.get(name) } : {}),
         location,
         phone,
         skills,
@@ -1485,7 +1503,7 @@ async function main() {
     });
     profileCount += 1;
   }
-  console.log(`  ✓ HR directory: ${profileCount} employee profiles seeded`);
+  console.log(`  ✓ HR directory: ${profileCount} employee profiles seeded (F1.6: ${profileCount - probationSeed.size} ACTIVE, ${probationSeed.size} PROBATION)`);
 
   // -------------------------------------------------------------------------
   // HR module seed — performance reviews (docs/HR_MODULE_PLAN.md §6).
@@ -1532,7 +1550,27 @@ async function main() {
       },
     });
   }
-  console.log(`  ✓ HR reviews: ${reviewSeed.length} cycles seeded across all lifecycle stages`);
+  // F1.6 — Diego's PROBATION-kind cycle, SUBMITTED so his manager (Ingrid,
+  // manager@) can complete it in the preview demo; until then the §9.3
+  // hard gate refuses his PROBATION → ACTIVE confirmation in the directory.
+  await db.performanceReview.create({
+    data: {
+      userId: userByName.get("Diego Morales"),
+      title: "2026 Probation review — Diego",
+      kind: "PROBATION",
+      periodStart: new Date("2026-11-02T00:00:00.000Z"),
+      periodEnd: new Date("2026-12-15T00:00:00.000Z"),
+      status: "SUBMITTED",
+      selfAssessment: "First six weeks: shipped the offline-first prototype, ramped on the release pipeline, pairing with Rafael weekly.",
+      selfRating: 4,
+      managerComment: "",
+      managerRating: null,
+      reviewedById: null,
+      reviewedAt: null,
+      acknowledgedAt: null,
+    },
+  });
+  console.log(`  ✓ HR reviews: ${reviewSeed.length + 1} cycles seeded (incl. Diego's pending PROBATION cycle — the §9.3 gate input)`);
 
   // -------------------------------------------------------------------------
   // HR module seed — onboarding (docs/HR_MODULE_PLAN.md §7). Diego is the

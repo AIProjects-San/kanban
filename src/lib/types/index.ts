@@ -114,6 +114,14 @@ export interface LeaveRequestT {
 // HR module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).
 export type ReviewStatus = "DRAFT" | "SUBMITTED" | "REVIEWED" | "ACKNOWLEDGED";
 
+// F1.6 — employment lifecycle (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.1). "" = not tracked yet (QA-19 discipline — an HR-owned fact nobody
+// has asserted yet renders as "—"), mirroring the department convention.
+export type EmploymentStatus = "" | "PROBATION" | "ACTIVE" | "SUSPENDED" | "EXITED";
+
+/** F1.6 — separates ordinary review cycles from probation reviews (§9.3 gate). */
+export type ReviewKind = "STANDARD" | "PROBATION";
+
 export interface PerformanceReviewT {
   id: string;
   userId: string;
@@ -122,6 +130,8 @@ export interface PerformanceReviewT {
   periodStart: string;
   periodEnd: string;
   status: ReviewStatus;
+  /** F1.6 — STANDARD by default; PROBATION cycles feed the §9.3 hard gate. */
+  kind: ReviewKind;
   selfAssessment: string;
   selfRating: number | null;
   managerComment: string;
@@ -174,6 +184,13 @@ export interface EmployeeProfileT {
   emergencyContactPhone: string;
   skills: string;
   notes: string;
+  // F1.6 — employment lifecycle (written only by transitionEmployment for
+  // the status itself; the three plain fields are HR-editable facts).
+  /** "" = not tracked yet — rendered as "—" until HR classifies. */
+  employmentStatus: EmploymentStatus;
+  probationEndsAt: string | null;
+  noticePeriodWeeks: number | null;
+  lastWorkingDay: string | null;
 }
 
 export interface LeaveBalanceT {

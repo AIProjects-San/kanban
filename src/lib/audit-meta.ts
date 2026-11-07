@@ -94,6 +94,9 @@ export type AuditAction =
   | "hr.attendance_marked"
   | "hr.attendance_updated"
   | "hr.attendance_deleted"
+  // F1.6 — employment lifecycle transitions (guarded action; one entry per
+  // status change, from → to recorded in the detail line)
+  | "hr.employment_transitioned"
   // HR module — performance review lifecycle (docs/HR_MODULE_PLAN.md §6)
   | "review.created"
   | "review.updated"
@@ -235,6 +238,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.holiday_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hr.attendance_marked": { icon: ClipboardCheck, cls: "text-emerald-600 bg-emerald-500/10" },
+  "hr.employment_transitioned": { icon: ArrowRightLeft, cls: "text-amber-500 bg-amber-500/10" },
   "hr.attendance_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.attendance_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 

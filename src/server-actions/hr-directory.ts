@@ -20,6 +20,7 @@ import { hasPermission } from "@/lib/rbac";
 import { DEPARTMENT_LABELS } from "@/lib/config";
 import type { EmployeeProfileT } from "@/lib/types";
 import { employeeProfileSchema, employeeProfileSelfSchema, parseOrThrow } from "@/lib/validation";
+import { isoDateOrNull } from "@/lib/employment";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -35,6 +36,8 @@ function serialize(
     hireDate: Date | null; phone: string; location: string;
     emergencyContactName: string; emergencyContactPhone: string;
     skills: string; notes: string; createdAt: Date; updatedAt: Date;
+    employmentStatus: string; probationEndsAt: Date | null;
+    noticePeriodWeeks: number | null; lastWorkingDay: Date | null;
   },
   user: { name: string; email: string; role: string; managerName: string | null },
 ): EmployeeProfileT {
@@ -54,6 +57,11 @@ function serialize(
     emergencyContactPhone: row.emergencyContactPhone,
     skills: row.skills,
     notes: row.notes,
+    // F1.6 — employment lifecycle ("" = not tracked, rendered as "—").
+    employmentStatus: row.employmentStatus as EmployeeProfileT["employmentStatus"],
+    probationEndsAt: isoDateOrNull(row.probationEndsAt),
+    noticePeriodWeeks: row.noticePeriodWeeks,
+    lastWorkingDay: isoDateOrNull(row.lastWorkingDay),
   };
 }
 
@@ -181,6 +189,12 @@ export async function updateProfileAsAdmin(userId: string, input: {
   emergencyContactPhone?: string;
   skills?: string;
   notes?: string;
+  // F1.6 — the three PLAIN employment facts are HR-editable here. The
+  // STATUS is not (its strict schema rejects employmentStatus): status
+  // changes must go through the guarded transitionEmployment action.
+  probationEndsAt?: string | null;
+  noticePeriodWeeks?: number | null;
+  lastWorkingDay?: string | null;
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("hr:admin");
@@ -193,6 +207,12 @@ export async function updateProfileAsAdmin(userId: string, input: {
 
     const hireDate = data.hireDate !== undefined
       ? data.hireDate ? new Date(`${data.hireDate}T00:00:00.000Z`) : null
+      : undefined;
+    const probationEndsAt = data.probationEndsAt !== undefined
+      ? data.probationEndsAt ? new Date(`${data.probationEndsAt}T00:00:00.000Z`) : null
+      : undefined;
+    const lastWorkingDay = data.lastWorkingDay !== undefined
+      ? data.lastWorkingDay ? new Date(`${data.lastWorkingDay}T00:00:00.000Z`) : null
       : undefined;
 
     await db.employeeProfile.upsert({
@@ -211,6 +231,9 @@ export async function updateProfileAsAdmin(userId: string, input: {
         emergencyContactPhone: data.emergencyContactPhone ?? "",
         skills: data.skills ?? "",
         notes: data.notes ?? "",
+        ...(probationEndsAt ? { probationEndsAt } : {}),
+        ...(data.noticePeriodWeeks != null ? { noticePeriodWeeks: data.noticePeriodWeeks } : {}),
+        ...(lastWorkingDay ? { lastWorkingDay } : {}),
       },
       update: {
         ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
@@ -222,6 +245,9 @@ export async function updateProfileAsAdmin(userId: string, input: {
         ...(data.emergencyContactPhone !== undefined ? { emergencyContactPhone: data.emergencyContactPhone } : {}),
         ...(data.skills !== undefined ? { skills: data.skills } : {}),
         ...(data.notes !== undefined ? { notes: data.notes } : {}),
+        ...(probationEndsAt !== undefined ? { probationEndsAt } : {}),
+        ...(data.noticePeriodWeeks !== undefined ? { noticePeriodWeeks: data.noticePeriodWeeks } : {}),
+        ...(lastWorkingDay !== undefined ? { lastWorkingDay } : {}),
       },
     });
 

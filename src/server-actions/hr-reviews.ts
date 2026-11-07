@@ -23,7 +23,6 @@ import { db } from "@/lib/db";
 import { logError } from "@/lib/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { REVIEW_STATUS_LABELS } from "@/lib/config";
-import type { ReviewStatus, PerformanceReviewT } from "@/lib/types";
 import {
   createReviewSchema,
   selfAssessmentSchema,
@@ -31,6 +30,7 @@ import {
   decideReviewSchema,
   parseOrThrow,
 } from "@/lib/validation";
+import type { ReviewKind, ReviewStatus, PerformanceReviewT } from "@/lib/types";
 import { logAudit } from "./shared";
 import { getApproverIdsFor } from "./hr-shared";
 import { toResult } from "./result";
@@ -60,7 +60,7 @@ async function assertReviewer(auth: { userId: string; role: string }, subjectId:
 
 function serialize(
   r: {
-    id: string; userId: string; title: string;
+    id: string; userId: string; title: string; kind?: string;
     periodStart: Date; periodEnd: Date; status: string;
     selfAssessment: string; selfRating: number | null;
     managerComment: string; managerRating: number | null;
@@ -75,6 +75,8 @@ function serialize(
     userId: r.userId,
     userName: subjectName,
     title: r.title,
+    // F1.6 — pre-kind rows (and any drift) serialize as STANDARD.
+    kind: (r.kind ?? "STANDARD") as ReviewKind,
     periodStart: r.periodStart.toISOString().slice(0, 10),
     periodEnd: r.periodEnd.toISOString().slice(0, 10),
     status: r.status as ReviewStatus,
@@ -151,6 +153,8 @@ export async function createReview(input: {
   title: string;
   periodStart: string;
   periodEnd: string;
+  /** F1.6 — "PROBATION" cycles satisfy the §9.3 hard gate once completed. */
+  kind?: "STANDARD" | "PROBATION";
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("review:manage");
@@ -178,6 +182,9 @@ export async function createReview(input: {
       data: {
         userId: data.userId,
         title: data.title,
+        // F1.6 — defaulted to STANDARD by the column; recorded explicitly
+        // so the audit line names the cycle type.
+        kind: data.kind ?? "STANDARD",
         periodStart: start,
         periodEnd: end,
         status: "DRAFT",
@@ -205,7 +212,7 @@ export async function createReview(input: {
       entityType: "PERFORMANCE_REVIEW",
       entityId: created.id,
       entityLabel: data.title,
-      detail: `${auth.name} opened a review cycle "${data.title}" for ${subject.name} (${data.periodStart} → ${data.periodEnd}).`,
+      detail: `${auth.name} opened a${data.kind === "PROBATION" ? " probation" : ""} review cycle "${data.title}" for ${subject.name} (${data.periodStart} → ${data.periodEnd}).`,
     });
     revalidatePath("/");
     return { id: created.id };

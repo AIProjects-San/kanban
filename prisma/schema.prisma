@@ -963,20 +963,34 @@ model EmployeeProfile {
   emergencyContactPhone String   @default("")
   skills               String    @default("") // free-text, comma-separated
   notes                String    @default("") // HR-visibility notes
+  // F1.6 — employment lifecycle (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+  // §7.1). QA-19 discipline: "" = not tracked yet (rendered as "—") —
+  // self-created profiles carry no HR-asserted employment fact. Status is
+  // ONLY written by the guarded transitionEmployment action (the §9.3 hard
+  // gate lives there), never by the plain profile-edit path.
+  employmentStatus     String    @default("") // "" | PROBATION | ACTIVE | SUSPENDED | EXITED (lib/employment.ts)
+  probationEndsAt      DateTime?
+  noticePeriodWeeks    Int?
+  lastWorkingDay       DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
   @@index([department])
+  @@index([employmentStatus])
 }
 
 // HR Module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).
 // Self + manager model: the employee writes a self-assessment (DRAFT),
 // submits it (SUBMITTED), their manager reviews + rates (REVIEWED), and the
 // employee acknowledges the result (ACKNOWLEDGED). Ratings are 1–5.
+// F1.6 — kind separates ordinary cycles from PROBATION reviews; the §9.3
+// hard gate (PROBATION → ACTIVE) is satisfied only by a PROBATION-kind
+// review that reached REVIEWED/ACKNOWLEDGED.
 model PerformanceReview {
   id               String    @id @default(cuid())
   userId           String
   title            String
+  kind             String    @default("STANDARD") // STANDARD | PROBATION (lib/employment.ts)
   periodStart      DateTime
   periodEnd        DateTime
   // DRAFT → SUBMITTED → REVIEWED → ACKNOWLEDGED (terminal).

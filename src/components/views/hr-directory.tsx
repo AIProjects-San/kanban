@@ -20,13 +20,20 @@ import { Modal } from "../ui/modal";
 import { Avatar } from "../ui/avatar";
 import { RoleBadge } from "../ui/role-badge";
 import { DEPARTMENT_LABELS, departmentLabel } from "@/lib/config";
-import type { EmployeeProfileT } from "@/lib/types";
+import {
+  EMPLOYMENT_STATUS_BADGE,
+  EMPLOYMENT_STATUS_LABELS,
+  EMPLOYMENT_STATUS_TRANSITIONS,
+} from "@/lib/employment";
+import type { EmployeeProfileT, EmploymentStatus } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import {
   getMyProfile,
   upsertMyProfile,
   getDirectory,
   updateProfileAsAdmin,
 } from "@/server-actions/hr-directory";
+import { transitionEmployment } from "@/server-actions/employment";
 
 // ---------------------------------------------------------------------------
 // Self-service card (Settings view)
@@ -78,6 +85,16 @@ export function EmployeeProfileSection() {
             </span>
             {profile !== "none" && profile.hireDate ? (
               <span className="text-sm text-muted-foreground">Hired {profile.hireDate}</span>
+            ) : null}
+            {/* F1.6 — employment status is HR-owned, shown read-only like the
+                rest of the job-data strip ("" stays silent until HR asserts). */}
+            {profile !== "none" && profile.employmentStatus ? (
+              <span className="text-sm text-muted-foreground" data-testid="ro-employment-status">
+                {EMPLOYMENT_STATUS_LABELS[profile.employmentStatus]}
+                {profile.employmentStatus === "PROBATION" && profile.probationEndsAt
+                  ? ` — ends ${profile.probationEndsAt}`
+                  : ""}
+              </span>
             ) : null}
           </div>
           <Field label="Phone">
@@ -200,6 +217,19 @@ export function DirectoryTab() {
               )}
             </div>
             <div className="mt-3 space-y-1 text-[0.6875rem] text-muted-foreground">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-medium text-foreground/70">Employment:</span>
+                {/* F1.6 — "" renders as "Not set" until HR classifies (QA-19). */}
+                <span
+                  className={cn("inline-flex px-2 py-0.5 rounded text-[0.6875rem] font-medium", EMPLOYMENT_STATUS_BADGE[p.employmentStatus])}
+                  data-testid="employment-status"
+                >
+                  {EMPLOYMENT_STATUS_LABELS[p.employmentStatus]}
+                </span>
+                {p.employmentStatus === "PROBATION" && p.probationEndsAt ? (
+                  <span>ends {p.probationEndsAt}</span>
+                ) : null}
+              </div>
               <div><span className="font-medium text-foreground/70">Department:</span> {p.department ? DEPARTMENT_LABELS.find((d) => d.key === p.department)?.label ?? p.department : "—"}</div>
               <div><span className="font-medium text-foreground/70">Manager:</span> {p.managerName ?? "—"}</div>
               <div><span className="font-medium text-foreground/70">Location:</span> {p.location || "—"}</div>
@@ -237,6 +267,14 @@ function EditProfileModal({
   const [ecPhone, setEcPhone] = useState("");
   const [skills, setSkills] = useState("");
   const [notes, setNotes] = useState("");
+  // F1.6 — employment lifecycle: the status select holds the CURRENT value
+  // plus the machine's legal targets (illegal moves never render); picking a
+  // new one routes the save through the guarded transitionEmployment action
+  // BEFORE the plain profile fields save.
+  const [employmentStatus, setEmploymentStatus] = useState<EmploymentStatus>("");
+  const [probationEndsAt, setProbationEndsAt] = useState("");
+  const [noticeWeeks, setNoticeWeeks] = useState("");
+  const [lastWorkingDay, setLastWorkingDay] = useState("");
   const [busy, setBusy] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -250,11 +288,24 @@ function EditProfileModal({
       setEcPhone(profile.emergencyContactPhone);
       setSkills(profile.skills);
       setNotes(profile.notes);
+      setEmploymentStatus(profile.employmentStatus);
+      setProbationEndsAt(profile.probationEndsAt ?? "");
+      setNoticeWeeks(profile.noticePeriodWeeks != null ? String(profile.noticePeriodWeeks) : "");
+      setLastWorkingDay(profile.lastWorkingDay ?? "");
     }
   }, [profile]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!profile) return null;
+
+  // Current status + its legal targets only — a pick from this list is
+  // always a legal transition; everything else (incl. un-classifying to "")
+  // is not offered.
+  const statusOptions: EmploymentStatus[] = [
+    profile.employmentStatus,
+    ...EMPLOYMENT_STATUS_TRANSITIONS[profile.employmentStatus],
+  ];
+  const statusChanged = employmentStatus !== profile.employmentStatus;
 
   return (
     <Modal open={Boolean(profile)} onClose={onClose} title={`Edit ${profile.name}'s profile`}>
@@ -263,9 +314,27 @@ function EditProfileModal({
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
+          // F1.6 — a changed status goes through the GUARDED transition
+          // (machine + §9.3 probation-review hard gate + audit) first; the
+          // gate's refusal surfaces as a toast and stops the save.
+          if (statusChanged) {
+            const tRes = await transitionEmployment(profile.userId, {
+              target: employmentStatus as "PROBATION" | "ACTIVE" | "SUSPENDED" | "EXITED",
+              probationEndsAt: probationEndsAt || null,
+              lastWorkingDay: lastWorkingDay || null,
+            });
+            if (!tRes.ok) {
+              setBusy(false);
+              toast.error(tRes.error);
+              return;
+            }
+          }
           const res = await updateProfileAsAdmin(profile.userId, {
             jobTitle, department, phone, location,
             emergencyContactName: ecName, emergencyContactPhone: ecPhone, skills, notes,
+            probationEndsAt: probationEndsAt || null,
+            noticePeriodWeeks: noticeWeeks === "" ? null : Number(noticeWeeks),
+            lastWorkingDay: lastWorkingDay || null,
           });
           setBusy(false);
           if (res.ok) {
@@ -311,6 +380,68 @@ function EditProfileModal({
             <Field label="HR notes (HR/admin only)">
               <textarea className="f-input min-h-20" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} placeholder="Visible to HR and admins only" />
             </Field>
+          </div>
+
+          {/* F1.6 — Employment section. LAST in the form so the modal's
+              first input stays the job title (an e2e step relies on it). */}
+          <div className="sm:col-span-2 rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">Employment</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Status">
+                <select
+                  className="f-input"
+                  value={employmentStatus}
+                  data-testid="employment-status-select"
+                  onChange={(e) => setEmploymentStatus(e.target.value as EmploymentStatus)}
+                >
+                  {statusOptions.map((s) => (
+                    <option key={s || "not-set"} value={s}>
+                      {s === "" ? "— Not set —" : EMPLOYMENT_STATUS_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Notice period (weeks)">
+                <input
+                  className="f-input"
+                  type="number"
+                  min={0}
+                  max={52}
+                  value={noticeWeeks}
+                  data-testid="notice-weeks-input"
+                  onChange={(e) => setNoticeWeeks(e.target.value)}
+                  placeholder="e.g. 4"
+                />
+              </Field>
+              <Field label="Probation ends">
+                <input
+                  className="f-input"
+                  type="date"
+                  value={probationEndsAt}
+                  data-testid="probation-ends-input"
+                  onChange={(e) => setProbationEndsAt(e.target.value)}
+                />
+              </Field>
+              <Field label="Last working day">
+                <input
+                  className="f-input"
+                  type="date"
+                  value={lastWorkingDay}
+                  data-testid="last-working-day-input"
+                  onChange={(e) => setLastWorkingDay(e.target.value)}
+                />
+              </Field>
+            </div>
+            {statusChanged && employmentStatus === "ACTIVE" && profile.employmentStatus === "PROBATION" ? (
+              <div className="text-[0.6875rem] text-muted-foreground" data-testid="probation-gate-hint">
+                Confirmation requires the probation review to be completed first — it will be refused while the cycle is outstanding.
+              </div>
+            ) : null}
+            {statusChanged && employmentStatus === "EXITED" ? (
+              <div className="text-[0.6875rem] text-muted-foreground">
+                Recording an exit requires a last working day.
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="flex justify-end gap-2">

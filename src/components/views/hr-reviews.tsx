@@ -103,7 +103,14 @@ export function ReviewsTab() {
               {visible.map((r) => (
                 <tr key={r.id} data-testid={`review-row-${r.title}`}>
                   <td className="px-4 py-2.5 font-medium">{r.userName}</td>
-                  <td className="px-4 py-2.5">{r.title}</td>
+                  <td className="px-4 py-2.5">
+                    {r.title}{" "}
+                    {r.kind === "PROBATION" ? (
+                      <span className={cn("inline-flex px-2 py-0.5 rounded text-[0.6875rem] font-medium ml-1", "bg-amber-500/10 text-amber-700 dark:text-amber-400")} data-testid="probation-tag">
+                        Probation
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{fmtPeriod(r)}</td>
                   <td className="px-4 py-2.5">
                     <span className={cn("inline-flex px-2 py-0.5 rounded text-[0.6875rem] font-medium", REVIEW_STATUS_BADGE[r.status])}>
@@ -164,6 +171,9 @@ function CreateReviewModal({
   const [title, setTitle] = useState("");
   const [periodStart, setPeriodStart] = useState(`${year}-01-01`);
   const [periodEnd, setPeriodEnd] = useState(`${year}-12-31`);
+  // F1.6 — PROBATION cycles are the §9.3 gate's input: completing one is
+  // what unlocks PROBATION → ACTIVE in the directory.
+  const [kind, setKind] = useState<"STANDARD" | "PROBATION">("STANDARD");
   const [busy, setBusy] = useState(false);
 
   return (
@@ -173,7 +183,7 @@ function CreateReviewModal({
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
-          const res = await createReview({ userId, title, periodStart, periodEnd });
+          const res = await createReview({ userId, title, periodStart, periodEnd, kind });
           setBusy(false);
           if (res.ok) {
             toast.success("Review cycle opened");
@@ -193,6 +203,17 @@ function CreateReviewModal({
         <Field label="Cycle title">
           <input className="f-input" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder={`e.g. ${year} Mid-year review`} required />
         </Field>
+        <Field label="Review type">
+          <select
+            className="f-input"
+            value={kind}
+            data-testid="review-kind-select"
+            onChange={(e) => setKind(e.target.value as "STANDARD" | "PROBATION")}
+          >
+            <option value="STANDARD">Standard review</option>
+            <option value="PROBATION">Probation review</option>
+          </select>
+        </Field>
         <FormRow>
           <Field label="Period start">
             <input type="date" className="f-input" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} required />
@@ -201,6 +222,11 @@ function CreateReviewModal({
             <input type="date" className="f-input" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} required />
           </Field>
         </FormRow>
+        {kind === "PROBATION" ? (
+          <div className="text-xs text-muted-foreground" data-testid="probation-kind-hint">
+            A completed probation review is required before a probationing employee can be confirmed as active (directory → Employment → Active).
+          </div>
+        ) : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>
           <button type="submit" className="f-btn f-btn-primary f-btn-sm" disabled={busy || !userId}>
@@ -312,7 +338,14 @@ export function MyReviewsSection() {
           {reviews.map((r) => (
             <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3" data-testid={`my-review-${r.title}`}>
               <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground truncate">{r.title}</div>
+                <div className="text-sm font-medium text-foreground truncate">
+                  {r.title}{" "}
+                  {r.kind === "PROBATION" ? (
+                    <span className={cn("inline-flex px-2 py-0.5 rounded text-[0.6875rem] font-medium ml-1", "bg-amber-500/10 text-amber-700 dark:text-amber-400")}>
+                      Probation
+                    </span>
+                  ) : null}
+                </div>
                 <div className="text-[0.6875rem] text-muted-foreground">{fmtPeriod(r)}{r.managerRating ? ` · mgr ${r.managerRating}/5` : ""}{r.reviewedBy ? ` · by ${r.reviewedBy}` : ""}</div>
                 {r.status === "REVIEWED" && r.managerComment && (
                   <div className="text-[0.6875rem] text-muted-foreground mt-1 line-clamp-2">“{r.managerComment}”</div>

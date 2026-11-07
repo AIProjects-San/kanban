@@ -257,6 +257,41 @@ describe("updateProfileAsAdmin", () => {
     expect(res.ok).toBe(false);
     expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
   });
+
+  // F1.6 — the three PLAIN employment facts are HR-editable facts; the
+  // STATUS itself never flows through this action (its strict schema
+  // rejects the key) — only the guarded transitionEmployment writes it.
+  it("F1.6: HR saves the plain employment facts (probation end, notice weeks, LWD)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", {
+      probationEndsAt: "2026-12-01",
+      noticePeriodWeeks: 4,
+      lastWorkingDay: null,
+    });
+    expect(res.ok).toBe(true);
+    expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "u-theo" },
+        update: expect.objectContaining({
+          probationEndsAt: new Date("2026-12-01T00:00:00.000Z"),
+          noticePeriodWeeks: 4,
+          lastWorkingDay: null, // explicit null clears
+        }),
+      }),
+    );
+  });
+
+  it("F1.6: a plain profile save CANNOT set employmentStatus — strict schema rejects the key", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", {
+      employmentStatus: "ACTIVE",
+    } as never);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/employmentStatus/i);
+    expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
+  });
 });
 
 describe("upsert update paths (partial fields)", () => {

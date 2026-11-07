@@ -127,6 +127,33 @@ describe("createReview", () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/period end/i);
   });
+
+  // F1.6 — PROBATION-kind cycles are the §9.3 gate's input: completing one
+  // unlocks PROBATION → ACTIVE in the directory.
+  it("F1.6: opens a PROBATION-kind cycle when the type is passed", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    db.user.findMany.mockResolvedValue([{ id: "u-theo" }]);
+    const res = await createReview({
+      userId: "u-theo",
+      title: "Probation review — Theo",
+      periodStart: "2026-08-15",
+      periodEnd: "2026-11-15",
+      kind: "PROBATION",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.performanceReview.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ userId: "u-theo", status: "DRAFT", kind: "PROBATION" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "review.created",
+        detail: expect.stringContaining("probation review cycle"),
+      }),
+    );
+  });
 });
 
 describe("saveSelfAssessment", () => {

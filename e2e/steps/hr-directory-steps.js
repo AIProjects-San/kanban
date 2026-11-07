@@ -132,6 +132,72 @@ Then("the directory card for {string} should show job title {string}", async fun
   assert.ok(text.includes(title), `card for ${name} does not show job title "${title}"`);
 });
 
+// F1.6 — employment lifecycle (§7.1): the card badge ("" renders as
+// "Not set" per the QA-19 no-fabrication discipline).
+Then("the directory card for {string} should show employment status {string}", async function (name, status) {
+  const card = await directoryCard(this, name);
+  const badge = await card.findElement(By.css("[data-testid='employment-status']"));
+  const text = (await badge.getText()).trim();
+  assert.ok(
+    text.includes(status),
+    `card for ${name} shows employment status "${text}", expected it to mention "${status}"`,
+  );
+});
+
+// F1.6 — pick a new status in the edit modal and save. The guarded
+// transitionEmployment action answers FIRST: a refusal (§9.3 hard gate,
+// missing last working day) surfaces as an error toast and the save STOPS
+// with the modal still open; a success proceeds to the plain profile save
+// ("Profile updated" toast) and the modal closes + the directory reloads.
+// The step stays outcome-agnostic — the scenarios assert which toast and
+// card status followed.
+When("I change {string} employment status to {string}", async function (name, status) {
+  const driver = await this.getDriver();
+  const card = await directoryCard(this, name);
+  const editBtn = await card.findElement(By.xpath(`.//button[contains(@aria-label, "Edit")]`));
+  await editBtn.click();
+  const select = await driver.wait(
+    until.elementLocated(By.css("[data-testid='employment-status-select']")),
+    10_000,
+    "employment status select not found in the profile edit modal",
+  );
+  // House pattern (hr-attendance-steps.js): click the <option> directly —
+  // option.click() fires the change event React's onChange listens for.
+  const option = await select.findElement(
+    By.xpath(`./option[normalize-space(.) = "${status}"]`),
+  );
+  await option.click();
+  await driver.findElement(By.xpath(`//button[contains(., "Save profile")]`)).click();
+  await driver.wait(
+    async () => {
+      const toasts = await driver.findElements(By.css("[data-sonner-toast]"));
+      for (const t of toasts) {
+        const text = (await t.getText()).toLowerCase();
+        if (text.includes("probation review outstanding") || text.includes("profile updated")) {
+          return true;
+        }
+      }
+      return false;
+    },
+    15_000,
+    "no employment-transition outcome toast appeared",
+  );
+  await driver.sleep(1_200);
+  // A refused transition leaves the modal open — close it so later card
+  // assertions read a clean directory (a successful one already closed it).
+  const cancel = await driver.findElements(
+    By.xpath(`//div[@role='dialog']//button[contains(., "Cancel")]`),
+  );
+  if (cancel.length > 0) await driver.executeScript("arguments[0].click();", cancel[0]);
+  // The directory reload after a successful save is asynchronous — re-open
+  // the tab defensively if the view remounted to its default tab.
+  const tabs = await driver.findElements(By.xpath(`//button[contains(., "Directory")]`));
+  if (tabs.length > 0) {
+    const root = await driver.findElements(DIRECTORY_ROOT);
+    if (root.length === 0) await driver.executeScript("arguments[0].click();", tabs[0]);
+  }
+});
+
 When("I search the directory for {string}", async function (query) {
   const driver = await this.getDriver();
   const input = await driver.wait(
