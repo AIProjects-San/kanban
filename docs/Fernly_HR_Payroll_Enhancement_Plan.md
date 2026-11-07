@@ -5,23 +5,23 @@
 | | |
 | --- | --- |
 | Document | `docs/Fernly_HR_Payroll_Enhancement_Plan.md` |
-| Date | 2026-11-06 |
-| Status | Planning input — not yet an implementation commitment |
+| Date | 2026-11-06 → **updated 2026-11-07** (benchmark re-pinned, row-level matrix added, Phase 1 marked complete, Phase 2/3 re-sequenced) |
+| Status | Epic plan — **Phase 1 (F1.1–F1.6) COMPLETE**; coverage matrices superseded by `docs/Fernly_HRMS_Feature_Parity_Matrix.md` (row-level, 314 rows) with `Fernly_HR_Payroll_Parity_Reassessment.md` §5 as the family-level status layer |
 | Scope | Payroll, HR (people & leave), Onboarding/Joining, Hiring — benchmarked against Frappe HR (ERPNext's HR + Payroll successor app) |
-| Companion docs | `docs/PRD.md`, `docs/HR_MODULE_PLAN.md`, `docs/RECRUITMENT_MODULE_PLAN.md`, `docs/Fernly_Persona_Acceptance_Assessment.md`, `docs/DECISIONS.md` (ADR-001…ADR-014) |
+| Companion docs | `docs/Fernly_HRMS_Feature_Parity_Matrix.md` (row-level truth), `docs/Fernly_HR_Payroll_Parity_Reassessment.md`, `docs/PRD.md`, `docs/HR_MODULE_PLAN.md`, `docs/RECRUITMENT_MODULE_PLAN.md`, `docs/Fernly_Persona_Acceptance_Assessment.md`, `docs/DECISIONS.md` (ADR-001…ADR-014) |
 
 ---
 
 ## 1. Executive Summary
 
-Fernly was benchmarked against **Frappe HR (`frappe/hrms`)** — the app that has contained all of ERPNext's HR and Payroll functionality since the ERPNext v14 module split (verified against the `frappe/erpnext` `main` branch on 2026-11-06: no `hr/` or `payroll/` module directories remain in the core repo). The benchmark was analyzed structurally (every one of its **158 HR/Payroll doctypes** inventoried by script) and functionally (deep reading of the core controllers: salary slip, payroll entry, salary structure assignment, leave application/ledger, attendance, onboarding, recruitment funnel, appraisal, expense claim).
+Fernly was benchmarked against **Frappe HR (`frappe/hrms`)** — the app that has contained all of ERPNext's HR and Payroll functionality since the ERPNext v14 module split (verified against the `frappe/erpnext` `main` branch on 2026-11-06: no `hr/` or `payroll/` module directories remain in the core repo). The benchmark was analyzed structurally (every one of its **157 HR/Payroll doctypes** inventoried by script at the current pin `88161025`; 158 at the original `159548fa` — one child table was merged into its parent since) and functionally (deep reading of the core controllers: salary slip, payroll entry, salary structure assignment, leave application/ledger, attendance, onboarding, recruitment funnel, appraisal, expense claim). The **2026-11-07 refresh** added the surfaces the first pass had not inventoried: 35 dashboard charts + 37 number cards, 7 email notifications, 8 print formats, the public jobs board + application web form, all 16 scheduler jobs, the 34-method mobile/PWA API, the roster app, and the engagement reminder engine — every one of them now mapped row-by-row in `Fernly_HRMS_Feature_Parity_Matrix.md` (314 rows).
 
 Headline findings:
 
 1. **Fernly's foundations are honest and sound.** Real arithmetic (`src/lib/payroll-math.ts`), snapshot isolation, one-way run locking, self-scoped member views, mailStatus honesty, RBAC-tested server actions, and audit logging are all genuinely working. The assessment report's six P0 defects are closed on `origin/main`.
-2. **Fernly covers roughly the "last mile" of the benchmark, not the middle.** Of 77 benchmarked feature families: **9 at parity (12%), 21 partial (27%), 41 missing (53%), 6 consciously out of scope (8%).** The missing middle is concentrated in four places: *attendance (entirely absent)*, *leave as a mutable balance instead of an append-only ledger*, *the employee lifecycle between "joined" and "left" (probation, promotion, transfer, offboarding, full-and-final)*, and *payroll's post-computation surfaces (arrears, corrections, encashment, bank export, payslip delivery)*.
+2. **Fernly covers the last mile and — after Phase 1 — six floor stones of the middle.** Of 77 benchmarked feature families: **12 at parity (16%), 23 partial (30%), 36 missing (47%), 6 consciously out of scope (8%)** at `bb2e046` (row-level: 31 / 84 / 161 / 37 of 314 rows). The remaining missing middle is concentrated in four places: *shifts and the attendance correction loop*, *carry-forward/encashment/earned-leave (the ledger's unwritten phases)*, *the employee lifecycle between "joined" and "left" (promotion, transfer, offboarding, full-and-final)*, and *payroll's post-computation surfaces (arrears, corrections, benefits, bank export, payslip delivery)* — plus the newly inventoried analytics/notifications/mobile surfaces (Phase 3 breadth).
 3. **The gap is bridgeable on the current stack.** ERPNext's depth is mostly *statutory + accounting + multi-company* machinery that Fernly deliberately does not build (ADR-014). The functional core that matters to a small organization — attendance, holiday calendars, a leave ledger, an employment lifecycle, offboarding with settlement, appraisal cycles with KRAs, expense claims and advances — fits Fernly's Next.js + Prisma + SQLite architecture without new infrastructure.
-4. **Recommended path:** three phases — **Foundation** (6 epics: holiday calendar, leave ledger, attendance, attendance→LOP link, component catalog, employment lifecycle), **Growth** (9 epics: offboarding/FnF, encashment & compensatory leave, earned-leave accrual, promotions/transfers, payroll exports & payslip email, appraisal cycles + goals, interview round templates + offer approval, expense claims & advances, half-day semantics), **Parity** (breadth: corrections/arrears, benefits accrual, gratuity rules, deduction slabs, shifts, public job openings, training, grievance, report suite).
+4. **Recommended path:** three phases — **Foundation** (6 epics: holiday calendar, leave ledger, attendance, attendance→LOP link, component catalog, employment lifecycle — **ALL LANDED, Phase 1 complete**), **Growth** (10 epics after the 2026-11-07 re-sequencing: offboarding/FnF, **joining hardening (new F2.10, the Onboarding-module epic)**, encashment, PayAdjustment adapter, earned-leave accrual, promotions/transfers, payroll exports, appraisal cycles, expense claims, half-days + interview templates), **Parity** (breadth: corrections/arrears, benefits accrual, gratuity rules, deduction slabs, shifts, public job openings, training, grievance, report suite, **engagement reminders (new F3.10)**).
 
 The plan explicitly borrows the benchmark's best engineering patterns (ledger-as-truth, savepoint-per-item batches, config-driven validation, derived statuses, watermark-based scheduled jobs) while consciously declining its hazards (double-entry GL, user-authored formula sandboxes, multi-company roll-ups, statutory engines).
 
@@ -33,15 +33,15 @@ The plan explicitly borrows the benchmark's best engineering patterns (ledger-as
 
 | Source | Version / commit | Method |
 | --- | --- | --- |
-| `github.com/frappe/hrms` | `159548fa676d51e0bc7ce85c6b6516d3d7b7316a` (merge of PR #5594, 2026-11-03) — develop branch tip at analysis time | Shallow clone; scripted structural inventory of every doctype JSON + controller; deep functional reading of core controllers and reports |
+| `github.com/frappe/hrms` | `159548fa` (2026-11-03) → `1c28527` (2026-11-06, reassessment) → **`88161025`** (`develop` tip, 2026-11-06 14:15 +0530; merge of PR #5608 — delta from `1c28527` is 5 commits of appointment-letter UI polish, logged in the matrix doc's Appendix B) | Partial clone; scripted structural inventory of every doctype JSON + controller; deep functional reading of core controllers and reports; **2026-11-07 pass: full enumeration of charts, cards, notifications, print formats, web forms, www pages, scheduler jobs, PWA API, roster app** |
 | `github.com/frappe/erpnext` | `main` (checked 2026-11-06 via GitHub contents API) | Verification of the module split: `erpnext/hr` and `erpnext/payroll` no longer exist in core |
-| Fernly (this repo) | `b932258` on `origin/main` | Full read of Prisma schema, RBAC matrix, server actions, views, seed script, docs |
+| Fernly (this repo) | `b932258` at original writing → **`bb2e046`** at the 2026-11-07 refresh (F1.1–F1.6 landed) | Full read of Prisma schema, RBAC matrix, server actions, views, seed script, docs; every matrix row re-verified against the working tree |
 
 ### 2.2 Method and honesty about depth
 
 "Analyse thoroughly without missing a single line" was interpreted as: **complete structural coverage + functional depth on everything that matters**, not a literal line-by-line read of ~1M LOC, which would not fit any usable report. Concretely:
 
-- A script (`scripts/hrms_inventory.py`) parsed **every doctype JSON** in `hrms/hr` and `hrms/payroll` — all 158 — extracting field counts, state machines (Select-field options), link graphs, child tables, submittability, permission roles, and controller sizes. Nothing was sampled or skipped; the full inventory is reproduced in Appendix A.
+- A script (`scripts/hrms_inventory.py`) parsed **every doctype JSON** in `hrms/hr` and `hrms/payroll` — all 158 at `159548fa`, 157 at the current pin — extracting field counts, state machines (Select-field options), link graphs, child tables, submittability, permission roles, and controller sizes. Nothing was sampled or skipped; the full inventory is reproduced in Appendix A. The 2026-11-07 refresh additionally enumerated every non-doctype surface (charts, cards, notifications, print formats, web forms, www pages, scheduler jobs, PWA API, roster app) — mapped in the matrix doc.
 - The core controllers (salary slip 2,859 lines, payroll entry 2,003 lines, leave application 1,591 lines, attendance, expense claim 1,045 lines, onboarding, appraisal, interviews, offers, full & final, gratuity, and others) were read functionally: state machines, validation order, business rules, scheduled jobs, and cross-module couplings were extracted with file references.
 - Fernly's side was inventoried with equal rigor: every Prisma model, every server action and its permission gate, every view, and the standing conventions established by the P0 remediation.
 
@@ -57,7 +57,7 @@ Full ERPNext parity is **not** the goal and should never be: ERPNext is a multi-
 
 ### 3.1 Product lineage
 
-ERPNext ≤ v13 shipped `hr` and `payroll` modules inside the monolith. From v14 onward, all HR and Payroll functionality moved to the dedicated **Frappe HR** app (`hrms`), which now owns 115 HR doctypes + 43 Payroll doctypes. The Employee doctype master still lives in ERPNext (`erpnext.setup.doctype.employee`); hrms extends it via `override_doctype_class` (`hrms/overrides/employee_master.py`) and `doc_events` hooks. This is itself a useful lesson: **the benchmark itself decided HR deserves its own bounded context**, separate from the core product.
+ERPNext ≤ v13 shipped `hr` and `payroll` modules inside the monolith. From v14 onward, all HR and Payroll functionality moved to the dedicated **Frappe HR** app (`hrms`), which now owns 114 HR doctypes + 43 Payroll doctypes (157 total at the current pin `88161025`; 115 + 43 at the original writing — one child table merged since). The Employee doctype master still lives in ERPNext (`erpnext.setup.doctype.employee`); hrms extends it via `override_doctype_class` (`hrms/overrides/employee_master.py`) and `doc_events` hooks. This is itself a useful lesson: **the benchmark itself decided HR deserves its own bounded context**, separate from the core product.
 
 ### 3.2 Architectural model
 
@@ -73,9 +73,11 @@ Five recurring mechanisms power nearly every hrms module:
 
 | Module | Standard doctypes | Child tables | Singles | Reports |
 | --- | --- | --- | --- | --- |
-| HR | 75 (33 submittable) | 36 | 4 (HR Settings, Leave Control Panel, Employee Attendance Tool, Shift Assignment Tool) | 17 |
+| HR | 75 (33 submittable) | 35 | 4 (HR Settings, Leave Control Panel, Employee Attendance Tool, Shift Assignment Tool) | 17 |
 | Payroll | 23 (16 submittable) | 18 | 2 (Payroll Settings, Bulk Salary Structure Assignment) | 8 |
-| **Total** | **98** | **54** | **6** | **25** |
+| **Total** | **98** | **53** | **6** | **25** |
+
+Beyond doctypes and reports, the 2026-11-07 enumeration added (previously uncounted): **35 dashboard charts + 2 chart sources, 37 number cards, 7 email notifications, 8 print formats, 1 web form, 3 www pages, 16 scheduler jobs, 34 PWA API methods, a standalone roster app, and the birthday/anniversary/holiday reminder engine** — all mapped in `Fernly_HRMS_Feature_Parity_Matrix.md`.
 
 The full per-doctype inventory (fields, state machines, controller sizes) is in Appendix A.
 
@@ -131,11 +133,15 @@ Appraisal Template (KRAs with weights summing to 100 + rating criteria summing t
 
 Expense Claim (59 fields, 1,045 lines): typed expense rows (default accounts per Expense Claim Type, sanctioned ≤ claimed, mandatory cost center), taxes, advance allocation with receivable-account enforcement; approval_status (workflow-aware, self-approval prevention) and computed payment status (Draft → Submitted → Paid/Partially Paid/Unpaid/Rejected/Cancelled); GL postings, exchange gain/loss, **reactive recomputation of reimbursed amounts from payment-ledger hooks**; ESS scoping (self claims only). Employee Advance (Draft → Unpaid/Partially Paid/Paid → Claimed/Returned combos, APLE-derived). Travel Request (itinerary + costings), Vehicle Log (odometer monotonicity, expense-claim bridge). Employee Grievance (type, against-party via DynamicLink, Open → Investigated → Resolved/Invalid). Reports: recruitment_analytics (funnel), appraisal_overview, employee_exits (exit + FnF pending), employee_analytics, birthdays, monthly_attendance_sheet (P/A/HD/H/WO/L grid), leave balances, unpaid expense claims, salary register, bank remittance, CTC break-up.
 
+### 4.7 Platform & delivery surfaces (added by the 2026-11-07 enumeration)
+
+Beyond doctypes, the benchmark ships: a **dashboard layer** — 35 charts and 37 number cards across HR and Payroll (funnel, headcount by axis, attendance counts, outgoing salary, time-to-fill) fed by 2 chart sources; **7 email notifications** (leave pending/status/cancelled, exit interview scheduled, training scheduled/feedback, retention bonus); **8 print formats** (salary slip classic/compact/detailed, job offer classic/minimal/with-salary-breakup, appointment letter standard/classic); a **public jobs board** (`www/jobs`) with filters/sort/pagination and a `job_application` web form; **16 scheduler jobs** (interview reminders, birthday/anniversary/holiday-in-advance reminders, shift expiry/materialization, leave expiry/encashment/earned-leave, job-opening auto-close, check-in sync); a **mobile/PWA API** of 34 whitelisted methods (attendance, leave balances, expense claims, shifts, notifications, attachments); a standalone **roster app**; and the engagement **reminder engine** (`employee_reminders.py`). All are mapped row-by-row in `Fernly_HRMS_Feature_Parity_Matrix.md` §9.
+
 ---
 
 ## 5. Fernly Current State
 
-Inventoried from the codebase at `b932258` (roles `ADMIN | MANAGER | MEMBER | HR`, 31 permissions in `src/lib/rbac.ts`, App Router single-page view switcher, canonical Postgres schema + generated SQLite sandbox variant per ADR-008).
+Inventoried from the codebase at `b932258` and **re-verified at `bb2e046` after Phase 1 landed** (roles `ADMIN | MANAGER | MEMBER | HR`, 33 permissions in `src/lib/rbac.ts` — `attendance:manage` joined at F1.3, App Router single-page view switcher, canonical Postgres schema + generated SQLite sandbox variant per ADR-008). The five Phase-1 epics changed the picture this section described: the leave ledger now exists (F1.2), attendance records exist (F1.3), the holiday calendar exists (F1.1), the component catalog exists (F1.5), and the employment lifecycle exists (F1.6). Sub-section verdicts below are kept as originally written for the record; current statuses live in `Fernly_HRMS_Feature_Parity_Matrix.md` (row-level) and the reassessment §5 (family-level).
 
 ### 5.1 Payroll (module R7)
 
@@ -176,19 +182,21 @@ Inventoried from the codebase at `b932258` (roles `ADMIN | MANAGER | MEMBER | HR
 
 ### 6.1 Coverage matrix
 
+> **Superseded as the status layer (2026-11-07).** The rows below keep their original pre-Phase-1 "Fernly today" text except where stamped with an F1.x landing; the **row-level truth** now lives in `docs/Fernly_HRMS_Feature_Parity_Matrix.md` (314 rows, verified at `bb2e046`) and the family-level current statuses in `Fernly_HR_Payroll_Parity_Reassessment.md` §5.
+
 Status legend — **Parity**: functionally equivalent for Fernly's context · **Partial**: works but materially thinner than the benchmark · **Missing**: absent · **Out of scope**: deliberately not built (ADR-014 or architecture boundary; rationale given).
 
 #### Payroll
 
 | # | Feature family | Frappe HR | Fernly today | Status |
 | --- | --- | --- | --- | --- |
-| P1 | Salary component catalog (master data, typed, reusable) | `Salary Component` master with 36 config fields | components JSON embedded per structure; no catalog | **Partial** |
+| P1 | Salary component catalog (master data, typed, reusable) | `Salary Component` master with 36 config fields | **F1.5 LANDED:** `SalaryComponent` master (code-unique, label/kind/mode/defaultAmount/isActive/sortOrder) with `payroll:manage` CRUD, structure-editor picker, offer mapping + auto-registration | **Parity (workspace scope)** (was Partial) |
 | P2 | Component kinds incl. employer contribution | Earning / Deduction / Employer Contribution | `OfferComponent.kind` has all three | **Parity** |
 | P3 | Component formulas & conditions (sandboxed eval) | AST-sandboxed `formula`/`condition` per component | FIXED / PERCENT_OF_BASIC only | **Out of scope** (see §7.0) |
 | P4 | Temporal structure assignment (SSA timeline) | employee+structure+from_date, base/variable, opening balances | `effectiveFrom` + revision history, no variable/opening balances | **Partial** |
 | P5 | Payroll frequencies | Monthly/Fortnightly/Bimonthly/Weekly/Daily | monthly only | **Partial** |
 | P6 | Payment-days proration (DOJ/exit clipping, half days) | 5-setting proration engine, ~100 lines | manual `lopDays`, auto line, days-in-period denominator | **Partial** |
-| P7 | Attendance/LWP-driven proration | Leave or Attendance mode with PPL fractions | none (no attendance module to feed it) | **Missing** |
+| P7 | Attendance/LWP-driven proration | Leave or Attendance mode with PPL fractions | **F1.4 LANDED:** `createPayrollRun`/`addPayslip` derive `lopDays` from attendance (ABSENT=1, HALF_DAY=0.5) + unpaid leave; `lopSource AUTO\|MANUAL` provenance with audited overrides | **Partial** (was Missing) |
 | P8 | Salary slip lifecycle & finality | Draft/Submitted/Cancelled/Withheld + docstatus | OPEN/LOCKED one-way lock, immutable lines | **Partial** |
 | P9 | Duplicate-slip idempotency | employee+period guard, payroll-entry-aware | `@@unique([runId, userId])` + period unique | **Parity** |
 | P10 | Period aggregates (YTD/MTD/component-wise) | YTD + MTD + per-component YTD on slip | calendar-year YTD at read time | **Partial** |
@@ -210,29 +218,29 @@ Status legend — **Parity**: functionally equivalent for Fernly's context · **
 | --- | --- | --- | --- | --- |
 | L1 | Leave type configuration richness | 33-field config doctype | paid/requiresDoc + 4 policy numbers | **Partial** |
 | L2 | Leave policy & assignment | policies + bulk assignment with pro-rata | 1:1 policy per type, year-based entitlement | **Partial** |
-| L3 | Append-only leave ledger | `Leave Ledger Entry` as single source of truth | mutable `LeaveBalance` (entitled/carriedOver/used) | **Missing** |
+| L3 | Append-only leave ledger | `Leave Ledger Entry` as single source of truth | **F1.2 LANDED:** `LeaveLedgerEntry` (GRANT/CARRY/CONSUME/EXPIRE/ADJUST + `isReversal`) is the source of truth; `LeaveBalance` a derived cache; EXPIRE/CARRY writers are F2.4 | **Partial** (was Missing) |
 | L4 | Allocation lifecycle & expiry | periods, CF expiry rows, daily job | year rollover with maxCarryOver cap | **Partial** |
 | L5 | Leave request validation chain | 10-step chain incl. processed-salary guard | notice, consecutive, overlap, balance guards (`hr-shared.ts`) | **Partial** |
 | L6 | Half-day semantics | half_day across application/attendance/payroll | none | **Missing** |
-| L7 | Holiday-aware day counting | holiday lists segmented per range | hardcoded Mon–Fri working days | **Missing** |
+| L7 | Holiday-aware day counting | holiday lists segmented per range | **F1.1 LANDED:** workspace calendar + `workingDaysBetween` + denormalized snapshots (per-employee lists out of scope) | **Parity (workspace scope)** (was Missing) |
 | L8 | Leave block lists | dates + department scoping + allow-list | none | **Missing** |
 | L9 | Leave encashment | encashable-days math, auto-drafts, payout adapter | none | **Missing** |
 | L10 | Compensatory leave | worked-holiday validation, ledger appends | none | **Missing** |
 | L11 | Earned leave accrual | schedule rows + daily job + caps + retries | none | **Missing** |
-| L12 | Attendance records & statuses | Present/Absent/On Leave/Half/WFH + late/early flags | no attendance module | **Missing** |
+| L12 | Attendance records & statuses | Present/Absent/On Leave/Half/WFH + late/early flags | **F1.3 LANDED:** `AttendanceRecord` — 5 statuses, HR marking, leave-derived ON_LEAVE, self-service read; late/early flags absent | **Partial** (was Missing) |
 | L13 | Attendance correction requests | `Attendance Request` with Skip/Overwrite | none | **Missing** |
 | L14 | Check-in capture (device/geo) | `Employee Checkin`, geo-fencing, auto-attendance | none | **Out of scope** (hardware boundary) |
 | L15 | Shift types & assignments | overlap-safe assignments, nightly expiry | none | **Missing** |
 | L16 | Shift schedules / roster automation | hourly materialization + watermarks | none | **Missing** |
 | L17 | Overtime capture → payroll | typed multipliers, slips → Additional Salary | none | **Missing** |
-| L18 | Holiday calendars | lists + assignments + weekly offs | none | **Missing** |
+| L18 | Holiday calendars | lists + assignments + weekly offs | **F1.1 LANDED:** `HolidayCalendarEntry` — workspace calendar, seeded, admin CRUD | **Parity (workspace scope)** (was Missing) |
 
 #### Employee lifecycle
 
 | # | Feature family | Frappe HR | Fernly today | Status |
 | --- | --- | --- | --- | --- |
 | E1 | Employee master breadth | grouping axes, approver wiring, work history | `EmployeeProfile` + org chart + roster | **Partial** |
-| E2 | Employment status lifecycle | Active/Inactive/Suspended/Left, relieving, retirement | no employment status, no probation, no exit dates | **Missing** |
+| E2 | Employment status lifecycle | Active/Inactive/Suspended/Left, relieving, retirement | **F1.6 LANDED:** `employmentStatus` PROBATION/ACTIVE/SUSPENDED/EXITED + probation/notice/LWD fields; guarded `transitionEmployment`; §9.3 hard gate | **Parity (workspace scope)** (was Missing) |
 | E3 | Structured change history (property diffs) | Employee Property History child table | generic audit log (before/after) | **Partial** |
 | E4 | Onboarding templates → tasks | ordered activity templates, user-XOR-role, holiday-aware dates | fixed 5-task default template | **Partial** |
 | E5 | Onboarding gates employee creation | `IncompleteTaskError` | employee created at `markJoined` regardless of checklist | **Missing** |
@@ -287,17 +295,25 @@ Status legend — **Parity**: functionally equivalent for Fernly's context · **
 
 ### 6.2 Coverage summary
 
+Current at `bb2e046` (Phase 1 complete; matches the reassessment's running tally and the matrix doc's family rollup):
+
 | Status | Count | Share |
 | --- | --- | --- |
-| Parity | 9 | 12% |
-| Partial | 21 | 27% |
-| Missing | 41 | 53% |
+| Parity | **12** | 16% |
+| Partial | **23** | 30% |
+| Missing | **36** | 47% |
 | Out of scope (deliberate) | 6 | 8% |
 | **Total families benchmarked** | **77** | 100% |
+
+Row-level (314 rows in the matrix doc): 31 parity · 84 partial · 161 missing · 37 out of scope · 1 beyond-benchmark.
+
+The pre-Phase-1 snapshot this section originally showed (9 / 21 / 41 / 6) is preserved in git history.
 
 Where Fernly is already strong (hiring pipeline, interview scheduling, scorecards, offer e-sign, review lifecycle, notifications), it reached parity with the benchmark's *shape* while staying far smaller. Where it is weakest is the **operational middle**: attendance (L12–L18), the leave ledger (L3), the employment lifecycle (E2, E5–E9), and everything payroll does *after* net pay is computed (P12–P21).
 
 ### 6.3 Narratives for the critical gaps
+
+> **Historical (written pre-Phase-1, kept for the record).** The first two narratives below were the F1.2 and F1.3 problem statements and are now resolved; the third is resolved by F1.6 for the status arc itself (promotion/transfer and offboarding/FnF remain F2.5/F2.1); the fourth and fifth are still current.
 
 **The leave balance is a number, not a story.** Fernly's `LeaveBalance` stores `entitled/carriedOver/used` and mutates them inside approve/cancel transactions. The invariant `used == Σ APPROVED request days` is maintained in code, but there is no audit-grade record of *when* balance changed or *why* — no grant rows, no expiry rows, no per-request consumption rows. The benchmark's answer is the append-only `Leave Ledger Entry`: every allocation, consumption, expiry and encashment is a signed row, balances are aggregates, and cancellation writes reversals. This single refactor unlocks encashment (L9), compensatory leave (L10), earned-leave accrual (L11), carry-forward expiry (L4) and honest leave reports — it is the highest-leverage change in this plan.
 
@@ -341,6 +357,8 @@ Where Fernly is already strong (hiring pipeline, interview scheduling, scorecard
 
 The load-bearing gaps. Each is a prerequisite for Phase 2 features and each lands independently.
 
+> **STATUS: COMPLETE (2026-11-07).** All six epics landed first-commit-clean with CI green, in the order F1.1 (`58b0fa7`) → F1.3 (`5ef0dd1`) → F1.4 (`534b2f4` + CI fixes to `c68e1c3`) → F1.2 (`89c0844`) → F1.5 (`42c6d82`) → F1.6 (`bfd1bd9`); full landing evidence per epic is in `Fernly_HR_Payroll_Parity_Reassessment.md` §7.1. The epic texts below are kept as the accepted specs. Fold-ins that rode along: F-R4 (working-day notice, F1.2), F-R1 (transactional retire+create, F1.5), F-R13 (DB-aware `checkPermission`, F1.5), F-R15-payroll-half (F1.4). Coverage moved 9→12 parity, 41→36 missing.
+
 **F1.1 Holiday calendar.** *Goal:* replace hardcoded Mon–Fri working-day math with a workspace holiday calendar. *Data:* `HolidayCalendarEntry` (date unique, label, `isHalfDay`, `kind PUBLIC/WEEKLY_OFF`). *Scope:* admin CRUD at `hr:admin`; a `workingDaysBetween()` helper in `src/lib/` consumed by leave-day counting and the LOP denominator; seed the current + next year. *Acceptance:* leave request days and payslip `days-in-period` respect holidays; unit tests for the helper; e2e with a holiday inside a request range. *Size:* **S**. *Depends on:* none.
 
 **F1.2 Leave ledger refactor.** *Goal:* append-only `LeaveLedgerEntry` (userId, leaveTypeId, year, `delta` signed, `entryType GRANT/CONSUME/EXPIRE/ADJUST/CARRY`, sourceType/sourceId, note, createdAt) as the source of truth; `LeaveBalance` becomes a derived cache or is dropped in favor of aggregate queries. *Method:* migration backfills ledger rows from existing balances + approved requests (idempotent, reversible via `down.sql` per ADR-008 discipline). *Acceptance:* invariant test `used == Σ CONSUME`; approve/cancel write reversal rows, never mutate; all existing leave e2e stays green unchanged. *Size:* **M**. *Depends on:* none. *This is the highest-leverage epic in the plan.*
@@ -353,9 +371,11 @@ The load-bearing gaps. Each is a prerequisite for Phase 2 features and each land
 
 **F1.6 Employment lifecycle fields.** *Goal:* `employmentStatus PROBATION/ACTIVE/SUSPENDED/EXITED` + `probationEndsAt`, `noticePeriodWeeks`, `lastWorkingDay` on EmployeeProfile; guarded transitions with audit; hireDate feeds probation defaults. *Decision (§9.3):* `PROBATION → ACTIVE` is a **hard gate** — the transition is rejected while the probation review is outstanding. *Acceptance:* transition tests incl. the gate (review pending → transition refused; completed → allowed); directory shows status; exit path (Phase F2.1) can rely on it. *Size:* **S**. *Depends on:* none.
 
-### 7.2 Phase 2 — Growth (9 epics)
+### 7.2 Phase 2 — Growth (10 epics)
 
 Operational parity for daily HR running. Ordered by user-visible value.
+
+> **Re-sequenced 2026-11-07** after the row-level matrix pass: **F2.1 stays next** (it consumes F1.6's EXITED arc), and the new **F2.10 (joining hardening) runs second** — the Onboarding module is a user-named core module, and the matrix's RJ/EM rows show its gaps are concentrated, cheap, and high-visibility (offer expiry/approval, payroll-ready joining, the joining gate, interview-invite email). Recommended order: **F2.1 → F2.10 → F2.2 → F2.3 → F2.4 → F2.5 → F2.6 → F2.7 → F2.8 → F2.9**. F2.9's offer-approval scope moved into F2.10.
 
 **F2.1 Offboarding & full-and-final lite.** Separation checklist (reuse the onboarding checklist machinery with a `SEPARATION` kind), `ExitInterview` record (scheduled/completed + notes), and a computed `FullAndFinalStatement`: payables (current OPEN run's net if unprocessed, unused-leave encashment per F2.2, any pending bonuses) minus receivables (outstanding advances per F2.8) with `UNSETTLED → SETTLED`. Settlement locks editing and audits amounts. *Acceptance:* statement math unit tests; e2e hire→probation→exit→settled. *Size:* **M**. *Depends on:* F1.6.
 
@@ -373,9 +393,11 @@ Operational parity for daily HR running. Ordered by user-visible value.
 
 **F2.8 Expense claims & advances lite.** `ExpenseClaim` (typed line items, total, `approval_status`, `paymentStatus UNPAID/PAID`, per-line receipt `fileRef` string — no upload yet, matching the candidate-document convention) and `EmployeeAdvance` (amount, `status OPEN/SETTLED/RETURNED`, outstanding derived); advance recovery suggests a DEDUCTION PayAdjustment. *Acceptance:* state-machine tests; e2e claim→approve→paid; advance→payslip deduction. *Size:* **L**. *Depends on:* F2.3 (for advance recovery).
 
-**F2.9 Half-day semantics + interview round templates + offer approval.** Half-day leave requests (`halfDayDate` inside range, 0.5-day consumption; attendance HALF_DAY interplay from F1.3); `InterviewRoundTemplate` (skills with expected ratings → scorecard criteria) reused by stage config; offer approval step (D-20): `OfferRecord` gains `DRAFT → APPROVED → SENT`, approve gated to a manager role distinct from the composer. *Acceptance:* each rides its module's existing e2e file. *Size:* **M**. *Depends on:* F1.3.
+**F2.9 Half-day semantics + interview round templates.** Half-day leave requests (`halfDayDate` inside range, 0.5-day consumption; attendance HALF_DAY interplay from F1.3); `InterviewRoundTemplate` (skills with expected ratings → scorecard criteria) reused by stage config. *(The offer-approval step and the whole joining-hardening bundle moved to F2.10 at the 2026-11-07 re-sequencing.)* *Acceptance:* each rides its module's existing e2e file. *Size:* **M**. *Depends on:* F1.3.
 
-### 7.3 Phase 3 — Parity breadth (9 epics)
+**F2.10 Joining hardening — the Onboarding-module epic (added 2026-11-07).** The benchmark's offer→join chain gates and automates what Fernly currently leaves to HR memory (reassessment §7.3, now epic-sized because Onboarding is a named core module). Scope, in the order it hurts: (1) **offer expiry + approval** — `OfferRecord` gains an `EXPIRED` outcome (F-R5: expired links stop counting as "awaiting"; `declineOffer` honors the expiry check) and a `DRAFT → APPROVED → SENT` approval step gated to a manager role distinct from the composer (R11/D-20); (2) **payroll-ready joining** — `markJoined` copies the signed offer into a `SalaryStructure` inside its transaction (or immediately after, with a visible payroll-ready flag) so no joiner is silently unpaid (F-R7); (3) **joining gate** — configurable precondition that every mandatory document is VERIFIED and any background check is terminal before `markJoined` runs (E5/F-R9, mirroring the benchmark's `required_for_employee_creation`); (4) **onboarding template unification** — one template source with assignable tasks, no inline copy in `markJoined` (F-R8); (5) **interview-invite email** — write the reserved `INTERVIEW_INVITE` outbox kind on schedule/reschedule and clean up the orphaned CalendarEvent/Reminder pair (F-R10 + F-R6); (6) **`{{startDate}}` LetterVars fix** (F-R11); (7) **appointment letter** — post-sign printable letter with the benchmark's placeholder discipline (R12), riding the print pattern the offer-sign page already proves. *Acceptance:* expiry/approval state-machine tests (live vs expired link both counted honestly); join→structure roundtrip e2e; gate-refusal e2e; invite email e2e; appointment-letter render test. *Size:* **L**. *Depends on:* none hard — F1.5's catalog makes (2) a mapping, not a copy. *Runs second, after F2.1.*
+
+### 7.3 Phase 3 — Parity breadth (10 epics)
 
 **F3.1 Payroll corrections & arrears-lite.** Re-simulate a LOCKED period under a corrected input (structure change or LWP correction) → emit the delta as a PayAdjustment in the next OPEN run with a link back. Toy-scale reverse-simulation, honestly labeled. *Size:* **M**.
 
@@ -393,21 +415,25 @@ Operational parity for daily HR running. Ordered by user-visible value.
 
 **F3.8 Grievance tracking.** Typed grievance with `Open → Investigated → Resolved/Invalid`. *Size:* **S**.
 
-**F3.9 Report suite.** Leave balances, monthly attendance sheet, salary register, recruitment funnel — CSV/XLSX export + analytics views, role-scoped (ADR-013 pattern). *Size:* **M**.
+**F3.9 Report suite.** Leave balances, monthly attendance sheet, salary register, recruitment funnel — CSV/XLSX export + analytics views, role-scoped (ADR-013 pattern). *(2026-11-07: scope now explicitly includes the humane subset of the benchmark's analytics surface surfaced by the matrix — the leave-ledger report view, key number cards on existing views, and the `employee_exits` report once F2.1 lands — NOT a full dashboard/chart framework.)* *Size:* **M**.
+
+**F3.10 Engagement reminders lite (added 2026-11-07).** Birthday + work-anniversary + advance-holiday reminders riding the proven cron-route pattern (`/api/cron/prune-audit`) with MailOutbox honesty — surfaced by the row-level matrix (benchmark jobs EM-J01–03, notification engine PL-02; the `employee_birthday` report rides along). Small, high-visibility, zero new infrastructure. *Size:* **S**.
 
 ### 7.4 Sequencing summary
 
 ```
-Phase 1 (Foundation)      Phase 2 (Growth)                    Phase 3 (Parity)
-F1.1 holidays ────────────► F1.4 LOP derivation
+Phase 1 (Foundation)      Phase 2 (Growth)                       Phase 3 (Parity)
+F1.1 holidays ───────────► F1.4 LOP derivation   [all DONE]
 F1.2 leave ledger ────────► F2.2 encashment, F2.4 earned leave
 F1.3 attendance ──────────► F2.9 half-days, F1.4
 F1.5 component catalog ──► F2.3 PayAdjustment ─► F2.8 advances, F3.1 corrections
 F1.6 employment status ──► F2.1 offboarding/FnF, F2.5 promotion/transfer
+(2026-11-07 order)        F2.1 → F2.10 joining hardening → F2.2 → F2.3 → F2.4
+                            → F2.5 → F2.6 → F2.7 → F2.8 → F2.9
 (independent)              F2.6 delivery/exports, F2.7 appraisal cycles
 ```
 
-Suggested order within Phase 1: F1.1 → F1.3 → F1.4 (visible value: attendance + honest LOP), then F1.2 → F1.5 → F1.6 (structural depth). Each epic follows the house pipeline: plan → review → code → code review → tests (unit + manual + automation) → final review → CI benchmark → doc update → one commit → push → CI green.
+Suggested order within Phase 1 (executed): F1.1 → F1.3 → F1.4 (visible value: attendance + honest LOP), then F1.2 → F1.5 → F1.6 (structural depth) — **all six landed; Phase 1 complete**. Phase 2 order after the 2026-11-07 re-sequencing: **F2.1 → F2.10 → F2.2 → F2.3 → F2.4 → F2.5 → F2.6 → F2.7 → F2.8 → F2.9**. Each epic follows the house pipeline: plan → review → code → code review → tests (unit + manual + automation) → final review → CI benchmark → doc update → one commit → push → CI green.
 
 ---
 
@@ -446,6 +472,10 @@ Suggested order within Phase 1: F1.1 → F1.3 → F1.4 (visible value: attendanc
 | Employee Grievance | `Grievance` (F3.8) | Phase 3 |
 | Staffing Plan / Job Requisition | staffing models (F3.6) | Phase 3 |
 | Payroll Settings / HR Settings | workspace config module (exists) | extend |
+| Dashboard chart / number card (35 + 37) | analytics views (extend the humane subset — key cards on existing views) | Phase 3 (F3.9) |
+| Email notification templates (7) | `MailOutbox` kinds (extend; `INTERVIEW_INVITE` reserved) | Phase 2–3 (F2.10, F3.10) |
+| Employee reminder engine (birthday/anniversary/holiday) | cron-route job + MailOutbox (new, F3.10) | Phase 3 |
+| Appointment Letter / Template | post-sign printable letter (new, F2.10) | Phase 2 |
 
 ---
 
@@ -459,6 +489,7 @@ Suggested order within Phase 1: F1.1 → F1.3 → F1.4 (visible value: attendanc
 4. **ADR-014 boundary creep.** F3.4 (deduction slabs) and F2.2 (encashment rates) brush against "statutory-looking" math. Every such surface needs the same honest framing as the existing banner — and F3.4 explicitly requires an ADR update.
 5. **CI budget.** Each epic adds unit + e2e coverage; the bundle budget and e2e runtime are finite. New views must stay lean and reuse existing test harnesses rather than adding per-feature browser flows.
 6. **Scope gravity.** The benchmark is an ERP; this plan is deliberately a fraction of it. Every future "wouldn't it be nice" should be checked against §7.0's declination table first.
+7. **Analytics & mobile breadth is the new scope magnet (2026-11-07).** The row-level matrix surfaced ~135 benchmark artifacts the 77-family matrix hid (charts, cards, notifications, print formats, the public jobs board, the 16-job scheduler, the 34-method PWA API, the roster app). The plan owns the humane subset (F2.6 exports, F2.10 joining emails, F3.9 report suite + key cards, F3.10 engagement reminders) and **deliberately declines the rest**: no dashboard/chart framework, no mobile/PWA app, no standalone roster UI — a web-only product at ≤200 employees does not need them. Any widening of that line is a product decision, not an epic-side effect.
 
 **Product decisions — resolved 2026-11-06 (locked; recorded from the planning session).**
 
@@ -473,6 +504,8 @@ Suggested order within Phase 1: F1.1 → F1.3 → F1.4 (visible value: attendanc
 ## Appendix A — Complete Frappe HR doctype inventory
 
 Generated by `scripts/hrms_inventory.py` — every doctype in `hrms/hr` and `hrms/payroll` at commit `159548fa`. Submittable doctypes are marked \*. "py lines" = controller size.
+
+> **Pin note (2026-11-07):** the current benchmark pin is `88161025`; the list below is materially identical there — the only delta across `159548fa → 1c28527 → 88161025` is that the `Appointment Letter content` child table (hr) was merged into its parent doctype, moving the totals to **157 doctypes (75 standard / 35 child / 4 singles in hr)**. The surfaces this appendix never counted — 35 charts, 37 cards, 7 notifications, 8 print formats, 1 web form, 3 www pages, 16 scheduler jobs, 34 PWA API methods, the roster app — are enumerated and mapped in `Fernly_HRMS_Feature_Parity_Matrix.md` (§§2–9 + Appendix A/B), which is the authoritative inventory going forward.
 
 
 ### Module: hr
@@ -685,9 +718,10 @@ Generated by `scripts/hrms_inventory.py` — every doctype in `hrms/hr` and `hrm
 
 ## Appendix B — Sources and Reproduction
 
-- Benchmark clone: `frappe/hrms` @ `159548fa676d51e0bc7ce85c6b6516d3d7b7316a` (2026-11-03), shallow clone under `.analysis/hrms` (excluded from the repo via `.git/info/exclude`).
+- Benchmark clone: `frappe/hrms` — `159548fa` (2026-11-03, original) → `1c28527` (2026-11-06, reassessment) → **`88161025` (2026-11-07 refresh, current pin)**; partial clone (`--filter=blob:none --depth 300`) under `.analysis/hrms` (excluded from the repo via `.git/info/exclude`). Delta `1c28527 → 88161025`: 5 commits / 4 files, appointment-letter UI polish only — logged row-by-row in `Fernly_HRMS_Feature_Parity_Matrix.md` Appendix B.
 - Split verification: GitHub contents API for `frappe/erpnext` `main` (2026-11-06) — no `hr/`/`payroll/` modules in the core package.
-- Structural inventory: `scripts/hrms_inventory.py` → `.analysis/hrms_inventory.json` + Appendix A (below). Reproduce with `python3 scripts/hrms_inventory.py` after cloning hrms to `.analysis/hrms`.
-- Fernly state: repo at commit `b932258` (`origin/main`), all paths cited inline.
-- Functional depth: core hrms controllers read in full (salary_slip, payroll_entry, salary_structure_assignment, salary_component, leave_application, leave_allocation, leave_ledger_entry, attendance, employee_checkin, shift_type, expense_claim, employee_onboarding, full_and final_statement, job_offer, interview, appraisal, gratuity, and others); state machines and validation chains above are extracted from those files with approximate line references.
+- Structural inventory: `scripts/hrms_inventory.py` → `.analysis/hrms_inventory.json` + Appendix A. Reproduce with `python3 scripts/hrms_inventory.py` after cloning hrms to `.analysis/hrms`. (Known gap, closed by manual enumeration this pass: the script's `collect_json_dir` glob misses nested notification / print-format / web-form dirs — see matrix Appendix A.)
+- Fernly state: repo at `b932258` at original writing; **`bb2e046` at the 2026-11-07 refresh** (Phase 1 complete), all paths cited inline and re-verified.
+- Functional depth: core hrms controllers read in full (salary_slip, payroll_entry, salary_structure_assignment, salary_component, leave_application, leave_allocation, leave_ledger_entry, attendance, employee_checkin, shift_type, expense_claim, employee_onboarding, full_and_final_statement, job_offer, interview, appraisal, gratuity, and others); state machines and validation chains above are extracted from those files with approximate line references.
+- Row-level mapping: `docs/Fernly_HRMS_Feature_Parity_Matrix.md` — 314 rows covering every doctype + report + chart + card + notification + print format + web form + www page + scheduler job + PWA API method + cross-cutting behavior, verified at `bb2e046`.
 - Related internal docs: `docs/PRD.md`, `docs/HR_MODULE_PLAN.md`, `docs/RECRUITMENT_MODULE_PLAN.md`, `docs/Fernly_Persona_Acceptance_Assessment.md`, `docs/DECISIONS.md` (ADR-008, ADR-009, ADR-014).
