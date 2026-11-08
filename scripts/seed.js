@@ -1613,12 +1613,17 @@ async function main() {
     ["Remy Laurent", "People Operations Lead", "MANAGEMENT", "2025-05-20", "Paris, France", "+33 6 55 55 01 13", "People ops, onboarding design, coaching"],
   ];
   let profileCount = 0;
+  // EM-B01 (S13) — the employee-number series mirrors the migration's
+  // deterministic backfill: EMP-0001… in profileSeed (createdAt) order.
+  let empSeq = 0;
   for (const [name, jobTitle, department, hireDate, location, phone, skills] of profileSeed) {
     const uid = userByName.get(name);
     if (!uid) continue;
+    empSeq += 1;
     await db.employeeProfile.create({
       data: {
         userId: uid,
+        employeeNumber: `EMP-${String(empSeq).padStart(4, "0")}`,
         jobTitle,
         department,
         hireDate: new Date(`${hireDate}T00:00:00.000Z`),

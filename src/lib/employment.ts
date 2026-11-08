@@ -114,3 +114,20 @@ export function defaultProbationEndsAt(hireDate: Date): Date {
 export function isoDateOrNull(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
 }
+
+// ---------------------------------------------------------------------------
+// EM-B01 (S13) — the employee-number series
+// ---------------------------------------------------------------------------
+
+/** EMP-XXXX: four-digit zero-padded sequence (EMP-0001, EMP-0002, …). Pure. */
+export function formatEmployeeNumber(seq: number): string {
+  const n = Math.max(1, Math.floor(seq));
+  return `EMP-${String(n).padStart(4, "0")}`;
+}
+
+/** Parse an employee number's sequence suffix; null for foreign formats. */
+export function parseEmployeeNumber(value: string | null | undefined): number | null {
+  if (typeof value !== "string") return null;
+  const m = /^EMP-(\d{4,})$/.exec(value.trim());
+  return m ? Number(m[1]) : null;
+}

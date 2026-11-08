@@ -32,7 +32,7 @@ const VALID_DEPARTMENTS = new Set<string>(DEPARTMENT_LABELS.map((d) => d.key));
 
 function serialize(
   row: {
-    id: string; userId: string; jobTitle: string; department: string;
+    id: string; userId: string; employeeNumber: string | null; jobTitle: string; department: string;
     hireDate: Date | null; phone: string; location: string;
     emergencyContactName: string; emergencyContactPhone: string;
     skills: string; notes: string; createdAt: Date; updatedAt: Date;
@@ -44,6 +44,7 @@ function serialize(
   return {
     id: row.id,
     userId: row.userId,
+    employeeNumber: row.employeeNumber,
     name: user.name,
     email: user.email,
     role: user.role,

@@ -186,6 +186,16 @@ describe("HR module leave models are declared", () => {
     expect(block).toMatch(/userId\s+String\s+@unique/);
     expect(block).toMatch(/jobTitle\s+String\s+@default\(""\)/);
     expect(block).toMatch(/hireDate\s+DateTime\?/);
+    // EM-B01 (S13) — the employee-number series: unique, assigned at
+    // creation, deterministically backfilled.
+    expect(block).toMatch(/employeeNumber\s+String\?\s+@unique/);
+    const s13 = resolve(repoRoot, "prisma", "migrations", "20261126600000_employee_number");
+    expect(existsSync(resolve(s13, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(s13, "down.sql"))).toBe(true);
+    const s13up = readFileSync(resolve(s13, "migration.sql"), "utf8");
+    expect(s13up).toMatch(/ADD COLUMN "employeeNumber" TEXT/);
+    expect(s13up).toMatch(/CREATE UNIQUE INDEX "EmployeeProfile_employeeNumber_key"/);
+    expect(s13up).toMatch(/'EMP-' \|\| LPAD/);
   });
 
   it("the hr_leave migration exists with a down.sql rollback (repo convention)", () => {

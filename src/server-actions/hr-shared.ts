@@ -15,6 +15,7 @@ import {
   type HolidayLookup,
 } from "@/lib/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
+import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/employment";
 import {
   resolveLeavePolicy,
   dueGrantOps,
@@ -684,4 +685,23 @@ export async function removeDerivedOnLeaveAttendance(
     where: { userId: request.userId, source: "DERIVED", status: "ON_LEAVE", date: { in: doomed } },
   });
   return doomed.length;
+}
+
+// ---------------------------------------------------------------------------
+// EM-B01 (S13) — the employee-number series' ONE assignment helper
+// ---------------------------------------------------------------------------
+
+/** The next employee number (EMP-XXXX) inside the caller's transaction:
+ * max existing sequence + 1, formatted by the pure kernel. Lexicographic
+ * max works because the zero-padded series sorts numerically; the parsed
+ * suffix keeps working past EMP-9999. */
+export async function nextEmployeeNumber(
+  tx: Pick<Prisma.TransactionClient, "employeeProfile">,
+): Promise<string> {
+  const last = await tx.employeeProfile.findFirst({
+    orderBy: { employeeNumber: "desc" },
+    select: { employeeNumber: true },
+  });
+  const seq = parseEmployeeNumber(last?.employeeNumber) ?? 0;
+  return formatEmployeeNumber(seq + 1);
 }

@@ -1048,6 +1048,12 @@ model SalaryComponent {
 // manager display comes from the existing User.managerId org chart — this
 // table adds NO manager field, avoiding a second source of truth.
 model EmployeeProfile {
+  // EM-B01 (S13) — the workspace employee-number series (EMP-0001…).
+  // Assigned at creation through the ONE nextEmployeeNumber helper
+  // (hr-shared) inside the creating transaction; unique; the migration
+  // backfills existing profiles deterministically by (createdAt, id).
+  // Nullable only so pre-S13 rows and exotic integrations stay legal.
+  employeeNumber String? @unique
   id                   String    @id @default(cuid())
   userId               String    @unique
   jobTitle             String    @default("")

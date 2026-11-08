@@ -63,6 +63,7 @@ import {
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit, sendOutboxMail, readOnboardingTemplate, instantiateChecklist } from "./shared";
+import { nextEmployeeNumber } from "./hr-shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 // R3 — decisions & candidate email outbox.
@@ -2216,6 +2217,10 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
       await tx.employeeProfile.create({
         data: {
           userId: created.id,
+          // EM-B01 (S13) — the next number in the workspace series, read
+          // inside the SAME transaction (a concurrent join racing the max
+          // surfaces as a unique-violation the friendly error names).
+          employeeNumber: await nextEmployeeNumber(tx),
           jobTitle: candidate.position || "",
           department: candidate.department || "",
           hireDate: new Date(),

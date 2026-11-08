@@ -207,6 +207,9 @@ export function DirectoryTab() {
                 <Avatar name={p.name} color="forest" size={36} />
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-foreground truncate" data-testid="directory-name">{p.name}</div>
+                  {p.employeeNumber && (
+                    <div className="text-[0.625rem] font-mono text-muted-foreground" data-testid="directory-emp-no">{p.employeeNumber}</div>
+                  )}
                   <div className="text-[0.6875rem] text-muted-foreground truncate">{p.jobTitle || "—"}</div>
                 </div>
               </div>

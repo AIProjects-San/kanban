@@ -299,6 +299,8 @@ export interface OffboardingOverviewT {
 export interface EmployeeProfileT {
   id: string;
   userId: string;
+  /** EM-B01 (S13) — the workspace series (EMP-0001…); null = pre-S13 row. */
+  employeeNumber: string | null;
   name: string;
   email: string;
   role: string;

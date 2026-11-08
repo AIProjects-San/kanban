@@ -10,7 +10,8 @@ import {
   canTransition,
   defaultProbationEndsAt,
   isEmploymentStatus,
-} from "@/lib/employment";
+  formatEmployeeNumber,
+  parseEmployeeNumber } from "@/lib/employment";
 
 // ---------------------------------------------------------------------------
 // F1.6 — employment lifecycle vocabulary (lib/employment.ts): the pure
@@ -116,5 +117,27 @@ describe("§9.3 gate inputs", () => {
 
   it("PROBATION is a review kind, STANDARD stays the default", () => {
     expect(REVIEW_KINDS).toEqual(["STANDARD", "PROBATION"]);
+  });
+});
+
+
+describe("EM-B01 (S13) — the employee-number series", () => {
+  it("formats the zero-padded EMP-XXXX series", () => {
+    expect(formatEmployeeNumber(1)).toBe("EMP-0001");
+    expect(formatEmployeeNumber(42)).toBe("EMP-0042");
+    expect(formatEmployeeNumber(9999)).toBe("EMP-9999");
+    expect(formatEmployeeNumber(10000)).toBe("EMP-10000"); // widens past 4 digits
+    expect(formatEmployeeNumber(0)).toBe("EMP-0001"); // floors at 1
+    expect(formatEmployeeNumber(-3)).toBe("EMP-0001");
+    expect(formatEmployeeNumber(7.9)).toBe("EMP-0007"); // floors fractions
+  });
+
+  it("parses its own output; foreign formats parse to null", () => {
+    expect(parseEmployeeNumber("EMP-0042")).toBe(42);
+    expect(parseEmployeeNumber("EMP-10000")).toBe(10000);
+    expect(parseEmployeeNumber(null)).toBeNull();
+    expect(parseEmployeeNumber("")).toBeNull();
+    expect(parseEmployeeNumber("EMP-")).toBeNull();
+    expect(parseEmployeeNumber("E-0042")).toBeNull();
   });
 });

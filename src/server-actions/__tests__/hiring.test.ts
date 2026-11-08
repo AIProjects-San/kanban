@@ -1704,6 +1704,11 @@ describe("R6 — markJoined", () => {
     expect(db.employeeProfile.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ userId: "u-new", jobTitle: "Senior Frontend Engineer" }),
     }));
+    // S13 (EM-B01) — the profile carries the next number in the workspace
+    // series (the mock's findFirst defaults to null → EMP-0001).
+    const profileArg = db.employeeProfile.create.mock.calls[0][0] as { data: { employeeNumber?: string } };
+    expect(profileArg.data.employeeNumber).toMatch(/^EMP-\d{4,}$/);
+    expect(profileArg.data.employeeNumber).toBe("EMP-0001");
     // 3 — the standard 5-task onboarding checklist (F2.10: instantiated from
     // the ONE template source — constant fallback when the table is empty).
     const checklistArg = db.onboardingChecklist.create.mock.calls[0][0] as {

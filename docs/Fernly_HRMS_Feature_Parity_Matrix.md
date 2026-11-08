@@ -295,7 +295,7 @@ The benchmark's `Employee` doctype lives in ERPNext but is functionally owned by
 
 | ID | Benchmark behavior | Fernly @ `bb2e046` | Status | Family / epic |
 | --- | --- | --- | --- | --- |
-| EM-B01 | Employee naming (series / employee number / full name) | deterministic seed emails + cuid ids; no employee-number series | Partial | E1 |
+| EM-B01 | Employee naming (series / employee number / full name) | S13: `EmployeeProfile.employeeNumber` (unique, EMP-0001…) — the ONE `nextEmployeeNumber` helper assigns inside the creating transaction (markJoined); the migration backfills deterministically by (createdAt, id); the directory renders the number under the name; seed mirrors the backfill | **Parity (workspace scope)** (was Partial) | E1 / **S13 DONE** |
 | EM-B02 | Relieving date + retirement-age math | `lastWorkingDay` (F1.6) on the EXITED arc; retirement-age concept declined | Partial | E2 |
 | EM-B03 | Work-history rows maintained on every employee change | — (audit log only) | Missing | E3 / F2.5 |
 | EM-B04 | Approver role auto-grant + doc sharing on approver wiring | static ROLE_PERMISSIONS floor + DB-granted ceiling (`rbac.ts`, F1.5's `checkPermission`); no per-approver grants | Partial | E1 |
