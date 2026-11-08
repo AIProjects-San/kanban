@@ -178,6 +178,8 @@ export type AuditAction =
   | "payroll.adjustment_created"
   | "payroll.adjustments_applied"
   // P2 (LV-09, F2.2) — leave encashment riding the adapter.
+  // P3 (PR-13/PR-B11, F3.1) — arrears reverse-simulation.
+  | "payroll.arrears_generated"
   | "leave.encashment_requested"
   | "leave.encashment_approved"
   | "leave.encashment_rejected";
@@ -333,6 +335,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.component_deleted": { icon: BookOpen, cls: "text-rose-500 bg-rose-500/10" },
   "payroll.adjustment_created": { icon: CircleDollarSign, cls: "text-teal-500 bg-teal-500/10" },
   "payroll.adjustments_applied": { icon: CircleDollarSign, cls: "text-sky-500 bg-sky-500/10" },
+  "payroll.arrears_generated": { icon: RotateCcw, cls: "text-indigo-500 bg-indigo-500/10" },
   "leave.encashment_requested": { icon: CircleDollarSign, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_approved": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_rejected": { icon: CircleDollarSign, cls: "text-rose-500 bg-rose-500/10" },

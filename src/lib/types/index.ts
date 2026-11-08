@@ -805,6 +805,24 @@ export interface PayAdjustmentT {
   createdAt: string;
 }
 
+/** P3 (PR-13/PR-B11, F3.1) — one LOCKED slip's arrears verdict from the
+ * preview: what it paid, what it would pay under the current structure,
+ * the positive delta owed (arrears), and whether an ARREARS row already
+ * covers it (idempotency). */
+export interface ArrearsPreviewT {
+  payslipId: string;
+  userId: string;
+  userName: string;
+  slipNo: string;
+  period: string;
+  storedNet: number;
+  simulatedNet: number;
+  delta: number;
+  owed: boolean;
+  reason: string;
+  alreadyArranged: boolean;
+}
+
 /** P2 (LV-09, F2.2) — one encashment request: days sold back from a leave
  * balance, paying through the P1 PayAdjustment adapter on the payout
  * period's run. status: PENDING → APPROVED | REJECTED; APPROVED → PAID

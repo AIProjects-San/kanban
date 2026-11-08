@@ -947,3 +947,13 @@ export const decideLeaveEncashmentSchema = z.object({
   decision: z.enum(["APPROVE", "REJECT"]),
   note: z.string().trim().max(500).default(""),
 }).strict();
+
+// P3 (PR-13/PR-B11, F3.1) — arrears preview + generation.
+export const arrearsPreviewSchema = z.object({
+  runId: cuidish,
+}).strict();
+
+export const generateArrearsSchema = z.object({
+  runId: cuidish,
+  payoutPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a payout month (YYYY-MM)."),
+}).strict();

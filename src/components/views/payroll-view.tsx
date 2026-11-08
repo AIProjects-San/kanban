@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, CalendarPlus, CircleDollarSign, Landmark, Loader2, Lock, Plus, Scale, Wallet } from "lucide-react";
+import { BookOpen, CalendarPlus, CircleDollarSign, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -27,6 +27,7 @@ import { StructureModal } from "../ui/structure-modal";
 import { PayslipModal } from "../ui/payslip-modal";
 import { ComponentCatalogModal } from "../ui/component-catalog-modal";
 import { PayAdjustmentModal } from "../ui/pay-adjustment-modal";
+import { ArrearsModal } from "../ui/arrears-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -55,6 +56,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   // P1 (F2.3) — the adjustment adapter panel + the explicit apply action.
   const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
   const [applyingAdjustments, setApplyingAdjustments] = useState(false);
+  // P3 (F3.1) — the arrears reverse-simulation (LOCKED runs only).
+  const [arrearsRun, setArrearsRun] = useState<PayrollRunT | null>(null);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -242,6 +245,17 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
               )}>
                 {r.status}
               </span>
+              {r.status === "LOCKED" && (
+                <button
+                  className="f-btn f-btn-ghost text-xs no-print"
+                  onClick={() => setArrearsRun(r)}
+                  type="button"
+                  data-testid={`arrears-btn-${r.period}`}
+                  title="Re-simulate this paid period under the current structures"
+                >
+                  <RotateCcw size={13} /> Arrears
+                </button>
+              )}
               {r.status === "OPEN" && (
                 lockConfirmId === r.id ? (
                   <span className="flex items-center gap-1.5 no-print">
@@ -382,6 +396,15 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         employees={employees}
         defaultPeriod={payslipsRun?.period ?? newPeriod}
       />
+      {arrearsRun && (
+        <ArrearsModal
+          open={arrearsRun != null}
+          onClose={() => setArrearsRun(null)}
+          runId={arrearsRun.id}
+          runPeriod={arrearsRun.period}
+          onGenerated={load}
+        />
+      )}
       <StructureModal
         open={structureModalOpen}
         onClose={() => setStructureModalOpen(false)}
