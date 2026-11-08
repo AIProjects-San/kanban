@@ -385,6 +385,16 @@ function TypeCard({ type, onChanged }: { type: LeaveTypeT; onChanged: () => Prom
           <span className={cn("text-[0.625rem] px-1.5 py-0.5 rounded", type.paid ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400")}>
             {type.paid ? "paid" : "unpaid"}
           </span>
+          {(type.policy?.allocationStrategy ?? "MANUAL") !== "MANUAL" && (
+            <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400">
+              {STRATEGY_LABELS[type.policy?.allocationStrategy ?? "MANUAL"]}
+            </span>
+          )}
+          {type.policy?.allowNegative && (
+            <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">
+              advance
+            </span>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-center">
@@ -421,6 +431,87 @@ function TypeCard({ type, onChanged }: { type: LeaveTypeT; onChanged: () => Prom
   );
 }
 
+// ---------------------------------------------------------------------------
+// F2.4 — leave policy strategy form state (docs/Fernly_Policy_Engine_Design.md
+// §4.1). The wire type (LeaveTypeT.policy) keeps the strategy knobs optional
+// for backward compatibility; the FORM state is always complete so both the
+// create and the edit paths send the full block (an update that silently
+// reset a strategy to MANUAL is exactly the drift this avoids).
+// ---------------------------------------------------------------------------
+
+const STRATEGY_LABELS: Record<string, string> = {
+  MANUAL: "manual",
+  ANNUAL_LUMP_SUM: "lump sum",
+  EARNED: "earned",
+  AFTER_SERVICE: "after service",
+};
+
+interface PolicyFormState {
+  annualDays: number;
+  maxCarryOver: number;
+  minNoticeDays: number;
+  maxConsecutiveDays: number;
+  allocationStrategy: NonNullable<LeaveTypeT["policy"]>["allocationStrategy"];
+  accrualFrequency: NonNullable<NonNullable<LeaveTypeT["policy"]>["accrualFrequency"]>;
+  allocateOnDay: NonNullable<NonNullable<LeaveTypeT["policy"]>["allocateOnDay"]>;
+  accrualRounding: NonNullable<NonNullable<LeaveTypeT["policy"]>["accrualRounding"]>;
+  accrualCap: number | null;
+  grantOn: NonNullable<NonNullable<LeaveTypeT["policy"]>["grantOn"]>;
+  prorateForJoiners: boolean;
+  minServiceMonths: number;
+  accrueDuringProbation: boolean;
+  allowNegative: boolean;
+  negativeFloor: number;
+  carryExpiresAfterMonths: number | null;
+  countHolidaysInLeave: boolean;
+}
+
+function defaultPolicyForm(): PolicyFormState {
+  return {
+    annualDays: 20,
+    maxCarryOver: 5,
+    minNoticeDays: 1,
+    maxConsecutiveDays: 15,
+    allocationStrategy: "MANUAL",
+    accrualFrequency: "MONTHLY",
+    allocateOnDay: "FIRST",
+    accrualRounding: "FLOOR_QUARTER",
+    accrualCap: null,
+    grantOn: "PERIOD_START",
+    prorateForJoiners: true,
+    minServiceMonths: 0,
+    accrueDuringProbation: true,
+    allowNegative: false,
+    negativeFloor: 0,
+    carryExpiresAfterMonths: null,
+    countHolidaysInLeave: false,
+  };
+}
+
+function policyFormFrom(policy: LeaveTypeT["policy"]): PolicyFormState {
+  const d = defaultPolicyForm();
+  if (!policy) return d;
+  return {
+    annualDays: policy.annualDays ?? d.annualDays,
+    maxCarryOver: policy.maxCarryOver ?? d.maxCarryOver,
+    minNoticeDays: policy.minNoticeDays ?? d.minNoticeDays,
+    maxConsecutiveDays: policy.maxConsecutiveDays ?? d.maxConsecutiveDays,
+    allocationStrategy: policy.allocationStrategy ?? d.allocationStrategy,
+    accrualFrequency: policy.accrualFrequency ?? d.accrualFrequency,
+    allocateOnDay: policy.allocateOnDay ?? d.allocateOnDay,
+    accrualRounding: policy.accrualRounding ?? d.accrualRounding,
+    accrualCap: policy.accrualCap ?? null,
+    grantOn: policy.grantOn ?? d.grantOn,
+    prorateForJoiners: policy.prorateForJoiners ?? d.prorateForJoiners,
+    minServiceMonths: policy.minServiceMonths ?? d.minServiceMonths,
+    accrueDuringProbation: policy.accrueDuringProbation ?? d.accrueDuringProbation,
+    allowNegative: policy.allowNegative ?? d.allowNegative,
+    negativeFloor: policy.negativeFloor ?? d.negativeFloor,
+    carryExpiresAfterMonths: policy.carryExpiresAfterMonths ?? null,
+    countHolidaysInLeave: policy.countHolidaysInLeave ?? d.countHolidaysInLeave,
+  };
+}
+
 function PolicyStat({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-md bg-muted/50 px-2 py-1.5">
@@ -435,12 +526,7 @@ function EditTypeModal({
 }: { type: LeaveTypeT; open: boolean; onClose: () => void; onChanged: () => Promise<void> }) {
   const [name, setName] = useState(type.name);
   const [color, setColor] = useState(type.color);
-  const [policy, setPolicy] = useState({
-    annualDays: type.policy?.annualDays ?? 20,
-    maxCarryOver: type.policy?.maxCarryOver ?? 5,
-    minNoticeDays: type.policy?.minNoticeDays ?? 1,
-    maxConsecutiveDays: type.policy?.maxConsecutiveDays ?? 15,
-  });
+  const [policy, setPolicy] = useState<PolicyFormState>(policyFormFrom(type.policy));
   const [busy, setBusy] = useState(false);
 
   return (
@@ -487,7 +573,7 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
   const [color, setColor] = useState("#8b5cf6");
   const [requiresDoc, setRequiresDoc] = useState(false);
   const [paid, setPaid] = useState(true);
-  const [policy, setPolicy] = useState({ annualDays: 20, maxCarryOver: 5, minNoticeDays: 1, maxConsecutiveDays: 15 });
+  const [policy, setPolicy] = useState<PolicyFormState>(defaultPolicyForm());
   const [busy, setBusy] = useState(false);
 
   return (
@@ -545,28 +631,212 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
 function PolicyFields({
   policy, setPolicy,
 }: {
-  policy: { annualDays: number; maxCarryOver: number; minNoticeDays: number; maxConsecutiveDays: number };
-  setPolicy: (p: { annualDays: number; maxCarryOver: number; minNoticeDays: number; maxConsecutiveDays: number }) => void;
+  policy: PolicyFormState;
+  setPolicy: (p: PolicyFormState) => void;
 }) {
   const num = (v: string): number => (v === "" ? 0 : Number(v));
+  const set = (patch: Partial<PolicyFormState>) => setPolicy({ ...policy, ...patch });
+  const strategy = policy.allocationStrategy;
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <Field label="Days / year">
-        <input id="pf-annual" type="number" min={0} max={365} step={0.5} className="f-input" value={policy.annualDays}
-          onChange={(e) => setPolicy({ ...policy, annualDays: num(e.target.value) })} required />
-      </Field>
-      <Field label="Max carry-over">
-        <input id="pf-carry" type="number" min={0} max={365} step={0.5} className="f-input" value={policy.maxCarryOver}
-          onChange={(e) => setPolicy({ ...policy, maxCarryOver: num(e.target.value) })} required />
-      </Field>
-      <Field label="Min notice (days)">
-        <input id="pf-notice" type="number" min={0} max={90} className="f-input" value={policy.minNoticeDays}
-          onChange={(e) => setPolicy({ ...policy, minNoticeDays: Math.round(num(e.target.value)) })} required />
-      </Field>
-      <Field label="Max consecutive (days)">
-        <input id="pf-max" type="number" min={1} max={365} className="f-input" value={policy.maxConsecutiveDays}
-          onChange={(e) => setPolicy({ ...policy, maxConsecutiveDays: Math.max(1, Math.round(num(e.target.value))) })} required />
-      </Field>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Field label="Days / year">
+          <input id="pf-annual" type="number" min={0} max={365} step={0.5} className="f-input" value={policy.annualDays}
+            onChange={(e) => set({ annualDays: num(e.target.value) })} required />
+        </Field>
+        <Field label="Max carry-over">
+          <input id="pf-carry" type="number" min={0} max={365} step={0.5} className="f-input" value={policy.maxCarryOver}
+            onChange={(e) => set({ maxCarryOver: num(e.target.value) })} required />
+        </Field>
+        <Field label="Min notice (days)">
+          <input id="pf-notice" type="number" min={0} max={90} className="f-input" value={policy.minNoticeDays}
+            onChange={(e) => set({ minNoticeDays: Math.round(num(e.target.value)) })} required />
+        </Field>
+        <Field label="Max consecutive (days)">
+          <input id="pf-max" type="number" min={1} max={365} className="f-input" value={policy.maxConsecutiveDays}
+            onChange={(e) => set({ maxConsecutiveDays: Math.max(1, Math.round(num(e.target.value))) })} required />
+        </Field>
+      </div>
+
+      {/* F2.4 — allocation strategy (docs/Fernly_Policy_Engine_Design.md §4.1) */}
+      <fieldset className="border rounded-lg p-3 space-y-3">
+        <legend className="px-1 text-xs uppercase tracking-wide text-muted-foreground">Allocation strategy</legend>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Field label="Strategy">
+            <select
+              id="pf-strategy"
+              className="f-input"
+              value={strategy}
+              onChange={(e) => set({ allocationStrategy: e.target.value as PolicyFormState["allocationStrategy"] })}
+            >
+              <option value="MANUAL">Manual (grant on first use)</option>
+              <option value="ANNUAL_LUMP_SUM">Annual lump sum</option>
+              <option value="EARNED">Earned (accrues)</option>
+              <option value="AFTER_SERVICE">After N months of service</option>
+            </select>
+          </Field>
+          {strategy === "EARNED" && (
+            <>
+              <Field label="Accrual frequency">
+                <select
+                  id="pf-freq"
+                  className="f-input"
+                  value={policy.accrualFrequency}
+                  onChange={(e) => set({ accrualFrequency: e.target.value as PolicyFormState["accrualFrequency"] })}
+                >
+                  <option value="MONTHLY">Monthly</option>
+                  <option value="QUARTERLY">Quarterly</option>
+                  <option value="HALF_YEARLY">Half-yearly</option>
+                  <option value="ANNUAL">Yearly</option>
+                </select>
+              </Field>
+              <Field label="Grant lands on">
+                <select
+                  id="pf-onday"
+                  className="f-input"
+                  value={policy.allocateOnDay}
+                  onChange={(e) => set({ allocateOnDay: e.target.value as PolicyFormState["allocateOnDay"] })}
+                >
+                  <option value="FIRST">Period start</option>
+                  <option value="LAST">Period end</option>
+                  <option value="DOJ_DAY">Hire day-of-month</option>
+                </select>
+              </Field>
+              <Field label="Rounding (0.25-day)">
+                <select
+                  id="pf-round"
+                  className="f-input"
+                  value={policy.accrualRounding}
+                  onChange={(e) => set({ accrualRounding: e.target.value as PolicyFormState["accrualRounding"] })}
+                >
+                  <option value="FLOOR_QUARTER">Floor to quarter</option>
+                  <option value="NEAREST">Nearest quarter</option>
+                </select>
+              </Field>
+              <Field label="Standing cap (days, empty = days/year)">
+                <input
+                  id="pf-cap"
+                  type="number"
+                  min={0}
+                  max={365}
+                  step={0.5}
+                  className="f-input"
+                  value={policy.accrualCap ?? ""}
+                  onChange={(e) => set({ accrualCap: e.target.value === "" ? null : num(e.target.value) })}
+                />
+              </Field>
+            </>
+          )}
+          {strategy === "ANNUAL_LUMP_SUM" && (
+            <>
+              <Field label="Grant on">
+                <select
+                  id="pf-granton"
+                  className="f-input"
+                  value={policy.grantOn}
+                  onChange={(e) => set({ grantOn: e.target.value as PolicyFormState["grantOn"] })}
+                >
+                  <option value="PERIOD_START">Jan 1 (pro-rate joiners)</option>
+                  <option value="ANNIVERSARY">Hire anniversary</option>
+                </select>
+              </Field>
+              <Field label="Pro-rate mid-year joiners">
+                <label className="flex items-center gap-2 text-sm text-foreground h-9">
+                  <input
+                    id="pf-prorate"
+                    type="checkbox"
+                    checked={policy.prorateForJoiners}
+                    disabled={policy.grantOn === "ANNIVERSARY"}
+                    onChange={(e) => set({ prorateForJoiners: e.target.checked })}
+                  />
+                  Pro-rate
+                </label>
+              </Field>
+            </>
+          )}
+          {strategy === "AFTER_SERVICE" && (
+            <Field label="Months of service first">
+              <input
+                id="pf-minservice"
+                type="number"
+                min={0}
+                max={600}
+                className="f-input"
+                value={policy.minServiceMonths}
+                onChange={(e) => set({ minServiceMonths: Math.round(num(e.target.value)) })}
+                required
+              />
+            </Field>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Field label="Advance (negative) leave">
+            <label className="flex items-center gap-2 text-sm text-foreground h-9">
+              <input
+                id="pf-neg"
+                type="checkbox"
+                checked={policy.allowNegative}
+                onChange={(e) => set({ allowNegative: e.target.checked })}
+              />
+              Allowed
+            </label>
+          </Field>
+          <Field label="Advance floor (days)">
+            <input
+              id="pf-floor"
+              type="number"
+              min={0}
+              max={365}
+              step={0.5}
+              className="f-input"
+              value={policy.negativeFloor}
+              disabled={!policy.allowNegative}
+              onChange={(e) => set({ negativeFloor: num(e.target.value) })}
+            />
+          </Field>
+          <Field label="Carry lapses after (months, empty = never)">
+            <input
+              id="pf-carryexp"
+              type="number"
+              min={1}
+              max={24}
+              className="f-input"
+              value={policy.carryExpiresAfterMonths ?? ""}
+              onChange={(e) => set({ carryExpiresAfterMonths: e.target.value === "" ? null : Math.round(num(e.target.value)) })}
+            />
+          </Field>
+          <Field label="Holidays consume leave">
+            <label className="flex items-center gap-2 text-sm text-foreground h-9">
+              <input
+                id="pf-holiday"
+                type="checkbox"
+                checked={policy.countHolidaysInLeave}
+                onChange={(e) => set({ countHolidaysInLeave: e.target.checked })}
+              />
+              Count holidays
+            </label>
+          </Field>
+        </div>
+
+        {(strategy === "EARNED" || strategy === "ANNUAL_LUMP_SUM") && (
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              id="pf-probation"
+              type="checkbox"
+              checked={policy.accrueDuringProbation}
+              onChange={(e) => set({ accrueDuringProbation: e.target.checked })}
+            />
+            Accrue while on probation
+          </label>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {strategy === "MANUAL" && "The full entitlement is granted the first time a balance is needed — the classic behavior."}
+          {strategy === "ANNUAL_LUMP_SUM" && "The whole year's entitlement is granted once (Jan 1 or the hire anniversary); mid-year joiners are pro-rated by remaining calendar days."}
+          {strategy === "EARNED" && "Entitlement accrues period by period (e.g. 2 days per month). Combine with advance leave for the take-now-repay-monthly organization."}
+          {strategy === "AFTER_SERVICE" && "The whole year's entitlement is deposited once the employee completes the service requirement, repeating on that anniversary."}
+        </p>
+      </fieldset>
     </div>
   );
 }

@@ -310,6 +310,11 @@ async function fillOnlyRange(world, typeName, start, end, reason) {
   await reasonEl.sendKeys(reason);
 }
 
+When("I fill an {string} request from a Monday {int} days out to the following Tuesday", async function (typeName, daysOut) {
+  const monday = mondayAtLeast(daysOut);
+  await fillOnlyRange(this, typeName, monday, new Date(monday.getTime() + 86_400_000), "Advance leave e2e");
+});
+
 When("I fill a {string} request from a Monday {int} days out to the following Friday", async function (typeName, daysOut) {
   const monday = mondayAtLeast(daysOut);
   await fillOnlyRange(this, typeName, monday, new Date(monday.getTime() + 4 * 86_400_000), "Balance guard e2e");
@@ -511,3 +516,37 @@ module.exports = {
   submitRange,
   showAllFilterIfPresent,
 };
+
+// ---------------------------------------------------------------------------
+// F2.4 — leave policy engine steps (docs/Fernly_Policy_Engine_Design.md §4).
+// ---------------------------------------------------------------------------
+
+Then("the request form should show the advance allowance of {int} days", async function (floorDays) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    async () =>
+      (await driver.getPageSource()).includes(`advance allowed to \u2212${floorDays}`),
+    10_000,
+    `the live preview did not show the advance allowance of ${floorDays} days`,
+  );
+});
+
+Then("the leave balance for {string} should show the accrued advance balance", async function (typeName) {
+  const driver = await this.getDriver();
+  // The EARNED strategy grants 2 days per whole elapsed month of the
+  // current year (capped at 24) — compute what today's accrual must be.
+  const now = new Date();
+  const monthsElapsed = now.getUTCMonth() + 1; // January = 1
+  const expected = Math.min(24, monthsElapsed * 2);
+  await driver.wait(
+    async () => {
+      const cards = await driver.findElements(
+        By.xpath(`//div[contains(@class, "f-card")][contains(., "${typeName}")]//*[@data-testid='balance-available']`),
+      );
+      if (cards.length === 0) return false;
+      return (await cards[0].getText()).trim() === String(expected);
+    },
+    10_000,
+    `balance for "${typeName}" never showed the accrued ${expected} days`,
+  );
+});

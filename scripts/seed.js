@@ -1252,6 +1252,34 @@ async function main() {
     },
     include: { policy: true },
   });
+  // F2.4 — the strategy demo type (Org A of Fernly_Policy_Engine_Design.md
+  // §4.2): earned monthly (24/year → 2 per month, granted on the 1st) with
+  // advance leave allowed down to −5 days — "take advance leave, it is
+  // added back monthly" made visible in the demo workspace.
+  const advanceType = await db.leaveType.create({
+    data: {
+      name: "Advance Annual", code: "ADVANCE", color: "#0ea5e9", paid: true, requiresDoc: false,
+      policy: {
+        create: {
+          annualDays: 24, maxCarryOver: 5, minNoticeDays: 1, maxConsecutiveDays: 15,
+          allocationStrategy: "EARNED",
+          accrualFrequency: "MONTHLY",
+          allocateOnDay: "FIRST",
+          accrualRounding: "FLOOR_QUARTER",
+          accrualCap: null,
+          grantOn: "PERIOD_START",
+          prorateForJoiners: true,
+          minServiceMonths: 0,
+          accrueDuringProbation: true,
+          allowNegative: true,
+          negativeFloor: 5,
+          carryExpiresAfterMonths: null,
+          countHolidaysInLeave: false,
+        },
+      },
+    },
+    include: { policy: true },
+  });
 
   const balanceFor = async (userId, type, entitled, used) => {
     await db.leaveBalance.create({
@@ -1259,10 +1287,15 @@ async function main() {
     });
   };
   // Everyone gets the full 20-day annual entitlement; Rafael already used 5.
+  // The Advance Annual type accrues monthly — the seed mirrors what the
+  // strategy would have granted by now (whole elapsed months × 2 days).
+  const nowMonth = new Date().getUTCFullYear() === YEAR ? new Date().getUTCMonth() : 11;
+  const advanceEntitled = Math.min(24, Math.max(0, (nowMonth + 1) * 2));
   for (const u of allUsers) {
     await balanceFor(u.id, annualType, 20, 0);
     await balanceFor(u.id, sickType, 10, 0);
     await balanceFor(u.id, unpaidType, 0, 0);
+    await balanceFor(u.id, advanceType, advanceEntitled, 0);
   }
   const rafaelId = userByName.get("Rafael Costa");
   if (rafaelId) {
@@ -1344,6 +1377,16 @@ async function main() {
     grant(u.id, annualType, 20);
     grant(u.id, sickType, 10);
     grant(u.id, unpaidType, 0);
+    // F2.4 — EARNED strategy grants: one row per elapsed month, sourceId =
+    // the deterministic period key (the cron job's idempotency input).
+    for (let m = 0; m <= nowMonth; m++) {
+      grantRows.push({
+        userId: u.id, leaveTypeId: advanceType.id, year: YEAR, delta: 2,
+        entryType: "GRANT", sourceType: "POLICY", sourceId: `${YEAR}-${String(m + 1).padStart(2, "0")}`,
+        note: `Accrued 2 day(s) for ${YEAR}-${String(m + 1).padStart(2, "0")} (monthly earned leave)`,
+        isReversal: false,
+      });
+    }
   }
   const consumeRows = [];
   for (const r of leaveRequests) {
@@ -1371,7 +1414,7 @@ async function main() {
     });
   }
 
-  console.log(`  ✓ HR leave: 3 types + policies, balances for ${allUsers.length} users, ${leaveRequests.length} requests across all statuses (YEAR ${YEAR}); ledger: ${grantRows.length} GRANT + ${consumeRows.length} CONSUME/reversal rows`);
+  console.log(`  ✓ HR leave: 4 types + policies (incl. F2.4 EARNED advance type), balances for ${allUsers.length} users, ${leaveRequests.length} requests across all statuses (YEAR ${YEAR}); ledger: ${grantRows.length} GRANT + ${consumeRows.length} CONSUME/reversal rows`);
 
   // -------------------------------------------------------------------------
   // F1.3 — attendance seed (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1).

@@ -328,11 +328,27 @@ export const leaveTypeSchema = z.object({
   requiresDoc: z.boolean().default(false),
   paid: z.boolean().default(true),
   active: z.boolean().default(true),
+  // F2.4 — the allocation strategy block (docs/Fernly_Policy_Engine_Design.md
+  // §4.1). Every default reproduces the pre-F2.4 behavior exactly, so a
+  // request that sends only the four legacy knobs is valid and identical.
   policy: z.object({
     annualDays: z.number().min(0).max(365),
     maxCarryOver: z.number().min(0).max(365),
     minNoticeDays: z.number().int().min(0).max(90),
     maxConsecutiveDays: z.number().int().min(1).max(365),
+    allocationStrategy: z.enum(["MANUAL", "ANNUAL_LUMP_SUM", "EARNED", "AFTER_SERVICE"]).default("MANUAL"),
+    accrualFrequency: z.enum(["MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUAL"]).default("MONTHLY"),
+    allocateOnDay: z.enum(["FIRST", "LAST", "DOJ_DAY"]).default("FIRST"),
+    accrualRounding: z.enum(["FLOOR_QUARTER", "NEAREST"]).default("FLOOR_QUARTER"),
+    accrualCap: z.number().min(0).max(365).nullable().default(null),
+    grantOn: z.enum(["PERIOD_START", "ANNIVERSARY"]).default("PERIOD_START"),
+    prorateForJoiners: z.boolean().default(true),
+    minServiceMonths: z.number().int().min(0).max(600).default(0),
+    accrueDuringProbation: z.boolean().default(true),
+    allowNegative: z.boolean().default(false),
+    negativeFloor: z.number().min(0).max(365).default(0),
+    carryExpiresAfterMonths: z.number().int().min(1).max(24).nullable().default(null),
+    countHolidaysInLeave: z.boolean().default(false),
   }).strict(),
 }).strict();
 

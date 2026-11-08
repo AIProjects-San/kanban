@@ -150,3 +150,23 @@ Feature: HR leave management
     And I open the task "Harden CI pipeline"
     And I log 2 hours on that task for a date 3 days from today
     Then the time log submission should be rejected with an error mentioning approved leave
+
+  # --- F2.4 — leave policy engine (advance/earned strategies) ------------
+
+  @hr-b
+  Scenario: The advance-leave policy surfaces its floor in the request form
+    Advance Annual accrues monthly and permits negative balances down to the
+    configured floor; the live preview names the allowance so the member
+    knows exactly how far they may go.
+    When I sign in as "member@fernly.app" with the demo password
+    And I open the "Leave" view
+    And I fill an "Advance Annual" request from a Monday 21 days out to the following Tuesday
+    Then the request form should show the advance allowance of 5 days
+
+  @hr-b
+  Scenario: The earned strategy's accrued balance shows month by month
+    Advance Annual grants two days per elapsed month of the year — the
+    balance card reflects the accrual, not a flat entitlement.
+    When I sign in as "member@fernly.app" with the demo password
+    And I open the "Leave" view
+    Then the leave balance for "Advance Annual" should show the accrued advance balance

@@ -106,8 +106,18 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
               </div>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-xl font-semibold text-foreground tabular-nums" data-testid="balance-available">{b.available}</div>
-              <div className="text-[0.625rem] uppercase tracking-wide text-muted-foreground">days left</div>
+              <div
+                className={cn(
+                  "text-xl font-semibold tabular-nums",
+                  b.available < 0 ? "text-amber-600 dark:text-amber-400" : "text-foreground",
+                )}
+                data-testid="balance-available"
+              >
+                {b.available}
+              </div>
+              <div className="text-[0.625rem] uppercase tracking-wide text-muted-foreground">
+                {b.available < 0 ? "days in advance" : "days left"}
+              </div>
             </div>
           </div>
         ))}
@@ -245,18 +255,32 @@ function RequestFormModal({
 
   const selectedType = types.find((t) => t.id === typeId);
   const selectedBalance = balances.find((b) => b.leaveTypeId === typeId);
+  // F2.4 — advance allowance from the selected type's policy (0 when the
+  // switch is off or the floor is 0 — identical to the classic guard).
+  // F2.4 — advance allowance from the selected type's policy (0 when the
+  // switch is off or the floor is 0 — identical to the classic guard).
+  const advanceFloor =
+    selectedType?.policy?.allowNegative && (selectedType.policy.negativeFloor ?? 0) > 0
+      ? selectedType.policy.negativeFloor ?? 0
+      : 0;
   // F1.1 — holiday-aware preview: same math as the server's createLeaveRequest
   // (lib/working-days.ts), so the number the member sees is the number that
-  // gets denormalized onto the request.
+  // gets denormalized onto the request. F2.4: when the type counts holidays
+  // as leave days, only half-day entries discount (the server's
+  // countHolidaysInLeave mode).
   const holidayMap = useMemo(() => holidayLookupFrom(holidays), [holidays]);
+  const countingHolidayMap = useMemo(() => {
+    if (!selectedType?.policy?.countHolidaysInLeave) return holidayMap;
+    return new Map([...holidayMap].filter(([, v]) => v.isHalfDay));
+  }, [holidayMap, selectedType]);
   const days = useMemo(() => {
     if (!startDate || !endDate || endDate < startDate) return 0;
     return workingDaysBetween(
       new Date(`${startDate}T00:00:00.000Z`),
       new Date(`${endDate}T00:00:00.000Z`),
-      holidayMap,
+      countingHolidayMap,
     );
-  }, [startDate, endDate, holidayMap]);
+  }, [startDate, endDate, countingHolidayMap]);
   const rangeHolidays = useMemo(
     () => holidaysInRange(startDate, endDate, holidays),
     [startDate, endDate, holidays],
@@ -270,6 +294,13 @@ function RequestFormModal({
   // Leave view crashed with `ReferenceError: year is not defined`.)
   const startYear = startDate ? Number(startDate.slice(0, 4)) : balanceYear;
   const crossYear = Boolean(startDate) && startYear !== balanceYear;
+  // F2.4 — the floor-aware client guard (mirrors checkLeaveRequestAgainstBalance:
+  // reject when days > available + floor; identical to the classic guard at
+  // floor 0).
+  const exceedsBalance =
+    Boolean(selectedBalance) &&
+    !crossYear &&
+    days > (selectedBalance?.available ?? 0) + advanceFloor;
 
   return (
     <Modal open={open} onClose={onClose} title="Request leave">
@@ -305,7 +336,9 @@ function RequestFormModal({
                 <option key={t.id} value={t.id}>
                   {t.name}
                   {selectedBalance && t.id === typeId
-                    ? ` — ${selectedBalance.available} day${selectedBalance.available === 1 ? "" : "s"} available`
+                    ? selectedBalance.available < 0
+                      ? ` — ${-selectedBalance.available} day${selectedBalance.available === -1 ? "" : "s"} in advance`
+                      : ` — ${selectedBalance.available} day${selectedBalance.available === 1 ? "" : "s"} available`
                     : ""}
                 </option>
               ))}
@@ -380,8 +413,13 @@ function RequestFormModal({
             </span>
           )}
           {selectedBalance && days > 0 && !crossYear && (
-            <span className={cn("tabular-nums", days > selectedBalance.available ? "text-destructive font-medium" : "text-muted-foreground")}>
-              {days} of {selectedBalance.available} available
+            <span
+              className={cn(
+                "tabular-nums",
+                exceedsBalance ? "text-destructive font-medium" : "text-muted-foreground",
+              )}
+            >
+              {days} of {selectedBalance.available} available{advanceFloor > 0 ? ` (advance allowed to −${advanceFloor})` : ""}
             </span>
           )}
         </div>
@@ -399,7 +437,9 @@ function RequestFormModal({
               // that starts in a different year is validated server-side
               // against that year's fresh entitlement, so the client must
               // not block it (it only showed a misleading "X of Y available").
-              (Boolean(selectedBalance) && !crossYear && days > (selectedBalance?.available ?? 0))
+              // F2.4: the guard is floor-aware — with advance leave the
+              // member may spend down to −negativeFloor days.
+              (Boolean(selectedBalance) && !crossYear && exceedsBalance)
             }
           >
             {busy ? "Submitting…" : "Submit request"}

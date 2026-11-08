@@ -765,6 +765,54 @@ model LeavePolicy {
   minNoticeDays       Int       @default(1)
   // Maximum consecutive working days one request may span.
   maxConsecutiveDays  Int       @default(15)
+  // F2.4 — leave policy engine (docs/Fernly_Policy_Engine_Design.md §4.1;
+  // docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2 F2.4). The allocation
+  // strategy block: how entitlement becomes ledger GRANT rows, and the
+  // guard knobs the request/approve floors read. Every default reproduces
+  // the pre-F2.4 behavior exactly (MANUAL + no negative allowance + floor 0
+  // + holidays excluded from counted days) — the migration is additive.
+  // MANUAL            — grant-on-first-use (the pre-F2.4 materialization
+  //                     path; nothing scheduled).
+  // ANNUAL_LUMP_SUM   — the whole year at once (Jan 1 by default, or on the
+  //                     hire anniversary; optional DOJ pro-rata).
+  // EARNED            — accrual in periods (month/quarter/half/year), the
+  //                     benchmark's "take advance leave, added monthly"
+  //                     shape when combined with allowNegative.
+  // AFTER_SERVICE     — the whole year deposited once the employee completes
+  //                     minServiceMonths, repeating on that anniversary.
+  allocationStrategy  String    @default("MANUAL") // MANUAL | ANNUAL_LUMP_SUM | EARNED | AFTER_SERVICE
+  // EARNED cadence + the day of each period the GRANT lands
+  // (DOJ_DAY = the hire day-of-month).
+  accrualFrequency    String    @default("MONTHLY") // MONTHLY | QUARTERLY | HALF_YEARLY | ANNUAL
+  allocateOnDay       String    @default("FIRST")   // FIRST | LAST | DOJ_DAY
+  // Per-period grant rounding to 0.25-day steps (half-day semantics F1.1).
+  accrualRounding     String    @default("FLOOR_QUARTER") // FLOOR_QUARTER | NEAREST
+  // EARNED only: cap on the standing balance the strategy may build
+  // (null = annualDays). Consumption frees room under a standing cap.
+  accrualCap          Float?
+  // ANNUAL_LUMP_SUM landing day: Jan 1 (PERIOD_START) or hire anniversary.
+  grantOn             String    @default("PERIOD_START") // PERIOD_START | ANNIVERSARY
+  // ANNUAL_LUMP_SUM + PERIOD_START: pro-rate by calendar days remaining in
+  // the year for mid-year joiners (floor-quarter).
+  prorateForJoiners   Boolean   @default(true)
+  // AFTER_SERVICE: months of service before the first deposit. When > 0 it
+  // is ALSO the LV-B07 usability gate (no leave before N months of service)
+  // for every strategy.
+  minServiceMonths    Int       @default(0)
+  // EARNED/lump strategies: accrue while on probation (false defers grants
+  // until probationEndsAt passes).
+  accrueDuringProbation Boolean @default(true)
+  // Advance (negative) leave: the guard becomes
+  //   available − requested ≥ −negativeFloor
+  // (identical to the classic guard when false / floor 0).
+  allowNegative       Boolean   @default(false)
+  negativeFloor       Float     @default(0)
+  // Carried days lapse after N months of the new year (null = never) — the
+  // year-end job writes the EXPIRE row once the lapse date passes.
+  carryExpiresAfterMonths Int?
+  // Holidays inside a request range consume leave days (LV-B01/B05's
+  // include_holiday; default false = the F1.1 holiday-aware count).
+  countHolidaysInLeave Boolean  @default(false)
   updatedAt           DateTime  @updatedAt
 }
 

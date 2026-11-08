@@ -135,7 +135,8 @@ def main(path: str) -> int:
     total_row = " | ".join(str(overall[s]) for s in statuses)
     print(f"| **Total** | {total_row} | **{sum(overall.values())}** |")
 
-    documented = {"parity": 31, "partial": 84, "missing": 161, "oos": 37, "beyond": 1}
+    # F2.4 (leave policy engine) update: 37/83/156/37/1 — 8 row flips
+    documented = {"parity": 37, "partial": 83, "missing": 156, "oos": 37, "beyond": 1}
     ok = all(overall[s] == documented[s] for s in statuses)
     print()
     print("Matrix section-10 sanity check:", "PASS" if ok else "FAIL")

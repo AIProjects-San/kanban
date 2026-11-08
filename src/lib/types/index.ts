@@ -75,6 +75,15 @@ export interface AttendanceMonthT {
   holidays: { date: string; label: string }[];
 }
 
+// F2.4 — leave allocation strategy vocabulary (docs/Fernly_Policy_Engine_
+// Design.md §4.1). Unions live here so lib/types stays dependency-free; the
+// pure kernel (lib/leave-policy.ts) and the DTOs share them.
+export type LeaveAllocationStrategy = "MANUAL" | "ANNUAL_LUMP_SUM" | "EARNED" | "AFTER_SERVICE";
+export type LeaveAccrualFrequency = "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUAL";
+export type LeaveAllocateOnDay = "FIRST" | "LAST" | "DOJ_DAY";
+export type LeaveAccrualRounding = "FLOOR_QUARTER" | "NEAREST";
+export type LeaveGrantOn = "PERIOD_START" | "ANNIVERSARY";
+
 export interface LeaveTypeT {
   id: string;
   name: string;
@@ -88,6 +97,23 @@ export interface LeaveTypeT {
     maxCarryOver: number;
     minNoticeDays: number;
     maxConsecutiveDays: number;
+    // F2.4 strategy block — optional in the wire type because the server
+    // DTO always fills them from the DB row (post-migration defaults), but
+    // older snapshots/tests may omit them; readers default via
+    // resolveLeavePolicy, never by guessing.
+    allocationStrategy?: LeaveAllocationStrategy;
+    accrualFrequency?: LeaveAccrualFrequency;
+    allocateOnDay?: LeaveAllocateOnDay;
+    accrualRounding?: LeaveAccrualRounding;
+    accrualCap?: number | null;
+    grantOn?: LeaveGrantOn;
+    prorateForJoiners?: boolean;
+    minServiceMonths?: number;
+    accrueDuringProbation?: boolean;
+    allowNegative?: boolean;
+    negativeFloor?: number;
+    carryExpiresAfterMonths?: number | null;
+    countHolidaysInLeave?: boolean;
   } | null;
 }
 

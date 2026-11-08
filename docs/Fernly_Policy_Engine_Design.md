@@ -6,7 +6,7 @@
 | --- | --- |
 | Document | `docs/Fernly_Policy_Engine_Design.md` |
 | Date | 2026-11-08 |
-| Status | Design — awaiting review before any code lands. Companion to `Fernly_Domain_Modules_Architecture_Plan.md` (structure) and `Fernly_HR_Payroll_Enhancement_Plan.md` (epics); this document defines *how business logic is expressed* in the four modules so that organizations differ by **rows in the database, not branches in the code** |
+| Status | Design — the leave-policy half (§4) **landed as F2.4** (2026-11-08; see Appendix C as-built). The payroll half (§5) lands with F2.3/F2.8/F3.3; §7's module map is the M-track's target shape (files live under `src/lib/` until M1–M4 move them). Companion to `Fernly_Domain_Modules_Architecture_Plan.md` (structure) and `Fernly_HR_Payroll_Enhancement_Plan.md` (epics); this document defines *how business logic is expressed* in the four modules so that organizations differ by **rows in the database, not branches in the code** |
 | Directive | "All modules should have pure code functions. Some business logic can be configurable from db like different deductions from net salary, number of leaves, holiday dates etc. Think all this business logic. Also some organizations allow leaves in negative i.e. take advanced leaves and add them monthly, some organization deposit all leaves after completion of a year of service etc." (2026-11-08) |
 | Fernly code state | `1fdc6a7` (`origin/main`; Phase 1 complete, parity matrix + module plan landed) |
 | Benchmark | Frappe HR (`frappe/hrms`) @ `88161025` — the matrix rows this design consumes are cited inline (`LV-*`, `PR-*`, `EM-16`) |
@@ -324,3 +324,23 @@ Conventions that lint cannot check, review does: every rule takes `asOf`/period 
 ---
 
 *Every Fernly fact above was verified against the working tree at `1fdc6a7` (schema, kernels, guards, config read in full); every benchmark claim cites `Fernly_HRMS_Feature_Parity_Matrix.md` @ `88161025`. This design changes no matrix status — F2.4/F2.3/F2.2/F2.1/F2.8/F3.3 will, when they land.*
+
+---
+
+## Appendix C — As-built record (F2.4, 2026-11-08)
+
+The leave-policy engine (§4) landed as epic F2.4. Where the build refined the design:
+
+| Design (§) | As built | Why |
+| --- | --- | --- |
+| `hr/rules/allocation.ts` + `hr/rules/leave-guard.ts` + `hr/rules/carry.ts` (§7 map) | one pure kernel `src/lib/leave-policy.ts` (all three rule families) + the I/O-wrapping job core `src/lib/leave-allocation-core.ts` | the M-track has not moved files yet (§7's map is the target shape); one kernel keeps the rule matrix in a single test file, and the design's own §2.1 split (rules decide / services obey) is preserved — the job core is the service |
+| `POLICY:<user>:<type>:<year>:<period>` source keys (§4.5) | `sourceType "POLICY"` + `sourceId` = the bare period key (`"2026-04"`, `"2026-Q1"`, `"2026"`, `"carry"`, `"carry-expire"`, `"carry-lapse"`) — uniqueness comes from the (user, type, year) ledger scope, not the key string | shorter, matches the F1.2 sourceId conventions readers already know; the MANUAL legacy path keeps its type-id sourceId byte-for-byte |
+| Lazy materialization grants "everything due" (§4.5) | unchanged for strategies; MANUAL keeps the legacy single full-year GRANT (single `.create`, legacy note) byte-identically | the zero-behavior-rollout rule (§8) applies to MANUAL too — existing rows/tests pin the old shape |
+| The engine's three writers (§4.5) | lazy writer only ever runs when the balance row is MISSING; the cron's grant phase only when it EXISTS (rollover creates the new-year row) — plus idempotency keys on both | closes the lazy-vs-cron race the design left implicit |
+| EARNED first period under `allocateOnDay: DOJ_DAY` | grants on the join day itself; under FIRST/LAST the hire month is skipped (a partial month never accrues) | the conservative reading of "employed on or before the landing moment" — pinned in the kernel tests |
+| ANNUAL_LUMP_SUM + PERIOD_START for a mid-year joiner | the grant's due DATE is the hire date (pro-rated or not) — a Dec 1 joiner must not wait for a Jan 1 they were not employed for | caught by the rule matrix; the design only specified the pro-rated amount |
+| `monthsIntoYear` | counts COMPLETE months (a 3-month carry expiry lapses on April 1st) | the design's "N months of the new year elapsed" read precisely |
+| LV-B07 as an independent gate (§4.1 note) | `checkServiceEligibility` runs at submission for every strategy when `minServiceMonths > 0`; AFTER_SERVICE also uses the knob as its deposit threshold | one knob, two honest consumers — as the design specified |
+| §10 open questions | Q1 FIFO consumption: landed (carry spent first, `carryLapseDelta`); Q2/Q3/Q4/Q5/Q6: unchanged, decided when F2.3/F2.2 land | only the leave-policy questions were in F2.4's scope |
+
+Everything else landed as written: the strategy space (§4.1), the guard shape (§4.3), the three organizations' ledger walks (§4.2 — the kernel tests walk them), the fail-loud enum pick (§10.6), the additive zero-behavior migration (§8), and the seeded demo type.

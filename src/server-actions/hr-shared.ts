@@ -15,6 +15,13 @@ import {
   type HolidayLookup,
 } from "@/lib/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
+import {
+  resolveLeavePolicy,
+  dueGrantOps,
+  type EmploymentFacts,
+  type GrantOp,
+  type LeavePolicyRow,
+} from "@/lib/leave-policy";
 import { AuthorizationError } from "./auth-guard";
 
 // ---------------------------------------------------------------------------
@@ -134,47 +141,125 @@ export async function assertLeaveDecider(
 
 // ---------------------------------------------------------------------------
 // Balance access — lazily materialized from the type's policy so a user who
-// has never taken leave still sees their entitlement.
+// has never taken leave still sees their entitlement. F2.4: for strategy
+// types (ANNUAL_LUMP_SUM / EARNED / AFTER_SERVICE) the materialization
+// grants everything ALREADY DUE under the strategy (the same dueGrantOps
+// rule the cron advances); MANUAL keeps the pre-F2.4 single-grant path
+// byte-for-byte.
 // ---------------------------------------------------------------------------
+
+/** The policy-shaped input the strategy materializers need — what the
+ * callers already have in hand from `include: { policy: true }`. */
+export type LeavePolicyInput = LeavePolicyRow | null | undefined;
+
+/** Employment facts for one user (profile row projected to day keys). */
+async function employmentFactsFor(
+  userId: string,
+): Promise<EmploymentFacts | null> {
+  const profile = await db.employeeProfile.findUnique({
+    where: { userId },
+    select: { hireDate: true, employmentStatus: true, probationEndsAt: true },
+  });
+  if (!profile) return null;
+  return {
+    hireDate: profile.hireDate ? dayKey(profile.hireDate) : null,
+    employmentStatus: profile.employmentStatus,
+    probationEndsAt: profile.probationEndsAt ? dayKey(profile.probationEndsAt) : null,
+  };
+}
+
+/** The strategy grants due at materialization time (MANUAL → the legacy
+ * single full-year grant op with the legacy sourceId). Pure rule + a
+ * facts read; called only when the balance row is missing. */
+async function materializationGrantOps(
+  userId: string,
+  policyRow: LeavePolicyInput,
+  year: number,
+): Promise<GrantOp[]> {
+  const policy = resolveLeavePolicy(policyRow);
+  if (policy.allocationStrategy === "MANUAL") {
+    // Legacy path, unchanged: one GRANT of annualDays, sourceId = the type
+    // id (the F1.2 convention existing rows and tests pin).
+    if (policy.annualDays === 0) return [];
+    return [{
+      periodKey: "", // caller writes the legacy sourceId (leaveTypeId)
+      delta: policy.annualDays,
+      dueDate: `${year}-01-01`,
+      note: `Entitlement materialized (${policy.annualDays} days)`,
+    }];
+  }
+  return dueGrantOps({
+    policy,
+    employment: await employmentFactsFor(userId),
+    year,
+    asOf: dayKey(new Date()), // "now" at materialization time (documented)
+    grantedSoFar: 0,
+    availableNow: 0,
+    existingPeriodKeys: new Set<string>(), // no balance row ⇒ no POLICY rows
+  });
+}
 
 export async function getOrCreateBalance(
   userId: string,
   leaveTypeId: string,
   year: number,
-  defaultEntitled: number,
+  policyRow: LeavePolicyInput,
 ): Promise<{ entitled: number; carriedOver: number; used: number }> {
   const existing = await db.leaveBalance.findUnique({
     where: { userId_leaveTypeId_year: { userId, leaveTypeId, year } },
     select: { entitled: true, carriedOver: true, used: true },
   });
   if (existing) return existing;
-  // No row yet — materialize the entitlement from the policy default AND
-  // the GRANT ledger row that explains it, in ONE transaction (F1.2: a
+  // No row yet — materialize the entitlement from the policy AND its
+  // ledger GRANT row(s) that explain it, in ONE transaction (F1.2: a
   // balance row must never exist without its ledger rows).
+  const ops = await materializationGrantOps(userId, policyRow, year);
+  const entitled = ops.reduce((s, o) => s + o.delta, 0);
+  const legacySourceId = resolveLeavePolicy(policyRow).allocationStrategy === "MANUAL";
   await db
     .$transaction(async (tx) => {
       await tx.leaveBalance.create({
-        data: { userId, leaveTypeId, year, entitled: defaultEntitled, carriedOver: 0, used: 0 },
+        data: { userId, leaveTypeId, year, entitled, carriedOver: 0, used: 0 },
       });
-      if (defaultEntitled !== 0) {
-        await tx.leaveLedgerEntry.create({
-          data: {
+      if (legacySourceId) {
+        // Legacy MANUAL path, byte-identical to pre-F2.4: a single GRANT
+        // row with sourceId = the type id (the F1.2 convention).
+        if (ops.length === 1) {
+          await tx.leaveLedgerEntry.create({
+            data: {
+              userId,
+              leaveTypeId,
+              year,
+              delta: ops[0].delta,
+              entryType: "GRANT",
+              sourceType: "POLICY",
+              sourceId: leaveTypeId,
+              note: ops[0].note,
+              isReversal: false,
+            },
+          });
+        }
+      } else if (ops.length > 0) {
+        // Strategy types: one GRANT row per due period (sourceId = the
+        // deterministic period key — the cron job's idempotency input).
+        await tx.leaveLedgerEntry.createMany({
+          data: ops.map((op) => ({
             userId,
             leaveTypeId,
             year,
-            delta: defaultEntitled,
+            delta: op.delta,
             entryType: "GRANT",
             sourceType: "POLICY",
-            sourceId: leaveTypeId,
-            note: `Entitlement materialized (${defaultEntitled} days)`,
+            sourceId: op.periodKey,
+            note: op.note,
             isReversal: false,
-          },
+          })),
         });
       }
     })
     .catch((err) => {
       // Unique-trio race with a concurrent reader: read the winner's row
-      // (the winner's transaction wrote its GRANT row too — both-or-neither
+      // (the winner's transaction wrote its GRANT rows too — both-or-neither
       // is the point of the shared transaction).
       // PR-22 — log it so a persistent (non-race) failure is visible.
       logError("[hr-shared] leave balance materialize raced with a concurrent create:", err);
@@ -183,7 +268,8 @@ export async function getOrCreateBalance(
     where: { userId_leaveTypeId_year: { userId, leaveTypeId, year } },
     select: { entitled: true, carriedOver: true, used: true },
   });
-  return row ?? { entitled: defaultEntitled, carriedOver: 0, used: 0 };
+  const fallback = { entitled, carriedOver: 0, used: 0 };
+  return row ?? fallback;
 }
 
 /**
@@ -192,11 +278,13 @@ export async function getOrCreateBalance(
  * The per-type loop was a true query N+1 (3 queries per type, including a
  * WRITE on a read path); steady-state is now exactly 2 queries, and the
  * lazy-materialize write only happens for types missing a row (first ever
- * view, or a newly created type). Not exported as a server action — helper.
+ * view, or a newly created type). F2.4: materialization is strategy-aware
+ * (one facts read per user when anything is missing). Not exported as a
+ * server action — helper.
  */
 export async function getOrCreateBalancesBatch(
   userId: string,
-  types: Array<{ id: string; entitled: number }>,
+  types: Array<{ id: string; policy: LeavePolicyInput }>,
   year: number,
 ): Promise<Map<string, { entitled: number; carriedOver: number; used: number }>> {
   const result = new Map<string, { entitled: number; carriedOver: number; used: number }>();
@@ -210,6 +298,50 @@ export async function getOrCreateBalancesBatch(
 
   const missing = types.filter((t) => !byType.has(t.id));
   if (missing.length > 0) {
+    // Employment facts for the strategy types among the missing rows (one
+    // read — MANUAL missing rows never need it).
+    const anyStrategy = missing.some(
+      (t) => resolveLeavePolicy(t.policy).allocationStrategy !== "MANUAL",
+    );
+    let facts: EmploymentFacts | null = null;
+    if (anyStrategy) {
+      const profile = await db.employeeProfile.findUnique({
+        where: { userId },
+        select: { hireDate: true, employmentStatus: true, probationEndsAt: true },
+      });
+      facts = profile
+        ? {
+            hireDate: profile.hireDate ? dayKey(profile.hireDate) : null,
+            employmentStatus: profile.employmentStatus,
+            probationEndsAt: profile.probationEndsAt ? dayKey(profile.probationEndsAt) : null,
+          }
+        : null;
+    }
+    const asOf = dayKey(new Date());
+    const opsByType = missing.map((t) => {
+      const policy = resolveLeavePolicy(t.policy);
+      if (policy.allocationStrategy === "MANUAL") {
+        return policy.annualDays === 0
+          ? []
+          : [{
+              periodKey: "", // legacy sourceId (the type id) — see below
+              delta: policy.annualDays,
+              dueDate: `${year}-01-01`,
+              note: `Entitlement materialized (${policy.annualDays} days)`,
+            }];
+      }
+      return dueGrantOps({
+        policy,
+        employment: facts,
+        year,
+        asOf,
+        grantedSoFar: 0,
+        availableNow: 0,
+        existingPeriodKeys: new Set<string>(),
+      });
+    });
+    const entitledByType = opsByType.map((ops) => ops.reduce((s, o) => s + o.delta, 0));
+
     // Materialize missing rows TOGETHER with their GRANT ledger rows in one
     // transaction (F1.2 — a cache row without its ledger explanation must
     // never exist). createMany without skipDuplicates (unsupported on
@@ -219,25 +351,26 @@ export async function getOrCreateBalancesBatch(
     await db
       .$transaction(async (tx) => {
         await tx.leaveBalance.createMany({
-          data: missing.map((t) => ({
-            userId, leaveTypeId: t.id, year, entitled: t.entitled, carriedOver: 0, used: 0,
+          data: missing.map((t, i) => ({
+            userId, leaveTypeId: t.id, year, entitled: entitledByType[i], carriedOver: 0, used: 0,
           })),
         });
-        const grants = missing.filter((t) => t.entitled !== 0);
-        if (grants.length > 0) {
-          await tx.leaveLedgerEntry.createMany({
-            data: grants.map((t) => ({
-              userId,
-              leaveTypeId: t.id,
-              year,
-              delta: t.entitled,
-              entryType: "GRANT",
-              sourceType: "POLICY",
-              sourceId: t.id,
-              note: `Entitlement materialized (${t.entitled} days)`,
-              isReversal: false,
-            })),
-          });
+        const ledgerRows = missing.flatMap((t, i) => {
+          const legacy = resolveLeavePolicy(t.policy).allocationStrategy === "MANUAL";
+          return opsByType[i].map((op) => ({
+            userId,
+            leaveTypeId: t.id,
+            year,
+            delta: op.delta,
+            entryType: "GRANT",
+            sourceType: "POLICY",
+            sourceId: legacy ? t.id : op.periodKey,
+            note: op.note,
+            isReversal: false,
+          }));
+        });
+        if (ledgerRows.length > 0) {
+          await tx.leaveLedgerEntry.createMany({ data: ledgerRows });
         }
       })
       .catch((err) => {
@@ -252,7 +385,12 @@ export async function getOrCreateBalancesBatch(
 
   for (const t of types) {
     const row = byType.get(t.id);
-    result.set(t.id, row ?? { entitled: t.entitled, carriedOver: 0, used: 0 });
+    // The facts-free fallback is the legacy flat entitlement (what the
+    // pre-F2.4 code fell back to when the re-read still lost the race).
+    result.set(
+      t.id,
+      row ?? { entitled: resolveLeavePolicy(t.policy).annualDays, carriedOver: 0, used: 0 },
+    );
   }
   return result;
 }
@@ -295,13 +433,15 @@ export async function ledgerProjectionFor(
 /** Transaction-client surface the balance materialize helper needs. */
 type BalanceWriteTx = Pick<
   Prisma.TransactionClient,
-  "leaveBalance" | "leaveLedgerEntry" | "leavePolicy"
+  "leaveBalance" | "leaveLedgerEntry" | "leavePolicy" | "employeeProfile"
 >;
 
 /**
- * Materialize the balance row + its GRANT ledger row INSIDE the caller's
+ * Materialize the balance row + its GRANT ledger row(s) INSIDE the caller's
  * transaction when the row is missing (the approve path's fail-closed
- * default, mirroring the old inline logic's semantics). Deliberately NOT
+ * default, mirroring the old inline logic's semantics). F2.4:
+ * strategy-aware — non-MANUAL types grant everything due under the strategy
+ * as of today; MANUAL keeps the legacy single-grant shape. Deliberately NOT
  * the try/catch-re-read pattern of the read-path helpers: inside a
  * Postgres transaction an INSERT unique-violation aborts the transaction,
  * so a lost race must fail loudly (a retryable error to the decider)
@@ -318,27 +458,83 @@ export async function materializeLeaveBalanceTx(
     select: { id: true },
   });
   if (existing) return;
-  const policy = await tx.leavePolicy.findUnique({
-    where: { leaveTypeId },
-    select: { annualDays: true },
-  });
-  const entitled = policy?.annualDays ?? 0;
+  const policyRow = await tx.leavePolicy.findUnique({ where: { leaveTypeId } });
+  const policy = resolveLeavePolicy(policyRow);
+
+  let ops: GrantOp[];
+  let legacySourceId: boolean;
+  if (policy.allocationStrategy === "MANUAL") {
+    legacySourceId = true;
+    ops =
+      policy.annualDays === 0
+        ? []
+        : [{
+            periodKey: "",
+            delta: policy.annualDays,
+            dueDate: `${year}-01-01`,
+            note: `Entitlement materialized (${policy.annualDays} days)`,
+          }];
+  } else {
+    legacySourceId = false;
+    const profile = await tx.employeeProfile.findUnique({
+      where: { userId },
+      select: { hireDate: true, employmentStatus: true, probationEndsAt: true },
+    });
+    const facts: EmploymentFacts | null = profile
+      ? {
+          hireDate: profile.hireDate ? dayKey(profile.hireDate) : null,
+          employmentStatus: profile.employmentStatus,
+          probationEndsAt: profile.probationEndsAt ? dayKey(profile.probationEndsAt) : null,
+        }
+      : null;
+    ops = dueGrantOps({
+      policy,
+      employment: facts,
+      year,
+      asOf: dayKey(new Date()),
+      grantedSoFar: 0,
+      availableNow: 0,
+      existingPeriodKeys: new Set<string>(),
+    });
+  }
+
+  const entitled = ops.reduce((s, o) => s + o.delta, 0);
   await tx.leaveBalance.create({
     data: { userId, leaveTypeId, year, entitled, carriedOver: 0, used: 0 },
   });
-  if (entitled !== 0) {
-    await tx.leaveLedgerEntry.create({
-      data: {
+  if (legacySourceId) {
+    // Legacy MANUAL path, byte-identical to pre-F2.4: one GRANT row via
+    // .create with sourceId = the type id (the F1.2 convention).
+    if (ops.length === 1) {
+      await tx.leaveLedgerEntry.create({
+        data: {
+          userId,
+          leaveTypeId,
+          year,
+          delta: ops[0].delta,
+          entryType: "GRANT",
+          sourceType: "POLICY",
+          sourceId: leaveTypeId,
+          note: ops[0].note,
+          isReversal: false,
+        },
+      });
+    }
+  } else if (ops.length > 0) {
+    // Strategy types: one GRANT row per due period (sourceId = the
+    // deterministic period key — the cron job's idempotency input).
+    await tx.leaveLedgerEntry.createMany({
+      data: ops.map((op) => ({
         userId,
         leaveTypeId,
         year,
-        delta: entitled,
+        delta: op.delta,
         entryType: "GRANT",
         sourceType: "POLICY",
-        sourceId: leaveTypeId,
-        note: `Entitlement materialized (${entitled} days)`,
+        sourceId: op.periodKey,
+        note: op.note,
         isReversal: false,
-      },
+      })),
     });
   }
 }

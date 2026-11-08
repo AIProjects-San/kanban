@@ -20,7 +20,7 @@ import { logError } from "@/lib/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { LEAVE_STATUS_LABELS } from "@/lib/config";
-import type { LeaveStatus, LeaveRequestT, LeaveTypeT, LeaveBalanceT, HolidayT } from "@/lib/types";
+import type { LeaveStatus, LeaveRequestT, LeaveTypeT, LeaveBalanceT, HolidayT, LeaveAllocationStrategy, LeaveAccrualFrequency, LeaveAllocateOnDay, LeaveAccrualRounding, LeaveGrantOn } from "@/lib/types";
 import {
   createLeaveRequestSchema,
   decideLeaveRequestSchema,
@@ -33,6 +33,13 @@ import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { workingDaysBetween } from "@/lib/working-days";
+import {
+  checkLeaveRequestAgainstBalance,
+  checkServiceEligibility,
+  advanceHint,
+  resolveLeavePolicy,
+  type LeavePolicyRow,
+} from "@/lib/leave-policy";
 import {
   parseDay,
   daysBetween,
@@ -93,10 +100,11 @@ export async function getMyLeaveData(): Promise<
     // PR-19 — balances for every active type in ONE batched read (+ a rare
     // lazy materialize write for missing rows). The previous per-type loop
     // ran 3 queries per leave type — a genuine N+1 with a write on the read
-    // path — on every Leave-view load.
+    // path — on every Leave-view load. F2.4: the policy ROW rides along so
+    // materialization is strategy-aware.
     const balancesByType = await getOrCreateBalancesBatch(
       auth.userId,
-      types.map((t) => ({ id: t.id, entitled: t.policy?.annualDays ?? 0 })),
+      types.map((t) => ({ id: t.id, policy: t.policy })),
       year,
     );
     const balances: LeaveBalanceT[] = types.map((t) => {
@@ -156,14 +164,7 @@ export async function getMyLeaveData(): Promise<
         paid: t.paid,
         color: t.color,
         active: t.active,
-        policy: t.policy
-          ? {
-              annualDays: t.policy.annualDays,
-              maxCarryOver: t.policy.maxCarryOver,
-              minNoticeDays: t.policy.minNoticeDays,
-              maxConsecutiveDays: t.policy.maxConsecutiveDays,
-            }
-          : null,
+        policy: t.policy ? policyDto(t.policy) : null,
       })),
       year,
       canManage: hasPermission(auth.role as never, "hr:view"),
@@ -246,17 +247,34 @@ export async function getLeaveQueue(): Promise<
         paid: t.paid,
         color: t.color,
         active: t.active,
-        policy: t.policy
-          ? {
-              annualDays: t.policy.annualDays,
-              maxCarryOver: t.policy.maxCarryOver,
-              minNoticeDays: t.policy.minNoticeDays,
-              maxConsecutiveDays: t.policy.maxConsecutiveDays,
-            }
-          : null,
+        policy: t.policy ? policyDto(t.policy) : null,
       })),
     };
   });
+}
+
+/** F2.4 — the policy DTO: every strategy knob the UI renders, straight
+ * from the row (post-migration columns are never null). */
+function policyDto(p: NonNullable<LeavePolicyRow> & Record<string, unknown>): NonNullable<LeaveTypeT["policy"]> {
+  return {
+    annualDays: p.annualDays,
+    maxCarryOver: p.maxCarryOver,
+    minNoticeDays: p.minNoticeDays,
+    maxConsecutiveDays: p.maxConsecutiveDays,
+    allocationStrategy: (p.allocationStrategy ?? "MANUAL") as LeaveAllocationStrategy,
+    accrualFrequency: (p.accrualFrequency ?? "MONTHLY") as LeaveAccrualFrequency,
+    allocateOnDay: (p.allocateOnDay ?? "FIRST") as LeaveAllocateOnDay,
+    accrualRounding: (p.accrualRounding ?? "FLOOR_QUARTER") as LeaveAccrualRounding,
+    accrualCap: p.accrualCap ?? null,
+    grantOn: (p.grantOn ?? "PERIOD_START") as LeaveGrantOn,
+    prorateForJoiners: p.prorateForJoiners ?? true,
+    minServiceMonths: p.minServiceMonths ?? 0,
+    accrueDuringProbation: p.accrueDuringProbation ?? true,
+    allowNegative: p.allowNegative ?? false,
+    negativeFloor: p.negativeFloor ?? 0,
+    carryExpiresAfterMonths: p.carryExpiresAfterMonths ?? null,
+    countHolidaysInLeave: p.countHolidaysInLeave ?? false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +319,17 @@ export async function createLeaveRequest(input: {
       type.policy && type.policy.minNoticeDays > 0 ? type.policy.minNoticeDays * 3 + 1 : 0;
     const nearStart = gap >= 1 && gap <= noticeWindow;
     const holidays = await getHolidayLookup(nearStart ? noticeFrom : start, end);
-    const days = workingDaysBetween(start, end, holidays);
+    // F2.4 — include-holiday mode (LV-B05): when the type counts holidays
+    // as leave days, only HALF-day entries stay in the counting lookup (a
+    // full holiday consumes a whole leave day, a half-day holiday half of
+    // one). The default (false) is the F1.1 holiday-aware count unchanged —
+    // and the notice window above always keeps the precise holiday-aware
+    // count (notice is about working days of warning, not consumption).
+    const resolvedPolicy = resolveLeavePolicy(type.policy);
+    const countingHolidays = resolvedPolicy.countHolidaysInLeave
+      ? new Map([...holidays].filter(([, v]) => v.isHalfDay))
+      : holidays;
+    const days = workingDaysBetween(start, end, countingHolidays);
     if (days <= 0) {
       throw new AuthorizationError("That range contains no working days (Mon–Fri, holidays excluded).");
     }
@@ -336,13 +364,40 @@ export async function createLeaveRequest(input: {
       throw new AuthorizationError("You already have a pending or approved request overlapping those dates.");
     }
 
-    // Balance — insufficient balance rejects at submission (scoping decision).
+    // F2.4 — LV-B07 service gate (minServiceMonths > 0): no leave of this
+    // type before N months of service. A user with no hire date on record
+    // passes (unknown ≠ ineligible — the rule refuses to fabricate).
+    if (resolvedPolicy.minServiceMonths > 0) {
+      const profile = await db.employeeProfile.findUnique({
+        where: { userId: auth.userId },
+        select: { hireDate: true, employmentStatus: true, probationEndsAt: true },
+      });
+      const facts = profile
+        ? {
+            hireDate: profile.hireDate ? profile.hireDate.toISOString().slice(0, 10) : null,
+            employmentStatus: profile.employmentStatus,
+            probationEndsAt: profile.probationEndsAt ? profile.probationEndsAt.toISOString().slice(0, 10) : null,
+          }
+        : null;
+      const eligibility = checkServiceEligibility(resolvedPolicy, facts, data.startDate);
+      if (!eligibility.ok) {
+        throw new AuthorizationError(
+          `${type.name} requires ${resolvedPolicy.minServiceMonths} month(s) of service before it can be taken — ` +
+            `you have ${eligibility.monthsOfService ?? 0} so far.`,
+        );
+      }
+    }
+
+    // Balance — insufficient balance rejects at submission (scoping
+    // decision). F2.4: floor-aware — with allowNegative the member may
+    // spend into an advance down to −negativeFloor days.
     const year = start.getUTCFullYear();
-    const balance = await getOrCreateBalance(auth.userId, type.id, year, policy?.annualDays ?? 0);
+    const balance = await getOrCreateBalance(auth.userId, type.id, year, type.policy);
     const available = balance.entitled + balance.carriedOver - balance.used;
-    if (days > available) {
+    const guard = checkLeaveRequestAgainstBalance(resolvedPolicy, days, available);
+    if (!guard.ok) {
       throw new AuthorizationError(
-        `Insufficient balance: ${days} day(s) requested, ${available} available for ${type.name}.`,
+        `Insufficient balance: ${days} day(s) requested, ${available} available for ${type.name}${advanceHint(resolvedPolicy)}.`,
       );
     }
 
@@ -410,7 +465,10 @@ export async function decideLeaveRequest(input: {
     await assertLeaveDecider(auth, request.userId);
 
     const newStatus: LeaveStatus = data.decision === "APPROVE" ? "APPROVED" : "REJECTED";
-    const type = await db.leaveType.findUnique({ where: { id: request.leaveTypeId }, select: { name: true } });
+    const type = await db.leaveType.findUnique({
+      where: { id: request.leaveTypeId },
+      select: { name: true, policy: true },
+    });
     const requester = await db.user.findUnique({ where: { id: request.userId }, select: { name: true } });
 
     if (data.decision === "APPROVE") {
@@ -463,13 +521,17 @@ export async function decideLeaveRequest(input: {
         // QA-1: the guard reads the LEDGER projection (one groupBy
         // aggregate). `available` is Σ(all deltas) — entitlement, carry,
         // adjustments and consumption in one number the cache cannot lie
-        // about.
+        // about. F2.4: floor-aware — with allowNegative the approval may
+        // lawfully land the member into an advance down to −negativeFloor
+        // days (identical rejection at floor 0).
         const projection = await ledgerProjectionFor(
           tx, request.userId, request.leaveTypeId, year,
         );
-        if (request.days > projection.available) {
+        const resolved = resolveLeavePolicy(type?.policy);
+        const guard = checkLeaveRequestAgainstBalance(resolved, request.days, projection.available);
+        if (!guard.ok) {
           throw new AuthorizationError(
-            `Insufficient balance: ${request.days} day(s) requested, only ${projection.available} day(s) left for ${type?.name ?? "this leave type"}.`,
+            `Insufficient balance: ${request.days} day(s) requested, only ${projection.available} day(s) left for ${type?.name ?? "this leave type"}${advanceHint(resolved)}.`,
           );
         }
 
@@ -669,6 +731,21 @@ export async function createLeaveType(input: {
     maxCarryOver: number;
     minNoticeDays: number;
     maxConsecutiveDays: number;
+    // F2.4 strategy block — all optional; zod defaults reproduce the
+    // pre-F2.4 semantics (MANUAL, no negative allowance, holidays excluded).
+    allocationStrategy?: "MANUAL" | "ANNUAL_LUMP_SUM" | "EARNED" | "AFTER_SERVICE";
+    accrualFrequency?: "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUAL";
+    allocateOnDay?: "FIRST" | "LAST" | "DOJ_DAY";
+    accrualRounding?: "FLOOR_QUARTER" | "NEAREST";
+    accrualCap?: number | null;
+    grantOn?: "PERIOD_START" | "ANNIVERSARY";
+    prorateForJoiners?: boolean;
+    minServiceMonths?: number;
+    accrueDuringProbation?: boolean;
+    allowNegative?: boolean;
+    negativeFloor?: number;
+    carryExpiresAfterMonths?: number | null;
+    countHolidaysInLeave?: boolean;
   };
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
@@ -726,6 +803,22 @@ export async function updateLeaveType(id: string, input: {
     maxCarryOver: number;
     minNoticeDays: number;
     maxConsecutiveDays: number;
+    // F2.4 strategy block — same shape as createLeaveType; the form always
+    // sends the complete policy (a partial policy update that silently
+    // reset a strategy to MANUAL is exactly the drift this avoids).
+    allocationStrategy?: "MANUAL" | "ANNUAL_LUMP_SUM" | "EARNED" | "AFTER_SERVICE";
+    accrualFrequency?: "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUAL";
+    allocateOnDay?: "FIRST" | "LAST" | "DOJ_DAY";
+    accrualRounding?: "FLOOR_QUARTER" | "NEAREST";
+    accrualCap?: number | null;
+    grantOn?: "PERIOD_START" | "ANNIVERSARY";
+    prorateForJoiners?: boolean;
+    minServiceMonths?: number;
+    accrueDuringProbation?: boolean;
+    allowNegative?: boolean;
+    negativeFloor?: number;
+    carryExpiresAfterMonths?: number | null;
+    countHolidaysInLeave?: boolean;
   };
 }): Promise<ActionResult<void>> {
   return toResult(async () => {

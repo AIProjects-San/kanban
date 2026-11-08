@@ -40,6 +40,9 @@ export interface LockRedis {
 export const MAINTENANCE_LOCK_KEY = `${redisKeyPrefix()}maintenance:lock`;
 /** Redis key recording the last successful maintenance run (ISO string). */
 export const MAINTENANCE_LAST_RUN_KEY = `${redisKeyPrefix()}maintenance:last_run`;
+/** F2.4 — the leave-allocation job's OWN lock key (separate identity from
+ * the audit purge's: one job's run must never suppress the other's). */
+export const LEAVE_ALLOCATION_LOCK_KEY = `${redisKeyPrefix()}maintenance:leave_allocation`;
 
 export interface MaintenanceLockResult {
   acquired: boolean;
@@ -49,7 +52,10 @@ export interface MaintenanceLockResult {
 
 // Fallback guard — the pre-PR-30 behaviour, still used when Redis is not
 // configured (single-instance deployments) or unavailable (fail-open).
-let memoryLastRunAt = 0;
+// Per-key map: the audit purge and the F2.4 leave-allocation job run on
+// SEPARATE locks (same pattern, different windows) — one job's run must
+// never suppress the other's.
+const memoryLastRunAtByKey = new Map<string, number>();
 let lastFailOpenWarnAt = 0;
 
 /**
@@ -57,17 +63,22 @@ let lastFailOpenWarnAt = 0;
  *
  * @param opts.minIntervalMs how long a successful run suppresses further
  *   runs (the Redis lock TTL / the in-memory window). Default 1 hour.
+ * @param opts.key the lock's identity — distinct jobs (audit purge, leave
+ *   allocation) pass their own key so one job's run never suppresses the
+ *   other's. Defaults to the shared maintenance key (pre-F2.4 callers).
  * @param opts.redisClient injectable for tests; defaults to the shared
  *   ioredis client when REDIS_URL is set.
  */
 export async function tryAcquireMaintenanceLock(opts?: {
   minIntervalMs?: number;
+  key?: string;
   redisClient?: LockRedis | null;
   redisUrl?: string;
   now?: number;
 }): Promise<MaintenanceLockResult> {
   const minIntervalMs = opts?.minIntervalMs ?? 60 * 60 * 1_000;
   const now = opts?.now ?? Date.now();
+  const key = opts?.key ?? MAINTENANCE_LOCK_KEY;
 
   const redisUrl = opts?.redisUrl ?? process.env.REDIS_URL;
   let client: LockRedis | null | undefined = opts?.redisClient;
@@ -79,7 +90,7 @@ export async function tryAcquireMaintenanceLock(opts?: {
   if (client) {
     try {
       const reply = await client.set(
-        MAINTENANCE_LOCK_KEY,
+        key,
         `${process.pid}:${now}`,
         "PX",
         minIntervalMs,
@@ -105,10 +116,11 @@ export async function tryAcquireMaintenanceLock(opts?: {
   }
 
   // In-memory guard (single-instance semantics).
+  const memoryLastRunAt = memoryLastRunAtByKey.get(key) ?? 0;
   if (now - memoryLastRunAt < minIntervalMs) {
     return { acquired: false, backend: "memory" };
   }
-  memoryLastRunAt = now;
+  memoryLastRunAtByKey.set(key, now);
   return { acquired: true, backend: "memory" };
 }
 
@@ -166,8 +178,8 @@ export async function getMaintenanceLastRun(opts?: {
   }
 }
 
-/** Test-only: reset the in-memory fallback guard between test cases. */
+/** Test-only: reset the in-memory fallback guards between test cases. */
 export function _resetMaintenanceLockForTests(): void {
-  memoryLastRunAt = 0;
+  memoryLastRunAtByKey.clear();
   lastFailOpenWarnAt = 0;
 }

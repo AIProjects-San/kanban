@@ -11,7 +11,7 @@ const db = vi.hoisted(() => {
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "leaveLedgerEntry",
     "user", "auditLog", "notification", "holidayCalendarEntry",
-    "attendanceRecord",
+    "attendanceRecord", "employeeProfile",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -212,7 +212,7 @@ describe("getApproverIdsFor / assertLeaveDecider", () => {
 describe("getOrCreateBalance", () => {
   it("returns the existing row untouched", async () => {
     db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 2, used: 3 });
-    const b = await getOrCreateBalance("u-theo", "lt-annual", 2026, 20);
+    const b = await getOrCreateBalance("u-theo", "lt-annual", 2026, ANNUAL_TYPE.policy);
     expect(b).toEqual({ entitled: 20, carriedOver: 2, used: 3 });
     expect(db.leaveBalance.create).not.toHaveBeenCalled();
   });
@@ -220,7 +220,7 @@ describe("getOrCreateBalance", () => {
     db.leaveBalance.findUnique
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ entitled: 20, carriedOver: 0, used: 0 });
-    const b = await getOrCreateBalance("u-theo", "lt-annual", 2026, 20);
+    const b = await getOrCreateBalance("u-theo", "lt-annual", 2026, ANNUAL_TYPE.policy);
     expect(db.leaveBalance.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ entitled: 20, year: 2026 }) }),
     );
@@ -1123,7 +1123,16 @@ describe("createLeaveType / updateLeaveType", () => {
         data: expect.objectContaining({
           name: "Parental",
           code: "PARENTAL",
-          policy: { create: { annualDays: 10, maxCarryOver: 0, minNoticeDays: 14, maxConsecutiveDays: 90 } },
+          // F2.4 — the strategy block lands with the zod defaults (MANUAL,
+          // no negative allowance, holidays excluded): a legacy-shaped input
+          // creates exactly the legacy-shaped policy.
+          policy: {
+            create: expect.objectContaining({
+              annualDays: 10, maxCarryOver: 0, minNoticeDays: 14, maxConsecutiveDays: 90,
+              allocationStrategy: "MANUAL", allowNegative: false, negativeFloor: 0,
+              countHolidaysInLeave: false,
+            }),
+          },
         }),
       }),
     );
@@ -1153,7 +1162,11 @@ describe("createLeaveType / updateLeaveType", () => {
     expect(db.leavePolicy.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { leaveTypeId: "lt-annual" },
-        update: { annualDays: 25, maxCarryOver: 5, minNoticeDays: 1, maxConsecutiveDays: 15 },
+        update: expect.objectContaining({
+          annualDays: 25, maxCarryOver: 5, minNoticeDays: 1, maxConsecutiveDays: 15,
+          // F2.4 — zod defaults fill the strategy block (legacy semantics).
+          allocationStrategy: "MANUAL", allowNegative: false,
+        }),
       }),
     );
   });
@@ -1501,7 +1514,7 @@ describe("PR-56 — remaining branch coverage (hr-shared)", () => {
       .mockResolvedValueOnce({ entitled: 20, carriedOver: 2, used: 3 });
     db.leaveBalance.create.mockRejectedValueOnce(new Error("P2002 unique constraint failed"));
 
-    const b = await getOrCreateBalance("u-theo", "lt-annual", 2026, 20);
+    const b = await getOrCreateBalance("u-theo", "lt-annual", 2026, ANNUAL_TYPE.policy);
     // The winner's numbers, not the policy default (20/0/0).
     expect(b).toEqual({ entitled: 20, carriedOver: 2, used: 3 });
     expect(db.leaveBalance.create).toHaveBeenCalledTimes(1);
@@ -1532,8 +1545,8 @@ describe("PR-56 — remaining branch coverage (hr-shared)", () => {
     db.leaveBalance.createMany.mockRejectedValueOnce(new Error("P2002 unique constraint failed"));
 
     const balances = await getOrCreateBalancesBatch("u-theo", [
-      { id: "lt-annual", entitled: 20 },
-      { id: "lt-sick", entitled: 10 },
+      { id: "lt-annual", policy: ANNUAL_TYPE.policy },
+      { id: "lt-sick", policy: { annualDays: 10, maxCarryOver: 0, minNoticeDays: 0, maxConsecutiveDays: 120 } },
     ], 2026);
 
     // Only the missing type was queued for materialization.
@@ -1551,5 +1564,227 @@ describe("PR-56 — remaining branch coverage (hr-shared)", () => {
     // (Batch rows keep their leaveTypeId — the fold-in stores the whole row.)
     expect(balances.get("lt-annual")).toMatchObject({ entitled: 20, carriedOver: 0, used: 0 });
     expect(balances.get("lt-sick")).toMatchObject({ entitled: 10, carriedOver: 1, used: 2 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F2.4 — leave policy engine (docs/Fernly_Policy_Engine_Design.md §4).
+// Floor-aware guards (submission + approval), the include-holiday day count,
+// the LV-B07 service gate, and strategy-aware materialization — through the
+// actions, with the rules themselves pinned in leave-policy.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("F2.4 — advance (negative) leave", () => {
+  const ADVANCE_TYPE = {
+    ...ANNUAL_TYPE,
+    id: "lt-advance",
+    name: "Advance Annual",
+    policy: {
+      ...ANNUAL_TYPE.policy,
+      leaveTypeId: "lt-advance",
+      allocationStrategy: "EARNED",
+      accrualFrequency: "MONTHLY",
+      allowNegative: true,
+      negativeFloor: 5,
+    },
+  };
+
+  it("permits a submission that lands inside the negative floor", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ADVANCE_TYPE);
+    // 6 available, 8 requested → −2 ≥ −5 → allowed (Org A's June walk).
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 24, carriedOver: 0, used: 18 });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-advance",
+      startDate: "2027-06-07",
+      endDate: "2027-06-15", // 8 working days, ≤ 15-day cap, notice fine
+      reason: "Advance leave e2e",
+    });
+    expect(res.ok).toBe(true);
+    // Mon 7 → Tue 15 = 7 working days; 6 − 7 = −1 ≥ −5 → allowed.
+    expect(db.leaveRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ days: 7, status: "PENDING" }) }),
+    );
+  });
+
+  it("rejects a submission past the floor and says what the floor is", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ADVANCE_TYPE);
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 24, carriedOver: 0, used: 18 });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-advance",
+      startDate: "2027-06-07",
+      endDate: "2027-06-18", // 10 working days → −4 < −5? no: 6−10 = −4 ≥ −5 ok. Push further:
+      reason: "",
+    });
+    // 12 working days → 6 − 12 = −6 < −5 → rejected.
+    const res2 = await createLeaveRequest({
+      leaveTypeId: "lt-advance",
+      startDate: "2027-06-07",
+      endDate: "2027-06-22",
+      reason: "",
+    });
+    expect(res.ok).toBe(true);
+    expect(res2.ok).toBe(false);
+    expect(res2.ok === false && res2.error).toMatch(/advance leave is allowed down to −5/i);
+    expect(db.leaveRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("QA-1 (floor-aware): approves exactly AT the floor, refuses past it", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveType.findUnique.mockResolvedValue(ADVANCE_TYPE);
+    // Available 6 (GRANT 24, CONSUME −18). Requesting 11 → −5 = floor → OK.
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, leaveTypeId: "lt-advance", days: 11 });
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([
+      { entryType: "GRANT", _sum: { delta: 24 } },
+      { entryType: "CONSUME", _sum: { delta: -18 } },
+    ]);
+    const at = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(at.ok).toBe(true);
+    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ delta: -11, entryType: "CONSUME" }) }),
+    );
+
+    // Requesting 11.25 → −5.25 < −5 → refused, nothing written for it.
+    db.leaveRequest.updateMany.mockClear();
+    db.leaveLedgerEntry.create.mockClear();
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, leaveTypeId: "lt-advance", days: 11.25 });
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
+    const past = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(past.ok).toBe(false);
+    expect(past.ok === false && past.error).toMatch(/insufficient balance/i);
+    expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("F2.4 — include-holiday day count (countHolidaysInLeave)", () => {
+  const COUNTING_TYPE = {
+    ...ANNUAL_TYPE,
+    id: "lt-counting",
+    policy: { ...ANNUAL_TYPE.policy, leaveTypeId: "lt-counting", countHolidaysInLeave: true },
+  };
+
+  it("counts a full holiday as a leave day (only half-day entries discount)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(COUNTING_TYPE);
+    // 2027-06-07 (Mon) .. 2027-06-09 (Wed): King's Birthday Mon full,
+    // Tue half-day holiday. Include-holiday: Mon counts 1, Tue counts 0.5,
+    // Wed 1 → 2.5 days (vs 1.5 with the default holiday-aware count).
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2027-06-07T00:00:00.000Z"), isHalfDay: false },
+      { date: new Date("2027-06-08T00:00:00.000Z"), isHalfDay: true },
+    ]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-counting",
+      startDate: "2027-06-07",
+      endDate: "2027-06-09",
+      reason: "",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.leaveRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ days: 2.5 }) }),
+    );
+  });
+});
+
+describe("F2.4 — LV-B07 service gate (minServiceMonths)", () => {
+  const GATED_TYPE = {
+    ...ANNUAL_TYPE,
+    id: "lt-gated",
+    name: "Long Service",
+    policy: { ...ANNUAL_TYPE.policy, leaveTypeId: "lt-gated", minServiceMonths: 6 },
+  };
+
+  it("rejects a request before N months of service with the months named", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(GATED_TYPE);
+    db.employeeProfile.findUnique.mockResolvedValue({
+      hireDate: new Date("2026-09-15T00:00:00.000Z"),
+      employmentStatus: "ACTIVE",
+      probationEndsAt: null,
+    });
+    // Request starts 2027-03-10 → 5 months of service (< 6).
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-gated",
+      startDate: "2027-03-10",
+      endDate: "2027-03-11",
+      reason: "",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/6 month\(s\) of service/);
+    expect(res.ok === false && res.error).toMatch(/you have 5 so far/i);
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("passes on the N-month mark and when no hire date is on record", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(GATED_TYPE);
+    db.employeeProfile.findUnique.mockResolvedValue({
+      hireDate: new Date("2026-09-15T00:00:00.000Z"),
+      employmentStatus: "ACTIVE",
+      probationEndsAt: null,
+    });
+    // On the mark: 2027-03-15 → exactly 6 months.
+    const onMark = await createLeaveRequest({
+      leaveTypeId: "lt-gated", startDate: "2027-03-15", endDate: "2027-03-16", reason: "",
+    });
+    expect(onMark.ok).toBe(true);
+
+    // No profile at all — unknown is not ineligible.
+    db.employeeProfile.findUnique.mockResolvedValue(null);
+    const noFacts = await createLeaveRequest({
+      leaveTypeId: "lt-gated", startDate: "2027-03-10", endDate: "2027-03-11", reason: "",
+    });
+    expect(noFacts.ok).toBe(true);
+  });
+});
+
+describe("F2.4 — strategy-aware materialization", () => {
+  it("materializes an EARNED balance with one GRANT row per due period", async () => {
+    // Employee hired 2023 → as of "now" (real clock — the rule's asOf), the
+    // current-year periods up to today are due. What matters here: the
+    // ledger rows carry PERIOD-KEY sourceIds (not the legacy type id) and
+    // the entitled cache equals their sum.
+    db.leaveBalance.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(undefined) // re-read after the (mocked) race-free create
+      .mockResolvedValueOnce(null);
+    const EARNED_POLICY = {
+      ...ANNUAL_TYPE.policy,
+      allocationStrategy: "EARNED",
+      accrualFrequency: "MONTHLY",
+      annualDays: 24,
+    };
+    db.employeeProfile.findUnique.mockResolvedValue({
+      hireDate: new Date("2023-03-15T00:00:00.000Z"),
+      employmentStatus: "ACTIVE",
+      probationEndsAt: null,
+    });
+
+    const b = await getOrCreateBalance("u-theo", "lt-earned", new Date().getUTCFullYear(), EARNED_POLICY);
+    // The mock never persists the row, so the fallback is the ops sum —
+    // which proves the strategy granted (12 × 2 only in December; earlier
+    // otherwise). Assert the ledger shape instead of the exact count.
+    expect(b.entitled).toBeGreaterThanOrEqual(2);
+    expect(b.entitled % 2).toBe(0); // whole months of 2 days
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([
+          expect.objectContaining({ entryType: "GRANT", sourceType: "POLICY", sourceId: expect.stringMatching(/^\d{4}-\d{2}$/) }),
+        ]),
+      }),
+    );
+  });
+
+  it("keeps the legacy single-grant shape for MANUAL types", async () => {
+    db.leaveBalance.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ entitled: 20, carriedOver: 0, used: 0 });
+    await getOrCreateBalance("u-theo", "lt-annual", 2026, ANNUAL_TYPE.policy);
+    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ delta: 20, entryType: "GRANT", sourceType: "POLICY", sourceId: "lt-annual" }),
+      }),
+    );
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
   });
 });

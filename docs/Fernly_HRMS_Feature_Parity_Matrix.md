@@ -142,10 +142,10 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 
 | ID | Benchmark artifact | Key features (from controller) | Fernly surface @ `bb2e046` | Status | Family / epic |
 | --- | --- | --- | --- | --- | --- |
-| LV-01 | `Leave Type` (33 fields) | LWP / partially-paid (salary fraction) / earned (frequency, allocate-on, rounding) / compensatory / carry-forward (cap + expiry days) / include-holiday / allow-negative / over-allocation / applicable-after / max-continuous / encashment knobs / optional-leave | `LeaveType` (code, label, paid, requiresDoc, color) + `LeavePolicy` knobs (annualDays, maxCarryOver, minNoticeDays, maxConsecutiveDays); `hr:admin` CRUD in `hr-leave.ts` | Partial | L1 |
+| LV-01 | `Leave Type` (33 fields) | LWP / partially-paid (salary fraction) / earned (frequency, allocate-on, rounding) / compensatory / carry-forward (cap + expiry days) / include-holiday / allow-negative / over-allocation / applicable-after / max-continuous / encashment knobs / optional-leave | `LeaveType` + `LeavePolicy` with the F2.4 strategy block (allocationStrategy MANUAL/ANNUAL_LUMP_SUM/EARNED/AFTER_SERVICE, accrual frequency/on-day/rounding/cap, grantOn + pro-rata, minServiceMonths, accrueDuringProbation, allowNegative + negativeFloor, carryExpiresAfterMonths, countHolidaysInLeave — `lib/leave-policy.ts`, `hr:admin` editor); still missing: partially-paid salary fraction, compensatory leave, encashment knobs (F2.2), optional-leave | Partial | L1 / **F2.4** |
 | LV-02 | `Leave Policy` + `Leave Policy Detail` (child) | multi-type allocation template | `LeavePolicy` 1:1 per type (policy = type + numbers) | Partial | L2 |
 | LV-03 | `Leave Policy Assignment` (submittable, 613 py lines) | assignment per employee × leave period; overlap-forbidden; bulk with per-employee savepoints; DOJ pro-rata; pre-computes earned-leave schedule | year-based entitlement per user — GRANT rows via policy/migration (F1.2 backfill); no assignment docs, no bulk tool, no pro-rata | Partial | L2 |
-| LV-04 | `Leave Allocation` (submittable, 597 py lines) | validates overlap, CF caps, backdating; writes two ledger entries (new + CF parts with own expiry dates) | annual GRANT rows in the ledger; `carriedOver` structurally 0 today (EXPIRE/CARRY writers are F2.4) | Partial | L4 / F2.4 |
+| LV-04 | `Leave Allocation` (submittable, 597 py lines) | validates overlap, CF caps, backdating; writes two ledger entries (new + CF parts with own expiry dates) | F2.4: strategy GRANT rows with deterministic period-key sourceIds (lazy + cron writers), year-end CARRY/EXPIRE pair capped by maxCarryOver, mid-year carry lapse; no submittable allocation documents, no per-row expiry dates (lapse is per-type), no backdating validation | Partial (improved) | L4 / **F2.4** |
 | LV-05 | `Leave Application` (submittable, 1,591 py lines) | 10-step validation chain; split-at-CF-boundary consumption; attendance marking; approver chain | `LeaveRequest` PENDING → APPROVED/REJECTED → CANCELLED; 7-step chain (notice-working-days F1.2, holiday-aware counting F1.1, consecutive, overlap, balance); manager-or-admin decide; decideById/note | Partial | L5 |
 | LV-06 | `Leave Ledger Entry` (submittable, 295 py lines) | append-only signed rows; is_carry_forward / is_expired; daily expiry job writes negatives | `LeaveLedgerEntry` (F1.2: GRANT/CARRY/CONSUME/EXPIRE/ADJUST + `isReversal`, polymorphic source; `LeaveBalance` a transactionally-synced derived cache; cancel writes reversal siblings; QA-1 guard = Σ deltas) | **Parity (workspace scope)** | L3 / F1.2 DONE |
 | LV-07 | `Leave Block List` (+`Date`, `Allow` children) | blocked dates + department scoping + allow-list | — | Missing | L8 |
@@ -162,12 +162,12 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | ID | Benchmark behavior | Fernly @ `bb2e046` | Status | Family / epic |
 | --- | --- | --- | --- | --- |
 | LV-B01 | LWP flag + partially-paid `fraction_of_daily_salary_per_leave` | boolean `paid` only (unpaid days charge full LOP) | Partial | L1 |
-| LV-B02 | Earned-leave frequency, allocate-on-day, rounding | — | Missing | L11 / F2.4 |
+| LV-B02 | Earned-leave frequency, allocate-on-day, rounding | EARNED strategy: accrualFrequency MONTHLY/QUARTERLY/HALF_YEARLY/ANNUAL, allocateOnDay FIRST/LAST/DOJ_DAY, accrualRounding FLOOR_QUARTER/NEAREST + December true-up (`lib/leave-policy.ts`, cron + lazy writers) | **Parity (workspace scope)** | L11 / **F2.4 DONE** |
 | LV-B03 | Compensatory-leave worked-holiday validation | — | Missing | L10 |
-| LV-B04 | Carry-forward cap + expiry days (daily job) | `maxCarryOver` knob exists; carriedOver always 0 (no rollover job) — F2.4 writes the EXPIRE/CARRY rows | Partial | L4 / F2.4 |
-| LV-B05 | include-holiday-in-leave-count setting | holidays excluded from counted working days (fixed behavior, not configurable; F2.4 adds `countHolidaysInLeave` per design doc §6) | Partial | L7 / **F2.4** |
-| LV-B06 | allow-negative / over-allocation switches | — (balance guard always; F2.4's policy engine adds `allowNegative` + `negativeFloor` per design doc §4.3) | Missing | L1 / **F2.4** |
-| LV-B07 | `applicable_after` days-in-service before leave allowed | — (F2.4's `minServiceMonths` knob covers this per design doc §4.1) | Missing | L1 / **F2.4** |
+| LV-B04 | Carry-forward cap + expiry days (daily job) | F2.4: the daily leave-allocation job writes the year-end CARRY (≤ maxCarryOver) + EXPIRE pair and the carryExpiresAfterMonths lapse (idempotent sourceIds `carry`/`carry-expire`/`carry-lapse`) | **Parity (workspace scope)** | L4 / **F2.4 DONE** |
+| LV-B05 | include-holiday-in-leave-count setting | F2.4: `countHolidaysInLeave` per type — full holidays consume a leave day, half-day entries still count 0.5 (server + live preview) | **Parity (workspace scope)** | L7 / **F2.4 DONE** |
+| LV-B06 | allow-negative / over-allocation switches | F2.4: `allowNegative` + `negativeFloor` per type; the floor-aware guard (request + approval) allows spending into an advance down to −floor; negative balances render as "N days in advance" | **Parity (workspace scope)** | L1 / **F2.4 DONE** |
+| LV-B07 | `applicable_after` days-in-service before leave allowed | F2.4: `minServiceMonths` gates submission (LV-B07) and doubles as AFTER_SERVICE's deposit threshold; no hire date on record passes (unknown ≠ ineligible) | **Parity (workspace scope)** | L1 / **F2.4 DONE** |
 | LV-B08 | Max-consecutive-days walk across adjacent applications | per-request `maxConsecutiveDays` guard; cross-request walk unverified/absent | Partial | L5 |
 | LV-B09 | Block-list validation with department scoping | — | Missing | L8 |
 | LV-B10 | Salary-processed guard (LWP cannot overlap a processed slip) | — | Missing | L5 |
@@ -178,7 +178,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | LV-B15 | Consumption split at allocation / CF-expiry boundaries | — (no CF today) | Missing | L4 / F2.4 |
 | LV-B16 | Auto-encashment drafts for allocations ended yesterday (daily job) | — | Missing | L9 / F2.2 |
 | LV-B17 | Allocation pro-rata by joining date | — | Missing | L2 |
-| LV-B18 | Earned-leave schedule: retries, failure reasons, HR email | — | Missing | L11 / F2.4 |
+| LV-B18 | Earned-leave schedule: retries, failure reasons, HR email | F2.4: the job counts + logs failed pairs (savepoint-per-pair, the pass survives) and is idempotent; no retry queue, no failure-reason records, no HR email | Partial | L11 / **F2.4** |
 | LV-B19 | Half-day leave application semantics | half-day exists only as holiday/LOP fractions (F1.1/F1.4), not as request shape | Missing | L6 / F2.9 |
 
 ### 3.3 Leave reports, charts, cards, notifications, jobs
@@ -198,7 +198,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | LV-T03 | Notification `Leave Application Cancelled` (email, Cancel) | — | Missing | X6 |
 | LV-J01 | Daily job `process_expired_allocation` | — (F2.4's year-end EXPIRE writes; cron pattern proven by `/api/cron/prune-audit`) | Missing | L4 / F2.4 |
 | LV-J02 | Daily job `generate_leave_encashment` | — | Missing | L9 / F2.2 |
-| LV-J03 | Daily job `allocate_earned_leaves` | — | Missing | L11 / F2.4 |
+| LV-J03 | Daily job `allocate_earned_leaves` | F2.4: `/api/cron/leave-allocation` (CRON_SECRET bearer, own maintenance-lock key, idempotent period-key grants) wired into the compose scheduler's daily pass | **Parity (workspace scope)** | L11 / **F2.4 DONE** |
 
 ---
 
@@ -519,12 +519,14 @@ Counted over the **314 mapped rows** above (artifacts + behaviors + reports/char
 
 | Status | Rows | Share | Notes |
 | --- | --- | --- | --- |
-| **Parity / Parity (workspace scope) / Parity+** | 31 | 10% | incl. the six F1.x landings and the deliberately-stricter probation gate |
-| **Partial** | 84 | 27% | working but materially thinner than the benchmark |
-| **Missing** | 161 | 51% | **88 of them already owned by a planned Phase 2/3 epic** (Family/epic column) |
+| **Parity / Parity (workspace scope) / Parity+** | 37 | 12% | incl. the six F1.x landings, the deliberately-stricter probation gate, and six F2.4 landings (leave policy engine: strategies, floor, carry, service gate, daily job) |
+| **Partial** | 83 | 26% | working but materially thinner than the benchmark |
+| **Missing** | 156 | 50% | **83 of them already owned by a planned Phase 2/3 epic** (Family/epic column) |
 | **Out of scope (deliberate)** | 37 | 12% | ADR-014 statutory, accounting/GL, hardware check-in, timesheet payroll, product telemetry, locked product decisions |
 | **Beyond benchmark** | 1 | <1% | joining formalities — documents + background verification (the day-one handout rides RJ-18) |
 | **Total** | **314** | 100% | |
+
+**F2.4 (leave policy engine) status flips at this update** — 8 rows: to Parity: LV-B02 (earned-leave frequency/on-day/rounding), LV-B04 (carry cap + expiry job), LV-B05 (include-holiday), LV-B06 (allow-negative), LV-B07 (applicable-after), LV-J03 (daily `allocate_earned_leaves`); to Partial: LV-04 (allocation ledger writers, no submittable docs), LV-B18 (schedule failure counting, no retry queue/email). LV-01's note updated (strategy block landed; fraction/comp/encashment knobs remain).
 
 Family-level (the plan's 77 families, statuses current at `bb2e046` — matches the reassessment): **12 Parity · 23 Partial · 36 Missing · 6 Out of scope**. Module-level: every row above is assigned to exactly one of the four domain logic modules — **hr 145 · admin 24 · account 93 · joining 52** — via the domain default plus 20 row-level exceptions, in `Fernly_Domain_Modules_Architecture_Plan.md` §5 (reproducible: `python3 scripts/module_rollup.py`, totals sanity-checked against this section).
 
