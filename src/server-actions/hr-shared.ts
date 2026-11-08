@@ -614,7 +614,7 @@ export async function findOverlappingActiveRequest(
 // attendance rows; cancelling that leave removes them again unless another
 // approved request still covers the date. Runs INSIDE the caller's
 // transaction so a rolled-back approval/cancel never leaves phantom rows.
-// An explicit HR record (MANUAL/IMPORT) always wins and is never touched.
+// An explicit HR record (MANUAL) always wins and is never touched.
 // ---------------------------------------------------------------------------
 
 /** Transaction-client surface the derivation helpers need — both the
@@ -664,7 +664,7 @@ export async function deriveOnLeaveAttendance(
 /** Remove the DERIVED ON_LEAVE rows of a cancelled approved request — but
  * only for dates no OTHER approved request still covers (overlapping
  * approved requests of different types are legal; their derived rows must
- * survive). MANUAL/IMPORT records are never touched. Returns how many rows
+ * survive). MANUAL records are never touched. Returns how many rows
  * were removed. */
 export async function removeDerivedOnLeaveAttendance(
   tx: AttendanceTx,

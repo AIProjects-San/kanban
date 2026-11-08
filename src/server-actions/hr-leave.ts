@@ -776,7 +776,7 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
         });
         // F1.3 — cancelling approved leave removes its DERIVED ON_LEAVE
         // rows again (dates still covered by ANOTHER approved request keep
-        // theirs; MANUAL/IMPORT records are never touched). Transactional
+        // theirs; MANUAL records are never touched). Transactional
         // with the status flip + refund above.
         await removeDerivedOnLeaveAttendance(tx, request);
       });

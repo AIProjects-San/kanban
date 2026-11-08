@@ -20,8 +20,8 @@
 //   • Otherwise the attendance mark decides: ABSENT → working fraction,
 //     HALF_DAY → half the working fraction (0.5 on a normal day, 0.25 on a
 //     half-day holiday), PRESENT/WFH/ON_LEAVE/no record → 0. Records on
-//     non-working days are ignored (attendance accepts marks on any date —
-//     F-R15; the payroll side only ever charges working days).
+//     non-working days are ignored (the server refuses such marks since
+//     F-R15/S3; the payroll side only ever charges working days either way).
 //   • PR-B07 (S4) — `unmarkedMode: "ABSENT"` charges UNMARKED working days
 //     (no record, no leave) as absent — the benchmark's
 //     consider_unmarked_attendance_as knob as workspace data. Default

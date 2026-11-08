@@ -602,10 +602,9 @@ export const fnfSettleSchema = z.object({
 export const HIRING_STAGE_TYPES = [
   "SCREENING", "INTERVIEW", "ASSESSMENT", "BG_CHECK", "DOCUMENTS", "OFFER", "CUSTOM",
 ] as const;
-export const HIRING_STAGE_STATUSES = [
-  "PENDING", "IN_PROGRESS", "PASSED", "FAILED", "SKIPPED",
-] as const;
-export const CANDIDATE_STATUSES = ["ACTIVE", "HIRED", "REJECTED", "WITHDRAWN"] as const;
+// F-R14 (S16) — the exported-but-unused HIRING_STAGE_STATUSES and
+// CANDIDATE_STATUSES constants were removed (dead since the hiring
+// module's own status machines landed; nothing imported them).
 
 export const saveStageTemplateSchema = z.object({
   id: cuidish.optional(),

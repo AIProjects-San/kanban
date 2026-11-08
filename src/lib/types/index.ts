@@ -49,7 +49,9 @@ export type AttendanceStatus = "PRESENT" | "ABSENT" | "HALF_DAY" | "WFH" | "ON_L
 /** How a row came to be: HR/admin marking, a future bulk import, or
  * derivation from an approved leave request (ADR-009 virtual-event
  * precedent — cancelling that leave removes the derived rows again). */
-export type AttendanceSource = "MANUAL" | "IMPORT" | "DERIVED";
+export type AttendanceSource = "MANUAL" | "DERIVED";
+// F-R14 (S16) — the dead "IMPORT" source value was removed: it had no
+// writer since F1.3 (imports arrive via direct DB writes if ever needed).
 
 /** One attendance record, client-shaped ("yyyy-mm-dd" date, "HH:mm" times). */
 export interface AttendanceT {

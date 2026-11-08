@@ -1309,7 +1309,8 @@ model HiringStageConfig {
 
 // A person moving through the pipeline. Email is unique — one pipeline record
 // per person (re-applicants are handled by reopening, not duplicating).
-// status: ACTIVE → HIRED | REJECTED | WITHDRAWN. userId is set when the
+// status: ACTIVE → SELECTED (offer stage) → HIRED | REJECTED | WITHDRAWN
+// (SELECTED is the joining-formalities gate F2.10 reads). userId is set when the
 // candidate joins and their employee account is created (R6).
 model Candidate {
   id           String    @id @default(cuid())
