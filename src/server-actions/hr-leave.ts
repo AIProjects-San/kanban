@@ -28,6 +28,7 @@ import {
   leaveTypeSchema,
   updateLeaveTypeSchema,
   parseOrThrow,
+  adjustLeaveBalanceSchema,
 } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
@@ -40,6 +41,7 @@ import {
   resolveLeavePolicy,
   type LeavePolicyRow,
 } from "@/lib/leave-policy";
+import { planLeaveAdjustment } from "@/lib/leave-ledger";
 import {
   parseDay,
   daysBetween,
@@ -875,5 +877,93 @@ export async function updateLeaveType(id: string, input: {
       detail: `${auth.name} updated leave type "${data.name ?? existing.name}"${data.active === false ? " (deactivated)" : ""}.`,
     });
     revalidatePath("/");
+  });
+}
+
+
+// ---------------------------------------------------------------------------
+// LV-10 (S9) — the user-facing ADJUST writer: HR corrections on the ledger
+// ---------------------------------------------------------------------------
+
+/**
+ * Adjust one member's leave balance for a year: an append-only ADJUST row
+ * (signed days, REASON REQUIRED — an adjustment without a recorded why is
+ * exactly the silent drift the ledger exists to prevent) plus the
+ * transactional cache re-sync. hr:admin gated — the same surface as the
+ * type/policy editor. The floor rule: an adjustment can never leave the
+ * balance further below zero than the policy's advance-leave floor
+ * (consumption and corrections share one bound).
+ */
+export async function adjustLeaveBalance(input: {
+  userId: string;
+  leaveTypeId: string;
+  year: number;
+  delta: number;
+  reason: string;
+}): Promise<ActionResult<{ availableBefore: number; availableAfter: number }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hr:admin");
+    const data = parseOrThrow(adjustLeaveBalanceSchema, input);
+
+    const [user, type] = await Promise.all([
+      db.user.findUnique({ where: { id: data.userId }, select: { id: true, name: true, deletedAt: true } }),
+      db.leaveType.findUnique({ where: { id: data.leaveTypeId }, include: { policy: true } }),
+    ]);
+    if (!user || user.deletedAt) throw new AuthorizationError("Member not found.");
+    if (!type) throw new AuthorizationError("Leave type not found.");
+
+    const policy = resolveLeavePolicy(type.policy);
+    const floor = policy.allowNegative ? policy.negativeFloor : 0;
+
+    // Materialize-if-missing + append the ADJUST row + re-sync the cache,
+    // all in ONE transaction; the floor check reads the POST-materialization
+    // truth (the ledger), so a first-ever adjustment lands on real numbers.
+    const { availableBefore, availableAfter } = await db.$transaction(async (tx) => {
+      await materializeLeaveBalanceTx(tx, data.userId, data.leaveTypeId, data.year);
+      const before = await ledgerProjectionFor(tx, data.userId, data.leaveTypeId, data.year);
+      const plan = planLeaveAdjustment({ available: before.available, delta: data.delta, negativeFloor: floor });
+      if (!plan.withinFloor) {
+        throw new AuthorizationError(
+          `This adjustment would leave ${user.name} at ${plan.newAvailable} day(s) — past the −${floor}-day advance floor for ${type.name}. Reduce the correction, or raise the floor in the type's policy first.`,
+        );
+      }
+      await tx.leaveLedgerEntry.create({
+        data: {
+          userId: data.userId,
+          leaveTypeId: data.leaveTypeId,
+          year: data.year,
+          delta: data.delta,
+          entryType: "ADJUST",
+          sourceType: "HR_ADJUSTMENT",
+          sourceId: "hr-adjust",
+          note: data.reason,
+          isReversal: false,
+        },
+      });
+      const after = await ledgerProjectionFor(tx, data.userId, data.leaveTypeId, data.year);
+      // Cache re-sync (absolute, drift-healing). Entitlement-side
+      // corrections (ADJUST + EXPIRE) fold into `entitled` so the
+      // member-facing available == Σ ledger deltas exactly.
+      await tx.leaveBalance.update({
+        where: { userId_leaveTypeId_year: { userId: data.userId, leaveTypeId: data.leaveTypeId, year: data.year } },
+        data: {
+          entitled: after.entitled + after.adjustments,
+          carriedOver: after.carriedOver,
+          used: Math.max(0, after.used),
+        },
+      });
+      return { availableBefore: before.available, availableAfter: after.available };
+    });
+
+    await logAudit({
+      actor: auth,
+      action: "hr.leave_adjusted",
+      entityType: "LEAVE_TYPE",
+      entityId: type.id,
+      entityLabel: `${type.name} · ${user.name} · ${data.year}`,
+      detail: `${auth.name} adjusted ${user.name}'s ${type.name} balance for ${data.year} by ${data.delta > 0 ? "+" : ""}${data.delta} day(s) (${availableBefore} → ${availableAfter} available) — ${data.reason}`,
+    });
+    revalidatePath("/");
+    return { availableBefore, availableAfter };
   });
 }

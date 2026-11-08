@@ -67,6 +67,7 @@ import {
   updateLeaveType,
   getMyLeaveData,
   getLeaveQueue,
+  adjustLeaveBalance,
 } from "../hr-leave";
 import { projectLeaveBalance } from "@/lib/leave-ledger";
 import {
@@ -1514,6 +1515,97 @@ describe("PR-56 — remaining branch coverage", () => {
 // in parseDay, and the two unique-trio race catches that log the conflict
 // and re-read the concurrent winner's row instead of failing the read path.
 // ---------------------------------------------------------------------------
+
+describe("LV-10 (S9) — adjustLeaveBalance (the user-facing ADJUST writer)", () => {
+  const HR_ADMIN_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
+
+  it("is hr:admin-gated — a member session is refused before any read", async () => {
+    requirePermissionMock.mockRejectedValue(new Error("no perm"));
+    const res = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, delta: 2, reason: "court-ordered correction" });
+    expect(res.ok).toBe(false);
+    expect(requirePermissionMock).toHaveBeenCalledWith("hr:admin");
+  });
+
+  it("writes an ADJUST ledger row with the reason, re-syncs the cache, and audits", async () => {
+    requirePermissionMock.mockResolvedValue(HR_ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // Before: GRANT 20 → available 20. After: + ADJUST 2 → 22.
+    db.leaveLedgerEntry.groupBy
+      .mockResolvedValueOnce([{ entryType: "GRANT", _sum: { delta: 20 } }])
+      .mockResolvedValue([{ entryType: "GRANT", _sum: { delta: 20 } }, { entryType: "ADJUST", _sum: { delta: 2 } }]);
+    const res = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, delta: 2, reason: "Accrual arrears from 2025" });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.data).toEqual({ availableBefore: 20, availableAfter: 22 });
+    const ledgerArg = db.leaveLedgerEntry.create.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(ledgerArg.data).toMatchObject({
+      userId: "u-theo", leaveTypeId: "lt-annual", year: 2026,
+      delta: 2, entryType: "ADJUST", sourceType: "HR_ADJUSTMENT",
+      note: "Accrual arrears from 2025", isReversal: false,
+    });
+    // Cache re-sync: entitled folds the entitlement-side correction (20 + 2).
+    const cacheArg = db.leaveBalance.update.mock.calls[0][0] as { data: { entitled: number; used: number } };
+    expect(cacheArg.data.entitled).toBe(22);
+    expect(cacheArg.data.used).toBe(0);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hr.leave_adjusted" }));
+  });
+
+  it("a negative adjustment past the floor is refused with the floor named (no row written)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([{ entryType: "GRANT", _sum: { delta: 20 } }]);
+    const res = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, delta: -21, reason: "Dock entitlement" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("advance floor");
+      expect(res.error).toContain("−0-day");
+    }
+    expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("an advance-leave floor (allowNegative + negativeFloor) admits corrections down to it", async () => {
+    requirePermissionMock.mockResolvedValue(HR_ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    db.leaveType.findUnique.mockResolvedValue({
+      ...ANNUAL_TYPE,
+      policy: { ...ANNUAL_TYPE.policy, allowNegative: true, negativeFloor: 5 },
+    });
+    db.leaveLedgerEntry.groupBy
+      .mockResolvedValueOnce([{ entryType: "GRANT", _sum: { delta: 10 } }])
+      .mockResolvedValue([{ entryType: "GRANT", _sum: { delta: 10 } }, { entryType: "ADJUST", _sum: { delta: -15 } }]);
+    const res = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, delta: -15, reason: "Claw back over-granted days" });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.data.availableAfter).toBe(-5);
+    expect(db.leaveLedgerEntry.create).toHaveBeenCalled();
+  });
+
+  it("validation: zero delta, non-quarter steps, and missing reasons are refused", async () => {
+    requirePermissionMock.mockResolvedValue(HR_ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    const zero = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, delta: 0, reason: "no-op" });
+    expect(zero.ok).toBe(false);
+    const dust = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, delta: 0.3, reason: "fraction" });
+    expect(dust.ok).toBe(false);
+    const noReason = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, delta: 1, reason: "  " });
+    expect(noReason.ok).toBe(false);
+  });
+
+  it("friendly 404s: unknown member and unknown leave type", async () => {
+    requirePermissionMock.mockResolvedValue(HR_ADMIN_AUTH);
+    db.user.findUnique.mockResolvedValue(null);
+    const noUser = await adjustLeaveBalance({ userId: "u-ghost", leaveTypeId: "lt-annual", year: 2026, delta: 1, reason: "test" });
+    expect(noUser.ok).toBe(false);
+    if (!noUser.ok) expect(noUser.error).toContain("Member not found");
+
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    db.leaveType.findUnique.mockResolvedValue(null);
+    const noType = await adjustLeaveBalance({ userId: "u-theo", leaveTypeId: "lt-ghost", year: 2026, delta: 1, reason: "test" });
+    expect(noType.ok).toBe(false);
+    if (!noType.ok) expect(noType.error).toContain("Leave type not found");
+  });
+});
 
 describe("PR-56 — remaining branch coverage (hr-shared)", () => {
   // hr-shared.ts:25 — the SECOND guard in parseDay: a string that matches

@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 //   available  ==  Σ ALL deltas
 // ---------------------------------------------------------------------------
 
-import { projectLeaveBalance } from "@/lib/leave-ledger";
+import { projectLeaveBalance, planLeaveAdjustment } from "@/lib/leave-ledger";
 
 describe("projectLeaveBalance", () => {
   it("projects an empty ledger as all zeros", () => {
@@ -128,5 +128,34 @@ describe("projectLeaveBalance", () => {
     ]);
     expect(p.used).toBe(0);
     expect(p.available).toBe(20);
+  });
+});
+
+
+describe("planLeaveAdjustment (LV-10 / S9)", () => {
+  it("positive and negative deltas move the balance and round to 2 decimals", () => {
+    expect(planLeaveAdjustment({ available: 20, delta: 2, negativeFloor: 0 }))
+      .toEqual({ newAvailable: 22, withinFloor: true });
+    expect(planLeaveAdjustment({ available: 20, delta: -1.25, negativeFloor: 0 }))
+      .toEqual({ newAvailable: 18.75, withinFloor: true });
+  });
+
+  it("floor 0 (the default policy) refuses any dip below zero", () => {
+    expect(planLeaveAdjustment({ available: 20, delta: -21, negativeFloor: 0 }))
+      .toEqual({ newAvailable: -1, withinFloor: false });
+    expect(planLeaveAdjustment({ available: 0, delta: -0.5, negativeFloor: 0 }).withinFloor)
+      .toBe(false);
+  });
+
+  it("an advance floor allows negative results down to −floor (consumption's bound)", () => {
+    expect(planLeaveAdjustment({ available: 2, delta: -7, negativeFloor: 5 }))
+      .toEqual({ newAvailable: -5, withinFloor: true });
+    expect(planLeaveAdjustment({ available: 2, delta: -7.25, negativeFloor: 5 }).withinFloor)
+      .toBe(false);
+  });
+
+  it("exactly zero and exactly −floor are within bounds; a negative floor input is clamped", () => {
+    expect(planLeaveAdjustment({ available: 5, delta: -5, negativeFloor: 0 }).withinFloor).toBe(true);
+    expect(planLeaveAdjustment({ available: 5, delta: -5, negativeFloor: -3 }).withinFloor).toBe(true);
   });
 });

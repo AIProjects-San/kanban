@@ -10,7 +10,7 @@
 // interviews and full-and-final settlement.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck, DoorOpen } from "lucide-react";
+import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck, DoorOpen, Scale } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -23,6 +23,7 @@ import {
   decideLeaveRequest,
   createLeaveType,
   updateLeaveType,
+  adjustLeaveBalance,
 } from "@/server-actions/hr-leave";
 import { DirectoryTab } from "./hr-directory";
 import { ReviewsTab } from "./hr-reviews";
@@ -30,6 +31,7 @@ import { OnboardingTab } from "./hr-onboarding";
 import { HolidaysTab } from "./hr-holidays";
 import { AttendanceTab } from "./hr-attendance";
 import { OffboardingTab } from "./hr-offboarding";
+import { getDirectory } from "@/server-actions/hr-directory";
 
 interface CurrentUser {
   id: string;
@@ -131,6 +133,8 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
       {tab === "requests" && (
         <RequestsTab
           requests={requests}
+          types={types}
+          canAdmin={canAdmin}
           currentUserId={currentUser.id}
           onChanged={load}
         />
@@ -171,14 +175,18 @@ function TabButton({
 // ---------------------------------------------------------------------------
 
 function RequestsTab({
-  requests, currentUserId, onChanged,
+  requests, types, canAdmin, currentUserId, onChanged,
 }: {
   requests: LeaveRequestT[];
+  types: LeaveTypeT[];
+  canAdmin: boolean;
   currentUserId: string;
   onChanged: () => Promise<void>;
 }) {
   const [statusFilter, setStatusFilter] = useState("PENDING");
   const [deciding, setDeciding] = useState<LeaveRequestT | null>(null);
+  // LV-10 (S9) — the HR leave adjustment writer's surface.
+  const [adjusting, setAdjusting] = useState(false);
 
   const filters = useMemo(
     () => [
@@ -196,6 +204,16 @@ function RequestsTab({
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <FilterBar filters={filters} value={statusFilter} onChange={(v) => setStatusFilter(v)} />
+        {canAdmin && (
+          <button
+            type="button"
+            className="f-btn f-btn-secondary f-btn-sm ml-auto"
+            onClick={() => setAdjusting(true)}
+            data-testid="adjust-balance-button"
+          >
+            <Scale size={13} /> Adjust a balance
+          </button>
+        )}
       </div>
 
       <div className="f-card overflow-hidden">
@@ -258,7 +276,112 @@ function RequestsTab({
         onClose={() => setDeciding(null)}
         onChanged={onChanged}
       />
+
+      {/* LV-10 (S9) — the ADJUST ledger writer: signed days, reason
+          required, floor-honest. Mount-on-open keeps the form pristine. */}
+      {canAdmin && adjusting && (
+        <AdjustBalanceModal
+          types={types}
+          onClose={() => setAdjusting(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LV-10 (S9) — Adjust balance modal
+// ---------------------------------------------------------------------------
+
+function AdjustBalanceModal({
+  types, onClose,
+}: {
+  types: LeaveTypeT[];
+  onClose: () => void;
+}) {
+  const [members, setMembers] = useState<{ userId: string; name: string }[]>([]);
+  const [userId, setUserId] = useState("");
+  const [leaveTypeId, setLeaveTypeId] = useState(types[0]?.id ?? "");
+  const [year, setYear] = useState(String(new Date().getUTCFullYear()));
+  const [deltaInput, setDeltaInput] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // The member roster loads asynchronously on mount (getDirectory is
+  // hr-scoped, same as the DecisionModal's approver fetch pattern).
+  useEffect(() => {
+    void (async () => {
+      const res = await getDirectory();
+      if (res.ok) setMembers(res.data.profiles.map((p) => ({ userId: p.userId, name: p.name })));
+    })();
+  }, []);
+
+  const delta = Math.round((Number(deltaInput) || 0) * 100) / 100;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const res = await adjustLeaveBalance({
+      userId, leaveTypeId, year: Number(year), delta, reason,
+    });
+    setBusy(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success(`Balance adjusted — ${res.data.availableBefore} → ${res.data.availableAfter} day(s) available.`);
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Adjust a leave balance">
+      <form className="space-y-3" onSubmit={submit}>
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          Adjustments are <strong>audited corrections on the append-only ledger</strong> — they never
+          rewrite history. Positive deltas add entitlement, negative deltas dock it; the reason is
+          required and lands on the ledger row.
+        </div>
+        <FormRow>
+          <Field label="Member">
+            <select className="f-input" value={userId} onChange={(e) => setUserId(e.target.value)} required data-testid="adjust-user">
+              <option value="">Select a member…</option>
+              {members.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Leave type">
+            <select className="f-input" value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)} required>
+              {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </Field>
+        </FormRow>
+        <FormRow>
+          <Field label="Year">
+            <input className="f-input" type="number" min={2020} max={2100} value={year} onChange={(e) => setYear(e.target.value)} required />
+          </Field>
+          <Field label="Adjustment (days — signed, quarter steps)">
+            <input
+              className="f-input" type="number" step={0.25} value={deltaInput}
+              onChange={(e) => setDeltaInput(e.target.value)}
+              placeholder="e.g. 2 or -1.5"
+              data-testid="adjust-delta"
+              required
+            />
+          </Field>
+        </FormRow>
+        <Field label="Reason (required — recorded on the ledger row)">
+          <textarea
+            className="f-input min-h-16" maxLength={500} value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Court-ordered entitlement correction, accrual arrears from 2025"
+            data-testid="adjust-reason"
+            required
+          />
+        </Field>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="f-btn f-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="f-btn f-btn-primary" disabled={busy || delta === 0} data-testid="adjust-save">
+            {busy ? "Adjusting…" : "Write adjustment"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

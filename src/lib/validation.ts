@@ -873,6 +873,20 @@ export const lockPayrollRunSchema = z.object({
   runId: cuidish,
 }).strict();
 
+// LV-10 (S9) — the HR leave adjustment writer. Deltas are signed days
+// (quarter-day steps like every leave fraction); the reason is REQUIRED —
+// an adjustment without a recorded why is exactly the silent drift the
+// ledger exists to prevent.
+export const adjustLeaveBalanceSchema = z.object({
+  userId: cuidish,
+  leaveTypeId: cuidish,
+  year: z.number().int().min(2020).max(2100),
+  delta: z.number().refine((n) => n !== 0, "An adjustment must be non-zero.")
+    .refine((n) => Math.abs(n) <= 365, "Adjustments are capped at 365 days.")
+    .refine((n) => Math.round(n * 4) === n * 4, "Adjustments move in quarter-day steps."),
+  reason: z.string().trim().min(3, "A reason is required — adjustments are audited corrections.").max(500),
+}).strict();
+
 export const addPayslipSchema = z.object({
   runId: cuidish,
   userId: cuidish,

@@ -111,3 +111,21 @@ export function projectLeaveBalance(
     available: round2(total),
   };
 }
+
+/**
+ * LV-10 (S9) — plan an HR leave adjustment against the floor. Pure: given
+ * the CURRENT available balance, the signed delta, and the policy's
+ * negative floor (0 when allowNegative is off), returns the resulting
+ * balance and whether it stays within the floor. Consumption and
+ * corrections share the same bound — an adjustment can never dig a deeper
+ * hole than the policy's advance-leave floor.
+ */
+export function planLeaveAdjustment(input: {
+  available: number;
+  delta: number;
+  negativeFloor: number;
+}): { newAvailable: number; withinFloor: boolean } {
+  const newAvailable = round2(input.available + input.delta);
+  const floor = Math.max(0, input.negativeFloor);
+  return { newAvailable, withinFloor: newAvailable >= -floor };
+}

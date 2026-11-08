@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
+  Scale,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -83,6 +84,8 @@ export type AuditAction =
   | "leave.cancelled"
   | "leave.type_created"
   | "leave.type_updated"
+  // LV-10 (S9) — the HR leave adjustment writer (ADJUST ledger rows).
+  | "hr.leave_adjusted"
   // F1.1 — holiday calendar lifecycle
   // (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1)
   | "hr.holiday_created"
@@ -251,6 +254,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.cancelled": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "leave.type_created": { icon: Plus, cls: "text-primary bg-primary/10" },
   "leave.type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.leave_adjusted": { icon: Scale, cls: "text-sky-500 bg-sky-500/10" },
   "hr.holiday_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
   "hr.holiday_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
