@@ -707,6 +707,9 @@ export interface SalaryStructureT {
   effectiveFrom: string;
   isActive: boolean;
   createdAt: string;
+  /** P5 (PR-15/PR-B04, F3.2) — the flexible-benefit cap (annual; 0 = no
+   * cap). Pre-P5 rows read as 0. */
+  maxBenefits: number;
 }
 
 /** F1.5 — one catalog row of the salary component vocabulary
@@ -803,6 +806,26 @@ export interface PayAdjustmentT {
   note: string;
   consumedRunPeriod: string;
   createdAt: string;
+}
+
+/** P5 (PR-15–18, PR-B04, F3.2) — the Benefits panel's data: this year's
+ * elections with live accrued balances (Σ ledger deltas) and the structure
+ * cap per employee. */
+export interface BenefitsOverviewT {
+  year: number;
+  rows: Array<{
+    id: string;
+    userId: string;
+    userName: string;
+    year: number;
+    componentCode: string;
+    label: string;
+    annualAmount: number;
+    status: "ACTIVE" | "CANCELLED";
+    cap: number;
+    balance: number;
+    createdAt: string;
+  }>;
 }
 
 /** P4 (PR-14/PR-B12, F3.1) — one paid slip's LWP-reversal facts for the

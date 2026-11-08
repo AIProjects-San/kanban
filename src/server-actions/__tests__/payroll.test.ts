@@ -10,12 +10,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
-    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "leaveEncashment", "auditLog", "holidayCalendarEntry",
+    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "leaveEncashment", "benefitElection", "benefitAccrual", "auditLog", "holidayCalendarEntry",
     "attendanceRecord", "leaveRequest", "leaveType", "fullAndFinalStatement",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
+    "groupBy",
   ];
   const obj: Record<string, Record<string, ReturnType<typeof vi.fn>>> = {};
   for (const m of models) {
@@ -171,6 +172,10 @@ beforeEach(() => {
   db.payAdjustment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "adj-new", createdAt: new Date(), updatedAt: new Date(), ...data }));
   db.payAdjustment.update.mockResolvedValue({});
   db.leaveEncashment.updateMany.mockResolvedValue({ count: 0 });
+  // P5 (F3.2) — no benefit elections by default (locks accrue nothing).
+  db.benefitElection.findMany.mockResolvedValue([]);
+  db.benefitAccrual.create.mockResolvedValue({});
+  db.benefitAccrual.groupBy.mockResolvedValue([]);
   // S4 — default policy: IGNORED (pre-S4 semantics byte-for-byte).
   getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
 });
@@ -1041,6 +1046,28 @@ describe("R7 — payslips", () => {
     const empty = await lockPayrollRun({ runId: "run-1" });
     expect(empty.ok).toBe(false);
     expect(db.payrollRun.update).not.toHaveBeenCalled();
+  });
+
+  it("P5 (F3.2) — locking accrues ACTIVE benefit elections (annual ÷ 12, paid-days-scaled)", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...OPEN_RUN, payslips: [{ net: 6_700 }] });
+    db.benefitElection.findMany.mockResolvedValue([
+      { id: "be-1", userId: "u-yuki", year: 2026, componentCode: "HEALTH", label: "Health insurance", annualAmount: 1_200, status: "ACTIVE", createdById: "u-hr", createdAt: new Date(), updatedAt: new Date() },
+    ]);
+    db.payslip.findMany.mockResolvedValue([{ userId: "u-yuki", paidDays: 22 }]);
+    const res = await lockPayrollRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    expect(db.benefitAccrual.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: "u-yuki", year: 2026, componentCode: "HEALTH",
+          entryType: "ACCRUAL", delta: 100, sourceId: "run-1",
+        }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.benefits_accrued",
+      detail: expect.stringContaining("1 benefit row(s)"),
+    }));
   });
 
   it("P2 (LV-09) — locking flips the run's consumed ENCASHMENT adjustments' source rows PAID, in the same transaction", async () => {

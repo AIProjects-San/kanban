@@ -1628,6 +1628,11 @@ model SalaryStructure {
   // JSON: OfferComponent[] — ANNUAL amounts (monthly = ÷12 at payslip time).
   components    String   @default("[]")
   notes         String   @default("")
+  // P5 (PR-15/PR-B04, F3.2) — the flexible-benefit cap: the maximum ANNUAL
+  // benefit amount this employee may elect (the benchmark's max_benefits).
+  // 0 = no cap (the pre-P5 world had no benefits at all, so the default is
+  // zero-behavior).
+  maxBenefits   Float    @default(0)
   effectiveFrom DateTime @default(now())
   isActive      Boolean  @default(true)
   createdById   String   @default("")
@@ -1781,4 +1786,54 @@ model PayAdjustment {
 
   @@index([period, status])
   @@index([userId, status])
+}
+
+// P5 (PR-15–18, PR-B04, F3.2) — the flexible-benefits mini-ledger.
+//
+// Election (yearly, per employee × component, capped by the structure's
+// maxBenefits): BenefitElection rows are the standing input.
+//
+// Accrual (append-only, per LOCKED run): locking a run writes one ACCRUAL
+// row per active election — annualAmount ÷ 12, scaled to the slip's paid
+// days (S5's window discipline, benefits accrue on paid days only).
+//
+// Claims: an HR-filed claim (single-step, audited — F2.8 generalizes the
+// member-claim flow) consumes the accrued balance with a negative CLAIM row
+// and pays through the P1 adapter (BENEFIT_PAYOUT adjustment).
+model BenefitElection {
+  id            String   @id @default(cuid())
+  userId        String
+  year          Int
+  componentCode String
+  label         String   @default("")
+  // The ANNUAL elected amount (accrual = ÷ 12, paid-days-scaled).
+  annualAmount  Float
+  // ACTIVE | CANCELLED (a cancelled election stops future accrual; the
+  // accrued balance stays claimable).
+  status        String   @default("ACTIVE")
+  createdById   String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, year, componentCode])
+  @@index([userId, year, status])
+}
+
+model BenefitAccrual {
+  id            String   @id @default(cuid())
+  userId        String
+  year          Int
+  componentCode String
+  // ACCRUAL (+, written at run lock) | CLAIM (−, written at claim approval).
+  entryType     String
+  delta         Float
+  // ACCRUAL rows: the locking run's id. CLAIM rows: the claim's id.
+  sourceId      String   @default("")
+  period        String   @default("")
+  note          String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, year, componentCode])
+  @@index([sourceId])
 }

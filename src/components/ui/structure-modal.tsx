@@ -42,6 +42,8 @@ export function StructureModal({
   const [userId, setUserId] = useState("");
   const [components, setComponents] = useState<OfferComponentT[]>([]);
   const [notes, setNotes] = useState("");
+  // P5 (F3.2) — the flexible-benefit cap (annual; 0 = no cap).
+  const [maxBenefits, setMaxBenefits] = useState("0");
   const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   // F1.5 — the component catalog feeding the picker (loaded on open; a
@@ -50,7 +52,7 @@ export function StructureModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setCatalog([]); }
+    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setMaxBenefits(String(edit?.maxBenefits ?? 0)); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setCatalog([]); }
   }, [open, edit]);
 
   // F1.5 — catalog for the picker, loaded when the modal opens. The setState
@@ -109,6 +111,7 @@ export function StructureModal({
       notes,
       effectiveFrom,
       isActive: true,
+      maxBenefits: Number(maxBenefits) || 0,
     });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
@@ -254,9 +257,18 @@ export function StructureModal({
           <div><div className="text-muted-foreground">Monthly gross</div><div className="font-semibold tabular-nums text-primary">${monthlyGross.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
         </div>
 
-        <Field label="Notes (audit only)">
-          <input className="f-input text-xs" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2_000} />
-        </Field>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Notes (audit only)">
+            <input className="f-input text-xs" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2_000} />
+          </Field>
+          <Field label="Flexible-benefit cap ($/year, 0 = no cap)">
+            <input
+              className="f-input text-xs" type="number" min={0} step={50}
+              value={maxBenefits} onChange={(e) => setMaxBenefits(e.target.value)}
+              data-testid="structure-max-benefits"
+            />
+          </Field>
+        </div>
 
         <div className="flex flex-wrap justify-end gap-2">
           {!edit && (

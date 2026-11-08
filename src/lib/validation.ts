@@ -839,6 +839,9 @@ export const saveSalaryStructureSchema = z.object({
   notes: z.string().trim().max(2_000).default(""),
   effectiveFrom: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use the YYYY-MM-DD date format.").optional(),
   isActive: z.boolean().default(true),
+  // P5 (PR-15/PR-B04, F3.2) — the flexible-benefit cap (annual; 0 = no cap).
+  // Optional in the wire shape: omitted = keep the stored value.
+  maxBenefits: z.number().min(0).max(10_000_000).optional(),
 }).strict();
 
 // F1.5 — the salary component catalog (docs/Fernly_HR_Payroll_Enhancement_Plan.md
@@ -969,6 +972,28 @@ export const reverseLwpDaysSchema = z.object({
     .refine((n) => n > 0, "Reversal needs a positive number of days.")
     .refine((n) => n <= 31, "Reversals are capped at 31 days.")
     .refine((n) => Math.round(n * 4) === n * 4, "Reversals move in quarter-day steps."),
+  payoutPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a payout month (YYYY-MM)."),
+  note: z.string().trim().max(500).default(""),
+}).strict();
+
+// P5 (PR-15–18, PR-B04, F3.2) — flexible benefits: election, claim, cancel.
+export const electBenefitSchema = z.object({
+  userId: cuidish,
+  year: z.number().int().min(2020).max(2100),
+  componentCode: z.string().trim().min(1, "A component code is required.").max(40),
+  label: z.string().trim().max(80).default(""),
+  annualAmount: z.number().min(0.01, "The elected annual amount must be positive.").max(1_000_000),
+}).strict();
+
+export const cancelBenefitElectionSchema = z.object({
+  electionId: cuidish,
+}).strict();
+
+export const claimBenefitSchema = z.object({
+  userId: cuidish,
+  year: z.number().int().min(2020).max(2100),
+  componentCode: z.string().trim().min(1).max(40),
+  amount: z.number().min(0.01, "The claim amount must be positive.").max(1_000_000),
   payoutPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a payout month (YYYY-MM)."),
   note: z.string().trim().max(500).default(""),
 }).strict();

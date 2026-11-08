@@ -14,7 +14,7 @@ import {
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
-  Scale, CircleDollarSign, Undo2,
+  Scale, CircleDollarSign, Undo2, HeartPulse,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -182,6 +182,11 @@ export type AuditAction =
   | "payroll.arrears_generated"
   // P4 (PR-14/PR-B12, F3.1) — LWP correction reversal.
   | "payroll.lwp_credit_created"
+  // P5 (PR-15–18, F3.2) — flexible benefits.
+  | "payroll.benefit_elected"
+  | "payroll.benefit_election_cancelled"
+  | "payroll.benefit_claimed"
+  | "payroll.benefits_accrued"
   | "leave.encashment_requested"
   | "leave.encashment_approved"
   | "leave.encashment_rejected";
@@ -339,6 +344,10 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.adjustments_applied": { icon: CircleDollarSign, cls: "text-sky-500 bg-sky-500/10" },
   "payroll.arrears_generated": { icon: RotateCcw, cls: "text-indigo-500 bg-indigo-500/10" },
   "payroll.lwp_credit_created": { icon: Undo2, cls: "text-teal-500 bg-teal-500/10" },
+  "payroll.benefit_elected": { icon: HeartPulse, cls: "text-pink-500 bg-pink-500/10" },
+  "payroll.benefit_election_cancelled": { icon: HeartPulse, cls: "text-zinc-500 bg-zinc-500/10" },
+  "payroll.benefit_claimed": { icon: HeartPulse, cls: "text-sky-500 bg-sky-500/10" },
+  "payroll.benefits_accrued": { icon: HeartPulse, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_requested": { icon: CircleDollarSign, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_approved": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_rejected": { icon: CircleDollarSign, cls: "text-rose-500 bg-rose-500/10" },

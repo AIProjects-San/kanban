@@ -60,6 +60,8 @@ import {
   validateAdjustmentInput,
   type PayAdjustmentRow,
 } from "@/lib/pay-adjustment";
+// P5 (PR-18, F3.2) — the benefits accrual pricing (lock hook).
+import { accrualAmount } from "@/lib/benefits";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -67,6 +69,7 @@ import {
 type StructureRow = {
   id: string; userId: string; components: string; notes: string;
   effectiveFrom: Date; isActive: boolean; createdAt: Date;
+  maxBenefits?: number | null;
 };
 
 function serializeStructure(
@@ -87,6 +90,7 @@ function serializeStructure(
     effectiveFrom: s.effectiveFrom.toISOString(),
     isActive: s.isActive,
     createdAt: s.createdAt.toISOString(),
+    maxBenefits: s.maxBenefits ?? 0,
   };
 }
 
@@ -149,6 +153,8 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
       effectiveFrom: data.effectiveFrom ? new Date(`${data.effectiveFrom}T00:00:00Z`) : new Date(),
       isActive: true,
       createdById: auth.userId,
+      // P5 — the flexible-benefit cap rides the structure (0 = no cap).
+      ...(data.maxBenefits !== undefined ? { maxBenefits: data.maxBenefits } : {}),
     };
     let row: { id: string };
     if (data.id) {
@@ -940,6 +946,16 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
       select: { sourceId: true },
     });
     const encashmentIds = encashmentAdjustments.map((a) => a.sourceId).filter((id) => id !== "");
+    // P5 (PR-18, F3.2) — the benefits accrual inputs: every ACTIVE election
+    // of an employee with a slip in this run accrues at lock (annual ÷ 12,
+    // paid-days-scaled — the same window discipline as earnings).
+    const benefitElections = await db.benefitElection.findMany({ where: { status: "ACTIVE" } });
+    const electionByUser = new Map<string, typeof benefitElections>();
+    for (const e of benefitElections) {
+      const list = electionByUser.get(e.userId);
+      if (list) list.push(e);
+      else electionByUser.set(e.userId, [e]);
+    }
     await db.$transaction(async (tx) => {
       await tx.payrollRun.update({
         where: { id: run.id },
@@ -949,6 +965,47 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
         await tx.leaveEncashment.updateMany({
           where: { id: { in: encashmentIds }, status: "APPROVED" },
           data: { status: "PAID", paidRunId: run.id, paidAt: new Date() },
+        });
+      }
+      // P5 — append-only ACCRUAL rows, one per election with a priced amount.
+      const accrualCount = { rows: 0 };
+      const payslipRows = await tx.payslip.findMany({
+        where: { runId: run.id },
+        select: { userId: true, paidDays: true },
+      });
+      const paidDaysByUser = new Map(payslipRows.map((p) => [p.userId, p.paidDays]));
+      for (const [userId, elections] of electionByUser) {
+        if (!paidDaysByUser.has(userId)) continue;
+        for (const e of elections) {
+          const amount = accrualAmount({
+            annualAmount: e.annualAmount,
+            paidDays: paidDaysByUser.get(userId) ?? null,
+            workingDays: run.workingDays,
+          });
+          if (amount <= 0) continue;
+          await tx.benefitAccrual.create({
+            data: {
+              userId,
+              year: e.year,
+              componentCode: e.componentCode,
+              entryType: "ACCRUAL",
+              delta: amount,
+              sourceId: run.id,
+              period: run.period,
+              note: `${e.label || e.componentCode} accrual (${run.period} lock)`,
+            },
+          });
+          accrualCount.rows += 1;
+        }
+      }
+      if (accrualCount.rows > 0) {
+        await logAudit({
+          actor: auth,
+          action: "payroll.benefits_accrued",
+          entityType: "PAYROLL_RUN",
+          entityId: run.id,
+          entityLabel: run.period,
+          detail: `${run.period} lock accrued ${accrualCount.rows} benefit row(s) (elections ÷ 12, paid-days-scaled).`,
         });
       }
     });

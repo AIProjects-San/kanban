@@ -70,7 +70,7 @@ const STRUCTURES: SalaryStructureT[] = [
     department: "ENGINEERING", source: "MANUAL",
     components: [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 80_400 }],
     notes: "", effectiveFrom: "2026-07-01T00:00:00.000Z", isActive: true,
-    createdAt: "2026-07-01T00:00:00.000Z",
+    createdAt: "2026-07-01T00:00:00.000Z", maxBenefits: 0,
   },
 ];
 

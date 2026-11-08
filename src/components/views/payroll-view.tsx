@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, CalendarPlus, CircleDollarSign, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
+import { BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -29,6 +29,7 @@ import { ComponentCatalogModal } from "../ui/component-catalog-modal";
 import { PayAdjustmentModal } from "../ui/pay-adjustment-modal";
 import { ArrearsModal } from "../ui/arrears-modal";
 import { LwpCorrectionModal } from "../ui/lwp-correction-modal";
+import { BenefitsModal } from "../ui/benefits-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -61,6 +62,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [arrearsRun, setArrearsRun] = useState<PayrollRunT | null>(null);
   // P4 (F3.1) — the LWP correction reversal (LOCKED slips with LOP only).
   const [lwpSlip, setLwpSlip] = useState<PayslipT | null>(null);
+  // P5 (F3.2) — the flexible-benefits panel.
+  const [benefitsOpen, setBenefitsOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -173,6 +176,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => setAdjustmentModalOpen(true)} data-testid="adjustments-btn">
             <CircleDollarSign size={15} /> Adjustments
+          </button>
+          <button className="f-btn f-btn-ghost" onClick={() => setBenefitsOpen(true)} data-testid="benefits-btn">
+            <HeartPulse size={15} /> Benefits
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => { setEditStructure(null); setStructureModalOpen(true); }} data-testid="new-structure-btn">
             <Plus size={15} /> Salary structure
@@ -428,6 +434,12 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           onReversed={load}
         />
       )}
+      <BenefitsModal
+        open={benefitsOpen}
+        onClose={() => setBenefitsOpen(false)}
+        onChanged={load}
+        employees={employees}
+      />
       <StructureModal
         open={structureModalOpen}
         onClose={() => setStructureModalOpen(false)}

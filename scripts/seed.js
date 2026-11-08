@@ -2624,6 +2624,60 @@ async function main() {
       p2Seeded.push("Mira's approved request (CONSUME + adapter row)");
     }
     console.log(`  ✓ P2 (F2.2) leave encashment: Annual Leave encashable=${p2Encashable}, ${p2Seeded.length} requests (${p2Seeded.join(", ")})`);
+
+    // ------------------------------------------------------------------
+    // P5 (PR-15–18, PR-B04, F3.2) — flexible-benefits seed: Hana's
+    // structure carries a $2,000 cap, her HEALTH election ($1,200/yr)
+    // accrued at the October lock (mirroring the lock hook: ÷12, full
+    // month), and one $60 claim paid onto November's queue — the Benefits
+    // panel's live story (balance 100 − 60 = 40 still claimable).
+    // ------------------------------------------------------------------
+    await db.benefitElection.deleteMany();
+    await db.benefitAccrual.deleteMany();
+    let p5Seeded = 0;
+    const p5HanaId = userByName.get("Hana Park");
+    const p5PrevRun = await db.payrollRun.findFirst({ where: { period: prevPeriod }, select: { id: true, workingDays: true } });
+    if (p5HanaId && p5PrevRun) {
+      await db.salaryStructure.updateMany({
+        where: { userId: p5HanaId, isActive: true },
+        data: { maxBenefits: 2000 },
+      });
+      const p5Election = await db.benefitElection.create({
+        data: {
+          userId: p5HanaId, year: TODAY.getFullYear(),
+          componentCode: "HEALTH", label: "Health insurance",
+          annualAmount: 1200, status: "ACTIVE", createdById: hrId,
+        },
+      });
+      // The October lock's accrual, mirrored by hand (1200/12 = 100).
+      await db.benefitAccrual.create({
+        data: {
+          userId: p5HanaId, year: TODAY.getFullYear(), componentCode: "HEALTH",
+          entryType: "ACCRUAL", delta: 100, sourceId: p5PrevRun.id, period: prevPeriod,
+          note: "Health insurance accrual (October lock)",
+        },
+      });
+      // A paid $60 claim (dental) onto November's adjustment queue.
+      const p5ClaimAdj = await db.payAdjustment.create({
+        data: {
+          userId: p5HanaId, sourceType: "BENEFIT_PAYOUT", sourceId: "",
+          componentCode: "HEALTH", label: "Benefit claim — Health insurance", side: "EARNING",
+          recurrence: "ONE_SHOT", calcMode: "FIXED", amount: 60, period: thisPeriod,
+          note: "Claim against accrued balance ($100 accrued) — dental",
+          createdById: hrId,
+        },
+      });
+      await db.benefitAccrual.create({
+        data: {
+          userId: p5HanaId, year: TODAY.getFullYear(), componentCode: "HEALTH",
+          entryType: "CLAIM", delta: -60, sourceId: p5ClaimAdj.id, period: thisPeriod,
+          note: "Benefit claim — Health insurance (dental)",
+        },
+      });
+      p5Seeded = 2; // election + claim (accrual rides the lock hook story)
+      console.log(`  ✓ P5 (F3.2) flexible benefits: Hana's HEALTH election $1,200/yr (cap $2,000), ${prevPeriod} accrual +100, one $60 claim onto ${thisPeriod} (balance $40 claimable)`);
+      void p5Election;
+    }
   }
 
   // -------------------------------------------------------------------------
