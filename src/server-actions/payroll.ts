@@ -38,6 +38,7 @@ import type { ActionResult } from "@/lib/action-result";
 import { parseComponents, type OfferComponent } from "@/lib/offer-math";
 import { workingDaysInPeriod, type HolidayLookup } from "@/lib/working-days";
 import { deriveLopDays, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
+import { getWorkspaceConfig } from "@/lib/config-loader";
 import { getHolidayLookup } from "./hr-shared";
 import {
   monthlyEarningsFromStructure,
@@ -279,6 +280,10 @@ async function deriveLopDaysForUsers(
   period: string,
   holidays: HolidayLookup,
 ): Promise<Map<string, number>> {
+  // PR-B07 (S4) — the workspace's unmarked-day policy rides every
+  // derivation (IGNORED default = pre-S4 semantics byte-for-byte).
+  const config = await getWorkspaceConfig();
+  const unmarkedMode = config.workspace.unmarkedAttendanceMode;
   const result = new Map<string, number>();
   if (userIds.length === 0) return result;
   const [y, m] = period.split("-").map(Number);
@@ -286,12 +291,15 @@ async function deriveLopDaysForUsers(
   const start = new Date(Date.UTC(y, m - 1, 1));
   const end = new Date(Date.UTC(y, m, 0));
 
-  const [marks, leaveRows] = await Promise.all([
+  // S4 — ALL statuses are read (not just ABSENT/HALF_DAY): in ABSENT mode a
+  // PRESENT/WFH/ON_LEAVE record is the difference between "marked" and
+  // "unmarked". Non-chargeable statuses still charge 0 in the pure kernel.
+  // The employment window (hireDate → lastWorkingDay) scopes every charge.
+  const [marks, leaveRows, profiles] = await Promise.all([
     db.attendanceRecord.findMany({
       where: {
         userId: { in: userIds },
         date: { gte: start, lte: end },
-        status: { in: ["ABSENT", "HALF_DAY"] },
       },
       select: { userId: true, date: true, status: true },
     }),
@@ -304,6 +312,10 @@ async function deriveLopDaysForUsers(
       },
       select: { userId: true, startDate: true, endDate: true, leaveTypeId: true },
     }),
+    db.employeeProfile.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, hireDate: true, lastWorkingDay: true },
+    }),
   ]);
 
   // Paid flag per leave type. A missing type row (deleted type) defaults to
@@ -314,8 +326,8 @@ async function deriveLopDaysForUsers(
     : [];
   const paidByType = new Map(types.map((t) => [t.id, t.paid]));
 
-  const byUser = new Map<string, { marks: LopAttendanceMark[]; spans: LopLeaveSpan[] }>();
-  for (const u of userIds) byUser.set(u, { marks: [], spans: [] });
+  const byUser = new Map<string, { marks: LopAttendanceMark[]; spans: LopLeaveSpan[]; opts: { unmarkedMode: "IGNORED" | "ABSENT"; employmentFrom: Date | null; employmentUntil: Date | null } }>();
+  for (const u of userIds) byUser.set(u, { marks: [], spans: [], opts: { unmarkedMode, employmentFrom: null, employmentUntil: null } });
   for (const mk of marks) byUser.get(mk.userId)?.marks.push({ date: mk.date, status: mk.status });
   for (const lr of leaveRows) {
     byUser.get(lr.userId)?.spans.push({
@@ -324,8 +336,15 @@ async function deriveLopDaysForUsers(
       paid: paidByType.get(lr.leaveTypeId) ?? true,
     });
   }
-  for (const [u, { marks: userMarks, spans }] of byUser) {
-    result.set(u, deriveLopDays(period, holidays, userMarks, spans));
+  for (const p of profiles) {
+    const entry = byUser.get(p.userId);
+    if (entry) {
+      entry.opts.employmentFrom = p.hireDate ?? null;
+      entry.opts.employmentUntil = p.lastWorkingDay ?? null;
+    }
+  }
+  for (const [u, { marks: userMarks, spans, opts }] of byUser) {
+    result.set(u, deriveLopDays(period, holidays, userMarks, spans, opts));
   }
   return result;
 }
@@ -445,7 +464,9 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
 
 /** One run's payslips with names + YTD net (same-year periods up to and
  * including this run — OPEN periods count so the current month is live). */
-export async function getPayrollRun(runId: string): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[] }>> {
+export async function getPayrollRun(
+  runId: string,
+): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT" }>> {
   return toResult(async () => {
     await requirePermission("payroll:manage");
     const id = String(runId ?? "").trim();
@@ -516,6 +537,9 @@ export async function getPayrollRun(runId: string): Promise<ActionResult<{ run: 
         createdAt: run.createdAt.toISOString(),
       },
       payslips,
+      // PR-B07 (S4) — the CURRENT workspace policy for the modal's honesty
+      // note (the derivation itself is a creation-time snapshot).
+      unmarkedMode: (await getWorkspaceConfig()).workspace.unmarkedAttendanceMode,
     };
   });
 }

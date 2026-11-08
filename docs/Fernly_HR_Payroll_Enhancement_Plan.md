@@ -383,7 +383,7 @@ The 2026-11-08 audit re-verified every Phase 1 family against the row-level matr
 | S1 | F-R2 (A) | **DONE** `updatePayslip` optimistic lock — `Payslip.version`, expected-version refusal, conflict surfaced in the modal | version column, friendly conflict error |
 | S2 | AT-B02/B03 | **DONE** Late-entry/early-exit flags + working hours computed from in/out | reference = workspace default day (Settings, default 09:00–17:30), computed on save |
 | S3 | F-R15 (C) | **DONE** Server-side guard: attendance marks rejected on non-working days | hard guard matching the grid shading |
-| S4 | PR-B07/AT-B08 | `unmarkedAttendanceMode IGNORED\|ABSENT` knob feeding the LOP derivation | default IGNORED (zero behavior change, ADR-008) |
+| S4 | PR-B07/AT-B08 | **DONE** `unmarkedAttendanceMode IGNORED\|ABSENT` knob feeding the LOP derivation (+ employment-window charging) | default IGNORED (zero behavior change, ADR-008) |
 | S5 | PR-B06 | Joiner/exiter payment-day clipping (DOJ/LWD within the period) | default ON — deliberate correctness fix (F2.10 gate precedent), e2e-pinned |
 | S6 | PR-B02 | Per-component `dependsOnPaymentDays` opt-out (catalog + snapshot) | default true (today's implicit behavior) |
 | S7 | PR-B23 | Configurable payroll rounding policy | default ROUND_2DP (zero behavior change) |

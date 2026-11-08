@@ -22,10 +22,22 @@
 //     half-day holiday), PRESENT/WFH/ON_LEAVE/no record → 0. Records on
 //     non-working days are ignored (attendance accepts marks on any date —
 //     F-R15; the payroll side only ever charges working days).
+//   • PR-B07 (S4) — `unmarkedMode: "ABSENT"` charges UNMARKED working days
+//     (no record, no leave) as absent — the benchmark's
+//     consider_unmarked_attendance_as knob as workspace data. Default
+//     IGNORED = absence of data is not absence (the honest reading of a
+//     manual-marking system). Any record — including PRESENT/WFH/ON_LEAVE —
+//     counts as "marked"; only a truly missing day charges.
+//   • Employment window (hireDate → lastWorkingDay): days OUTSIDE the
+//     window never charge (marks, leave, or unmarked) — pre-hire and
+//     post-exit days are not loss of pay. Absent inputs = unbounded window
+//     (the S5 payment-day clipping formalizes the gross-side mirror).
 //   • The sum is rounded to 2 decimals to kill float dust.
 //
-// Days with no record and no leave charge 0: absence of data is not absence
-// (the honest reading of a manual-marking system — no auto-absent sweep).
+// Unmarked-mode days (PR-B07, S4): with unmarkedMode "ABSENT", a working
+// day with no record and no leave inside the employment window charges as
+// absent; with the default IGNORED, absence of data is not absence (the
+// honest reading of a manual-marking system — no auto-absent sweep).
 //
 // All dates are UTC-midnight date-only values; inputs accept Date or
 // "YYYY-MM-DD" strings defensively (the LeaveRequest.startDate convention).
@@ -43,6 +55,17 @@ export interface LopLeaveSpan {
   startDate: Date | string;
   endDate: Date | string;
   paid: boolean;
+}
+
+/** PR-B07 (S4) — the workspace knob + the employment window. All optional;
+ * omitted = the pre-S4 semantics byte-for-byte. */
+export interface DeriveLopOptions {
+  /** Treat unmarked working days as ABSENT (default IGNORED). */
+  unmarkedMode?: "IGNORED" | "ABSENT";
+  /** First employment day (EmployeeProfile.hireDate); null/absent = unbounded. */
+  employmentFrom?: Date | string | null;
+  /** Last employment day (EmployeeProfile.lastWorkingDay); null/absent = unbounded. */
+  employmentUntil?: Date | string | null;
 }
 
 function asUtcDay(d: Date | string): Date {
@@ -73,11 +96,14 @@ export function deriveLopDays(
   holidays: HolidayLookup | undefined,
   marks: LopAttendanceMark[],
   leaveSpans: LopLeaveSpan[],
+  opts: DeriveLopOptions = {},
 ): number {
   const [y, m] = period.split("-").map(Number);
   if (!y || !m || m < 1 || m > 12) return 0;
   const start = new Date(Date.UTC(y, m - 1, 1));
   const end = new Date(Date.UTC(y, m, 0)); // day 0 = last day of previous month
+  const empFrom = opts.employmentFrom != null ? asUtcDay(opts.employmentFrom) : null;
+  const empUntil = opts.employmentUntil != null ? asUtcDay(opts.employmentUntil) : null;
 
   const markByDay = new Map<string, string>();
   for (const mark of marks) {
@@ -93,7 +119,12 @@ export function deriveLopDays(
   const cursor = new Date(start.getTime());
   while (cursor.getTime() <= end.getTime()) {
     const wf = workingFraction(cursor, holidays);
-    if (wf > 0) {
+    // Employment window (S4/S5): days outside [hireDate, lastWorkingDay]
+    // never charge — pre-hire and post-exit days are not loss of pay.
+    const inWindow =
+      (empFrom === null || cursor >= empFrom) &&
+      (empUntil === null || cursor <= empUntil);
+    if (wf > 0 && inWindow) {
       const span = spans.find((s) => cursor >= s.start && cursor <= s.end);
       if (span) {
         // Approved leave wins over attendance marks (see header).
@@ -102,6 +133,11 @@ export function deriveLopDays(
         const status = markByDay.get(dayKey(cursor));
         if (status === "ABSENT") total += wf;
         else if (status === "HALF_DAY") total += wf / 2;
+        else if (status === undefined && opts.unmarkedMode === "ABSENT") {
+          // PR-B07 (S4) — no record and no leave on a working day inside
+          // the employment window: the workspace counts it as absent.
+          total += wf;
+        }
       }
     }
     cursor.setUTCDate(cursor.getUTCDate() + 1);

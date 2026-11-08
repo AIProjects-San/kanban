@@ -285,6 +285,24 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
             />
           </Field>
         </FormRow>
+        <FormRow>
+          {/* PR-B07 (S4) — consider_unmarked_attendance_as. The rule is pure
+              (lib/lop-derivation.ts); this row owns the instance. Applies to
+              runs created while it is on — existing payslips keep their
+              snapshot lopDays. */}
+          <Field label="Unmarked attendance days">
+            <select
+              className="f-input"
+              value={form.unmarkedAttendanceMode ?? "IGNORED"}
+              onChange={(e) => setForm({ ...form, unmarkedAttendanceMode: e.target.value as "IGNORED" | "ABSENT" })}
+              data-testid="unmarked-mode-select"
+            >
+              <option value="IGNORED">Ignore (never charge loss-of-pay)</option>
+              <option value="ABSENT">Count as absent (charge loss-of-pay)</option>
+            </select>
+          </Field>
+          <div />
+        </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">
             {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Save size={14} /> Save settings</>}

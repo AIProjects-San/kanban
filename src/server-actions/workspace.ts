@@ -52,6 +52,9 @@ export async function updateWorkspaceSettings(input: Partial<{
    * flags + working hours (Settings → General; lib/attendance-flags.ts). */
   attendanceDayStart?: string;
   attendanceDayEnd?: string;
+  /** PR-B07 (S4) — consider_unmarked_attendance_as (Settings → General;
+   * lib/lop-derivation.ts consumes it at run creation). */
+  unmarkedAttendanceMode?: "IGNORED" | "ABSENT";
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

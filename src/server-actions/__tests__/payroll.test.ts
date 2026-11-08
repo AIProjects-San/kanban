@@ -49,6 +49,14 @@ vi.mock("@/server-actions/shared", () => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
+// S4 (PR-B07) — the LOP derivation reads the workspace unmarked-day
+// policy through the cached config loader; mocked so tests can flip it.
+const getWorkspaceConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/config-loader", () => ({
+  getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
+  bumpConfigCache: vi.fn(),
+}));
+
 import {
   getSalaryStructures,
   saveSalaryStructure,
@@ -153,6 +161,8 @@ beforeEach(() => {
   db.payslip.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ps-new", ...data }));
   db.payslip.update.mockResolvedValue({});
   db.payslip.count.mockResolvedValue(0);
+  // S4 — default policy: IGNORED (pre-S4 semantics byte-for-byte).
+  getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
 });
 
 describe("R7 — RBAC (payroll:manage = ADMIN + HR only)", () => {
@@ -671,6 +681,41 @@ describe("R7 — payslips", () => {
     });
     expect(res.ok).toBe(false);
     expect(db.payslip.update).not.toHaveBeenCalled();
+  });
+
+  it("PR-B07 (S4) — ABSENT mode charges unmarked working days at run creation; marks shield", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "ABSENT" } });
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-yuki", jobTitle: "Data Engineer", department: "ENGINEERING", hireDate: new Date("2026-11-01T00:00:00Z"), lastWorkingDay: null },
+    ]);
+    // PRESENT on Nov 2–6 (5 working days) → 21 − 5 = 16 unmarked charge.
+    db.attendanceRecord.findMany.mockResolvedValue(
+      ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"].map((date) => ({
+        userId: "u-yuki", date: new Date(`${date}T00:00:00Z`), status: "PRESENT",
+      })),
+    );
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const created = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ userId: string; lopDays: number; lopSource: string }> } };
+    };
+    const slip = created.data.payslips.create.find((p: { userId: string }) => p.userId === "u-yuki");
+    expect(slip?.lopDays).toBe(16);
+    expect(slip?.lopSource).toBe("AUTO");
+  });
+
+  it("PR-B07 (S4) — IGNORED default keeps unmarked days at zero (zero-behavior change)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const created = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ userId: string; lopDays: number }> } };
+    };
+    expect(created.data.payslips.create.every((p: { lopDays: number }) => p.lopDays === 0)).toBe(true);
   });
 
   it("addPayslip appends a mid-period joiner with the next slip number", async () => {

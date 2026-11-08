@@ -92,7 +92,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | PR-B04 | Flexible-benefit election & pro-rata | — | Missing | P14 / F3.2 |
 | PR-B05 | Five payroll frequencies | monthly only | Partial | P5 |
 | PR-B06 | Payment-days engine: DOJ/relieving clipping, include-holiday settings, half-day fractions | working-day denominator from the holiday calendar (F1.1) + fractional LOP 0.5/0.25 (F1.4); **no joiner/exiter date clipping within a month** | Partial | P6 / F1.1+F1.4 DONE |
-| PR-B07 | `consider_unmarked_attendance_as` (absent/present) | unmarked days are simply not LOP-charged | Missing | P6 |
+| PR-B07 | `consider_unmarked_attendance_as` (absent/present) | S4: `Workspace.unmarkedAttendanceMode IGNORED\|ABSENT` (Settings → General, default IGNORED = zero behavior change) feeds the pure `deriveLopDays` opts — ABSENT charges unmarked working days inside each employee's [hireDate, lastWorkingDay] window (any record, incl. PRESENT/WFH/ON_LEAVE, counts as marked; paid leave shields); derivation now reads ALL attendance statuses; payslip modal's AUTO note states the policy | **Parity (workspace scope)** (was Missing) | P6 / **S4 DONE** |
 | PR-B08 | Duplicate-slip idempotency (employee+period, payroll-entry-aware) | `@@unique([runId, userId])` + period-unique run + pre-checks | **Parity** | P9 |
 | PR-B09 | YTD + MTD + per-component YTD on the slip | calendar-year **net** YTD at read time; HR basis (incl. OPEN) vs ESS basis (LOCKED-only) — F-R3 documents the divergence | Partial | P10 |
 | PR-B10 | One-off adjustments (recurring/one-shot, overwrite semantics) | manual OPEN-run line edits; no recurring, no overwrite mode | Partial | P11 / F2.3 |
@@ -232,7 +232,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | AT-B05 | Skip/Overwrite correction semantics | — (declined with AT-02) | Out of scope | L13 |
 | AT-B06 | Geo-fencing radius vs shift locations | — | Out of scope | L14 |
 | AT-B07 | Check-in pairing modes + grace periods → auto attendance | — | Out of scope | L14 |
-| AT-B08 | Unmarked days as absent (bounded by shift buffers) | — (only explicitly marked ABSENT charges LOP; derivation ignores non-working-day marks) | Missing | P6 |
+| AT-B08 | Unmarked days as absent (bounded by shift buffers) | S4/PR-B07: unmarked-as-absent is workspace-configurable (`unmarkedAttendanceMode`), bounded by the employment window (hireDate→LWD) instead of shift buffers (no shifts until F3.5); default IGNORED | **Parity (workspace scope)** (was Missing) | P6 / **S4 DONE** |
 | AT-B09 | Attendance → payroll proration | F1.4 derivation: ABSENT=1, HALF_DAY=0.5 + unpaid leave, leave-wins, `lopSource AUTO\|MANUAL`, audited overrides, LOP line at creation | Partial | P7 / F1.4 DONE |
 | AT-B10 | Shift overlap validation incl. midnight wrap | — | Missing | L15 |
 | AT-B11 | Nightly shift-assignment expiry | — | Missing | L15 |

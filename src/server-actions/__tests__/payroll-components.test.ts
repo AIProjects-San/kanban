@@ -52,6 +52,14 @@ vi.mock("@/server-actions/shared", () => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
+// S4 (PR-B07) — createPayrollRun reads the workspace unmarked-day policy
+// through the cached config loader; default IGNORED = pre-S4 semantics.
+const getWorkspaceConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/config-loader", () => ({
+  getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
+  bumpConfigCache: vi.fn(),
+}));
+
 import {
   getSalaryComponents,
   saveSalaryComponent,
@@ -88,6 +96,7 @@ const OFFER_COMPONENTS = [
 ];
 
 beforeEach(() => {
+  getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
   vi.clearAllMocks();
   requirePermissionMock.mockResolvedValue(HR_AUTH);
   getSessionOrThrowMock.mockResolvedValue({ ...HR_AUTH, userId: "u-yuki", role: "MEMBER" as const, name: "Yuki Tanaka" });
@@ -113,6 +122,8 @@ beforeEach(() => {
   db.holidayCalendarEntry.findMany.mockResolvedValue([]);
   db.attendanceRecord.findMany.mockResolvedValue([]);
   db.leaveRequest.findMany.mockResolvedValue([]);
+  // S4 — the derivation reads employment windows from profiles.
+  db.employeeProfile.findMany.mockResolvedValue([]);
   db.leaveType.findMany.mockResolvedValue([]);
   db.payrollRun.findUnique.mockResolvedValue(null);
   db.payrollRun.findMany.mockResolvedValue([]);

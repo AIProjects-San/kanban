@@ -43,6 +43,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [payslips, setPayslips] = useState<PayslipT[]>([]);
   const [payslipsRun, setPayslipsRun] = useState<PayrollRunT | null>(null);
+  const [unmarkedMode, setUnmarkedMode] = useState<"IGNORED" | "ABSENT">("IGNORED");
   const [openPayslip, setOpenPayslip] = useState<PayslipT | null>(null);
   const [structureModalOpen, setStructureModalOpen] = useState(false);
   const [editStructure, setEditStructure] = useState<SalaryStructureT | null>(null);
@@ -80,6 +81,10 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     if (res.ok) {
       setPayslips(res.data.payslips);
       setPayslipsRun(res.data.run);
+      // PR-B07 (S4) — the current workspace policy explains the AUTO note
+      // in the payslip modal (the derivation itself is a creation-time
+      // snapshot; the note states the policy, not a re-derivation).
+      setUnmarkedMode(res.data.unmarkedMode);
     } else {
       toast.error(res.error);
       setPayslips([]);
@@ -342,6 +347,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       />
       <PayslipModal
         payslip={openPayslip}
+        unmarkedMode={unmarkedMode}
         onClose={() => { setOpenPayslip(null); if (selectedRunId) void loadPayslips(selectedRunId); void load(); }}
         onChanged={() => { if (selectedRunId) void loadPayslips(selectedRunId); void load(); }}
       />

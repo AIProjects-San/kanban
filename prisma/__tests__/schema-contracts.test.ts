@@ -209,6 +209,16 @@ describe("S2 (AT-B02/B03) — attendance timing facts + reference day", () => {
     expect(block).toMatch(/attendanceDayEnd\s+String\s+@default\("17:30"\)/);
   });
 
+  it("PR-B07 (S4) — Workspace declares the unmarked-day mode knob (default IGNORED)", () => {
+    expect(modelBlock("Workspace")).toMatch(/unmarkedAttendanceMode\s+String\s+@default\("IGNORED"\)/);
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261126200000_unmarked_attendance_mode");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+    expect(readFileSync(resolve(dir, "migration.sql"), "utf8")).toMatch(
+      /ADD COLUMN "unmarkedAttendanceMode" TEXT NOT NULL DEFAULT 'IGNORED'/,
+    );
+  });
+
   it("the timing migration exists with a down.sql rollback (repo convention)", () => {
     const dir = resolve(repoRoot, "prisma", "migrations", "20261126100000_attendance_timing");
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);

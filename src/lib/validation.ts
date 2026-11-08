@@ -197,6 +197,9 @@ export const workspaceSettingsSchema = z.object({
   // hours. Same HH:MM shape the attendance form already uses.
   attendanceDayStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Day start must be HH:MM (24-hour clock).").optional(),
   attendanceDayEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Day end must be HH:MM (24-hour clock).").optional(),
+  // PR-B07 (S4) — consider_unmarked_attendance_as. IGNORED keeps the
+  // pre-S4 semantics (unmarked days never charge LOP).
+  unmarkedAttendanceMode: z.enum(["IGNORED", "ABSENT"]).optional(),
 }).strict(); // reject unknown keys
 
 /**

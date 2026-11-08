@@ -108,6 +108,10 @@ export interface WorkspaceSettingsT {
    * pure lib/attendance-flags.ts kernel. Defaults 09:00 / 17:30. */
   attendanceDayStart: string;
   attendanceDayEnd: string;
+  /** PR-B07 (S4) — consider_unmarked_attendance_as: IGNORED (default,
+   * pre-S4 semantics) or ABSENT (unmarked working days charge LOP).
+   * Consumed by the pure lib/lop-derivation.ts kernel at run creation. */
+  unmarkedAttendanceMode: "IGNORED" | "ABSENT";
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -276,6 +280,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           joiningGateEnabled: workspace.joiningGateEnabled,
           attendanceDayStart: workspace.attendanceDayStart,
           attendanceDayEnd: workspace.attendanceDayEnd,
+          unmarkedAttendanceMode: (workspace.unmarkedAttendanceMode === "ABSENT" ? "ABSENT" : "IGNORED"),
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -295,6 +300,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           joiningGateEnabled: true,
           attendanceDayStart: "09:00",
           attendanceDayEnd: "17:30",
+          unmarkedAttendanceMode: "IGNORED",
         },
 
     taskStatuses: taskStatuses.length

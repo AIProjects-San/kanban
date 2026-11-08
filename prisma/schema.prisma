@@ -532,6 +532,11 @@ model Workspace {
   // and this row owns the instance (policy-as-data).
   attendanceDayStart  String   @default("09:00")
   attendanceDayEnd    String   @default("17:30")
+  // PR-B07 (S4) — consider_unmarked_attendance_as, as workspace data.
+  // IGNORED (default) = the pre-S4 semantics byte-for-byte: absence of
+  // attendance data is not absence. ABSENT = the LOP derivation charges
+  // unmarked working days (inside the employment window) as absent.
+  unmarkedAttendanceMode String @default("IGNORED") // IGNORED | ABSENT
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

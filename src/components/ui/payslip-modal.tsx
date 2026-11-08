@@ -35,11 +35,16 @@ function keyFromLabel(label: string, fallbackIdx: number): string {
 
 export function PayslipModal({
   payslip,
+  unmarkedMode = "IGNORED",
   onClose,
   onChanged,
 }: {
   /** The payslip to show; null → closed. */
   payslip: PayslipT | null;
+  /** PR-B07 (S4) — the workspace's unmarked-day policy, for the AUTO
+   * provenance note (the derivation is a creation-time snapshot; the note
+   * states the policy that produced it). */
+  unmarkedMode?: "IGNORED" | "ABSENT";
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -185,6 +190,7 @@ export function PayslipModal({
               {p.lopSource === "AUTO"
                 ? "Auto-derived at run creation from attendance (absent / half-day) and unpaid leave — saving a different value records a manual override."
                 : "Manually set by HR — overrides the run-creation derivation."}
+              {unmarkedMode === "ABSENT" ? " Workspace policy: unmarked working days count as absent (runs created while the policy is on)." : ""}
             </div>
           </div>
         ) : p.lopDays > 0 ? (
