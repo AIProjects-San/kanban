@@ -390,7 +390,7 @@ The 2026-11-08 audit re-verified every Phase 1 family against the row-level matr
 | S8 | PR-B03 | **DONE** Statistical components (display-only, excluded from net) | new STATISTICAL kind |
 | S9 | LV-10 | **DONE** HR leave adjustment tool — user-facing ADJUST ledger writer | `hr:admin`, reason required, floor-honest |
 | S10 | LV-B10 | **DONE** Salary-processed guard — unpaid leave cannot overlap a LOCKED slip | validation-chain step |
-| S11 | LV-B11 | Attendance-conflict guard in the leave chain | refuse on explicit (non-derived) marks in range |
+| S11 | LV-B11 | **DONE** Attendance-conflict guard in the leave chain | refuse on explicit (non-derived) marks in range |
 | S12 | LV-B08 | Cross-request max-consecutive-days walk | pure helper, adjacency by calendar day |
 | S13 | EM-B01 | Employee-number series EMP-0001 | zero-padded 4-digit, deterministic backfill |
 | S14 | EM-B04/LV-B13 | Leave-approver override | `EmployeeProfile.leaveApproverId`, chain: override → manager → ADMIN/HR |

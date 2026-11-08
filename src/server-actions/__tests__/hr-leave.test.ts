@@ -1520,6 +1520,62 @@ describe("PR-56 — remaining branch coverage", () => {
 // and re-read the concurrent winner's row instead of failing the read path.
 // ---------------------------------------------------------------------------
 
+describe("LV-B11 (S11) — attendance-conflict guard in the leave chain", () => {
+  it("an explicit attendance mark inside the range refuses the request, naming the date + status", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.attendanceRecord.findMany.mockImplementation(async ({ where }: { where?: { status?: { in?: string[] } } }) => {
+      // The chain reads attendance twice: the conflict guard (statuses
+      // filtered) answers with a clash; other reads stay empty.
+      if (where?.status?.in?.includes("PRESENT")) {
+        return [{ date: new Date(`${isoDay(3)}T00:00:00Z`), status: "PRESENT" }];
+      }
+      return [];
+    });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "clash",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("Attendance is already marked");
+      expect(res.error).toContain("PRESENT");
+    }
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("ON_LEAVE rows (derived or manual) never conflict — they ARE the leave story", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // The guard's DB-side status filter (PRESENT/ABSENT/HALF_DAY/WFH) is
+    // honored by the mock: the ON_LEAVE row exists but never reaches the
+    // conflict list.
+    db.attendanceRecord.findMany.mockImplementation(async ({ where }: { where?: { status?: { in?: string[] } } }) => {
+      const statuses = where?.status?.in as string[] | undefined;
+      if (statuses) {
+        const all = [{ date: new Date(`${isoDay(3)}T00:00:00Z`), status: "ON_LEAVE" }];
+        return all.filter((r) => statuses.includes(r.status));
+      }
+      return [{ date: new Date(`${isoDay(3)}T00:00:00Z`), status: "ON_LEAVE" }];
+    });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "over derived rows",
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("marks OUTSIDE the range do not block the request (the guard's date window is DB-side)", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // An ABSENT mark 20 days out exists; the guard's read (statuses filter)
+    // returns nothing inside the requested window.
+    db.attendanceRecord.findMany.mockImplementation(async ({ where }: { where?: { status?: { in?: string[] } } }) => {
+      if (where?.status?.in) return [];
+      return [{ date: new Date(`${isoDay(20)}T00:00:00Z`), status: "ABSENT" }];
+    });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unrelated mark",
+    });
+    expect(res.ok).toBe(true);
+  });
+});
+
 describe("LV-B10 (S10) — salary-processed guard on unpaid leave", () => {
   const UNPAID_TYPE = { ...ANNUAL_TYPE, paid: false, name: "Unpaid Leave" };
 

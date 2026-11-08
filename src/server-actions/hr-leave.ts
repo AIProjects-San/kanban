@@ -405,6 +405,29 @@ export async function createLeaveRequest(input: {
       }
     }
 
+    // LV-B11 (S11) — attendance-conflict guard: an explicit HR mark inside
+    // the range (PRESENT / ABSENT / HALF_DAY / WFH — DERIVED rows are
+    // ON_LEAVE and never conflict) means attendance already tells a
+    // different story for those days; the request is refused naming them
+    // instead of silently double-encoding the same date.
+    {
+      const conflicting = await db.attendanceRecord.findMany({
+        where: {
+          userId: auth.userId,
+          date: { gte: start, lte: end },
+          status: { in: ["PRESENT", "ABSENT", "HALF_DAY", "WFH"] },
+        },
+        select: { date: true, status: true },
+        orderBy: { date: "asc" },
+      });
+      if (conflicting.length > 0) {
+        const shown = conflicting.slice(0, 3).map((c) => `${c.date.toISOString().slice(0, 10)} (${c.status})`);
+        throw new AuthorizationError(
+          `Attendance is already marked for ${shown.join(", ")}${conflicting.length > 3 ? ` and ${conflicting.length - 3} more day(s)` : ""} — those dates tell a different story. Ask HR to clear the marks before requesting leave over them.`,
+        );
+      }
+    }
+
     // LV-B10 (S10) — salary-processed guard: UNPAID leave charges loss of
     // pay, and a LOCKED run's slips are immutable — the request is refused
     // when its range touches a month already processed (paid types and OPEN
