@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   dayKey,
+  paymentWindow,
   holidayLookupFrom,
   workingDaysBetween,
   workingDaysInPeriod,
@@ -110,5 +111,63 @@ describe("workingDaysInPeriod", () => {
       { date: "2026-12-25", isHalfDay: false },
     ]);
     expect(workingDaysInPeriod("2026-11", hol)).toBe(21);
+  });
+});
+
+describe("paymentWindow (S5 / PR-B06)", () => {
+  it("no employment dates = the unbounded full-period window", () => {
+    const w = paymentWindow("2026-11", undefined);
+    expect(w.paidDays).toBe(21);
+    expect(w.clippedFrom).toBe(false);
+    expect(w.clippedUntil).toBe(false);
+  });
+
+  it("a mid-month hire date clips the window start", () => {
+    // Hired Tue Nov 10 → working days 10..30 = 15.
+    const w = paymentWindow("2026-11", undefined, { from: "2026-11-10" });
+    expect(w.paidDays).toBe(15);
+    expect(w.clippedFrom).toBe(true);
+    expect(w.clippedUntil).toBe(false);
+  });
+
+  it("a mid-month last-working-day clips the window end", () => {
+    // LWD Fri Nov 6 → working days 2..6 = 5.
+    const w = paymentWindow("2026-11", undefined, { until: "2026-11-06" });
+    expect(w.paidDays).toBe(5);
+    expect(w.clippedFrom).toBe(false);
+    expect(w.clippedUntil).toBe(true);
+  });
+
+  it("both ends clip (hired and left in the same month)", () => {
+    // Hired Mon Nov 2, LWD Fri Nov 13 → 2..13 = 10 working days.
+    const w = paymentWindow("2026-11", undefined, { from: "2026-11-02", until: "2026-11-13" });
+    expect(w.paidDays).toBe(10);
+  });
+
+  it("employment dates outside the period change nothing (no clipping)", () => {
+    const before = paymentWindow("2026-11", undefined, { from: "2026-10-15" });
+    expect(before.paidDays).toBe(21);
+    expect(before.clippedFrom).toBe(false);
+    const after = paymentWindow("2026-11", undefined, { until: "2026-12-15" });
+    expect(after.paidDays).toBe(21);
+    expect(after.clippedUntil).toBe(false);
+  });
+
+  it("the window is holiday-aware (half-day holidays count 0.5)", () => {
+    const hol = holidayLookupFrom([{ date: "2026-11-02", isHalfDay: true }, { date: "2026-11-11", isHalfDay: false }]);
+    // Full period: 21 weekdays − 1 (Nov 11 full holiday) − 0.5 (Nov 2 half) = 19.5.
+    expect(paymentWindow("2026-11", hol).paidDays).toBe(19.5);
+    // Window from Nov 10: 11 is a full holiday; 10,12,13,16-20,23-27,30 = 14.
+    expect(paymentWindow("2026-11", hol, { from: "2026-11-10" }).paidDays).toBe(14);
+  });
+
+  it("an inverted window (LWD before hire) yields 0 paid days", () => {
+    const w = paymentWindow("2026-11", undefined, { from: "2026-11-20", until: "2026-11-06" });
+    expect(w.paidDays).toBe(0);
+  });
+
+  it("accepts Date objects for the employment bounds", () => {
+    const w = paymentWindow("2026-11", undefined, { from: new Date("2026-11-10T00:00:00.000Z") });
+    expect(w.paidDays).toBe(15);
   });
 });

@@ -2309,7 +2309,8 @@ async function main() {
     const prevWorkingDays = workingDaysInPeriod(prevPeriod);
     const thisWorkingDays = workingDaysInPeriod(thisPeriod);
 
-    // Last month: LOCKED (paid).
+    // Last month: LOCKED (paid). S5 — paidDays stamped (full month: every
+    // structure holder was employed the whole period).
     await db.payrollRun.create({
       data: {
         period: prevPeriod,
@@ -2327,6 +2328,7 @@ async function main() {
               slipNo: `PS-${prevPeriod}-${String(i + 1).padStart(3, "0")}`,
               earnings: JSON.stringify(earnings),
               deductions: "[]",
+              paidDays: prevWorkingDays,
               gross,
               net,
             };
@@ -2398,7 +2400,44 @@ async function main() {
       }
       return Math.round(total * 100) / 100;
     };
+    // S5 (PR-B06) — mirror of lib/working-days.ts paymentWindow + the
+    // run-creation scaling: each structure holder's paid days = working days
+    // in [max(month start, hireDate), min(month end, LWD)] (seed mirrors
+    // production math). Soren (LWD this month) gets the clipped showcase; the
+    // other holders are full-period.
+    const profileByUser = new Map(
+      (await db.employeeProfile.findMany({
+        select: { userId: true, hireDate: true, lastWorkingDay: true },
+      })).map((p) => [p.userId, p]),
+    );
+    const paymentDaysFor = (userId, period) => {
+      const [yy, mm] = period.split("-").map(Number);
+      const start = new Date(Date.UTC(yy, mm - 1, 1));
+      const end = new Date(Date.UTC(yy, mm, 0));
+      const p = profileByUser.get(userId);
+      const from = p?.hireDate && p.hireDate > start ? p.hireDate : start;
+      const until = p?.lastWorkingDay && p.lastWorkingDay < end ? p.lastWorkingDay : end;
+      if (from > until) return 0;
+      let count = 0;
+      const cursor = new Date(from);
+      while (cursor <= until) {
+        const dow = cursor.getUTCDay();
+        if (dow !== 0 && dow !== 6) {
+          const hol = holidayKeyMap.get(cursor.toISOString().slice(0, 10));
+          if (!hol) count += 1;
+          else if (hol.isHalfDay) count += 0.5;
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+      return count;
+    };
+    const scaleLines = (lines, paidDays, denominator) => {
+      if (paidDays == null || denominator <= 0 || paidDays >= denominator) return lines;
+      const fraction = paidDays / denominator;
+      return lines.map((l) => ({ ...l, amount: round2(l.amount * fraction) }));
+    };
     let autoLopCount = 0;
+    let clippedCount = 0;
     await db.payrollRun.create({
       data: {
         period: thisPeriod,
@@ -2407,7 +2446,10 @@ async function main() {
         workingDays: thisWorkingDays,
         payslips: {
           create: structures.map((s, i) => {
-            const earnings = monthlyLines(s.components);
+            // S5 — the employment window first: lines scale to paid days.
+            const paidDays = paymentDaysFor(s.user.id, thisPeriod);
+            if (paidDays < thisWorkingDays) clippedCount += 1;
+            let earnings = scaleLines(monthlyLines(s.components), paidDays, thisWorkingDays);
             // F1.4 derivation first …
             let lopDays = deriveLopDays(s.user.id, thisPeriod);
             let lopSource = "AUTO";
@@ -2438,6 +2480,7 @@ async function main() {
               deductions: JSON.stringify(deductions),
               lopDays,
               lopSource,
+              paidDays,
               gross,
               net,
             };
@@ -2445,7 +2488,7 @@ async function main() {
         },
       },
     });
-    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line) + F1.5 component catalog (7 definitions, 1 retired)`);
+    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line${clippedCount > 0 ? `, ${clippedCount} scaled to employment windows (S5)` : ""}) + F1.5 component catalog (7 definitions, 1 retired)`);
   }
 
   // -------------------------------------------------------------------------

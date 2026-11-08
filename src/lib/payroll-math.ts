@@ -44,6 +44,30 @@ export function monthlyEarningsFromStructure(components: OfferComponent[]): Pays
     }));
 }
 
+/** PR-B06 (S5) — scale a full-month earning set to the paid window.
+ * Pure: each line × paidDays / denominator, rounded per line (the snapshot
+ * discipline keeps whatever numbers are stored — scaling happens once, at
+ * run/slip creation, never on read). paidDays == denominator (or null)
+ * returns the SAME numbers (non-clipped employees stay byte-identical);
+ * a non-positive denominator guards the degenerate empty-calendar run. */
+export function scaleEarningsToPaidDays(
+  earnings: PayslipLine[],
+  paidDays: number | null | undefined,
+  denominator: number | null | undefined,
+): PayslipLine[] {
+  if (
+    paidDays == null ||
+    denominator == null ||
+    !Number.isFinite(denominator) ||
+    denominator <= 0 ||
+    paidDays >= denominator
+  ) {
+    return earnings;
+  }
+  const fraction = paidDays / denominator;
+  return earnings.map((l) => ({ ...l, amount: round2(l.amount * fraction) }));
+}
+
 export function lineSum(lines: PayslipLine[]): number {
   return round2(lines.reduce((sum, l) => sum + (Number.isFinite(l.amount) ? l.amount : 0), 0));
 }

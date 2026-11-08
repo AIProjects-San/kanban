@@ -15,6 +15,7 @@ import {
   currentPeriod,
   isPayrollPeriod,
   LOP_LINE_KEY,
+  scaleEarningsToPaidDays,
 } from "@/lib/payroll-math";
 
 const STRUCTURE = [
@@ -111,5 +112,38 @@ describe("payroll-math", () => {
     expect(isPayrollPeriod("2026-13")).toBe(false);
     expect(isPayrollPeriod("2026-1")).toBe(false);
     expect(isPayrollPeriod("26-11")).toBe(false);
+  });
+});
+
+
+describe("scaleEarningsToPaidDays (S5 / PR-B06)", () => {
+  const full = [
+    { key: "basic", label: "Basic Salary", amount: 6_500 },
+    { key: "transport", label: "Transport Allowance", amount: 200 },
+  ];
+
+  it("identity when paidDays equals the denominator (non-clipped byte-identical)", () => {
+    expect(scaleEarningsToPaidDays(full, 21, 21)).toBe(full);
+  });
+
+  it("null / undefined paidDays or denominator returns the input unchanged (pre-S5 rows)", () => {
+    expect(scaleEarningsToPaidDays(full, null, 21)).toBe(full);
+    expect(scaleEarningsToPaidDays(full, undefined, 21)).toBe(full);
+    expect(scaleEarningsToPaidDays(full, 5, undefined)).toBe(full);
+    expect(scaleEarningsToPaidDays(full, 5, 0)).toBe(full);
+  });
+
+  it("scales each line by paidDays / denominator, rounded per line", () => {
+    // 5 / 21: 6,500 → 1,547.62; 200 → 47.62.
+    expect(scaleEarningsToPaidDays(full, 5, 21)).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 1_547.62 },
+      { key: "transport", label: "Transport Allowance", amount: 47.62 },
+    ]);
+  });
+
+  it("does not mutate the input array (snapshot discipline)", () => {
+    const input = [{ key: "basic", label: "Basic Salary", amount: 6_500 }];
+    scaleEarningsToPaidDays(input, 5, 21);
+    expect(input[0].amount).toBe(6_500);
   });
 });

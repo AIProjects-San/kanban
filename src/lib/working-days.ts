@@ -85,3 +85,40 @@ export function nonWorkingDayReason(
   if (holiday && !holiday.isHalfDay) return `a holiday (${holiday.label})`;
   return null;
 }
+
+/**
+ * PR-B06 (S5) — the payment window of a "YYYY-MM" period for one employee:
+ * working days in [max(period start, hireDate), min(period end, LWD)].
+ * Pure; the caller supplies the holiday lookup and the employment dates.
+ * `paidDays` is the holiday-aware count inside the window (half-day
+ * holidays 0.5); `clippedFrom/Until` tell the UI which ends bit. Absent
+ * employment dates = the unbounded full-period window (paidDays equals
+ * workingDaysInPeriod).
+ */
+export function paymentWindow(
+  period: string,
+  holidays: HolidayLookup | undefined,
+  employment?: { from?: Date | string | null; until?: Date | string | null },
+): { paidDays: number; windowStart: Date; windowEnd: Date; clippedFrom: boolean; clippedUntil: boolean } {
+  const [y, m] = period.split("-").map(Number);
+  const periodStart = new Date(Date.UTC(y || 1970, (m || 1) - 1, 1));
+  const periodEnd = new Date(Date.UTC(y || 1970, m || 1, 0));
+  const from = employment?.from != null
+    ? (employment.from instanceof Date ? employment.from : new Date(`${employment.from}T00:00:00.000Z`))
+    : null;
+  const until = employment?.until != null
+    ? (employment.until instanceof Date ? employment.until : new Date(`${employment.until}T00:00:00.000Z`))
+    : null;
+  const windowStart = from && from > periodStart ? from : periodStart;
+  const windowEnd = until && until < periodEnd ? until : periodEnd;
+  const paidDays = windowStart <= windowEnd
+    ? workingDaysBetween(windowStart, windowEnd, holidays)
+    : 0;
+  return {
+    paidDays,
+    windowStart,
+    windowEnd,
+    clippedFrom: Boolean(from && from > periodStart),
+    clippedUntil: Boolean(until && until < periodEnd),
+  };
+}

@@ -1625,6 +1625,13 @@ model Payslip {
   // every successful edit; LOCKED slips are immutable so it never moves
   // after payment.
   version    Int       @default(0)
+  // PR-B06 (S5) — working days inside the employee's employment window
+  // [max(period start, hireDate), min(period end, lastWorkingDay)],
+  // snapshotted at run/slip creation. Earnings are scaled by
+  // paidDays/workingDays (scaleEarningsToPaidDays). null = pre-S5 rows
+  // (read as full-period; no retroactive rewrite of paid history). The LOP
+  // derivation already refuses to charge outside the window (S4).
+  paidDays   Float?
   gross      Float     @default(0)
   net        Float     @default(0)
   createdAt  DateTime  @default(now())

@@ -750,6 +750,9 @@ export interface PayslipT {
   /** F-R2 (S1) — optimistic-lock version; carried back as expectedVersion
    * when the modal saves, refused on mismatch. */
   version: number;
+  /** PR-B06 (S5) — working days inside the employment window, snapshotted at
+   * creation; earnings are scaled to it. null = pre-S5 full-period rows. */
+  paidDays: number | null;
   gross: number;
   net: number;
   ytdNet: number;

@@ -396,6 +396,12 @@ describe("Recruitment R1 models are declared", () => {
     const dir = resolve(repoRoot, "prisma", "migrations", "20261117000000_hiring_payroll");
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+    // PR-B06 (S5) — the employment-window day snapshot; nullable = pre-S5.
+    expect(slip).toMatch(/paidDays\s+Float\?/);
+    const s5 = resolve(repoRoot, "prisma", "migrations", "20261126300000_payment_day_clipping");
+    expect(existsSync(resolve(s5, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(s5, "down.sql"))).toBe(true);
+    expect(readFileSync(resolve(s5, "migration.sql"), "utf8")).toMatch(/ADD COLUMN "paidDays" DOUBLE PRECISION/);
     // F-R2 (S1) — the optimistic-lock migration is committed with its down
     // path; additive, every stored slip reads as version 0.
     const s1 = resolve(repoRoot, "prisma", "migrations", "20261126000000_payslip_optimistic_lock");

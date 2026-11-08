@@ -112,7 +112,7 @@ function payslipRow(overrides: Record<string, unknown> = {}) {
       { key: "transport", label: "Transport Allowance", amount: 200 },
     ]),
     deductions: "[]",
-    note: "", lopDays: 0, lopSource: "AUTO", version: 0, gross: 6_700, net: 6_700,
+    note: "", lopDays: 0, lopSource: "AUTO", version: 0, paidDays: null, gross: 6_700, net: 6_700,
     createdAt: new Date(), updatedAt: new Date(),
     run: OPEN_RUN,
     ...overrides,
@@ -716,6 +716,91 @@ describe("R7 — payslips", () => {
       data: { payslips: { create: Array<{ userId: string; lopDays: number }> } };
     };
     expect(created.data.payslips.create.every((p: { lopDays: number }) => p.lopDays === 0)).toBe(true);
+  });
+
+  it("PR-B06 (S5) — a mid-month joiner's earnings scale to the employment window at run creation", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    // Hired Tue Nov 10 → paidDays 15 of 21: 6,500 → 4,642.86; 200 → 142.86.
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-yuki", jobTitle: "Data Engineer", department: "ENGINEERING", hireDate: new Date("2026-11-10T00:00:00Z"), lastWorkingDay: null },
+    ]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const created = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; paidDays: number; gross: number; net: number }> } };
+    };
+    const slip = created.data.payslips.create[0];
+    expect(slip.paidDays).toBe(15);
+    const lines = JSON.parse(slip.earnings) as Array<{ key: string; amount: number }>;
+    expect(lines.find((l) => l.key === "basic")?.amount).toBe(4_642.86);
+    expect(lines.find((l) => l.key === "transport")?.amount).toBe(142.86);
+    // gross = 4,642.86 + 142.86 = 4,785.72 (rounded per line, summed).
+    expect(slip.gross).toBe(4_785.72);
+    expect(slip.net).toBe(4_785.72);
+  });
+
+  it("PR-B06 (S5) — a mid-month leaver (LWD) scales too; LOP rides the scaled gross", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-yuki", jobTitle: "Data Engineer", department: "ENGINEERING", hireDate: null, lastWorkingDay: new Date("2026-11-06T00:00:00Z") },
+    ]);
+    // One ABSENT day inside the window (Nov 4).
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { userId: "u-yuki", date: new Date("2026-11-04T00:00:00Z"), status: "ABSENT" },
+    ]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const created = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ paidDays: number; lopDays: number; deductions: string; net: number }> } };
+    };
+    const slip = created.data.payslips.create[0];
+    expect(slip.paidDays).toBe(5);
+    expect(slip.lopDays).toBe(1);
+    // Scaled gross = 6,700 × 5/21 = 1,595.24; LOP line = 1,595.24 × 1/21 = 75.96.
+    const deductions = JSON.parse(slip.deductions) as Array<{ key: string; amount: number }>;
+    expect(deductions.find((l) => l.key === "lop")?.amount).toBe(75.96);
+    expect(slip.net).toBe(1_519.28);
+  });
+
+  it("PR-B06 (S5) — updatePayslip caps LOP at the PAID days of a clipped slip", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow({
+      paidDays: 5,
+      earnings: JSON.stringify([{ key: "basic", label: "Basic Salary", amount: 4_642.86 }]),
+      deductions: "[]",
+      gross: 4_642.86, net: 4_642.86,
+      run: { ...OPEN_RUN, workingDays: 21 },
+    }));
+    const res = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 4_642.86 }],
+      deductions: [],
+      lopDays: 6, // > 5 paid days
+      note: "",
+    });
+    if (res.ok) throw new Error("expected failure");
+    expect(res.error).toContain("can't exceed the 5 paid days");
+    expect(res.error).toContain("clipped to the employment window");
+  });
+
+  it("PR-B06 (S5) — addPayslip scales a mid-period joiner (pre-join days are no longer manual)", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...OPEN_RUN, workingDays: 21 });
+    db.payslip.findUnique.mockResolvedValue(null);
+    db.payslip.count.mockResolvedValue(3);
+    db.salaryStructure.findFirst.mockResolvedValue(STRUCTURE_ROW);
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-yuki", jobTitle: "Data Engineer", department: "ENGINEERING", hireDate: new Date("2026-11-16T00:00:00Z"), lastWorkingDay: null },
+    ]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    const res = await addPayslip({ runId: "run-1", userId: "u-yuki" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payslip.create.mock.calls[0][0] as { data: { paidDays: number; gross: number; earnings: string } };
+    // Hired Mon Nov 16 → paidDays 11 of 21 → gross 6,700 × 11/21 = 3,509.52.
+    expect(createArg.data.paidDays).toBe(11);
+    expect(createArg.data.gross).toBe(3_509.52);
   });
 
   it("addPayslip appends a mid-period joiner with the next slip number", async () => {

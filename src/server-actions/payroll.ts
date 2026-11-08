@@ -36,13 +36,14 @@ import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseComponents, type OfferComponent } from "@/lib/offer-math";
-import { workingDaysInPeriod, type HolidayLookup } from "@/lib/working-days";
+import { workingDaysInPeriod, paymentWindow, type HolidayLookup } from "@/lib/working-days";
 import { deriveLopDays, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { getHolidayLookup } from "./hr-shared";
 import {
   monthlyEarningsFromStructure,
   payslipTotals,
+  scaleEarningsToPaidDays,
   withLopLine,
   daysInPeriod,
   parsePayslipLines,
@@ -273,18 +274,29 @@ function slipNumber(period: string, seq: number): string {
  * (ABSENT / HALF_DAY) and approved leave (paid types shield the day, unpaid
  * types charge it — lib/lop-derivation.ts has the exact per-day semantics).
  * Charges only working days (weekends/holidays never charge); days with no
- * record and no leave charge 0. Runs at run/slip CREATION only — the value
- * is then a snapshot on the payslip (F1.1's never-re-derived discipline). */
+ * record and no leave charge 0 (unless PR-B07's ABSENT mode). Runs at
+ * run/slip CREATION only — the value is then a snapshot on the payslip
+ * (F1.1's never-re-derived discipline).
+ * S5 (PR-B06) — also returns each user's PAID DAYS (the employment-window
+ * working-day count from lib/working-days.ts paymentWindow) so the caller
+ * can scale earnings to the days actually employed. */
+interface PayrollFacts {
+  lopDays: number;
+  paidDays: number;
+  clippedFrom: boolean;
+  clippedUntil: boolean;
+}
+
 async function deriveLopDaysForUsers(
   userIds: string[],
   period: string,
   holidays: HolidayLookup,
-): Promise<Map<string, number>> {
+): Promise<Map<string, PayrollFacts>> {
   // PR-B07 (S4) — the workspace's unmarked-day policy rides every
   // derivation (IGNORED default = pre-S4 semantics byte-for-byte).
   const config = await getWorkspaceConfig();
   const unmarkedMode = config.workspace.unmarkedAttendanceMode;
-  const result = new Map<string, number>();
+  const result = new Map<string, PayrollFacts>();
   if (userIds.length === 0) return result;
   const [y, m] = period.split("-").map(Number);
   if (!y || !m || m < 1 || m > 12) return result;
@@ -344,7 +356,15 @@ async function deriveLopDaysForUsers(
     }
   }
   for (const [u, { marks: userMarks, spans, opts }] of byUser) {
-    result.set(u, deriveLopDays(period, holidays, userMarks, spans, opts));
+    // S5 — the payment window from the same employment facts the LOP walk
+    // uses (one read, one truth): working days in [hireDate, LWD] ∩ period.
+    const win = paymentWindow(period, holidays, { from: opts.employmentFrom, until: opts.employmentUntil });
+    result.set(u, {
+      lopDays: deriveLopDays(period, holidays, userMarks, spans, opts),
+      paidDays: win.paidDays,
+      clippedFrom: win.clippedFrom,
+      clippedUntil: win.clippedUntil,
+    });
   }
   return result;
 }
@@ -410,12 +430,18 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // days of the period. Snapshot semantics: the value is written once at
     // creation (lopSource AUTO); corrections afterwards go through a manual
     // HR override in updatePayslip, never a silent re-derivation.
+    // S5 (PR-B06) — the same facts carry each employee's PAID DAYS (the
+    // employment-window working-day count); earnings scale by
+    // paidDays / workingDays so mid-month joiners/leavers are paid for the
+    // days they were employed (deliberate default-ON correctness fix;
+    // pre-S5 rows read as full-period).
     const lopByUser = await deriveLopDaysForUsers(
       structures.map((s) => s.userId),
       data.period,
       periodHolidays,
     );
-    const autoLopCount = [...lopByUser.values()].filter((v) => v > 0).length;
+    const autoLopCount = [...lopByUser.values()].filter((f) => f.lopDays > 0).length;
+    const clippedCount = [...lopByUser.values()].filter((f) => f.clippedFrom || f.clippedUntil).length;
 
     const run = await db.payrollRun.create({
       data: {
@@ -425,8 +451,14 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
         workingDays: runWorkingDays,
         payslips: {
           create: structures.map((s, i) => {
-            const earnings = monthlyEarningsFromStructure(parseComponents(s.components));
-            const lopDays = lopByUser.get(s.userId) ?? 0;
+            const facts = lopByUser.get(s.userId)
+              ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false };
+            const earnings = scaleEarningsToPaidDays(
+              monthlyEarningsFromStructure(parseComponents(s.components)),
+              facts.paidDays,
+              runWorkingDays,
+            );
+            const lopDays = facts.lopDays;
             // The auto LOP line is materialized at creation (net totals are
             // honest immediately — no per-slip save needed to see the dock).
             const deductions = lopDays > 0
@@ -440,6 +472,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
               deductions: JSON.stringify(deductions),
               lopDays,
               lopSource: "AUTO",
+              paidDays: facts.paidDays,
               gross,
               net,
             };
@@ -455,7 +488,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}.`,
+      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}`,
     });
     revalidatePath("/");
     return { id: run.id, payslipCount: run.payslips.length };
@@ -518,6 +551,7 @@ export async function getPayrollRun(
         lopDays: p.lopDays,
         lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
         version: p.version,
+        paidDays: p.paidDays ?? null,
         gross: p.gross,
         net: p.net,
         ytdNet: ytdByUser.get(p.userId) ?? p.net,
@@ -599,10 +633,18 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     // float dust from the editor can never flip the changed-value check.
     const lopDays = round2(data.lopDays);
     const runWorkingDays = slip.run.workingDays;
-    const periodDays = runWorkingDays > 0 ? runWorkingDays : daysInPeriod(slip.run.period);
+    // S5 — a clipped slip's LOP bound is its PAID days (the employment
+    // window), not the whole period: you cannot lose pay for days you were
+    // not employed. Pre-S5 rows (paidDays null) keep the period bound.
+    const paidDays = slip.paidDays ?? null;
+    const periodDays = paidDays != null
+      ? paidDays
+      : runWorkingDays > 0 ? runWorkingDays : daysInPeriod(slip.run.period);
     if (lopDays > periodDays) {
       throw new AuthorizationError(
-        `Loss-of-pay days (${lopDays}) can't exceed the ${periodDays} working days of ${slip.run.period}.`,
+        paidDays != null && paidDays < (runWorkingDays > 0 ? runWorkingDays : daysInPeriod(slip.run.period))
+          ? `Loss-of-pay days (${lopDays}) can't exceed the ${periodDays} paid days of ${slip.run.period} (this slip is clipped to the employment window).`
+          : `Loss-of-pay days (${lopDays}) can't exceed the ${periodDays} working days of ${slip.run.period}.`,
       );
     }
     // F1.4 — provenance: a changed value is a manual override of the
@@ -688,19 +730,30 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       new Date(Date.UTC(py, pm, 0)),
     );
     const lopByUser = await deriveLopDaysForUsers([data.userId], run.period, periodHolidays);
-    const lopDays = lopByUser.get(data.userId) ?? 0;
+    const facts = lopByUser.get(data.userId)
+      ?? { lopDays: 0, paidDays: run.workingDays, clippedFrom: false, clippedUntil: false };
+    const lopDays = facts.lopDays;
+    // S5 (PR-B06) — the joiner's earnings scale to their employment window:
+    // pre-join days are no longer a manual HR LOP call, the run snapshots
+    // the pro-rated lines (and paidDays) directly.
+    const scaledEarnings = scaleEarningsToPaidDays(
+      earnings,
+      facts.paidDays,
+      run.workingDays > 0 ? run.workingDays : undefined,
+    );
     const deductions = lopDays > 0
-      ? withLopLine([], payslipTotals(earnings, []).gross, lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
+      ? withLopLine([], payslipTotals(scaledEarnings, []).gross, lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
       : [];
-    const { gross, net } = payslipTotals(earnings, deductions);
+    const { gross, net } = payslipTotals(scaledEarnings, deductions);
     const createData = {
       runId: run.id,
       userId: data.userId,
       slipNo: slipNumber(run.period, count + 1),
-      earnings: JSON.stringify(earnings),
+      earnings: JSON.stringify(scaledEarnings),
       deductions: JSON.stringify(deductions),
       lopDays,
       lopSource: "AUTO",
+      paidDays: facts.paidDays,
       gross,
       net,
     };
@@ -834,6 +887,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         lopDays: p.lopDays,
         lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
         version: p.version,
+        paidDays: p.paidDays ?? null,
         gross: p.gross,
         net: p.net,
         ytdNet: ytdBySlip.get(p.id) ?? p.net,

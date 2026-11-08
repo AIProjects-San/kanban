@@ -201,6 +201,24 @@ export function PayslipModal({
           </div>
         ) : null}
 
+        {/* PR-B06 (S5) — the employment-window day breakdown. Full-month
+            slips (paidDays == workingDays, or pre-S5 null) render nothing. */}
+        {editable && p.paidDays != null && p.runWorkingDays > 0 && p.paidDays < p.runWorkingDays && (
+          <div
+            className="rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs text-sky-700 dark:text-sky-400"
+            data-testid="payslip-paid-days"
+          >
+            Paid days: <strong>{p.paidDays}</strong> of {p.runWorkingDays} working days — this slip is
+            clipped to the employment window (joined or left mid-month); the lines above are scaled
+            pro-rata, and loss-of-pay is capped at the paid days.
+          </div>
+        )}
+        {!editable && p.paidDays != null && p.runWorkingDays > 0 && p.paidDays < p.runWorkingDays && (
+          <div className="text-xs text-muted-foreground" data-testid="payslip-paid-days">
+            Paid days: {p.paidDays} of {p.runWorkingDays} working days (employment window) — lines scaled pro-rata.
+          </div>
+        )}
+
         {lineEditor(deductions, setDeductions, "deductions")}
 
         {/* Totals */}
