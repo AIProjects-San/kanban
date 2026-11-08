@@ -738,6 +738,9 @@ export interface PayslipT {
   note: string;
   lopDays: number;
   lopSource: "AUTO" | "MANUAL";
+  /** F-R2 (S1) — optimistic-lock version; carried back as expectedVersion
+   * when the modal saves, refused on mismatch. */
+  version: number;
   gross: number;
   net: number;
   ytdNet: number;

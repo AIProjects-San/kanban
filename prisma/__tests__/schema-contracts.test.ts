@@ -349,6 +349,9 @@ describe("Recruitment R1 models are declared", () => {
     // F1.4 — Float (HALF_DAY charges 0.5) + the AUTO/MANUAL provenance flag.
     expect(slip).toMatch(/lopDays\s+Float\s+@default\(0\)/);
     expect(slip).toMatch(/lopSource\s+String\s+@default\("AUTO"\)/);
+    // F-R2 (S1) — optimistic-lock version: updatePayslip refuses a save whose
+    // expectedVersion doesn't match; incremented on every successful edit.
+    expect(slip).toMatch(/version\s+Int\s+@default\(0\)/);
     expect(slip).toMatch(/gross\s+Float\s+@default\(0\)/);
     expect(slip).toMatch(/net\s+Float\s+@default\(0\)/);
     expect(slip).toMatch(/@@unique\(\[runId,\s*userId\]\)/);
@@ -356,6 +359,13 @@ describe("Recruitment R1 models are declared", () => {
     const dir = resolve(repoRoot, "prisma", "migrations", "20261117000000_hiring_payroll");
     expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
     expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+    // F-R2 (S1) — the optimistic-lock migration is committed with its down
+    // path; additive, every stored slip reads as version 0.
+    const s1 = resolve(repoRoot, "prisma", "migrations", "20261126000000_payslip_optimistic_lock");
+    expect(existsSync(resolve(s1, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(s1, "down.sql"))).toBe(true);
+    const s1up = readFileSync(resolve(s1, "migration.sql"), "utf8");
+    expect(s1up).toMatch(/ADD COLUMN "version" INTEGER NOT NULL DEFAULT 0/);
     // F1.4 — the attendance→LOP derivation migration (provenance column +
     // Int→Float widenings) is committed with its down path. Clause-level
     // assertions: Prisma emits multi-clause ALTER TABLE statements (SET

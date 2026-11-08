@@ -1598,6 +1598,12 @@ model Payslip {
   // override, not a silent re-derivation). MANUAL: an HR override saved
   // through updatePayslip (audited).
   lopSource  String    @default("AUTO")
+  // F-R2 (S1) — optimistic-lock version. updatePayslip carries the version
+  // the editor loaded; a mismatch (someone else saved while this editor was
+  // open) refuses the save instead of silently overwriting. Incremented on
+  // every successful edit; LOCKED slips are immutable so it never moves
+  // after payment.
+  version    Int       @default(0)
   gross      Float     @default(0)
   net        Float     @default(0)
   createdAt  DateTime  @default(now())

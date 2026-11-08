@@ -93,6 +93,9 @@ export function PayslipModal({
     setBusy(true);
     const res = await updatePayslip({
       payslipId: payslip.id,
+      // F-R2 — optimistic lock: refuse silently overwriting another editor's
+      // save; the server bounces stale versions with a reopen hint.
+      expectedVersion: payslip.version,
       earnings,
       deductions,
       lopDays,

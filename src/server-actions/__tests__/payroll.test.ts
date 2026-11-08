@@ -104,7 +104,7 @@ function payslipRow(overrides: Record<string, unknown> = {}) {
       { key: "transport", label: "Transport Allowance", amount: 200 },
     ]),
     deductions: "[]",
-    note: "", lopDays: 0, lopSource: "AUTO", gross: 6_700, net: 6_700,
+    note: "", lopDays: 0, lopSource: "AUTO", version: 0, gross: 6_700, net: 6_700,
     createdAt: new Date(), updatedAt: new Date(),
     run: OPEN_RUN,
     ...overrides,
@@ -163,7 +163,7 @@ describe("R7 — RBAC (payroll:manage = ADMIN + HR only)", () => {
       getPayrollRuns(),
       saveSalaryStructure({ userId: "u-yuki", components: COMPONENTS }),
       createPayrollRun({ period: "2026-11" }),
-      updatePayslip({ payslipId: "ps-1", earnings: [], deductions: [], lopDays: 0 }),
+      updatePayslip({ payslipId: "ps-1", expectedVersion: 0, earnings: [], deductions: [], lopDays: 0 }),
       lockPayrollRun({ runId: "run-1" }),
       getPayrollData(),
     ]);
@@ -417,7 +417,7 @@ describe("R7 — payslips", () => {
   it("updatePayslip recomputes gross/net and manages the auto LOP line", async () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow());
     const res = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [
         { key: "basic", label: "Basic Salary", amount: 6_500 },
         { key: "bonus", label: "Bonus", amount: 500 },
@@ -441,13 +441,13 @@ describe("R7 — payslips", () => {
   it("updatePayslip refuses a LOCKED run and duplicate line keys", async () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow({ run: LOCKED_RUN }));
     const locked = await updatePayslip({
-      payslipId: "ps-1", earnings: [], deductions: [], lopDays: 0,
+      payslipId: "ps-1", expectedVersion: 0, earnings: [], deductions: [], lopDays: 0,
     });
     expect(locked.ok).toBe(false);
 
     db.payslip.findUnique.mockResolvedValue(payslipRow());
     const dup = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [
         { key: "basic", label: "A", amount: 1 },
         { key: "basic", label: "B", amount: 2 },
@@ -466,7 +466,7 @@ describe("R7 — payslips", () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow());
     db.fullAndFinalStatement.findFirst.mockResolvedValueOnce({ id: "fnf-1", status: "SETTLED" });
     const res = await updatePayslip({
-      payslipId: "ps-1", earnings: [], deductions: [], lopDays: 0,
+      payslipId: "ps-1", expectedVersion: 0, earnings: [], deductions: [], lopDays: 0,
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("full-and-final statement is settled");
@@ -486,7 +486,7 @@ describe("R7 — payslips", () => {
   it("updatePayslip rejects LOP days beyond the run period's day count (persona-audit P0 fix)", async () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow()); // run period 2026-11 → 30 days
     const res = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [],
       lopDays: 31,
@@ -504,7 +504,7 @@ describe("R7 — payslips", () => {
     // working days denormalized at creation.
     db.payslip.findUnique.mockResolvedValue(payslipRow({ run: { ...OPEN_RUN, workingDays: 21 } }));
     const res = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [],
       lopDays: 1,
@@ -521,7 +521,7 @@ describe("R7 — payslips", () => {
 
     // The cap uses the same denominator: 22 days in a 21-working-day period.
     const over = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [],
       lopDays: 22,
@@ -534,7 +534,7 @@ describe("R7 — payslips", () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow());
     // gross 6,700 — LOP 30/30 = 6,700 plus a 500 manual line → net −500.
     const res = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [{ key: "adv", label: "Advance recovery", amount: 500 }],
       lopDays: 30,
@@ -547,7 +547,7 @@ describe("R7 — payslips", () => {
   it("F1.4 — changing lopDays flips lopSource to MANUAL and the audit records the override", async () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow({ lopDays: 2, lopSource: "AUTO" }));
     const res = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [],
       lopDays: 3,
@@ -568,7 +568,7 @@ describe("R7 — payslips", () => {
   it("F1.4 — saving the SAME lopDays keeps the existing provenance (AUTO stays AUTO, MANUAL stays MANUAL)", async () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow({ lopDays: 2, lopSource: "AUTO" }));
     const sameAuto = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [],
       lopDays: 2,
@@ -579,7 +579,7 @@ describe("R7 — payslips", () => {
 
     db.payslip.findUnique.mockResolvedValue(payslipRow({ lopDays: 2, lopSource: "MANUAL" }));
     const sameManual = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [],
       lopDays: 2,
@@ -597,7 +597,7 @@ describe("R7 — payslips", () => {
   it("F1.4 — half-day overrides pass validation and compute fractional LOP", async () => {
     db.payslip.findUnique.mockResolvedValue(payslipRow({ run: { ...OPEN_RUN, workingDays: 21 } }));
     const res = await updatePayslip({
-      payslipId: "ps-1",
+      payslipId: "ps-1", expectedVersion: 0,
       earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
       deductions: [],
       lopDays: 1.5,
@@ -612,6 +612,65 @@ describe("R7 — payslips", () => {
     // 6,700 × 1.5 / 21 = 478.57.
     const deductions = JSON.parse(updateArg.data.deductions) as Array<{ key: string; amount: number }>;
     expect(deductions.find((l) => l.key === "lop")?.amount).toBe(478.57);
+  });
+
+  it("F-R2 — a stale expectedVersion refuses the save, writes nothing, audits nothing", async () => {
+    // Editor A loaded version 0; editor B saved first (version now 1).
+    db.payslip.findUnique.mockResolvedValue(payslipRow({ version: 1, gross: 9_999, net: 9_999 }));
+    db.payslip.update.mockClear();
+    logAuditMock.mockClear();
+    const res = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 0,
+      note: "stale edit",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("saved by someone else");
+      expect(res.error).toContain("PS-2026-11-001");
+    }
+    expect(db.payslip.update).not.toHaveBeenCalled();
+    expect(logAuditMock).not.toHaveBeenCalled();
+  });
+
+  it("F-R2 — a fresh save increments the version (the next editor must reload)", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow());
+    const res = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 0,
+      note: "",
+    });
+    expect(res.ok).toBe(true);
+    const updateArg = db.payslip.update.mock.calls[0][0] as { data: { version: number } };
+    expect(updateArg.data.version).toBe(1);
+    // The persisted row now carries version 1 — the second save on the same
+    // stale expectation (editor A re-saving without reopening) is refused.
+    db.payslip.findUnique.mockResolvedValue(payslipRow({ version: 1 }));
+    const res2 = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 0,
+      note: "",
+    });
+    expect(res2.ok).toBe(false);
+  });
+
+  it("F-R2 — expectedVersion is required (no silent last-write-wins fallback)", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow());
+    const res = await updatePayslip({
+      payslipId: "ps-1",
+      earnings: [],
+      deductions: [],
+      lopDays: 0,
+      note: "",
+    });
+    expect(res.ok).toBe(false);
+    expect(db.payslip.update).not.toHaveBeenCalled();
   });
 
   it("addPayslip appends a mid-period joiner with the next slip number", async () => {

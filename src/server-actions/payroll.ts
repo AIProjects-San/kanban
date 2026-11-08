@@ -496,6 +496,7 @@ export async function getPayrollRun(runId: string): Promise<ActionResult<{ run: 
         note: p.note,
         lopDays: p.lopDays,
         lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
+        version: p.version,
         gross: p.gross,
         net: p.net,
         ytdNet: ytdByUser.get(p.userId) ?? p.net,
@@ -548,6 +549,15 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
         "This employee's full-and-final statement is settled — their payslips are locked by the frozen settlement.",
       );
     }
+    // F-R2 (S1) — optimistic lock: two HR editors of the same OPEN slip
+    // must never silently overwrite each other. The modal carries the
+    // version it loaded; anything else means another save landed first —
+    // refuse, let them reopen to see the newer numbers.
+    if (slip.version !== data.expectedVersion) {
+      throw new AuthorizationError(
+        `Payslip ${slip.slipNo} was saved by someone else while you were editing. Reopen it to see their changes, then re-apply your edit.`,
+      );
+    }
     // A duplicated line key would break the LOP replace semantics — reject.
     const dupKey = (lines: PayslipLine[]) =>
       lines.some((l, i) => lines.findIndex((x) => x.key === l.key) !== i);
@@ -596,6 +606,7 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
         note: data.note,
         gross,
         net,
+        version: slip.version + 1,
       },
     });
     await logAudit({
@@ -798,6 +809,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         note: p.note,
         lopDays: p.lopDays,
         lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
+        version: p.version,
         gross: p.gross,
         net: p.net,
         ytdNet: ytdBySlip.get(p.id) ?? p.net,

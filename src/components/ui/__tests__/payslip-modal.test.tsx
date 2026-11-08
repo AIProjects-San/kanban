@@ -29,7 +29,7 @@ function payslip(overrides: Partial<PayslipT> = {}): PayslipT {
       { key: "transport", label: "Transport Allowance", amount: 200 },
     ],
     deductions: [],
-    note: "", lopDays: 0, lopSource: "AUTO", gross: 6_700, net: 6_700, ytdNet: 13_400,
+    note: "", lopDays: 0, lopSource: "AUTO", version: 0, gross: 6_700, net: 6_700, ytdNet: 13_400,
     ...overrides,
   };
 }
@@ -100,6 +100,7 @@ describe("PayslipModal (OPEN run)", () => {
     await waitFor(() =>
       expect(updatePayslip).toHaveBeenCalledWith({
         payslipId: "ps-1",
+        expectedVersion: 0, // F-R2 — the loaded version rides every save
         earnings: payslip().earnings,
         deductions: [], // manual deductions only — the LOP line is server-side
         lopDays: 1,
@@ -108,6 +109,21 @@ describe("PayslipModal (OPEN run)", () => {
     );
     expect(onChanged).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("F-R2 — a conflict error keeps the modal open (the toast says who saved first)", async () => {
+    updatePayslip.mockResolvedValue({
+      ok: false,
+      error: "Payslip PS-2026-11-001 was saved by someone else while you were editing. Reopen it to see their changes, then re-apply your edit.",
+    });
+    render(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    fireEvent.click(screen.getByTestId("payslip-save"));
+    const { toast } = await import("sonner");
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("saved by someone else"),
+    ));
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("a server error keeps the modal open with the toast", async () => {

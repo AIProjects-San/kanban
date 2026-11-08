@@ -832,6 +832,11 @@ export const createPayrollRunSchema = z.object({
 
 export const updatePayslipSchema = z.object({
   payslipId: cuidish,
+  // F-R2 (S1) — optimistic lock: the Payslip.version this editor loaded.
+  // A mismatch (another editor saved first) refuses the save; the modal
+  // re-reads on reopen. Required, not defaulted — a missing version must
+  // never silently degrade to last-write-wins.
+  expectedVersion: z.number().int().min(0),
   earnings: z.array(payslipLineSchema).max(40),
   deductions: z.array(payslipLineSchema).max(40),
   // F1.4: fractional days are legal — HALF_DAY attendance derives 0.5 (and
