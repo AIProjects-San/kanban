@@ -111,6 +111,13 @@ describe("PayslipModal (OPEN run)", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("F-R3 (S15) — the YTD line explains the HR basis vs the employee's locked-only basis", () => {
+    render(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    const basis = screen.getByTestId("payslip-ytd-basis");
+    expect(basis.textContent).toContain("HR basis");
+    expect(basis.textContent).toContain("locked (paid) runs only");
+  });
+
   it("F-R2 — a conflict error keeps the modal open (the toast says who saved first)", async () => {
     updatePayslip.mockResolvedValue({
       ok: false,

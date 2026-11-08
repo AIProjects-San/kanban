@@ -83,7 +83,10 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
             <div className="text-sm font-semibold tabular-nums text-destructive">{money(Math.round((latest.gross - latest.net) * 100) / 100)}</div>
           </div>
           <div>
-            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Net YTD {latest.runPeriod.slice(0, 4)}</div>
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Net YTD {latest.runPeriod.slice(0, 4)}
+              <span className="ml-1 normal-case font-normal" title="Your view counts locked (paid) runs only — the HR console's YTD also includes the currently open month.">(paid runs only)</span>
+            </div>
             <div className="text-sm font-semibold tabular-nums">{money(latest.ytdNet)}</div>
           </div>
           <button className="f-btn f-btn-secondary ml-auto" onClick={() => setOpen(latest)} data-testid="my-payslips-latest-open">

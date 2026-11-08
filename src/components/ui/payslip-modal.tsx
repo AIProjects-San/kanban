@@ -264,9 +264,12 @@ export function PayslipModal({
           <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions)}</div></div>
           <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
         </div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-muted-foreground" data-testid="payslip-ytd-basis">
           YTD net (through {p.runPeriod}): <strong data-testid="payslip-ytd">{money(p.ytdNet)}</strong>
           {editable ? " — updates when this slip is saved." : ""}
+          {" "}HR basis: every run of the year including this OPEN one — your
+          employees' own payslip view counts locked (paid) runs only, so the
+          two surfaces can differ while a month is open.
         </div>
 
         <Field label="Note (shown on the printed slip)">
