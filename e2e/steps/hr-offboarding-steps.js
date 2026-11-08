@@ -157,8 +157,19 @@ Then("the exit interview for {string} should show status {string}", async functi
 When("I record an exit interview for {string}", async function (name) {
   const driver = await this.getDriver();
   const card = await offboardingCard(this, name);
-  const btn = await card.findElement(By.css("[data-testid='record-interview-btn']"));
-  await btn.click();
+  const btns = await card.findElements(By.css("[data-testid='record-interview-btn']"));
+  if (btns.length === 0) {
+    // Cucumber's retry re-runs the scenario against shared state — an
+    // interview this attempt already recorded is a satisfied precondition,
+    // not a failure (the badge assertion that follows pins the status).
+    const badge = await card.findElements(By.css("[data-testid='exit-interview-status']"));
+    if (badge.length > 0) {
+      const text = (await badge[0].getText()).trim();
+      if (text === "Pending" || text === "Scheduled") return;
+    }
+    throw new Error(`record-interview button not found on ${name}'s card and no live interview badge to fall back on`);
+  }
+  await btns[0].click();
   await driver.sleep(1_500);
 });
 
@@ -170,8 +181,20 @@ When("I schedule the exit interview for {string} on {string}", async function (n
     10_000,
     "interview date input not found",
   );
-  await input.clear();
-  await input.sendKeys(date);
+  // NEVER sendKeys into <input type="date">: Chrome's segmented (en-US
+  // MM/DD/YYYY) date widget re-parses the keystrokes into garbage
+  // ("2026-11-12" typed becomes 61112-02-02). Use the house React-setter
+  // pattern (hr-directory-steps.js / payroll-steps.js): the native
+  // prototype value setter + a bubbled input event is a real change.
+  await driver.executeScript(
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('input', { bubbles: true }));
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    input,
+    date,
+  );
   await card.findElement(By.css("[data-testid='schedule-interview-btn']")).click();
   await driver.sleep(1_500);
 });
