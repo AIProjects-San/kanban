@@ -430,6 +430,13 @@ describe("settleFullAndFinal", () => {
 
 describe("getOffboardingOverview", () => {
   it("surfaces the EXITED case with the live computation and picker lists", async () => {
+    // A COMPLETED interview (the seeded story's shape) must still render —
+    // the read shows the LATEST record regardless of status; only the
+    // create action enforces one-LIVE-per-employee.
+    db.exitInterview.findMany.mockResolvedValue([
+      { ...INTERVIEW, status: "COMPLETED", completedAt: new Date("2026-11-05T00:00:00.000Z") },
+      { ...INTERVIEW, id: "ei-old", status: "CANCELLED" },
+    ]);
     const res = await getOffboardingOverview();
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -438,6 +445,7 @@ describe("getOffboardingOverview", () => {
     expect(c.userId).toBe("u-soren");
     expect(c.employmentStatus).toBe("EXITED");
     expect(c.lastWorkingDay).toBe("2026-11-07");
+    expect(c.interview?.status).toBe("COMPLETED"); // latest wins, not the cancelled older row
     expect(c.fnf.status).toBe("NONE");
     if (c.fnf.status === "NONE" && c.fnf.computed) {
       expect(c.fnf.computed.payableTotal).toBe(5_971.23);
@@ -471,7 +479,8 @@ describe("getOffboardingOverview", () => {
     } else {
       expect.unreachable("expected a SETTLED fnf state");
     }
-    // A settled case is not offered in the separation prep picker.
-    expect(res.data.members.find((m) => m.userId === "u-soren")).toBeUndefined();
+    // Every active user is offered — the picker covers prep-before-exit AND
+    // the post-exit checklist (the seeded story's shape).
+    expect(res.data.members.find((m) => m.userId === "u-soren")).toBeDefined();
   });
 });

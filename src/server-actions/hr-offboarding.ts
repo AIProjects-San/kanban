@@ -266,7 +266,7 @@ export async function getOffboardingOverview(): Promise<ActionResult<Offboarding
     await requirePermission("hr:admin");
 
     // The offboarding orbit: EXITED profiles ∪ separation checklists ∪
-    // live exit interviews ∪ FnF rows. Prep-in-flight cases (a checklist or
+    // exit interviews ∪ FnF rows. Prep-in-flight cases (a checklist or
     // interview for someone still ACTIVE) surface here too.
     const [exitedProfiles, separationRows, interviewRows, fnfRows] = await Promise.all([
       db.employeeProfile.findMany({
@@ -278,10 +278,12 @@ export async function getOffboardingOverview(): Promise<ActionResult<Offboarding
         include: { tasks: true },
         orderBy: { createdAt: "desc" },
       }),
-      db.exitInterview.findMany({
-        where: { status: { in: [...EXIT_INTERVIEW_LIVE_STATUSES] } },
-        orderBy: { createdAt: "desc" },
-      }),
+      // ALL interviews, newest first: the display shows each employee's
+      // LATEST record regardless of status (completed and cancelled are
+      // real outcomes HR reads); the one-LIVE-per-employee rule governs
+      // WRITES (createExitInterview refuses while a live record exists),
+      // never this read.
+      db.exitInterview.findMany({ orderBy: { createdAt: "desc" } }),
       db.fullAndFinalStatement.findMany({ orderBy: { createdAt: "desc" } }),
     ]);
 
@@ -313,7 +315,11 @@ export async function getOffboardingOverview(): Promise<ActionResult<Offboarding
     const profileByUser = new Map(profiles.map((p) => [p.userId, p]));
     const names = new Map(users.map((u) => [u.id, u.name]));
     const checklistByUser = new Map(separationRows.map((c) => [c.newHireId, c]));
-    const interviewByUser = new Map(interviewRows.map((i) => [i.userId, i]));
+    // Latest interview per employee (rows are newest-first above).
+    const interviewByUser = new Map<string, (typeof interviewRows)[number]>();
+    for (const row of interviewRows) {
+      if (!interviewByUser.has(row.userId)) interviewByUser.set(row.userId, row);
+    }
     const fnfByUser = new Map(fnfRows.map((f) => [f.userId, f]));
 
     const cases: OffboardingCaseT[] = [];
@@ -375,11 +381,10 @@ export async function getOffboardingOverview(): Promise<ActionResult<Offboarding
       return a.name.localeCompare(b.name);
     });
 
-    // Picker options: members not yet EXITED (the separation prep list).
-    const exitedIds = new Set(exitedProfiles.map((p) => p.userId));
-    const members = users
-      .filter((u) => !exitedIds.has(u.id))
-      .map((u) => ({ userId: u.id, name: u.name }));
+    // Picker options: every active user — separation prep BEFORE the exit
+    // and the post-exit checklist (the seeded story's shape) both start
+    // here; the modal copy points at the Directory for the exit itself.
+    const members = users.map((u) => ({ userId: u.id, name: u.name }));
 
     return { cases, members, interviewers: users.map((u) => ({ userId: u.id, name: u.name })) };
   });

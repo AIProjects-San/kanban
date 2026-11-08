@@ -199,14 +199,24 @@ function InterviewBlock({
         )}
       </div>
 
-      {!interview ? (
-        <button
-          className="f-btn f-btn-ghost f-btn-sm"
-          data-testid="record-interview-btn"
-          onClick={() => void busy(() => createExitInterview({ userId: caseData.userId }))}
-        >
-          <CalendarClock size={13} /> Record exit interview
-        </button>
+      {!interview || interview.status === "CANCELLED" ? (
+        // No record yet, or the latest was cancelled (its history stays on
+        // the card below) — both accept a fresh record; the action layer
+        // refuses while a LIVE (PENDING/SCHEDULED) record exists.
+        <div className="space-y-2">
+          {interview?.status === "CANCELLED" && (
+            <div className="text-[0.6875rem] text-muted-foreground line-through">
+              Previous interview cancelled {fmtDay(interview.createdAt)} — record a new one below.
+            </div>
+          )}
+          <button
+            className="f-btn f-btn-ghost f-btn-sm"
+            data-testid="record-interview-btn"
+            onClick={() => void busy(() => createExitInterview({ userId: caseData.userId }))}
+          >
+            <CalendarClock size={13} /> {interview ? "Record a new exit interview" : "Record exit interview"}
+          </button>
+        </div>
       ) : (
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">
