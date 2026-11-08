@@ -1520,6 +1520,50 @@ describe("PR-56 — remaining branch coverage", () => {
 // and re-read the concurrent winner's row instead of failing the read path.
 // ---------------------------------------------------------------------------
 
+describe("LV-B08 (S12) — cross-request consecutive walk in createLeaveRequest", () => {
+  it("a request touching an ACTIVE same-type request over the cap is refused with the chain named", async () => {
+    db.leaveType.findUnique.mockResolvedValue({
+      ...ANNUAL_TYPE,
+      policy: { ...ANNUAL_TYPE.policy, maxConsecutiveDays: 6 },
+    });
+    // Fixed far-future dates (past every notice window): an approved
+    // Mon–Fri 2027-03-01→05 request; the new one is the FOLLOWING Mon–Tue
+    // 2027-03-08→09 → a touching chain of 7 working days > 6.
+    db.leaveRequest.findMany.mockImplementation(async ({ where }: { where?: { status?: { in?: string[] } } }) => {
+      if (where?.status?.in?.includes("PENDING")) {
+        return [{
+          startDate: new Date("2027-03-01T00:00:00Z"),
+          endDate: new Date("2027-03-05T00:00:00Z"),
+        }];
+      }
+      return [];
+    });
+    db.leaveRequest.findFirst.mockResolvedValue(null); // no overlap
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-03-08", endDate: "2027-03-09", reason: "chained week",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("chains with your other");
+      expect(res.error).toContain("consecutive day(s)");
+    }
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("a REJECTED/CANCELLED neighbour never chains (only ACTIVE requests count)", async () => {
+    db.leaveType.findUnique.mockResolvedValue({
+      ...ANNUAL_TYPE,
+      policy: { ...ANNUAL_TYPE.policy, maxConsecutiveDays: 6 },
+    });
+    db.leaveRequest.findMany.mockResolvedValue([]); // the walk finds no ACTIVE rows
+    db.leaveRequest.findFirst.mockResolvedValue(null);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-03-08", endDate: "2027-03-09", reason: "after a cancelled week",
+    });
+    expect(res.ok).toBe(true);
+  });
+});
+
 describe("LV-B11 (S11) — attendance-conflict guard in the leave chain", () => {
   it("an explicit attendance mark inside the range refuses the request, naming the date + status", async () => {
     db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);

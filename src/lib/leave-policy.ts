@@ -52,6 +52,7 @@
 //
 // All dates are "YYYY-MM-DD" strings; arithmetic is UTC-midnight based.
 
+import { workingDaysBetween, type HolidayLookup } from "@/lib/working-days";
 import type {
   LeaveAccrualFrequency,
   LeaveAccrualRounding,
@@ -574,4 +575,61 @@ export function carryLapseDelta(carryGranted: number, used: number): number {
  * April 1st, the first day of the 4th month. */
 export function monthsIntoYear(year: number, asOf: string): number {
   return monthsBetween(`${year}-01-01`, asOf);
+}
+
+/**
+ * LV-B08 (S12) — the cross-request max-consecutive-days walk. Pure: merge
+ * the new range with the member's other ACTIVE (PENDING/APPROVED) requests
+ * of the same type into calendar chains (ranges touching or overlapping
+ * chain together; a gap of ≥1 calendar day breaks the chain), then count
+ * the holiday-aware working days of the chain that contains the new range.
+ * The per-request guard (F-era) counts one request; this walk closes the
+ * "two adjacent 8-day requests under a 15-day cap" hole.
+ */
+export function checkCrossRequestConsecutive(input: {
+  newStart: string;
+  newEnd: string;
+  others: Array<{ start: string; end: string }>;
+  maxConsecutiveDays: number;
+  holidays?: HolidayLookup;
+}): { ok: boolean; chainDays: number; chainStart: string; chainEnd: string } {
+  const toUtc = (iso: string) => new Date(`${iso}T00:00:00.000Z`).getTime();
+  const DAY = 86_400_000;
+
+  // Merge the new range into the interval set (new range first).
+  const intervals = [
+    { start: toUtc(input.newStart), end: toUtc(input.newEnd) },
+    ...input.others.map((r) => ({ start: toUtc(r.start), end: toUtc(r.end) })),
+  ].sort((a, b) => a.start - b.start);
+
+  const chains: Array<{ start: number; end: number }> = [];
+  for (const iv of intervals) {
+    const last = chains[chains.length - 1];
+    // Chain rule: two ranges chain when the calendar gap between them holds
+    // NO working day (a weekend/holiday bridge is still consecutive leave —
+    // Fri + Mon is one uninterrupted stretch); overlaps chain trivially.
+    if (last) {
+      const gapStart = new Date(last.end + DAY);
+      const gapEnd = new Date(iv.start - DAY);
+      const bridged = iv.start <= last.end || workingDaysBetween(gapStart, gapEnd, input.holidays) === 0;
+      if (bridged) {
+        last.end = Math.max(last.end, iv.end);
+        continue;
+      }
+    }
+    chains.push({ ...iv });
+  }
+
+  // The chain containing the new range.
+  const newStart = toUtc(input.newStart);
+  const chain = chains.find((c) => newStart >= c.start && newStart <= c.end) ?? chains[0];
+  const chainStart = new Date(chain.start);
+  const chainEnd = new Date(chain.end);
+  const chainDays = workingDaysBetween(chainStart, chainEnd, input.holidays);
+  return {
+    ok: chainDays <= input.maxConsecutiveDays,
+    chainDays,
+    chainStart: chainStart.toISOString().slice(0, 10),
+    chainEnd: chainEnd.toISOString().slice(0, 10),
+  };
 }

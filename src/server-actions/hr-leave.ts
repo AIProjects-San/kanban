@@ -42,6 +42,7 @@ import {
   type LeavePolicyRow,
 } from "@/lib/leave-policy";
 import { planLeaveAdjustment } from "@/lib/leave-ledger";
+import { checkCrossRequestConsecutive } from "@/lib/leave-policy";
 import { monthsInRange } from "@/lib/payroll-math";
 import {
   parseDay,
@@ -379,6 +380,40 @@ export async function createLeaveRequest(input: {
     // Overlap — no two active (PENDING/APPROVED) requests may intersect.
     if (await findOverlappingActiveRequest(auth.userId, start, end)) {
       throw new AuthorizationError("You already have a pending or approved request overlapping those dates.");
+    }
+
+    // LV-B08 (S12) — the cross-request consecutive walk: adjacent ACTIVE
+    // requests of the SAME type chain together (a ≥1-day gap breaks the
+    // chain); the chain's holiday-aware working days must respect the cap
+    // the per-request guard already enforces on single requests. Types
+    // without a policy row keep the type-default cap (15).
+    {
+      const cap = policy?.maxConsecutiveDays ?? 15;
+      if (days <= cap) {
+      const sameTypeActive = await db.leaveRequest.findMany({
+        where: {
+          userId: auth.userId,
+          leaveTypeId: type.id,
+          status: { in: ["PENDING", "APPROVED"] },
+        },
+        select: { startDate: true, endDate: true },
+      });
+        const walk = checkCrossRequestConsecutive({
+          newStart: data.startDate,
+          newEnd: data.endDate,
+          others: sameTypeActive.map((r) => ({
+            start: r.startDate.toISOString().slice(0, 10),
+            end: r.endDate.toISOString().slice(0, 10),
+          })),
+          maxConsecutiveDays: cap,
+          holidays,
+        });
+        if (!walk.ok) {
+          throw new AuthorizationError(
+            `${type.name} allows at most ${cap} consecutive days — this request chains with your other ${type.name} requests into ${walk.chainDays} consecutive day(s) (${walk.chainStart} → ${walk.chainEnd}).`,
+          );
+        }
+      }
     }
 
     // F2.4 — LV-B07 service gate (minServiceMonths > 0): no leave of this

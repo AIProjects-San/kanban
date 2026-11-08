@@ -22,7 +22,7 @@ import {
   type LeavePolicyRow,
   type EmploymentFacts,
   type DueGrantsInput,
-} from "@/lib/leave-policy";
+  checkCrossRequestConsecutive } from "@/lib/leave-policy";
 
 const NO_FACTS: EmploymentFacts | null = null;
 const ACTIVE_FROM_2023: EmploymentFacts = {
@@ -454,5 +454,73 @@ describe("date helpers", () => {
     expect(monthsBetween("2026-01-15", "2026-02-10")).toBe(0); // partial month
     expect(monthsBetween("2026-01-15", "2026-02-15")).toBe(1);
     expect(monthsBetween("2026-03-01", "2026-01-01")).toBe(-2);
+  });
+});
+
+
+describe("checkCrossRequestConsecutive (LV-B08 / S12)", () => {
+  const hol = undefined; // holiday-free: working days = Mon–Fri counts
+
+  it("a lone range is its own chain (identical to the per-request guard)", () => {
+    const r = checkCrossRequestConsecutive({ newStart: "2026-11-02", newEnd: "2026-11-06", others: [], maxConsecutiveDays: 5, holidays: hol });
+    expect(r).toEqual({ ok: true, chainDays: 5, chainStart: "2026-11-02", chainEnd: "2026-11-06" });
+  });
+
+  it("TOUCHING requests chain: Mon–Fri + next Mon–Fri = 10 working days", () => {
+    const r = checkCrossRequestConsecutive({
+      newStart: "2026-11-09", newEnd: "2026-11-13",
+      others: [{ start: "2026-11-02", end: "2026-11-06" }],
+      maxConsecutiveDays: 9, holidays: hol,
+    });
+    expect(r.chainDays).toBe(10);
+    expect(r.ok).toBe(false);
+    expect(r.chainStart).toBe("2026-11-02");
+    expect(r.chainEnd).toBe("2026-11-13");
+  });
+
+  it("a ≥1-calendar-day gap breaks the chain (weekend bridges count as gaps)", () => {
+    // Fri 2026-11-06 → Tue 2026-11-10: Sat/Sun gap → separate chains.
+    const r = checkCrossRequestConsecutive({
+      newStart: "2026-11-10", newEnd: "2026-11-13",
+      others: [{ start: "2026-11-02", end: "2026-11-06" }],
+      maxConsecutiveDays: 9, holidays: hol,
+    });
+    expect(r.chainDays).toBe(4); // Tue–Fri only
+    expect(r.ok).toBe(true);
+  });
+
+  it("three-way chains merge in any input order", () => {
+    const r = checkCrossRequestConsecutive({
+      newStart: "2026-11-09", newEnd: "2026-11-10",
+      others: [
+        { start: "2026-11-16", end: "2026-11-20" },      // after, touching Tue 10 → Wed 11? gap = 11-15 minus...
+        { start: "2026-11-02", end: "2026-11-06" },      // before, touching
+      ],
+      maxConsecutiveDays: 9, holidays: hol,
+    });
+    // 11-02..06 (5d) + 11-09..10 (2d) chain; 11-16..20 has an 11-11..15 gap → separate.
+    expect(r.chainDays).toBe(7);
+    expect(r.chainStart).toBe("2026-11-02");
+    expect(r.chainEnd).toBe("2026-11-10");
+  });
+
+  it("overlapping requests merge into one chain (the overlap guard fires elsewhere)", () => {
+    const r = checkCrossRequestConsecutive({
+      newStart: "2026-11-04", newEnd: "2026-11-10",
+      others: [{ start: "2026-11-02", end: "2026-11-06" }],
+      maxConsecutiveDays: 9, holidays: hol,
+    });
+    expect(r.chainDays).toBe(7); // 11-02..10
+    expect(r.ok).toBe(true);
+  });
+
+  it("holidays inside the chain reduce the counted days (holiday-aware like every day count)", () => {
+    const hol2 = new Map([["2026-11-03", { isHalfDay: false }]]);
+    const r = checkCrossRequestConsecutive({
+      newStart: "2026-11-02", newEnd: "2026-11-06", others: [],
+      maxConsecutiveDays: 4, holidays: hol2,
+    });
+    expect(r.chainDays).toBe(4);
+    expect(r.ok).toBe(true);
   });
 });
