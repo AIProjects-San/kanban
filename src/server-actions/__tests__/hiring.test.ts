@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord", "teamMember", "employeeProfile", "onboardingChecklist"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord", "teamMember", "employeeProfile", "onboardingChecklist", "onboardingTask", "salaryStructure", "salaryComponent", "onboardingTemplateTask"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -42,9 +42,18 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
-vi.mock("@/server-actions/shared", () => ({
-  logAudit: (...a: unknown[]) => logAuditMock(...a),
-}));
+vi.mock("@/server-actions/shared", async () => {
+  // F2.10 — sendOutboxMail / readOnboardingTemplate / instantiateChecklist
+  // run for real (over the mocked db + injectable mailer), exactly like the
+  // code under test uses them; only logAudit is a spy.
+  const actual = await vi.importActual<typeof import("@/server-actions/shared")>("@/server-actions/shared");
+  return {
+    logAudit: (...a: unknown[]) => logAuditMock(...a),
+    sendOutboxMail: actual.sendOutboxMail,
+    readOnboardingTemplate: actual.readOnboardingTemplate,
+    instantiateChecklist: actual.instantiateChecklist,
+  };
+});
 
 // R3 — injectable mailer: the default mock simulates a successful Resend
 // delivery; individual tests swap in dry-run / throwing mailers.
@@ -111,6 +120,8 @@ import {
   signOffer,
   declineOffer,
   markJoined,
+  approveOffer,
+  getOffersAwaitingApproval,
 } from "../hiring";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
@@ -169,8 +180,11 @@ beforeEach(() => {
   getSessionOrThrowMock.mockResolvedValue(HR_AUTH);
   // F-R13 — checkPermission defaults to the static floor (ADMIN/HR hold the
   // hiring perms; MANAGER/MEMBER don't); tests can override per-case.
+  // F2.10 — hiring:approve is the exception: ADMIN/MANAGER hold it, HR (the
+  // composer's role) deliberately does not.
   checkPermissionMock.mockImplementation(
-    async (role: string, _perm: string) => role === "ADMIN" || role === "HR",
+    async (role: string, perm: string) =>
+      perm === "hiring:approve" ? role === "ADMIN" || role === "MANAGER" : role === "ADMIN" || role === "HR",
   );
   db.hiringStageConfig.findMany.mockImplementation(async ({ where }: { where?: { isActive?: boolean } } = {}) =>
     where?.isActive === true ? TEMPLATE.filter((t) => t.isActive) : TEMPLATE,
@@ -226,9 +240,24 @@ beforeEach(() => {
   db.user.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "u-new", ...data }));
   db.teamMember.create.mockResolvedValue({ id: "tm-new" });
   db.employeeProfile.create.mockResolvedValue({ id: "ep-new" });
-  db.onboardingChecklist.create.mockResolvedValue({ id: "oc-new" });
+  db.onboardingChecklist.create.mockImplementation(async ({ data }: { data: { tasks?: { create?: Record<string, unknown>[] } } & Record<string, unknown> }) => ({
+    id: "oc-new", completedAt: null, createdAt: new Date(), updatedAt: new Date(), kind: "ONBOARDING",
+    ...data,
+    tasks: (data.tasks?.create ?? []).map((t, i) => ({ id: `ot-${i}`, checklistId: "oc-new", assigneeId: null, done: false, doneAt: null, doneById: null, notes: "", order: i, createdAt: new Date(), updatedAt: new Date(), ...t })),
+  }));
+  // F2.10 — offer lapse (updateMany), salary-structure copy + catalog, and
+  // the onboarding-template source (empty table → constant fallback).
+  db.offerRecord.updateMany.mockResolvedValue({ count: 0 });
+  db.salaryStructure.updateMany.mockResolvedValue({ count: 0 });
+  db.salaryStructure.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-new", ...data }));
+  db.salaryComponent.findMany.mockResolvedValue([]);
+  db.salaryComponent.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "sc-new", ...data }));
+  db.onboardingTemplateTask.findMany.mockResolvedValue([]);
+  // F-R6 — the reschedule cleanup path.
+  db.reminder.deleteMany.mockResolvedValue({ count: 0 });
+  db.calendarEvent.delete.mockResolvedValue({ id: "ev-old" });
   getWorkspaceConfigMock.mockResolvedValue({
-    workspace: { name: "Fernly Workspace", hiringEmailDomain: "fernly.app", defaultDepartment: "ENGINEERING" },
+    workspace: { name: "Fernly Workspace", hiringEmailDomain: "fernly.app", defaultDepartment: "ENGINEERING", joiningGateEnabled: false },
   });
 });
 
@@ -237,7 +266,7 @@ const INTERVIEW_STAGE = {
   stageType: "INTERVIEW", ownerUserId: "u-mgr", status: "IN_PROGRESS",
   scheduledAt: null, remarks: "", rating: null, strengths: "", concerns: "",
   recommendation: null, eventId: null, sortOrder: 20, startedAt: null, completedAt: null,
-  candidate: { id: "cand-1", fullName: "Nadia Petrova", position: "SWE", status: "ACTIVE" },
+  candidate: { id: "cand-1", fullName: "Nadia Petrova", email: "nadia@example.com", position: "SWE", status: "ACTIVE" },
 };
 
 describe("createCandidate", () => {
@@ -484,16 +513,28 @@ describe("stage template config", () => {
 });
 
 describe("getHiringPermissions", () => {
-  it("HR can manage and configure; MANAGER is view-only", async () => {
+  it("HR can manage and configure; MANAGER is view-only — except offer approval (F2.10)", async () => {
     requirePermissionMock.mockResolvedValue(HR_AUTH);
     const hrRes = await getHiringPermissions();
     expect(hrRes.ok).toBe(true);
-    if (hrRes.ok) expect(hrRes.data).toEqual({ canManage: true, canConfig: true, mailConfigured: false });
+    // F2.10 — HR composes but does NOT approve (four-eyes; MANAGER approves).
+    if (hrRes.ok) expect(hrRes.data).toEqual({ canManage: true, canConfig: true, canApprove: false, mailConfigured: false });
 
     requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
     const mgrRes = await getHiringPermissions();
     expect(mgrRes.ok).toBe(true);
-    if (mgrRes.ok) expect(mgrRes.data).toEqual({ canManage: false, canConfig: false, mailConfigured: false });
+    if (mgrRes.ok) expect(mgrRes.data).toEqual({ canManage: false, canConfig: false, canApprove: true, mailConfigured: false });
+  });
+
+  // F2.10 — the DB-aware probe reflects DB grants for hiring:approve too.
+  it("canApprove follows the DB ceiling, not just the static floor", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    checkPermissionMock.mockImplementation(async (role: string, perm: string) =>
+      perm === "hiring:approve" ? role === "MANAGER" : role === "HR",
+    );
+    const res = await getHiringPermissions();
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.canApprove).toBe(false);
   });
 
   // P0-6 (D-05/D-18) — the probe feeds the hiring view's first-run warning,
@@ -1363,6 +1404,8 @@ describe("R5 — updateOfferRecord + getOfferRecords", () => {
 // provisions the employee account + onboarding checklist.
 // ---------------------------------------------------------------------------
 
+// F2.10 — the sendable state is APPROVED (the manager four-eyes step sits
+// between compose and send); approvedById/approvedAt carry the trail.
 const R6_OFFER = {
   id: "or-1", candidateId: "cand-1", templateId: "ot-1", templateLabel: "Designer Band",
   components: JSON.stringify([
@@ -1370,8 +1413,9 @@ const R6_OFFER = {
     { key: "kiwisaver", label: "KiwiSaver 3%", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
   ]),
   benefits: JSON.stringify(["4 weeks annual leave"]),
-  letterText: "Hi Nadia — CTC $70,040.", status: "DRAFT", notes: "",
-  createdById: "u-hr", token: null, tokenExpiresAt: null,
+  letterText: "Hi Nadia — CTC $70,040.", status: "APPROVED", notes: "",
+  createdById: "u-hr", approvedById: "u-mgr", approvedAt: new Date("2026-11-14T09:00:00Z"),
+  startDate: null, token: null, tokenExpiresAt: null,
   signedAt: null, signedName: "", signedIp: "",
   createdAt: new Date(), updatedAt: new Date(),
   candidate: { id: "cand-1", fullName: "Nadia Petrova", email: "nadia@example.com", position: "Product Designer", status: "SELECTED" },
@@ -1426,7 +1470,15 @@ describe("R6 — sendOffer", () => {
     expect(resolveArg.data.error).toContain("Resend unreachable");
   });
 
-  it("refuses to send a non-DRAFT offer (immutable once sent)", async () => {
+  it("refuses to send a DRAFT offer — manager approval is required first (F2.10)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({ ...R6_OFFER, status: "DRAFT" });
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("Manager approval is required");
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to send a non-APPROVED offer (immutable once sent)", async () => {
     db.offerRecord.findUnique.mockResolvedValue({ ...R6_OFFER, status: "SENT", token: "tok-existing" });
     const res = await sendOffer({ offerId: "or-1" });
     expect(res.ok).toBe(false);
@@ -1615,9 +1667,15 @@ describe("R6 — markJoined", () => {
     expect(db.user.create).not.toHaveBeenCalled();
   });
 
-  it("provisions account + roster + profile + onboarding checklist, flips the candidate to HIRED, and queues the welcome email", async () => {
+  it("provisions account + roster + profile + salary structure + onboarding checklist, flips the candidate to HIRED, and queues the welcome email", async () => {
     db.candidate.findUnique.mockResolvedValue(SELECTED_WITH_SIGNER());
-    db.offerRecord.findFirst.mockResolvedValue({ id: "or-signed", status: "SIGNED", signedAt: new Date() });
+    db.offerRecord.findFirst.mockResolvedValue({
+      id: "or-signed", status: "SIGNED", signedAt: new Date(), templateLabel: "Designer Band",
+      components: JSON.stringify([
+        { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68_000 },
+        { key: "kiwisaver", label: "KiwiSaver 3%", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+      ]),
+    });
     const res = await markJoined({ candidateId: "cand-1" });
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -1625,6 +1683,12 @@ describe("R6 — markJoined", () => {
       expect(res.data.userId).toBe("u-new");
       // D-03 (P0-4) — the workspace name rides along for the day-one handout.
       expect(res.data.workspaceName).toBe("Fernly Workspace");
+      // F2.10 (F-R7) — the joiner is payroll-ready: the signed offer's
+      // components became an ACTIVE salary structure.
+      expect(res.data.payrollReady).toBe(true);
+      // F2.10 (F-R8) — the instantiated template tasks ride along (the
+      // day-one handout prints these instead of a client copy).
+      expect(res.data.checklistTasks).toHaveLength(5);
     }
 
     // 1 — the User account: deterministic email, MEMBER role, hashed password.
@@ -1640,20 +1704,37 @@ describe("R6 — markJoined", () => {
     expect(db.employeeProfile.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ userId: "u-new", jobTitle: "Senior Frontend Engineer" }),
     }));
-    // 3 — the standard 5-task onboarding checklist.
+    // 3 — the standard 5-task onboarding checklist (F2.10: instantiated from
+    // the ONE template source — constant fallback when the table is empty).
     const checklistArg = db.onboardingChecklist.create.mock.calls[0][0] as {
       data: { newHireId: string; tasks: { create: unknown[] } };
     };
     expect(checklistArg.data.newHireId).toBe("u-new");
     expect(checklistArg.data.tasks.create).toHaveLength(5);
-    // 4 — candidate → HIRED with the link back to the account.
+    // 4 — F2.10 (F-R7): the salary structure copy — the offer's components
+    // verbatim (amounts never rewritten), notes naming the source.
+    expect(db.salaryStructure.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: "u-new",
+          isActive: true,
+          notes: "Copied from the signed offer (Designer Band) on joining.",
+        }),
+      }),
+    );
+    const structureArg = db.salaryStructure.create.mock.calls[0][0] as { data: { components: string } };
+    expect(JSON.parse(structureArg.data.components)).toEqual([
+      { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68_000 },
+      { key: "kiwisaver", label: "KiwiSaver 3%", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+    ]);
+    // 5 — candidate → HIRED with the link back to the account.
     expect(db.candidate.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "cand-1" },
         data: expect.objectContaining({ status: "HIRED", userId: "u-new" }),
       }),
     );
-    // 5 — WELCOME email via the outbox (delivered by the default mock).
+    // 6 — WELCOME email via the outbox (delivered by the default mock).
     const outboxArg = db.mailOutbox.create.mock.calls[0][0] as { data: { kind: string; toAddress: string } };
     expect(outboxArg.data.kind).toBe("WELCOME");
     expect(outboxArg.data.toAddress).toBe("nadia.petrova@fernly.app");
@@ -1735,7 +1816,8 @@ describe("R8 — getHiringFunnel", () => {
       expect(interview).toMatchObject({ inStage: 1, passed: 0, avgDays: 3 });
 
       // Offer funnel: 2 signed / 3 decided = 67%; awaiting 1; draft ignored.
-      expect(res.data.offers).toEqual({ total: 5, awaiting: 1, signed: 2, declined: 1, acceptRate: 67 });
+      // F2.10: expired counts lapsed links (none here).
+      expect(res.data.offers).toEqual({ total: 5, awaiting: 1, signed: 2, declined: 1, expired: 0, acceptRate: 67 });
     }
   });
 
@@ -1746,5 +1828,380 @@ describe("R8 — getHiringFunnel", () => {
     const res = await getHiringFunnel();
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.offers.acceptRate).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F2.10 — joining hardening: the offer approval step (R11/D-20), expiry
+// semantics (F-R5), the joining gate (F-R9/E5), payroll-ready joining
+// (F-R7), the unified onboarding template (F-R8), and the interview-invite
+// email + reschedule cleanup (F-R10/F-R6).
+// ---------------------------------------------------------------------------
+
+describe("F2.10 — approveOffer (the manager four-eyes step)", () => {
+  const DRAFT_OFFER = () => ({
+    ...R6_OFFER, status: "DRAFT" as const, approvedById: "", approvedAt: null,
+  });
+
+  it("requires hiring:approve — HR (the composer's role) is refused", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:approve"));
+    const res = await approveOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(false);
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("flips DRAFT → APPROVED with approvedById/approvedAt and audits", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(DRAFT_OFFER());
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    const res = await approveOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(true);
+    expect(db.offerRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "or-1" },
+        data: expect.objectContaining({ status: "APPROVED", approvedById: "u-mgr" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_approved" }));
+  });
+
+  it("refuses the composer approving their own offer (four-eyes)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(DRAFT_OFFER());
+    requirePermissionMock.mockResolvedValue(HR_AUTH); // u-hr composed it
+    const res = await approveOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("cannot approve their own offer");
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-DRAFT offers and non-SELECTED candidates", async () => {
+    db.offerRecord.findUnique.mockResolvedValueOnce({ ...R6_OFFER, status: "APPROVED" });
+    const approved = await approveOffer({ offerId: "or-1" });
+    expect(approved.ok).toBe(false);
+
+    db.offerRecord.findUnique.mockResolvedValueOnce({
+      ...DRAFT_OFFER(),
+      candidate: { ...R6_OFFER.candidate, status: "ACTIVE" },
+    });
+    const movedOn = await approveOffer({ offerId: "or-1" });
+    expect(movedOn.ok).toBe(false);
+    if (!movedOn.ok) expect(movedOn.error).toContain("SELECTED");
+  });
+});
+
+describe("F2.10 — offer expiry semantics (F-R5)", () => {
+  it("editing an APPROVED offer demotes it back to DRAFT (re-approval required)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({ ...R6_OFFER, status: "APPROVED" });
+    const res = await updateOfferRecord({
+      id: "or-1",
+      components: [{ key: "basic", label: "B", kind: "EARNING", mode: "FIXED", amount: 70_000 }],
+      benefits: [],
+      letterText: "bumped",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.offerRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "DRAFT", approvedById: "", approvedAt: null }),
+      }),
+    );
+    const auditArg = logAuditMock.mock.calls.find((c) => c[0].action === "hiring.offer_updated")?.[0];
+    expect(auditArg?.detail).toContain("demoted it back to DRAFT");
+  });
+
+  it("declineOffer now honors the expiry check (symmetric with signOffer)", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      ...R6_OFFER, status: "SENT", token: "tok-stale",
+      tokenExpiresAt: new Date(Date.now() - 1_000),
+      candidate: { id: "cand-1", fullName: "Nadia Petrova" },
+    });
+    const res = await declineOffer({ token: "tok-stale" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("expired");
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("getOfferByToken refuses a lapsed EXPIRED token with the honest message", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({ ...R6_OFFER, status: "EXPIRED", token: "tok-expired" });
+    const res = await getOfferByToken("tok-expired");
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("expired");
+  });
+
+  it("hiring reads lazily lapse stale SENT links to EXPIRED (F2.4-style materialization)", async () => {
+    db.offerRecord.updateMany.mockResolvedValue({ count: 2 });
+    db.offerRecord.findMany.mockResolvedValue([]);
+    db.user.findMany.mockResolvedValue([]);
+    const res = await getOfferRecords();
+    expect(res.ok).toBe(true);
+    expect(db.offerRecord.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "SENT", tokenExpiresAt: { lt: expect.any(Date) } }),
+        data: { status: "EXPIRED" },
+      }),
+    );
+    // One audit line for the batch (never per-row spam).
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offers_lapsed" }));
+  });
+
+  it("the funnel counts awaiting over LIVE links only — stale links become expired", async () => {
+    db.candidate.findMany.mockResolvedValue([]);
+    db.candidateStage.findMany.mockResolvedValue([]);
+    db.offerRecord.findMany.mockResolvedValue([
+      { status: "SENT", tokenExpiresAt: new Date(Date.now() + 86_400_000) },
+      { status: "SENT", tokenExpiresAt: new Date(Date.now() - 86_400_000) },
+      { status: "EXPIRED", tokenExpiresAt: new Date(Date.now() - 86_400_000) },
+      { status: "SIGNED", tokenExpiresAt: null },
+    ]);
+    const res = await getHiringFunnel();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.offers.awaiting).toBe(1);
+      expect(res.data.offers.expired).toBe(2);
+    }
+  });
+});
+
+describe("F2.10 — the joining gate (F-R9/E5)", () => {
+  const SIGNED_OFFER = () => ({
+    id: "or-signed", status: "SIGNED", signedAt: new Date(), templateLabel: "Designer Band",
+    components: JSON.stringify([{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 68_000 }]),
+  });
+  const MANDATORY_TYPES = [
+    { key: "id_proof", label: "ID Document", isMandatory: true, isActive: true, sortOrder: 10, id: "dt-1", description: "" },
+    { key: "bank_details", label: "Bank Details", isMandatory: true, isActive: true, sortOrder: 20, id: "dt-2", description: "" },
+  ];
+
+  it("refuses joining while a mandatory document is un-VERIFIED, listing the blockers", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { name: "Fernly Workspace", hiringEmailDomain: "fernly.app", defaultDepartment: "ENGINEERING", joiningGateEnabled: true },
+    });
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerRecord.findFirst.mockResolvedValue(SIGNED_OFFER());
+    db.documentTypeConfig.findMany.mockResolvedValue(MANDATORY_TYPES);
+    db.candidateDocument.findMany.mockResolvedValue([
+      { docTypeKey: "id_proof", status: "RECEIVED" },
+    ]);
+    db.backgroundCheck.findMany.mockResolvedValue([
+      { vendor: "VerifyRight", status: "IN_REVIEW" },
+    ]);
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("Joining blocked");
+      expect(res.error).toContain("ID Document: received, not yet verified");
+      expect(res.error).toContain("Bank Details: not requested yet");
+      expect(res.error).toContain("Background check (VerifyRight): in review");
+    }
+    expect(db.user.create).not.toHaveBeenCalled();
+  });
+
+  it("allows joining once every mandatory doc is VERIFIED and the BGV is terminal (FLAGGED counts as decided)", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { name: "Fernly Workspace", hiringEmailDomain: "fernly.app", defaultDepartment: "ENGINEERING", joiningGateEnabled: true },
+    });
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerRecord.findFirst.mockResolvedValue(SIGNED_OFFER());
+    db.documentTypeConfig.findMany.mockResolvedValue(MANDATORY_TYPES);
+    db.candidateDocument.findMany.mockResolvedValue([
+      { docTypeKey: "id_proof", status: "VERIFIED" },
+      { docTypeKey: "bank_details", status: "VERIFIED" },
+    ]);
+    db.backgroundCheck.findMany.mockResolvedValue([{ vendor: "VerifyRight", status: "FLAGGED" }]);
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    expect(db.user.create).toHaveBeenCalled();
+  });
+
+  it("the gate is configurable — a disabled gate joins despite outstanding formalities", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { name: "Fernly Workspace", hiringEmailDomain: "fernly.app", defaultDepartment: "ENGINEERING", joiningGateEnabled: false },
+    });
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerRecord.findFirst.mockResolvedValue(SIGNED_OFFER());
+    db.documentTypeConfig.findMany.mockResolvedValue(MANDATORY_TYPES);
+    db.candidateDocument.findMany.mockResolvedValue([]);
+    db.backgroundCheck.findMany.mockResolvedValue([]);
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+  });
+
+  it("getJoiningFormalities returns the same verdict the gate enforces", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { name: "Fernly Workspace", hiringEmailDomain: "fernly.app", defaultDepartment: "ENGINEERING", joiningGateEnabled: true },
+    });
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.documentTypeConfig.findMany.mockResolvedValue(MANDATORY_TYPES);
+    db.candidateDocument.findMany.mockResolvedValue([{ docTypeKey: "id_proof", status: "VERIFIED", requestedAt: new Date(), receivedAt: null, verifiedById: "", verifiedAt: null }]);
+    db.backgroundCheck.findMany.mockResolvedValue([]);
+    db.user.findMany.mockResolvedValue([]);
+    const res = await getJoiningFormalities("cand-1");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.gate.enabled).toBe(true);
+      expect(res.data.gate.allowed).toBe(false);
+      expect(res.data.gate.blockers).toEqual(["Bank Details: not requested yet"]);
+    }
+  });
+});
+
+describe("F2.10 — payroll-ready joining (F-R7)", () => {
+  it("maps the offer's components through the catalog (canonical labels, offer amounts) and auto-registers unseen codes", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerRecord.findFirst.mockResolvedValue({
+      id: "or-signed", status: "SIGNED", signedAt: new Date(), templateLabel: "Designer Band",
+      components: JSON.stringify([
+        { key: "basic", label: "Basic (negotiated)", kind: "EARNING", mode: "FIXED", amount: 70_000 },
+        { key: "new_code", label: "Relocation", kind: "EARNING", mode: "FIXED", amount: 2_000 },
+      ]),
+    });
+    db.salaryComponent.findMany.mockResolvedValue([
+      { code: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED" },
+    ]);
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.payrollReady).toBe(true);
+    // The unseen code auto-registers (catalog converges on everything in use).
+    expect(db.salaryComponent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ code: "new_code", label: "Relocation", defaultAmount: 2_000, sortOrder: 1000 }),
+      }),
+    );
+    // Catalog-known codes canonicalize the label; the AMOUNT stays the offer's.
+    const structureArg = db.salaryStructure.create.mock.calls[0][0] as { data: { components: string } };
+    const mapped = JSON.parse(structureArg.data.components);
+    expect(mapped[0]).toMatchObject({ key: "basic", label: "Basic Salary", amount: 70_000 });
+    expect(mapped[1]).toMatchObject({ key: "new_code", label: "Relocation", amount: 2_000 });
+  });
+
+  it("a signed offer with NO components joins but reports payrollReady: false (visibly unpaid)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerRecord.findFirst.mockResolvedValue({ id: "or-signed", status: "SIGNED", signedAt: new Date(), components: "[]" });
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.payrollReady).toBe(false);
+    expect(db.salaryStructure.create).not.toHaveBeenCalled();
+    const auditArg = logAuditMock.mock.calls.find((c) => c[0].action === "hiring.candidate_joined")?.[0];
+    expect(auditArg?.detail).toContain("NO salary structure");
+  });
+});
+
+describe("F2.10 — the unified onboarding template (F-R8)", () => {
+  it("markJoined instantiates the checklist from the TEMPLATE TABLE rows (not a code copy)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerRecord.findFirst.mockResolvedValue({
+      id: "or-signed", status: "SIGNED", signedAt: new Date(),
+      components: JSON.stringify([{ key: "basic", label: "Basic", kind: "EARNING", mode: "FIXED", amount: 68_000 }]),
+    });
+    db.onboardingTemplateTask.findMany.mockResolvedValue([
+      { id: "tt-1", kind: "ONBOARDING", title: "Laptop + accounts", dueOffsetDays: 1, assignSelf: false, isActive: true, sortOrder: 10 },
+      { id: "tt-2", kind: "ONBOARDING", title: "Read the handbook", dueOffsetDays: 2, assignSelf: true, isActive: true, sortOrder: 20 },
+      { id: "tt-3", kind: "SEPARATION", title: "Exit-only task", dueOffsetDays: 3, assignSelf: true, isActive: true, sortOrder: 10 },
+      { id: "tt-4", kind: "ONBOARDING", title: "Deactivated task", dueOffsetDays: 4, assignSelf: true, isActive: false, sortOrder: 30 },
+    ]);
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    const checklistArg = db.onboardingChecklist.create.mock.calls[0][0] as {
+      data: { tasks: { create: { title: string; assigneeId: string | null }[] } };
+    };
+    // Only the kind's ACTIVE rows, in sortOrder order — self tasks to the hire.
+    expect(checklistArg.data.tasks.create.map((t) => t.title)).toEqual(["Laptop + accounts", "Read the handbook"]);
+    expect(checklistArg.data.tasks.create[0].assigneeId).toBeNull();
+    expect(checklistArg.data.tasks.create[1].assigneeId).toBe("u-new");
+    // The instantiated tasks ride the return for the day-one handout.
+    if (res.ok) {
+      expect(res.data.checklistTasks.map((t) => t.title)).toEqual(["Laptop + accounts", "Read the handbook"]);
+    }
+  });
+
+  it("manager tasks auto-assign to the hire's manager — the createChecklist discipline markJoined used to drift from", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages({ status: "SELECTED" }));
+    db.offerRecord.findFirst.mockResolvedValue({
+      id: "or-signed", status: "SIGNED", signedAt: new Date(),
+      components: JSON.stringify([{ key: "basic", label: "Basic", kind: "EARNING", mode: "FIXED", amount: 68_000 }]),
+    });
+    // The hire's (newly created) account has a manager — the roster lookup
+    // inside instantiateChecklist finds managerId and claims the null tasks.
+    db.user.findUnique.mockImplementation(async ({ where }: { where: { id?: string; email?: string } }) => {
+      if (where.id === "u-new") return { managerId: "u-mgr" };
+      return null; // email probes (nextAvailableHireEmail) find no collision
+    });
+    const res = await markJoined({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTask.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { checklistId: "oc-new", assigneeId: null },
+        data: { assigneeId: "u-mgr" },
+      }),
+    );
+  });
+});
+
+describe("F2.10 — interview invite + reschedule cleanup (F-R10/F-R6)", () => {
+  it("scheduling writes the reserved INTERVIEW_INVITE outbox kind to the candidate", async () => {
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    db.candidateStage.findMany.mockResolvedValue([]);
+    db.user.findUnique.mockResolvedValue({ name: "Ingrid Solberg" });
+    const when = new Date("2026-11-10T09:30:00.000Z").toISOString();
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, interviewerId: "u-mgr" });
+    expect(res.ok).toBe(true);
+    const outboxArg = db.mailOutbox.create.mock.calls[0][0] as { data: { kind: string; toAddress: string; subject: string } };
+    expect(outboxArg.data.kind).toBe("INTERVIEW_INVITE");
+    expect(outboxArg.data.toAddress).toBe("nadia@example.com");
+    expect(outboxArg.data.subject).toContain("Interview invitation");
+  });
+
+  it("a reschedule deletes the previous event + its linked reminder, then creates the fresh pair", async () => {
+    db.candidateStage.findUnique.mockResolvedValue({
+      ...INTERVIEW_STAGE, scheduledAt: new Date("2026-11-09T09:00:00Z"), eventId: "ev-old",
+    });
+    db.candidateStage.findMany.mockResolvedValue([]);
+    db.user.findUnique.mockResolvedValue({ name: "Ingrid Solberg" });
+    const when = new Date("2026-11-12T14:00:00.000Z").toISOString();
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, interviewerId: "u-mgr" });
+    expect(res.ok).toBe(true);
+    // The stale pair goes via the eventId link (F-R6 — no more orphans).
+    expect(db.reminder.deleteMany).toHaveBeenCalledWith({ where: { eventId: "ev-old" } });
+    expect(db.calendarEvent.delete).toHaveBeenCalledWith({ where: { id: "ev-old" } });
+    // The new reminder carries the NEW event's id (the next reschedule's link).
+    expect(db.reminder.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ eventId: "ev-1" }) }),
+    );
+    expect(db.candidateStage.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ eventId: "ev-1" }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.interview_rescheduled" }));
+  });
+});
+
+describe("F2.10 — getOffersAwaitingApproval (the approver's queue)", () => {
+  it("requires hiring:approve — HR (the composer) cannot read the queue", async () => {
+    requirePermissionMock.mockImplementation(denyFor("hiring:approve"));
+    const res = await getOffersAwaitingApproval();
+    expect(res.ok).toBe(false);
+  });
+
+  it("lists DRAFT offers for SELECTED candidates with CTC + composer, never tokens or letters", async () => {
+    db.offerRecord.findMany.mockResolvedValue([
+      {
+        id: "or-d1", candidateId: "cand-1", templateLabel: "Designer Band", notes: "band match",
+        components: R6_OFFER.components, createdById: "u-hr", createdAt: new Date(),
+        candidate: { id: "cand-1", fullName: "Nadia Petrova", position: "Product Designer", status: "SELECTED" },
+      },
+      {
+        id: "or-d2", candidateId: "cand-9", templateLabel: "Stale", notes: "",
+        components: "[]", createdById: "u-hr", createdAt: new Date(),
+        candidate: { id: "cand-9", fullName: "Moved On", position: "", status: "REJECTED" },
+      },
+    ]);
+    db.user.findMany.mockResolvedValue([{ id: "u-hr", name: "Remy" }]);
+    const res = await getOffersAwaitingApproval();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data).toHaveLength(1);
+      expect(res.data[0]).toMatchObject({
+        id: "or-d1", candidateName: "Nadia Petrova", createdBy: "Remy",
+        ctc: 70_040, notes: "band match",
+      });
+      expect(Object.keys(res.data[0])).not.toContain("token");
+    }
   });
 });

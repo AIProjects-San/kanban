@@ -12,7 +12,7 @@
 // for the audit trail. Declining is one click and equally final.
 
 import { useState } from "react";
-import { Leaf, Loader2, PenLine, ShieldCheck, XCircle } from "lucide-react";
+import { Leaf, Loader2, PenLine, Printer, ShieldCheck, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { signOffer, declineOffer } from "@/server-actions/hiring";
 import { formatMoney } from "@/lib/offer-math";
@@ -84,16 +84,85 @@ export function OfferSignView({
   return (
     <OfferSignShell offer={offer}>
       {outcome === "signed" ? (
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-6 text-center" data-testid="offer-signed-state">
-          <ShieldCheck size={28} className="mx-auto text-emerald-600" />
-          <h2 className="mt-3 text-lg font-semibold text-foreground">You&apos;re signed — welcome aboard!</h2>
-          <p className="mt-1.5 text-sm text-muted-foreground max-w-md mx-auto">
-            {signedAt
-              ? `Recorded ${new Date(signedAt).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}${signedName ? ` by ${signedName}` : ""}.`
-              : "Your acceptance was recorded with a timestamp and cannot be changed."}{" "}
-            {offer.workspaceName} will be in touch about your start date and your first day.
-          </p>
-        </div>
+        <>
+          {/* F2.10 (R12) — the post-sign APPOINTMENT LETTER: the signed
+              offer's durable printable confirmation (letter snapshot +
+              package + the recorded signature), riding the payslip modal's
+              .print-area / window.print() pattern. The heading + signature
+              block are what make it an appointment letter rather than a
+              re-read of the offer. */}
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-6 text-center print:hidden" data-testid="offer-signed-state">
+            <ShieldCheck size={28} className="mx-auto text-emerald-600" />
+            <h2 className="mt-3 text-lg font-semibold text-foreground">You&apos;re signed — welcome aboard!</h2>
+            <p className="mt-1.5 text-sm text-muted-foreground max-w-md mx-auto">
+              {signedAt
+                ? `Recorded ${new Date(signedAt).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}${signedName ? ` by ${signedName}` : ""}.`
+                : "Your acceptance was recorded with a timestamp and cannot be changed."}{" "}
+              {offer.workspaceName} will be in touch about your start date and your first day.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Your letter of appointment is below — print or save it for your records.
+            </p>
+          </div>
+          {/* The printable letter — everything inside is .print-area, so
+              window.print() emits exactly this sheet. */}
+          <div className="rounded-lg border border-border bg-card p-6 print-area" data-testid="appointment-letter">
+            <div className="flex items-center gap-2 pb-4 border-b border-border">
+              <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center text-primary-foreground">
+                <Leaf size={16} />
+              </div>
+              <span className="font-semibold tracking-tight text-foreground">{offer.workspaceName}</span>
+            </div>
+            <h2 className="mt-5 text-xl font-bold tracking-tight text-foreground">Letter of Appointment</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {signedAt
+                ? new Date(signedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+                : new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
+            </p>
+            <pre className="mt-4 whitespace-pre-wrap font-sans text-sm text-foreground leading-relaxed">{offer.letterText}</pre>
+            <div className="mt-4 rounded-md border border-border divide-y divide-border" data-testid="appointment-letter-package">
+              <div className="px-3 py-2 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                Your annual package — {offer.templateLabel}
+              </div>
+              {offer.components.map((c) => (
+                <div key={c.key} className="px-3 py-1.5 flex items-baseline justify-between gap-3 text-sm">
+                  <span>{c.label}</span>
+                  <span className="tabular-nums font-medium">{formatMoney(c.resolved)}</span>
+                </div>
+              ))}
+              <div className="px-3 py-2 bg-muted/40 flex items-baseline justify-between gap-3 text-sm font-semibold">
+                <span>Net take-home / yr</span>
+                <span className="tabular-nums text-primary">{formatMoney(offer.totals.net)}</span>
+              </div>
+              <div className="px-3 py-2 bg-muted/40 flex items-baseline justify-between gap-3 text-sm font-semibold">
+                <span>Total package (CTC) / yr</span>
+                <span className="tabular-nums text-emerald-600">{formatMoney(offer.totals.ctc)}</span>
+              </div>
+            </div>
+            <div className="mt-6 pt-4 border-t border-border text-sm space-y-1" data-testid="appointment-letter-signature">
+              <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Accepted electronically</div>
+              <div>
+                <span className="font-semibold">{signedName || offer.candidateName}</span>
+                {signedAt ? (
+                  <span className="text-muted-foreground">
+                    {" · "}{new Date(signedAt).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                ) : null}
+              </div>
+              <div className="text-xs text-muted-foreground">For and on behalf of {offer.workspaceName}</div>
+            </div>
+          </div>
+          <div className="flex justify-end print:hidden">
+            <button
+              type="button"
+              className="f-btn f-btn-secondary"
+              onClick={() => window.print()}
+              data-testid="appointment-letter-print"
+            >
+              <Printer size={14} /> Print appointment letter
+            </button>
+          </div>
+        </>
       ) : outcome === "declined" ? (
         <div className="rounded-lg border border-border bg-muted/40 p-6 text-center" data-testid="offer-declined-state">
           <XCircle size={28} className="mx-auto text-muted-foreground" />

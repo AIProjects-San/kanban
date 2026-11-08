@@ -83,3 +83,68 @@ describe("composeRejectionEmail", () => {
     expect(email.text).toContain("The Fernly Hiring Team");
   });
 });
+
+// ---------------------------------------------------------------------------
+// F2.10 (F-R10) — the interview-invite composer (the INTERVIEW_INVITE
+// outbox kind's text). A reschedule re-sends ON PURPOSE: the email carries
+// the new time.
+// ---------------------------------------------------------------------------
+
+import { composeInterviewInviteEmail } from "@/lib/hiring-email";
+
+describe("composeInterviewInviteEmail", () => {
+  const when = new Date("2026-11-12T14:00:00.000Z");
+  const base = {
+    candidateName: "Tomas Eriksen",
+    position: "QA Engineer",
+    stageLabel: "Interview 1 — Technical",
+    workspaceName: "Fernly Workspace",
+    when,
+    durationMin: 60,
+    interviewerName: "Ingrid Solberg",
+  };
+
+  it("subject names the position + workspace; the body carries stage, time, duration and interviewer", () => {
+    const email = composeInterviewInviteEmail(base);
+    expect(email.subject).toBe("Interview invitation — QA Engineer at Fernly Workspace");
+    expect(email.text).toContain("Stage: Interview 1 — Technical");
+    expect(email.text).toContain("(60 minutes)");
+    expect(email.text).toContain("With: Ingrid Solberg");
+    // The when label is weekday + short date + time (the first thing a
+    // candidate scans).
+    expect(email.text).toMatch(/When: \w{3}, 12 Nov 2026, \d{2}:\d{2}/);
+    expect(email.text).toContain("reply to this email");
+  });
+
+  it("html escapes candidate-controlled and HR-typed fields (F-07 discipline)", () => {
+    const email = composeInterviewInviteEmail({
+      ...base,
+      position: "QA & Release",
+      interviewerName: 'Ingrid "The Detail" Solberg',
+    });
+    expect(email.html).toContain("QA &amp; Release");
+    expect(email.html).toContain("&quot;The Detail&quot;");
+    expect(email.html).not.toContain('"The Detail"');
+  });
+
+  it("omits the interviewer line when unknown; defaults duration to 60", () => {
+    const email = composeInterviewInviteEmail({
+      candidateName: "Tomas Eriksen",
+      position: "",
+      stageLabel: "Interview 1",
+      workspaceName: "Fernly Workspace",
+      when,
+      durationMin: Number.NaN,
+    });
+    expect(email.text).not.toContain("With:");
+    expect(email.text).toContain("(60 minutes)");
+    // Blank position → generic subject, never "the  role".
+    expect(email.subject).toBe("Interview invitation — Interview 1 at Fernly Workspace");
+  });
+
+  it("an invalid date degrades to \"to be confirmed\", never \"Invalid Date\"", () => {
+    const email = composeInterviewInviteEmail({ ...base, when: new Date("not-a-date") });
+    expect(email.text).toContain("When: to be confirmed");
+    expect(email.text).not.toContain("Invalid Date");
+  });
+});

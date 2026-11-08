@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2, ChevronRight, CircleDashed, Loader2, MinusCircle, XCircle,
   Plus, Pencil, CalendarClock, ClipboardPen, FileText, ShieldCheck, UserPlus,
+  AlertTriangle, Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
@@ -146,6 +147,8 @@ export function CandidateDetailModal({
     docTypes: DocumentTypeConfigT[];
     documents: CandidateDocumentT[];
     bgChecks: BackgroundCheckT[];
+    /** F2.10 (F-R9/E5) — the joining-gate verdict markJoined enforces. */
+    gate: { enabled: boolean; allowed: boolean; blockers: string[]; summary: string };
   } | null>(null);
   // Inline action form on one doc row ("receive" fileRef / "reject" remark).
   const [docAction, setDocAction] = useState<{ doc: CandidateDocumentT; mode: "receive" | "reject" } | null>(null);
@@ -160,6 +163,9 @@ export function CandidateDetailModal({
   // account email + "Forgot password?" steps) instead of relying on a
   // provider-gated welcome email that may have been SKIPPED.
   const [joinHandout, setJoinHandout] = useState<JoinerHandout | null>(null);
+  // F2.10 (F-R7) — the payroll-ready verdict of the last markJoined in THIS
+  // modal session (drives the hired summary's salary-structure line).
+  const [lastJoin, setLastJoin] = useState<{ payrollReady: boolean } | null>(null);
 
   const loadInterviewers = useCallback(async () => {
     if (interviewers.length > 0) return;
@@ -178,6 +184,7 @@ export function CandidateDetailModal({
       setSendEmail(false); setEmailRemarks("");
       setDocAction(null); setDocInput(""); setBgFormOpen(false); setBgVendor(""); setBgNotes(""); setBgReportRef("");
       setJoinHandout(null);
+      setLastJoin(null);
     }
   }, [open]);
 
@@ -185,7 +192,12 @@ export function CandidateDetailModal({
   const loadFormalities = useCallback(async (cid: string) => {
     const res = await getJoiningFormalities(cid);
     if (res.ok) {
-      setFormalities({ docTypes: res.data.docTypes, documents: res.data.documents, bgChecks: res.data.bgChecks });
+      setFormalities({
+        docTypes: res.data.docTypes,
+        documents: res.data.documents,
+        bgChecks: res.data.bgChecks,
+        gate: res.data.gate,
+      });
     }
   }, []);
 
@@ -258,12 +270,16 @@ export function CandidateDetailModal({
   // (the welcome email carries it too, when a mail provider is configured).
   // D-03 — the toast is transient, so the handout modal carries the durable
   // copy: printable sign-in email + set-password steps + first-two-weeks
-  // checklist, with the not-delivered warning when the mail was SKIPPED.
+  // checklist (F2.10: the REAL instantiated tasks, not a code copy), with
+  // the not-delivered warning when the mail was SKIPPED. F2.10 also renders
+  // the payroll-ready verdict (F-R7 — the salary structure copy) in the
+  // hired summary.
   const join = async () => {
     setBusy(true);
     const res = await markJoined({ candidateId: c.id });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
+    setLastJoin({ payrollReady: res.data.payrollReady });
     if (res.data.mailStatus === "SENT") {
       toast.success(`${c.fullName} joined — account ${res.data.email} created with an onboarding checklist. Welcome email sent.`);
     } else {
@@ -275,6 +291,8 @@ export function CandidateDetailModal({
       email: res.data.email,
       workspaceName: res.data.workspaceName ?? "Fernly",
       mailStatus: res.data.mailStatus,
+      payrollReady: res.data.payrollReady,
+      tasks: res.data.checklistTasks.map((t) => ({ title: t.title, due: `day ${t.dueOffsetDays}` })),
     });
     onChanged();
   };
@@ -531,6 +549,23 @@ export function CandidateDetailModal({
                   <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-0.5" data-testid="hired-details">
                     <div>Employee account created{c.joinedAt ? ` · joined ${fmt(c.joinedAt)}` : ""}.</div>
                     <div>Their onboarding checklist is live under HR → Onboarding.</div>
+                    {/* F2.10 (F-R7) — the payroll-ready verdict, visible right
+                    after joining (when this modal session did the join). */}
+                    {lastJoin && (
+                      <div
+                        className={cn(
+                          "flex items-center gap-1.5",
+                          lastJoin.payrollReady ? "text-emerald-600" : "text-amber-600",
+                        )}
+                        data-testid="payroll-ready-line"
+                      >
+                        {lastJoin.payrollReady ? (
+                          <><CheckCircle2 size={12} /> Salary structure copied from the signed offer — payroll-ready.</>
+                        ) : (
+                          <><AlertTriangle size={12} /> No salary structure — the signed offer had no components. Fix payroll manually.</>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
                 {(c.status === "REJECTED" || c.status === "WITHDRAWN" || c.status === "SELECTED") && canManage && (
@@ -603,6 +638,32 @@ export function CandidateDetailModal({
                   Request all mandatory
                 </button>
               </div>
+
+              {/* F2.10 (F-R9/E5) — the joining-gate verdict: what markJoined
+                  will enforce, rendered BEFORE it bites. */}
+              {formalities?.gate.enabled && (
+                <div
+                  className={cn(
+                    "rounded-md border px-3 py-2 mb-2.5 text-xs",
+                    formalities.gate.allowed
+                      ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700"
+                      : "border-amber-500/40 bg-amber-500/10 text-amber-700",
+                  )}
+                  data-testid="joining-gate-status"
+                >
+                  <div className="font-semibold flex items-center gap-1.5">
+                    {formalities.gate.allowed ? <CheckCircle2 size={12} /> : <Lock size={12} />}
+                    Joining gate — {formalities.gate.summary}
+                  </div>
+                  {!formalities.gate.allowed && (
+                    <ul className="mt-1 list-disc pl-7 space-y-0.5">
+                      {formalities.gate.blockers.map((b) => (
+                        <li key={b}>{b}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               {/* Document checklist */}
               <div className="space-y-1.5" data-testid="doc-checklist">

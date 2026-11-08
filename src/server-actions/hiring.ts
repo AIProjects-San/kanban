@@ -59,17 +59,22 @@ import {
   deleteOfferTemplateSchema,
   createOfferRecordSchema,
   updateOfferRecordSchema,
+  approveOfferSchema,
   parseOrThrow,
 } from "@/lib/validation";
-import { logAudit } from "./shared";
+import { logAudit, sendOutboxMail, readOnboardingTemplate, instantiateChecklist } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 // R3 — decisions & candidate email outbox.
-import { composeRejectionEmail } from "@/lib/hiring-email";
+import { composeRejectionEmail, composeInterviewInviteEmail } from "@/lib/hiring-email";
 import { createMailer } from "@/lib/mailer";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 // R5 — offer builder math + letter rendering.
 import { computeOffer, parseComponents, parseBenefits, renderOfferLetter, formatMoney } from "@/lib/offer-math";
+// F2.10 — offer link lifecycle (expiry predicate + letter date format) and
+// the joining gate's pure rule.
+import { isOfferLinkExpired, formatOfferDate, dateOnlyISO } from "@/lib/offer-lifecycle";
+import { evaluateJoiningGate } from "@/lib/joining-gate";
 // R6 — account creation for joined hires + shared HTML escaping.
 import { hashPassword } from "@/lib/password";
 import { escapeHtml } from "@/lib/utils";
@@ -841,35 +846,78 @@ export async function scheduleInterview(input: unknown): Promise<ActionResult<{ 
       );
     }
 
-    const event = await db.calendarEvent.create({
-      data: {
-        title: `Interview: ${stage.candidate.fullName} — ${stage.label}`,
-        description: `${stage.candidate.position || "Position n/a"} · ${stage.candidate.email}`,
-        date: when,
-        time: `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`,
-        durationMin: 60,
-        type: "MEETING",
-        location: stage.candidate.department || "",
-      },
+    // F-R12/F2.10 — the reschedule's delete-old/create-new/update-stage used
+    // to be three naked writes (a crash mid-way orphaned the event); now ONE
+    // transaction. F-R6: a reschedule deletes the PREVIOUS event + its
+    // linked reminder via stage.eventId instead of orphaning them.
+    const oldEventId = stage.eventId;
+    await db.$transaction(async (tx) => {
+      if (oldEventId) {
+        await tx.reminder.deleteMany({ where: { eventId: oldEventId } });
+        await tx.calendarEvent.delete({ where: { id: oldEventId } });
+      }
+      const created = await tx.calendarEvent.create({
+        data: {
+          title: `Interview: ${stage.candidate.fullName} — ${stage.label}`,
+          description: `${stage.candidate.position || "Position n/a"} · ${stage.candidate.email}`,
+          date: when,
+          time: `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`,
+          durationMin: 60,
+          type: "MEETING",
+          location: stage.candidate.department || "",
+        },
+      });
+      await tx.reminder.create({
+        data: {
+          title: `Interview with ${stage.candidate.fullName} (${stage.label})`,
+          dueDate: when,
+          ownerId: interviewerId,
+          // F-R6 — the link that lets the NEXT reschedule clean this pair up.
+          eventId: created.id,
+        },
+      });
+      await tx.candidateStage.update({
+        data: { scheduledAt: when, ownerUserId: interviewerId, eventId: created.id },
+        where: { id: stage.id },
+      });
     });
-    await db.reminder.create({
-      data: {
-        title: `Interview with ${stage.candidate.fullName} (${stage.label})`,
-        dueDate: when,
-        ownerId: interviewerId,
-      },
+
+    // F2.10 (F-R10) — the reserved INTERVIEW_INVITE outbox kind finally has
+    // its writer: every schedule AND reschedule emails the candidate (a
+    // reschedule re-sends on purpose — the email carries the new time; no
+    // same-day duplicate guard, unlike rejections). Best-effort: a provider
+    // outage never fails the scheduling itself.
+    const config = await getWorkspaceConfig();
+    const interviewer = await db.user.findUnique({
+      where: { id: interviewerId },
+      select: { name: true },
     });
-    await db.candidateStage.update({
-      where: { id: stage.id },
-      data: { scheduledAt: when, ownerUserId: interviewerId, eventId: event.id },
+    const invite = composeInterviewInviteEmail({
+      candidateName: stage.candidate.fullName,
+      position: stage.candidate.position,
+      stageLabel: stage.label,
+      workspaceName: config.workspace.name,
+      when,
+      durationMin: 60,
+      interviewerName: interviewer?.name,
     });
+    const { status: mailStatus } = await sendOutboxMail({
+      kind: "INTERVIEW_INVITE",
+      candidateId: stage.candidateId,
+      toAddress: stage.candidate.email,
+      subject: invite.subject,
+      text: invite.text,
+      html: invite.html,
+      sentById: auth.userId,
+    });
+
     await logAudit({
       actor: auth,
       action: stage.scheduledAt ? "hiring.interview_rescheduled" : "hiring.interview_scheduled",
       entityType: "CANDIDATE",
       entityId: stage.candidateId,
       entityLabel: stage.candidate.fullName,
-      detail: `${auth.name} scheduled "${stage.label}" with ${stage.candidate.fullName} for ${when.toISOString()} (calendar event + interviewer reminder created).`,
+      detail: `${auth.name} ${stage.scheduledAt ? "rescheduled" : "scheduled"} "${stage.label}" with ${stage.candidate.fullName} for ${when.toISOString()} (calendar event + interviewer reminder${oldEventId ? ", previous pair cleaned up" : ""}; invite email ${mailStatus}).`,
     });
     revalidatePath("/");
     return { ok: true };
@@ -979,20 +1027,23 @@ export async function getMyInterviews(): Promise<
 // ---------------------------------------------------------------------------
 
 export async function getHiringPermissions(): Promise<
-  ActionResult<{ canManage: boolean; canConfig: boolean; mailConfigured: boolean }>
+  ActionResult<{ canManage: boolean; canConfig: boolean; canApprove: boolean; mailConfigured: boolean }>
 > {
   return toResult(async () => {
     const auth = await requirePermission("hiring:view");
     // F-R13: DB-aware probes — the client's capability buttons must reflect
-    // DB grants (hiring:manage/hiring:config), not the static floor alone.
+    // DB grants (hiring:manage/hiring:config/hiring:approve), not the static
+    // floor alone.
     const canManage = await checkPermission(auth.role, "hiring:manage");
     const canConfig = await checkPermission(auth.role, "hiring:config");
+    // F2.10 — the manager-approver probe drives the Offer approvals panel.
+    const canApprove = await checkPermission(auth.role, "hiring:approve");
     // P0-6 (D-05/D-18) — first-run guidance: the hiring view warns when no
     // transactional mail provider is wired. Same env source of truth as the
     // mailer factory (lib/mailer.ts createMailer), so the banner can never
     // disagree with what actually happens on a send.
     const mailConfigured = Boolean(process.env.RESEND_API_KEY);
-    return { canManage, canConfig, mailConfigured };
+    return { canManage, canConfig, canApprove, mailConfigured };
   });
 }
 
@@ -1008,17 +1059,22 @@ export async function getHiringFunnel(): Promise<
   ActionResult<{
     totals: { total: number; active: number; selected: number; hired: number; rejected: number; withdrawn: number };
     stages: Array<{ stageKey: string; label: string; inStage: number; passed: number; avgDays: number | null }>;
-    offers: { total: number; awaiting: number; signed: number; declined: number; acceptRate: number | null };
+    offers: { total: number; awaiting: number; signed: number; declined: number; expired: number; acceptRate: number | null };
   }>
 > {
   return toResult(async () => {
     await requirePermission("hiring:view");
+    // F-R5/F2.10 — converge the DB on the honest state first (SENT links
+    // past their expiry become EXPIRED), then count. Belt and suspenders:
+    // awaiting ALSO filters through the pure predicate so the number is
+    // honest even for a row a concurrent read has not lapsed yet.
+    await lapseExpiredSentOffers();
     const [candidates, stageRows, offerRows] = await Promise.all([
       db.candidate.findMany({ select: { status: true } }),
       db.candidateStage.findMany({
         select: { stageKey: true, label: true, status: true, startedAt: true, completedAt: true },
       }),
-      db.offerRecord.findMany({ select: { status: true } }),
+      db.offerRecord.findMany({ select: { status: true, tokenExpiresAt: true } }),
     ]);
 
     const count = (s: string) => candidates.filter((c) => c.status === s).length;
@@ -1057,7 +1113,14 @@ export async function getHiringFunnel(): Promise<
 
     const signed = offerRows.filter((o) => o.status === "SIGNED").length;
     const declined = offerRows.filter((o) => o.status === "DECLINED").length;
-    const awaiting = offerRows.filter((o) => o.status === "SENT").length;
+    // F-R5 — a live link is SENT and not yet past its expiry; a stale one
+    // counts as expired (lapsed or lapsing — both are dead links).
+    const awaiting = offerRows.filter(
+      (o) => o.status === "SENT" && !isOfferLinkExpired(o.tokenExpiresAt),
+    ).length;
+    const expired = offerRows.filter(
+      (o) => o.status === "EXPIRED" || (o.status === "SENT" && isOfferLinkExpired(o.tokenExpiresAt)),
+    ).length;
 
     return {
       totals: {
@@ -1074,6 +1137,7 @@ export async function getHiringFunnel(): Promise<
         awaiting,
         signed,
         declined,
+        expired,
         // Accept rate over DECIDED offers only (pending offers are neither
         // accepted nor lost — null until the first decision lands).
         acceptRate: signed + declined > 0 ? Math.round((signed / (signed + declined)) * 100) : null,
@@ -1157,12 +1221,15 @@ export async function getJoiningFormalities(
   docTypes: DocumentTypeConfigT[];
   documents: CandidateDocumentT[];
   bgChecks: BackgroundCheckT[];
+  /** F2.10 (F-R9/E5) — the joining-gate verdict for THIS candidate: what
+   * markJoined will enforce, rendered before it bites. */
+  gate: { enabled: boolean; allowed: boolean; blockers: string[]; summary: string };
 }>> {
   return toResult(async () => {
     await requirePermission("hiring:manage");
     const candidate = await db.candidate.findUnique({ where: { id: candidateId } });
     if (!candidate) throw new AuthorizationError("Candidate not found.");
-    const [docTypes, documents, bgChecks] = await Promise.all([
+    const [docTypes, documents, bgChecks, config] = await Promise.all([
       db.documentTypeConfig.findMany({ orderBy: [{ sortOrder: "asc" }, { key: "asc" }] }),
       db.candidateDocument.findMany({
         where: { candidateId },
@@ -1172,12 +1239,21 @@ export async function getJoiningFormalities(
         where: { candidateId },
         orderBy: { initiatedAt: "desc" },
       }),
+      getWorkspaceConfig(),
     ]);
     const names = await namesFor([
       ...documents.map((d) => d.verifiedById),
       ...bgChecks.map((b) => b.initiatedById),
     ]);
+    // F2.10 — the same pure rule markJoined enforces (when the gate is on).
+    const evaluation = evaluateJoiningGate({ docTypes, documents, bgChecks });
     return {
+      gate: {
+        enabled: config.workspace.joiningGateEnabled,
+        allowed: !config.workspace.joiningGateEnabled || evaluation.allowed,
+        blockers: evaluation.blockers,
+        summary: evaluation.summary,
+      },
       docTypes: docTypes.map(serializeDocType),
       documents: documents.map((d) => ({
         id: d.id, candidateId: d.candidateId, docTypeKey: d.docTypeKey,
@@ -1488,7 +1564,9 @@ export async function deleteOfferTemplate(input: { id: string }): Promise<Action
 
 /** Generate an offer for a SELECTED candidate from a template: components +
  * benefits are copied (the template snapshot), the letter is rendered with
- * the candidate's numbers. Status DRAFT — editable until sent (R6). */
+ * the candidate's numbers. Status DRAFT — editable until approved + sent
+ * (R6). F2.10: an optional negotiated start date feeds the {{startDate}}
+ * letter placeholder (F-R11 — it used to render empty). */
 export async function createOfferRecord(input: unknown): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
@@ -1508,12 +1586,15 @@ export async function createOfferRecord(input: unknown): Promise<ActionResult<{ 
     const benefits = parseBenefits(template.benefits);
     const config = await getWorkspaceConfig();
     const totals = computeOffer(components);
+    const startDate = data.startDate ? new Date(`${data.startDate}T00:00:00Z`) : null;
     const letterText = renderOfferLetter(
       template.letterTemplate,
       {
         candidateName: candidate.fullName,
         position: candidate.position,
         workspaceName: config.workspace.name,
+        // F-R11 — "15 Jan 2027" in the letter, "" when HR has not set one.
+        startDate: formatOfferDate(startDate),
       },
       totals,
     );
@@ -1525,6 +1606,7 @@ export async function createOfferRecord(input: unknown): Promise<ActionResult<{ 
         components: JSON.stringify(components),
         benefits: JSON.stringify(benefits),
         letterText,
+        startDate,
         status: "DRAFT",
         notes: data.notes,
         createdById: auth.userId,
@@ -1536,15 +1618,18 @@ export async function createOfferRecord(input: unknown): Promise<ActionResult<{ 
       entityType: "OFFER_RECORD",
       entityId: row.id,
       entityLabel: `${candidate.fullName} — ${template.label}`,
-      detail: `${auth.name} generated a draft offer for ${candidate.fullName} from "${template.label}" (CTC ${formatMoney(totals.ctc)}).`,
+      detail: `${auth.name} generated a draft offer for ${candidate.fullName} from "${template.label}" (CTC ${formatMoney(totals.ctc)}${startDate ? `, proposed start ${formatOfferDate(startDate)}` : ""}).`,
     });
     revalidatePath("/");
     return { id: row.id };
   });
 }
 
-/** Edit a DRAFT offer's negotiated numbers / benefits / letter. Once sent
- * (R6) the record is immutable — the signed snapshot is the contract. */
+/** Edit a DRAFT offer's negotiated numbers / benefits / letter / start
+ * date. F2.10: an APPROVED draft is editable too, but the edit DEMOTES it
+ * back to DRAFT (the manager approved specific numbers — changing them
+ * needs fresh approval; the audit line says so). Once SENT the record is
+ * immutable — the signed snapshot is the contract. */
 export async function updateOfferRecord(input: unknown): Promise<ActionResult<{ ok: true }>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
@@ -1554,9 +1639,11 @@ export async function updateOfferRecord(input: unknown): Promise<ActionResult<{ 
       include: { candidate: { select: { fullName: true } } },
     });
     if (!offer) throw new AuthorizationError("Offer not found.");
-    if (offer.status !== "DRAFT") {
+    if (offer.status !== "DRAFT" && offer.status !== "APPROVED") {
       throw new AuthorizationError(`Offer is already ${offer.status} — sent offers are immutable.`);
     }
+    const startDate = data.startDate ? new Date(`${data.startDate}T00:00:00Z`) : null;
+    const demoted = offer.status === "APPROVED";
     await db.offerRecord.update({
       where: { id: offer.id },
       data: {
@@ -1564,6 +1651,9 @@ export async function updateOfferRecord(input: unknown): Promise<ActionResult<{ 
         benefits: JSON.stringify(data.benefits),
         letterText: data.letterText,
         notes: data.notes,
+        startDate,
+        // The demotion: an edit invalidates the approval.
+        ...(demoted ? { status: "DRAFT", approvedById: "", approvedAt: null } : {}),
       },
     });
     const totals = computeOffer(data.components);
@@ -1573,23 +1663,68 @@ export async function updateOfferRecord(input: unknown): Promise<ActionResult<{ 
       entityType: "OFFER_RECORD",
       entityId: offer.id,
       entityLabel: `${offer.candidate.fullName} — ${offer.templateLabel}`,
-      detail: `${auth.name} updated the draft offer for ${offer.candidate.fullName} (CTC ${formatMoney(totals.ctc)}).`,
+      detail: `${auth.name} updated the ${demoted ? "approved " : ""}draft offer for ${offer.candidate.fullName} (CTC ${formatMoney(totals.ctc)})${demoted ? " — the edit demoted it back to DRAFT; manager approval is required again." : ""}`,
     });
     revalidatePath("/");
     return { ok: true };
   });
 }
 
-/** All offers, newest first (hiring:manage) — the Offers panel. */
+/** F2.10 (R11/D-20) — the manager approval step: DRAFT → APPROVED. Gated
+ * to hiring:approve (MANAGER + ADMIN in the static floor, deliberately NOT
+ * HR — the composer's role), and four-eyes: the composer themself cannot
+ * approve their own offer. Only APPROVED offers are sendable. */
+export async function approveOffer(input: unknown): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:approve");
+    const data = parseOrThrow(approveOfferSchema, input);
+    const offer = await db.offerRecord.findUnique({
+      where: { id: data.offerId },
+      include: { candidate: { select: { id: true, fullName: true, status: true } } },
+    });
+    if (!offer) throw new AuthorizationError("Offer not found.");
+    if (offer.status !== "DRAFT") {
+      throw new AuthorizationError(`Offer is already ${offer.status} — only DRAFT offers can be approved.`);
+    }
+    if (offer.candidate.status !== "SELECTED") {
+      throw new AuthorizationError(`Candidate is ${offer.candidate.status} — approve the offer of a SELECTED candidate.`);
+    }
+    if (offer.createdById && offer.createdById === auth.userId) {
+      throw new AuthorizationError(
+        "The composer cannot approve their own offer — a second pair of eyes (a manager) is required before it can be sent.",
+      );
+    }
+    await db.offerRecord.update({
+      where: { id: offer.id },
+      data: { status: "APPROVED", approvedById: auth.userId, approvedAt: new Date() },
+    });
+    const totals = computeOffer(parseComponents(offer.components));
+    await logAudit({
+      actor: auth,
+      action: "hiring.offer_approved",
+      entityType: "OFFER_RECORD",
+      entityId: offer.id,
+      entityLabel: `${offer.candidate.fullName} — ${offer.templateLabel}`,
+      detail: `${auth.name} approved the draft offer for ${offer.candidate.fullName} (CTC ${formatMoney(totals.ctc)}) — it can now be sent.`,
+    });
+    revalidatePath("/");
+    return { ok: true };
+  });
+}
+
+/** All offers, newest first (hiring:manage) — the Offers panel. Lapses
+ * stale SENT links to EXPIRED first (F-R5) so the panel never shows a dead
+ * link as "awaiting". */
 export async function getOfferRecords(): Promise<ActionResult<OfferRecordT[]>> {
   return toResult(async () => {
     await requirePermission("hiring:manage");
+    await lapseExpiredSentOffers();
     const rows = await db.offerRecord.findMany({
       include: { candidate: { select: { fullName: true, position: true } } },
       orderBy: { createdAt: "desc" },
       take: 100,
     });
-    const names = await namesFor(rows.map((r) => r.createdById));
+    const names = await namesFor(rows.map((r) => r.createdById).concat(rows.map((r) => r.approvedById)));
     return rows.map((r) => ({
       id: r.id,
       candidateId: r.candidateId,
@@ -1612,18 +1747,75 @@ export async function getOfferRecords(): Promise<ActionResult<OfferRecordT[]>> {
       tokenExpiresAt: r.tokenExpiresAt ? r.tokenExpiresAt.toISOString() : null,
       signedAt: r.signedAt ? r.signedAt.toISOString() : null,
       signedName: r.signedName,
+      // F2.10 — the approval trail + the negotiated start date.
+      approvedBy: r.approvedById ? names.get(r.approvedById) ?? null : null,
+      approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
+      startDate: dateOnlyISO(r.startDate),
     }));
+  });
+}
+
+/** F2.10 (R11/D-20) — DRAFT offers awaiting a manager's approval, for the
+ * approver's panel (hiring:approve — MANAGER/ADMIN, not the HR composer).
+ * Deliberately leaner than getOfferRecords: candidate, template, CTC and
+ * notes — but never tokens, letters or the composer's audit copy (salary
+ * surfaces stay hiring:manage-scoped; the approver sees exactly what the
+ * decision needs). */
+export async function getOffersAwaitingApproval(): Promise<ActionResult<{
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  position: string;
+  templateLabel: string;
+  ctc: number;
+  notes: string;
+  createdBy: string | null;
+  createdAt: string;
+}[]>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hiring:approve");
+    void auth;
+    const rows = await db.offerRecord.findMany({
+      where: { status: "DRAFT" },
+      include: { candidate: { select: { id: true, fullName: true, position: true, status: true } } },
+      orderBy: { createdAt: "asc" },
+      take: 100,
+    });
+    const names = await namesFor(rows.map((r) => r.createdById));
+    return rows
+      // A DRAFT whose candidate moved on is not approvable — hide it (the
+      // approveOffer guard still refuses it if raced).
+      .filter((r) => r.candidate.status === "SELECTED")
+      .map((r) => {
+        const totals = computeOffer(parseComponents(r.components));
+        return {
+          id: r.id,
+          candidateId: r.candidateId,
+          candidateName: r.candidate.fullName,
+          position: r.candidate.position,
+          templateLabel: r.templateLabel,
+          ctc: totals.ctc,
+          notes: r.notes,
+          createdBy: names.get(r.createdById) ?? null,
+          createdAt: r.createdAt.toISOString(),
+        };
+      });
   });
 }
 
 // ---------------------------------------------------------------------------
 // R6 — e-sign + auto employee creation (docs/RECRUITMENT_MODULE_PLAN.md §5).
-// Flow: sendOffer (hiring:manage) mints a single-use token + emails the
-// signing link via the outbox; the candidate opens the PUBLIC /offer/[token]
+// Flow: createOfferRecord (HR composes, DRAFT) → approveOffer (a MANAGER —
+// F2.10's four-eyes step, hiring:approve, distinct from the composer) →
+// sendOffer (hiring:manage) mints a single-use token + emails the signing
+// link via the outbox; the candidate opens the PUBLIC /offer/[token]
 // page (no session) and either signs (typed full name → immutable snapshot
-// with IP + timestamp) or declines; markJoined then creates the User account
-// (deterministic <first>.<last>@domain email), EmployeeProfile, TeamMember
-// roster entry, onboarding checklist, and queues a welcome email.
+// with IP + timestamp) or declines; the link's expiry is honored on BOTH
+// paths and lapsed reads flip stale SENT rows to EXPIRED (F-R5); markJoined
+// then creates the User account (deterministic <first>.<last>@domain
+// email), EmployeeProfile, TeamMember roster entry, salary structure copied
+// from the signed offer (F-R7), onboarding checklist from the unified
+// template source (F-R8), and queues a welcome email.
 // ---------------------------------------------------------------------------
 
 const OFFER_TOKEN_TTL_DAYS = 7;
@@ -1634,6 +1826,34 @@ function generateOfferToken(): string {
 
 function offerBaseUrl(): string {
   return process.env.BETTER_AUTH_URL ?? process.env.APP_URL ?? "http://localhost:3000";
+}
+
+/** F2.10 (F-R5) — lazy materialization: flip every SENT offer whose signing
+ * link has passed its expiry to the stored EXPIRED outcome. Idempotent (the
+ * where-clause only matches still-SENT rows); called at the top of the
+ * hiring reads (getOfferRecords / getHiringFunnel) so the DB converges on
+ * the honest state exactly like the F2.4 leave-allocation lazy path. The
+ * funnel ALSO counts awaiting through the pure predicate, so the number is
+ * honest even before a lapse has run. */
+async function lapseExpiredSentOffers(): Promise<number> {
+  const lapsed = await db.offerRecord.updateMany({
+    where: {
+      status: "SENT",
+      tokenExpiresAt: { lt: new Date() },
+    },
+    data: { status: "EXPIRED" },
+  });
+  const count = lapsed.count ?? 0;
+  if (count > 0) {
+    await logAudit({
+      actor: { userId: "system", name: "System", role: "SYSTEM" },
+      action: "hiring.offers_lapsed",
+      entityType: "OFFER_RECORD",
+      entityLabel: `${count} offer${count === 1 ? "" : "s"}`,
+      detail: `${count} sent offer${count === 1 ? "" : "s"} passed their signing-link expiry and ${count === 1 ? "was" : "were"} marked EXPIRED.`,
+    });
+  }
+  return count;
 }
 
 /** The deterministic account email for a joining hire:
@@ -1670,7 +1890,13 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
       include: { candidate: { select: { id: true, fullName: true, email: true, position: true, status: true } } },
     });
     if (!offer) throw new AuthorizationError("Offer not found.");
-    if (offer.status !== "DRAFT") {
+    if (offer.status === "DRAFT") {
+      // F2.10 — the approval step sits between compose and send.
+      throw new AuthorizationError(
+        "Manager approval is required before an offer can be sent — approve the draft first.",
+      );
+    }
+    if (offer.status !== "APPROVED") {
       throw new AuthorizationError(`Offer is already ${offer.status}.`);
     }
     if (offer.candidate.status !== "SELECTED") {
@@ -1694,6 +1920,7 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
       `Hi ${offer.candidate.fullName.split(/\s+/)[0]},\n\n` +
       `Please review and sign your offer from ${config.workspace.name}:\n\n${link}\n\n` +
       `Total package: ${formatMoney(totals.ctc)} per year (net ${formatMoney(totals.net)}).\n` +
+      (offer.startDate ? `Proposed start date: ${formatOfferDate(offer.startDate)}.\n` : "") +
       `The link expires in ${OFFER_TOKEN_TTL_DAYS} days and can be used once.\n\n` +
       `We are looking forward to having you on the team!\n\nThe ${config.workspace.name} Hiring Team`;
     const html =
@@ -1701,37 +1928,19 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
       `<p>Please review and sign your offer from ${escapeHtml(config.workspace.name)}:</p>` +
       `<p><a href="${link}">${link}</a></p>` +
       `<p>Total package: <strong>${formatMoney(totals.ctc)}</strong> per year (net ${formatMoney(totals.net)}).</p>` +
+      (offer.startDate ? `<p>Proposed start date: <strong>${escapeHtml(formatOfferDate(offer.startDate))}</strong>.</p>` : "") +
       `<p>The link expires in ${OFFER_TOKEN_TTL_DAYS} days and can be used once.</p>` +
       `<p>We are looking forward to having you on the team!</p>` +
       `<p>The ${escapeHtml(config.workspace.name)} Hiring Team</p>`;
 
-    const row = await db.mailOutbox.create({
-      data: {
-        kind: "OFFER",
-        candidateId: offer.candidateId,
-        toAddress: offer.candidate.email,
-        subject,
-        body: text,
-        status: "QUEUED",
-        sentById: auth.userId,
-      },
-    });
-    let status = "SKIPPED";
-    let providerMessageId = "";
-    let error = "";
-    try {
-      const result = await createMailer().sendMail({ to: offer.candidate.email, subject, html, text });
-      if (result.delivered) {
-        status = "SENT";
-        providerMessageId = result.messageId ?? "";
-      }
-    } catch (err) {
-      status = "FAILED";
-      error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-    }
-    await db.mailOutbox.update({
-      where: { id: row.id },
-      data: { status, providerMessageId, error, sentAt: new Date() },
+    const { status } = await sendOutboxMail({
+      kind: "OFFER",
+      candidateId: offer.candidateId,
+      toAddress: offer.candidate.email,
+      subject,
+      text,
+      html,
+      sentById: auth.userId,
     });
 
     await logAudit({
@@ -1740,7 +1949,7 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
       entityType: "OFFER_RECORD",
       entityId: offer.id,
       entityLabel: `${offer.candidate.fullName} — ${offer.templateLabel}`,
-      detail: `${auth.name} sent the offer to ${offer.candidate.email} (signing link expires in ${OFFER_TOKEN_TTL_DAYS} days; email ${status}).`,
+      detail: `${auth.name} sent the approved offer to ${offer.candidate.email} (signing link expires in ${OFFER_TOKEN_TTL_DAYS} days; email ${status}).`,
     });
     revalidatePath("/");
     return { token, mailStatus: status };
@@ -1781,10 +1990,15 @@ export async function getOfferByToken(
       include: { candidate: { select: { fullName: true, position: true } } },
     });
     if (!offer) throw new AuthorizationError("This offer link is not valid.");
+    if (offer.status === "EXPIRED") {
+      // F2.10 — the lapsed outcome gets the same honest message a stale
+      // SENT link produces, never the misleading "not available yet".
+      throw new AuthorizationError("This offer link has expired — please ask HR to resend it.");
+    }
     if (offer.status !== "SENT" && offer.status !== "SIGNED" && offer.status !== "DECLINED") {
       throw new AuthorizationError("This offer is not available for signing yet.");
     }
-    if (offer.status === "SENT" && offer.tokenExpiresAt && offer.tokenExpiresAt.getTime() < Date.now()) {
+    if (offer.status === "SENT" && isOfferLinkExpired(offer.tokenExpiresAt)) {
       throw new AuthorizationError("This offer link has expired — please ask HR to resend it.");
     }
     const components = parseComponents(offer.components);
@@ -1832,7 +2046,7 @@ export async function signOffer(input: {
     });
     if (!offer) throw new AuthorizationError("This offer link is not valid.");
     if (offer.status !== "SENT") throw new AuthorizationError(`This offer is ${offer.status}.`);
-    if (offer.tokenExpiresAt && offer.tokenExpiresAt.getTime() < Date.now()) {
+    if (isOfferLinkExpired(offer.tokenExpiresAt)) {
       throw new AuthorizationError("This offer link has expired — please ask HR to resend it.");
     }
     if (signedName.toLowerCase() !== offer.candidate.fullName.toLowerCase()) {
@@ -1864,7 +2078,9 @@ export async function signOffer(input: {
   });
 }
 
-/** Public (no session): decline without signing. */
+/** Public (no session): decline without signing. F2.10 (F-R5): the expiry
+ * check is now honored here too — symmetric with signOffer; a stale link
+ * can neither sign NOR decline (the outcome already reads EXPIRED). */
 export async function declineOffer(input: { token: string }): Promise<ActionResult<{ ok: true }>> {
   return toResult(async () => {
     const t = String(input?.token ?? "").trim();
@@ -1875,6 +2091,9 @@ export async function declineOffer(input: { token: string }): Promise<ActionResu
     });
     if (!offer) throw new AuthorizationError("This offer link is not valid.");
     if (offer.status !== "SENT") throw new AuthorizationError(`This offer is ${offer.status}.`);
+    if (isOfferLinkExpired(offer.tokenExpiresAt)) {
+      throw new AuthorizationError("This offer link has expired — please ask HR to resend it.");
+    }
     await db.offerRecord.update({ where: { id: offer.id }, data: { status: "DECLINED" } });
     await logAudit({
       actor: { userId: `candidate:${offer.candidateId}`, name: offer.candidate.fullName, role: "CANDIDATE" },
@@ -1890,9 +2109,28 @@ export async function declineOffer(input: { token: string }): Promise<ActionResu
 }
 
 /** Mark a signed candidate as Joined: creates the employee's account
- * (deterministic email), EmployeeProfile, roster entry, and onboarding
- * checklist, then queues the welcome email. Idempotent per candidate. */
-export async function markJoined(input: { candidateId: string }): Promise<ActionResult<{ userId: string; email: string; mailStatus: string; workspaceName: string }>> {
+ * (deterministic email), EmployeeProfile, roster entry, salary structure
+ * copied from the signed offer (F2.10 / F-R7 — no joiner is silently
+ * unpaid), onboarding checklist instantiated from the ONE template source
+ * (F-R8), then queues the welcome email. Idempotent per candidate.
+ *
+ * F2.10 (F-R9/E5) — the joining gate: when Workspace.joiningGateEnabled,
+ * every ACTIVE+MANDATORY document type must have a VERIFIED document and
+ * every background check must be terminal, mirroring the benchmark's
+ * required_for_employee_creation. The refusal lists exactly what is
+ * outstanding. */
+export async function markJoined(input: { candidateId: string }): Promise<ActionResult<{
+  userId: string;
+  email: string;
+  mailStatus: string;
+  workspaceName: string;
+  /** F2.10 (F-R7) — false only when the signed offer carried no components
+   * (the joiner is then visibly NOT payroll-ready — the UI warns loudly). */
+  payrollReady: boolean;
+  /** F2.10 (F-R8) — the instantiated template tasks, so the day-one handout
+   * prints the real checklist instead of a third hard-coded copy. */
+  checklistTasks: { title: string; dueOffsetDays: number }[];
+}>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
     const candidateId = String(input?.candidateId ?? "").trim();
@@ -1914,11 +2152,48 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
     }
 
     const config = await getWorkspaceConfig();
-    const domain = (config as { workspace: { hiringEmailDomain?: string } }).workspace.hiringEmailDomain || "fernly.app";
+
+    // F2.10 — the joining gate (F-R9/E5). Same pure rule the formalities
+    // panel renders, enforced here where it actually bites.
+    if (config.workspace.joiningGateEnabled) {
+      const [docTypes, documents, bgChecks] = await Promise.all([
+        db.documentTypeConfig.findMany({ orderBy: { sortOrder: "asc" } }),
+        db.candidateDocument.findMany({ where: { candidateId: candidate.id } }),
+        db.backgroundCheck.findMany({ where: { candidateId: candidate.id } }),
+      ]);
+      const gate = evaluateJoiningGate({ docTypes, documents, bgChecks });
+      if (!gate.allowed) {
+        throw new AuthorizationError(
+          `Joining blocked — outstanding formalities: ${gate.blockers.join("; ")}.`,
+        );
+      }
+    }
+
+    const domain = config.workspace.hiringEmailDomain || "fernly.app";
     const email = await nextAvailableHireEmail(candidate.fullName, domain);
     // Random one-time password — never emailed; the hire sets their own via
     // the existing password-reset flow (welcome mail points them there).
     const passwordHash = await hashPassword(crypto.randomBytes(24).toString("base64url"));
+
+    // F2.10 (F-R7) — the offer→structure mapping (createStructureFromOffer's
+    // catalog discipline, inlined so it rides markJoined's transaction):
+    // catalog codes canonicalize label/kind/mode, unseen codes
+    // auto-register, the AMOUNT always stays the offer's actual.
+    const offerComponents = parseComponents(signedOffer.components);
+    const catalogRows = await db.salaryComponent.findMany({
+      select: { code: true, label: true, kind: true, mode: true },
+    });
+    const catalogByCode = new Map(catalogRows.map((r) => [r.code, r]));
+    const toRegister = offerComponents.filter((c) => !catalogByCode.has(c.key));
+    const mappedComponents = offerComponents.map((c) => {
+      const cat = catalogByCode.get(c.key);
+      return cat
+        ? { ...c, label: cat.label, kind: cat.kind as (typeof c)["kind"], mode: cat.mode as (typeof c)["mode"] }
+        : c;
+    });
+
+    // F2.10 (F-R8) — the ONE template source.
+    const template = await readOnboardingTemplate("ONBOARDING");
 
     const user = await db.$transaction(async (tx) => {
       const created = await tx.user.create({
@@ -1946,27 +2221,54 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
           hireDate: new Date(),
         },
       });
-      // The standard onboarding checklist (mirrors hr-onboarding's template).
-      await tx.onboardingChecklist.create({
-        data: {
-          newHireId: created.id,
-          title: `${candidate.fullName} — onboarding`,
-          tasks: {
-            create: [
-              { title: "Sign the employment contract", dueOffsetDays: 1, order: 0 },
-              { title: "Set up accounts and SSO access", dueOffsetDays: 2, order: 1 },
-              { title: "Meet your manager for the 1:1 kick-off", dueOffsetDays: 3, order: 2 },
-              { title: "Complete the workspace tour", dueOffsetDays: 5, assigneeId: created.id, order: 3 },
-              { title: "First small task shipped with a mentor", dueOffsetDays: 14, assigneeId: created.id, order: 4 },
-            ],
+      // F2.10 (F-R7) — copy the signed offer into an ACTIVE salary structure
+      // inside the same transaction: the joiner is payroll-ready the moment
+      // they exist (an offer without components skips this — visibly).
+      let structureCreated = false;
+      if (mappedComponents.length > 0) {
+        for (const c of toRegister) {
+          await tx.salaryComponent.create({
+            data: {
+              code: c.key,
+              label: c.label,
+              kind: c.kind,
+              mode: c.mode,
+              defaultAmount: c.amount,
+              isActive: true,
+              sortOrder: 1000,
+            },
+          });
+        }
+        await tx.salaryStructure.updateMany({
+          where: { userId: created.id, isActive: true },
+          data: { isActive: false },
+        });
+        await tx.salaryStructure.create({
+          data: {
+            userId: created.id,
+            components: JSON.stringify(mappedComponents),
+            notes: `Copied from the signed offer (${signedOffer.templateLabel || "custom"}) on joining.`,
+            isActive: true,
+            createdById: auth.userId,
           },
-        },
+        });
+        structureCreated = true;
+      }
+      // F2.10 (F-R8) — the shared instantiation (self tasks → the hire,
+      // manager tasks → the hire's manager when one exists, else HR picks
+      // up; the exact createChecklist discipline markJoined used to drift
+      // from).
+      await instantiateChecklist(tx, {
+        newHireId: created.id,
+        title: `${candidate.fullName} — onboarding`,
+        kind: "ONBOARDING",
+        template,
       });
       await tx.candidate.update({
         where: { id: candidate.id },
         data: { status: "HIRED", userId: created.id, joinedAt: new Date() },
       });
-      return created;
+      return { created, structureCreated };
     });
 
     // Welcome email → outbox (best-effort).
@@ -1984,33 +2286,14 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
       `<p>To set your password, open the app and use "Forgot password?" with that email.</p>` +
       `<p>Your onboarding checklist is waiting in the app — see you on day one!</p>` +
       `<p>The ${escapeHtml(config.workspace.name)} team</p>`;
-    const row = await db.mailOutbox.create({
-      data: {
-        kind: "WELCOME",
-        candidateId: candidate.id,
-        toAddress: email,
-        subject,
-        body: text,
-        status: "QUEUED",
-        sentById: auth.userId,
-      },
-    });
-    let wstatus = "SKIPPED";
-    let wprovider = "";
-    let werror = "";
-    try {
-      const result = await createMailer().sendMail({ to: email, subject, html, text });
-      if (result.delivered) {
-        wstatus = "SENT";
-        wprovider = result.messageId ?? "";
-      }
-    } catch (err) {
-      wstatus = "FAILED";
-      werror = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-    }
-    await db.mailOutbox.update({
-      where: { id: row.id },
-      data: { status: wstatus, providerMessageId: wprovider, error: werror, sentAt: new Date() },
+    const { status: wstatus } = await sendOutboxMail({
+      kind: "WELCOME",
+      candidateId: candidate.id,
+      toAddress: email,
+      subject,
+      text,
+      html,
+      sentById: auth.userId,
     });
 
     await logAudit({
@@ -2019,12 +2302,24 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
       entityType: "CANDIDATE",
       entityId: candidate.id,
       entityLabel: candidate.fullName,
-      detail: `${auth.name} marked "${candidate.fullName}" as joined — account ${email} created with onboarding checklist + welcome email (${wstatus}).`,
+      detail: `${auth.name} marked "${candidate.fullName}" as joined — account ${email} created with onboarding checklist + welcome email (${wstatus})` +
+        (user.structureCreated
+          ? `; salary structure copied from the signed offer (${mappedComponents.length} components — payroll-ready).`
+          : "; NO salary structure — the signed offer had no components, fix payroll manually."),
     });
     revalidatePath("/");
     // workspaceName rides along for the day-one handout (persona-audit
     // D-03): HR prints the joiner's sign-in instructions — the sheet needs
-    // the workspace's display name alongside the account email.
-    return { userId: user.id, email, mailStatus: wstatus, workspaceName: config.workspace.name };
+    // the workspace's display name alongside the account email. F2.10 adds
+    // payrollReady + the instantiated tasks (F-R7/F-R8 — the handout's
+    // first-two-weeks list is now data, not a third code copy).
+    return {
+      userId: user.created.id,
+      email,
+      mailStatus: wstatus,
+      workspaceName: config.workspace.name,
+      payrollReady: user.structureCreated,
+      checklistTasks: template.map((t) => ({ title: t.title, dueOffsetDays: t.dueOffsetDays })),
+    };
   });
 }

@@ -51,6 +51,13 @@ export type Permission =
   | "hiring:view"
   | "hiring:manage"
   | "hiring:config"
+  // F2.10 (R11/D-20) — offer approval: the four-eyes step between HR
+  // composing a draft and it being sendable. Deliberately granted to
+  // MANAGER but NOT HR — the approver must be a different pair of eyes
+  // than the composer (approveOffer additionally refuses the composer
+  // themself, so an ADMIN who composed cannot self-approve). HR keeps
+  // hiring:manage and can still send — but only an APPROVED offer.
+  | "hiring:approve"
   // Payroll (RECRUITMENT_MODULE_PLAN.md §5 R7) — salary data is sensitive:
   // ADMIN + HR only. MANAGERs (interviewers on the hiring board) and
   // MEMBERs never see structures, runs or payslips.
@@ -66,7 +73,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "audit:view",
     "bug:create", "bug:edit:any", "bug:edit:own", "bug:delete", "bug:assign",
     "hr:view", "hr:admin", "leave:request", "review:manage", "onboarding:manage",
-    "hiring:view", "hiring:manage", "hiring:config",
+    "hiring:view", "hiring:manage", "hiring:config", "hiring:approve",
     "payroll:manage",
     "attendance:manage",
   ],
@@ -80,6 +87,9 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "bug:create", "bug:edit:any", "bug:edit:own", "bug:assign",
     "hr:view", "leave:request", "review:manage",
     "hiring:view",
+    // F2.10 — managers are the offer approvers (distinct from the HR
+    // composer; four-eyes on every sent offer).
+    "hiring:approve",
   ],
   MEMBER: [
     "task:create", "task:edit:own",
@@ -149,6 +159,7 @@ export const ALL_PERMISSIONS: { key: Permission; label: string; description: str
   { key: "hiring:view", label: "View hiring pipeline", description: "See the candidate board and stage timelines (interviewers included)" },
   { key: "hiring:manage", label: "Manage hiring", description: "Create candidates, advance stages and decide outcomes in the recruitment pipeline" },
   { key: "hiring:config", label: "Configure hiring", description: "Edit the workspace hiring stage template and document types" },
+  { key: "hiring:approve", label: "Approve offers", description: "Approve draft offers before they are sent (managers — the approver must differ from the HR composer)" },
   { key: "payroll:manage", label: "Manage payroll", description: "Maintain salary structures, run monthly payroll, edit and lock payslips" },
   { key: "attendance:manage", label: "Manage attendance", description: "Mark and edit daily attendance for everyone in the workspace" },
 ];

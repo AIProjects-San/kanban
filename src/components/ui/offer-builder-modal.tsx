@@ -10,7 +10,7 @@
 // the link; a SENT row shows its link + expiry until it is signed/declined.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy, Link2, Loader2, PenLine, Plus, Send, Trash2, X } from "lucide-react";
+import { Check, Clock, Copy, Link2, Loader2, PenLine, Plus, Send, ShieldCheck, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
@@ -27,9 +27,11 @@ import { computeOffer, formatMoney } from "@/lib/offer-math";
 
 const OFFER_STATUS_CLS: Record<string, string> = {
   DRAFT: "bg-amber-500/10 text-amber-600",
+  APPROVED: "bg-sky-500/10 text-sky-600",
   SENT: "bg-indigo-500/10 text-indigo-600",
   SIGNED: "bg-emerald-500/10 text-emerald-600",
   DECLINED: "bg-destructive/10 text-destructive",
+  EXPIRED: "bg-zinc-500/10 text-zinc-500",
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -70,6 +72,8 @@ export function OfferBuilderModal({
   const [benefitsText, setBenefitsText] = useState("");
   const [letterText, setLetterText] = useState("");
   const [notes, setNotes] = useState("");
+  // F2.10 (F-R11) — the negotiated start date ("YYYY-MM-DD", "" = unset).
+  const [startDate, setStartDate] = useState("");
   // R6 — the freshly minted signing link (highlighted until the modal
   // closes) + a copied-link confirmation chip.
   const [freshToken, setFreshToken] = useState<string | null>(null);
@@ -131,6 +135,7 @@ export function OfferBuilderModal({
     setBenefitsText(o.benefits.join("\n"));
     setLetterText(o.letterText);
     setNotes(o.notes);
+    setStartDate(o.startDate ?? "");
   };
 
   const generate = async () => {
@@ -166,6 +171,7 @@ export function OfferBuilderModal({
       benefits: benefitsText.split("\n").map((b) => b.trim()).filter(Boolean),
       letterText,
       notes,
+      startDate: startDate || undefined,
     });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
@@ -233,10 +239,17 @@ export function OfferBuilderModal({
                     <button className="f-btn f-btn-ghost text-xs" disabled={busy} onClick={() => openDraft(o)} data-testid={`edit-offer-${o.id}`}>
                       Edit draft
                     </button>
-                    <button className="f-btn f-btn-primary text-xs" disabled={busy} onClick={() => void send(o.id)} data-testid={`send-offer-${o.id}`}>
-                      {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send
-                    </button>
+                    {/* F2.10 — sendOffer refuses DRAFTs now; the hint says why
+                    and who can flip it (the manager approvals panel). */}
+                    <span className="text-xs text-muted-foreground" data-testid={`awaiting-approval-${o.id}`}>
+                      Awaiting manager approval
+                    </span>
                   </>
+                )}
+                {o.status === "APPROVED" && (
+                  <button className="f-btn f-btn-primary text-xs" disabled={busy} onClick={() => void send(o.id)} data-testid={`send-offer-${o.id}`}>
+                    {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send
+                  </button>
                 )}
                 {o.status === "SENT" && o.token && (
                   <button className="f-btn f-btn-ghost text-xs" onClick={() => void copyLink(o.token!)} data-testid={`copy-link-${o.id}`}>
@@ -250,10 +263,22 @@ export function OfferBuilderModal({
                 )}
               </div>
               {/* Signature trail (audit-grade: who + when) */}
+              {o.status === "APPROVED" && (
+                <div className="text-xs text-sky-600 flex items-center gap-1.5" data-testid={`approved-by-${o.id}`}>
+                  <ShieldCheck size={12} /> Approved by {o.approvedBy ?? "a manager"}
+                  {o.approvedAt ? ` · ${new Date(o.approvedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}
+                  {o.startDate ? ` · proposed start ${new Date(`${o.startDate}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                </div>
+              )}
               {o.status === "SENT" && o.tokenExpiresAt && (
                 <div className="text-xs text-muted-foreground flex items-center gap-1.5">
                   <PenLine size={12} /> Awaiting signature — link expires{" "}
                   {new Date(o.tokenExpiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                </div>
+              )}
+              {o.status === "EXPIRED" && (
+                <div className="text-xs text-zinc-500 flex items-center gap-1.5" data-testid={`expired-${o.id}`}>
+                  <Clock size={12} /> Signing link expired — send a fresh offer if the candidate is still interested.
                 </div>
               )}
               {o.status === "SIGNED" && o.signedAt && (
@@ -370,9 +395,24 @@ export function OfferBuilderModal({
               maxLength={10_000}
             />
           </Field>
-          <Field label="Internal notes (audit only)">
-            <input className="f-input text-xs" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2_000} />
-          </Field>
+          {/* F2.10 (F-R11) — the negotiated start date. The letter above was
+          rendered at generation with {{startDate}} resolved from the value
+          set then; adjust the letter text by hand if you change the date
+          here (the letter is the editable snapshot, never re-rendered). */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Proposed start date (feeds {{startDate}} in the letter)">
+              <input
+                type="date"
+                className="f-input text-xs"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                data-testid="offer-start-date"
+              />
+            </Field>
+            <Field label="Internal notes (audit only)">
+              <input className="f-input text-xs" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2_000} />
+            </Field>
+          </div>
           <div className="flex justify-end gap-2">
             <button type="button" className="f-btn f-btn-ghost" onClick={() => setEditing(null)}>Close</button>
             <button type="submit" className="f-btn f-btn-primary" disabled={busy} data-testid="save-offer-btn">

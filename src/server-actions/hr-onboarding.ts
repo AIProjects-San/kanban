@@ -25,41 +25,25 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
-import type { OnboardingChecklistT } from "@/lib/types";
+import type { OnboardingChecklistT, OnboardingTemplateTaskT } from "@/lib/types";
 import {
   createChecklistSchema,
   addTaskSchema,
   taskDoneSchema,
+  saveOnboardingTemplateTaskSchema,
+  deleteOnboardingTemplateTaskSchema,
   parseOrThrow,
 } from "@/lib/validation";
-import { logAudit } from "./shared";
+import { logAudit, readOnboardingTemplate, instantiateChecklist } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
-/** The default template instantiated per new hire. */
-const DEFAULT_TEMPLATE: { title: string; dueOffsetDays: number; assignSelf: boolean }[] = [
-  { title: "Sign the employment contract", dueOffsetDays: 1, assignSelf: false },
-  { title: "Set up accounts and SSO access", dueOffsetDays: 2, assignSelf: false },
-  { title: "Meet your manager for the 1:1 kick-off", dueOffsetDays: 3, assignSelf: false },
-  { title: "Complete the workspace tour", dueOffsetDays: 5, assignSelf: true },
-  { title: "First small task shipped with a mentor", dueOffsetDays: 14, assignSelf: true },
-];
-
-/** F2.1 — the default SEPARATION template (benchmark EM-14's symmetric
- * exit flow). Offsets count from the separation checklist's creation
- * (typically around the exit), not the last working day — the assignee
- * reads them as "within N days" guidance. */
-const DEFAULT_SEPARATION_TEMPLATE: { title: string; dueOffsetDays: number; assignSelf: boolean }[] = [
-  { title: "Hand over ongoing work and documents", dueOffsetDays: 3, assignSelf: true },
-  { title: "Return laptop and access devices", dueOffsetDays: 5, assignSelf: true },
-  { title: "Revoke accounts, SSO and tool access", dueOffsetDays: 5, assignSelf: false },
-  { title: "Hold the exit interview", dueOffsetDays: 7, assignSelf: false },
-  { title: "Settle the full-and-final statement", dueOffsetDays: 10, assignSelf: false },
-];
-
-function templateFor(kind: string) {
-  return kind === "SEPARATION" ? DEFAULT_SEPARATION_TEMPLATE : DEFAULT_TEMPLATE;
-}
+// F2.10 (F-R8) — the template source is now the OnboardingTemplateTask table
+// (with the canonical constants in lib/onboarding-template.ts as the
+// empty-table fallback). The DEFAULT_TEMPLATE / DEFAULT_SEPARATION_TEMPLATE /
+// templateFor constants that used to live here are GONE — this file, the
+// inline copy inside markJoined, and the client copy in joiner-handout.tsx
+// all read the one source through readOnboardingTemplate.
 
 function serialize(
   c: {
@@ -170,7 +154,9 @@ export async function createChecklist(input: {
     const auth = await requirePermission("onboarding:manage");
     const data = parseOrThrow(createChecklistSchema, input);
     const kind = data.kind;
-    const template = templateFor(kind);
+    // F2.10 (F-R8) — the ONE template source (table rows, constants as the
+    // empty-table fallback).
+    const template = await readOnboardingTemplate(kind);
 
     const hire = await db.user.findUnique({
       where: { id: data.newHireId },
@@ -186,49 +172,17 @@ export async function createChecklist(input: {
     // tasks and the manager auto-assignment are one logical creation. The
     // nested create was already atomic; the manager updateMany now joins it
     // in the same transaction so a crash can't leave manager tasks stranded
-    // unassigned while the checklist exists.
-    const checklist = await db.$transaction(async (tx) => {
-      const created = await tx.onboardingChecklist.create({
-        data: {
-          newHireId: data.newHireId,
-          title: data.title,
-          kind,
-          ...(data.useTemplate
-            ? {
-                tasks: {
-                  create: template.map((t, i) => ({
-                    title: t.title,
-                    dueOffsetDays: t.dueOffsetDays,
-                    // Self tasks go to the hire; manager tasks default to the
-                    // hire's manager when one exists, else unassigned (HR picks up).
-                    assigneeId: t.assignSelf ? data.newHireId : null,
-                    order: i,
-                  })),
-                },
-              }
-            : {}),
-        },
-        include: { tasks: true },
-      });
-
-      // The manager tasks belong to the hire's manager — assign them now.
-      // (Separation: the handover/revoke owners default to the manager the
-      // same way — one code path, symmetric flow.)
-      if (data.useTemplate) {
-        const approvers = await tx.user.findUnique({
-          where: { id: data.newHireId },
-          select: { managerId: true },
-        });
-        const managerId = approvers?.managerId ?? null;
-        if (managerId) {
-          await tx.onboardingTask.updateMany({
-            where: { checklistId: created.id, assigneeId: null },
-            data: { assigneeId: managerId },
-          });
-        }
-      }
-      return created;
-    });
+    // unassigned while the checklist exists. F2.10 (F-R8): the whole body is
+    // the SHARED instantiateChecklist — markJoined instantiates through the
+    // exact same code path (no more drifted copy).
+    const checklist = await db.$transaction(async (tx) =>
+      instantiateChecklist(tx, {
+        newHireId: data.newHireId,
+        title: data.title,
+        kind,
+        template: data.useTemplate ? template : [],
+      }),
+    );
 
     await logAudit({
       actor: auth,
@@ -378,5 +332,114 @@ export async function setTaskDone(input: {
       detail: `${auth.name} marked "${task.title}" as ${input.done ? "done" : "not done"}.`,
     });
     revalidatePath("/");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// F2.10 (F-R8) — the onboarding TEMPLATE source (OnboardingTemplateTask CRUD,
+// onboarding:manage). Every instantiated checklist reads these rows (with the
+// canonical constants as the empty-table fallback); the HR console's
+// Onboarding tab edits them here.
+// ---------------------------------------------------------------------------
+
+/** All template rows, both kinds, sortOrder-first (onboarding:manage). */
+export async function getOnboardingTemplates(): Promise<ActionResult<OnboardingTemplateTaskT[]>> {
+  return toResult(async () => {
+    await requirePermission("onboarding:manage");
+    const rows = await db.onboardingTemplateTask.findMany({
+      orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      kind: r.kind === "SEPARATION" ? "SEPARATION" : "ONBOARDING",
+      title: r.title,
+      dueOffsetDays: r.dueOffsetDays,
+      assignSelf: r.assignSelf,
+      isActive: r.isActive,
+      sortOrder: r.sortOrder,
+    }));
+  });
+}
+
+/** Create or edit one template task row. sortOrder defaults to the kind's
+ * current max + 1 so new tasks land at the end of their list. */
+export async function saveOnboardingTemplateTask(input: unknown): Promise<ActionResult<{ id: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("onboarding:manage");
+    const data = parseOrThrow(saveOnboardingTemplateTaskSchema, input);
+
+    if (data.id) {
+      const existing = await db.onboardingTemplateTask.findUnique({ where: { id: data.id } });
+      if (!existing) throw new AuthorizationError("Template task not found.");
+      const row = await db.onboardingTemplateTask.update({
+        where: { id: data.id },
+        data: {
+          kind: data.kind,
+          title: data.title,
+          dueOffsetDays: data.dueOffsetDays,
+          assignSelf: data.assignSelf,
+          isActive: data.isActive,
+          ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),
+        },
+      });
+      await logAudit({
+        actor: auth,
+        action: "onboarding.template_task_saved",
+        entityType: "ONBOARDING_TEMPLATE",
+        entityId: row.id,
+        entityLabel: row.title,
+        detail: `${auth.name} edited the ${row.kind.toLowerCase()} template task "${row.title}" (due day ${row.dueOffsetDays}, ${row.assignSelf ? "self" : "manager"}, ${row.isActive ? "active" : "inactive"}).`,
+      });
+      revalidatePath("/");
+      return { id: row.id };
+    }
+
+    const last = await db.onboardingTemplateTask.findFirst({
+      where: { kind: data.kind },
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+    const row = await db.onboardingTemplateTask.create({
+      data: {
+        kind: data.kind,
+        title: data.title,
+        dueOffsetDays: data.dueOffsetDays,
+        assignSelf: data.assignSelf,
+        isActive: data.isActive,
+        sortOrder: data.sortOrder ?? (last?.sortOrder ?? 0) + 1,
+      },
+    });
+    await logAudit({
+      actor: auth,
+      action: "onboarding.template_task_saved",
+      entityType: "ONBOARDING_TEMPLATE",
+      entityId: row.id,
+      entityLabel: row.title,
+      detail: `${auth.name} added the ${row.kind.toLowerCase()} template task "${row.title}" (due day ${row.dueOffsetDays}, ${row.assignSelf ? "self" : "manager"}).`,
+    });
+    revalidatePath("/");
+    return { id: row.id };
+  });
+}
+
+/** Remove one template task row. Instantiated checklists keep their tasks
+ * (they are plain OnboardingTask rows) — only future instantiations change. */
+export async function deleteOnboardingTemplateTask(input: unknown): Promise<ActionResult<{ ok: true }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("onboarding:manage");
+    const data = parseOrThrow(deleteOnboardingTemplateTaskSchema, input);
+    const row = await db.onboardingTemplateTask.findUnique({ where: { id: data.id } });
+    if (!row) throw new AuthorizationError("Template task not found.");
+    await db.onboardingTemplateTask.delete({ where: { id: row.id } });
+    await logAudit({
+      actor: auth,
+      action: "onboarding.template_task_deleted",
+      entityType: "ONBOARDING_TEMPLATE",
+      entityId: row.id,
+      entityLabel: row.title,
+      detail: `${auth.name} removed the ${row.kind.toLowerCase()} template task "${row.title}".`,
+    });
+    revalidatePath("/");
+    return { ok: true };
   });
 }

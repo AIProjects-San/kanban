@@ -68,6 +68,7 @@ function offer(overrides: Partial<OfferRecordT> = {}): OfferRecordT {
     letterText: "Hi Priyanka Menon — $70,040", status: "DRAFT", notes: "",
     createdBy: "Remy", createdAt: "2026-11-11T00:00:00.000Z", updatedAt: "2026-11-11T00:00:00.000Z",
     token: null, tokenExpiresAt: null, signedAt: null, signedName: "",
+    approvedBy: null, approvedAt: null, startDate: "",
     ...overrides,
   };
 }
@@ -156,13 +157,18 @@ describe("OfferBuilderModal", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R6 — send: DRAFT → SENT mints the signing link (displayed + copyable)
+// R6 — send: APPROVED → SENT mints the signing link (displayed + copyable).
+// F2.10: the Send button lives on the APPROVED row; a DRAFT shows the
+// awaiting-manager-approval hint instead.
 // ---------------------------------------------------------------------------
 
 describe("OfferBuilderModal: R6 send", () => {
-  it("Send on a DRAFT calls sendOffer and surfaces the signing link", async () => {
+  it("Send on an APPROVED offer calls sendOffer and surfaces the signing link", async () => {
     sendOffer.mockResolvedValue({ ok: true, data: { token: "tok-abc123" } });
-    getOfferRecords.mockResolvedValue({ ok: true, data: [offer()] });
+    getOfferRecords.mockResolvedValue({
+      ok: true,
+      data: [offer({ status: "APPROVED", approvedBy: "Ingrid Solberg", approvedAt: "2026-11-14T09:00:00.000Z" })],
+    });
     render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
     await screen.findByTestId("offer-row-or-1");
 
@@ -175,9 +181,33 @@ describe("OfferBuilderModal: R6 send", () => {
     expect(screen.getByTestId("offer-sign-link").textContent).toContain("/offer/tok-abc123");
   });
 
-  it("a failed send surfaces the error and keeps the draft editable", async () => {
-    sendOffer.mockResolvedValue({ ok: false, error: "Offer is already SENT." });
+  it("a DRAFT shows the awaiting-approval hint instead of a Send button (F2.10)", async () => {
     getOfferRecords.mockResolvedValue({ ok: true, data: [offer()] });
+    render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
+    await screen.findByTestId("awaiting-approval-or-1");
+    expect(screen.queryByTestId("send-offer-or-1")).toBeNull();
+  });
+
+  it("an APPROVED row shows the approval trail (who + when + start date)", async () => {
+    getOfferRecords.mockResolvedValue({
+      ok: true,
+      data: [offer({
+        status: "APPROVED", approvedBy: "Ingrid Solberg", approvedAt: "2026-11-14T09:00:00.000Z",
+        startDate: "2026-11-29",
+      })],
+    });
+    render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
+    const trail = await screen.findByTestId("approved-by-or-1");
+    expect(trail.textContent).toContain("Ingrid Solberg");
+    expect(trail.textContent).toContain("proposed start");
+  });
+
+  it("a failed send surfaces the error and keeps the offer editable", async () => {
+    sendOffer.mockResolvedValue({ ok: false, error: "Offer is already SENT." });
+    getOfferRecords.mockResolvedValue({
+      ok: true,
+      data: [offer({ status: "APPROVED", approvedBy: "Ingrid", approvedAt: "2026-11-14T09:00:00.000Z" })],
+    });
     render(<OfferBuilderModal open candidate={CANDIDATE} onClose={onClose} onChanged={onChanged} />);
     await screen.findByTestId("offer-row-or-1");
 

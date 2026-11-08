@@ -8,17 +8,19 @@
 // until R2 assigns them stages.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, ChevronRight, FileText, Filter, Mail, Plus, Settings2, UserPlus } from "lucide-react";
+import { CalendarClock, ChevronRight, FileText, Filter, Loader2, Mail, Plus, Settings2, ShieldCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { CandidateT, HiringFunnelT, HiringStageConfigT, MailOutboxT, OfferRecordT } from "@/lib/types";
 import {
+  approveOffer,
   getHiringBoard,
   getHiringFunnel,
   getHiringPermissions,
   getMailOutbox,
   getMyInterviews,
   getOfferRecords,
+  getOffersAwaitingApproval,
 } from "@/server-actions/hiring";
 import { CandidateModal } from "../ui/candidate-modal";
 import { CandidateDetailModal } from "../ui/candidate-detail-modal";
@@ -58,6 +60,14 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
   const [candidates, setCandidates] = useState<CandidateT[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [canConfig, setCanConfig] = useState(false);
+  // F2.10 — the manager-approver probe: drives the Offer approvals panel
+  // (the composer cannot send a DRAFT; a manager flips it to APPROVED).
+  const [canApprove, setCanApprove] = useState(false);
+  const [approvals, setApprovals] = useState<{
+    id: string; candidateId: string; candidateName: string; position: string;
+    templateLabel: string; ctc: number; notes: string; createdBy: string | null; createdAt: string;
+  }[]>([]);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
   // P0-6 (D-05/D-18) — mail-provider truth from the permission probe; drives
   // the first-run warning above the outbox (defaults true so a stale probe
   // never flashes the banner — the real action always returns the field).
@@ -97,6 +107,7 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
     if (permRes.ok) {
       setCanManage(permRes.data.canManage);
       setCanConfig(permRes.data.canConfig);
+      setCanApprove(permRes.data.canApprove);
       setMailConfigured(permRes.data.mailConfigured ?? true);
     }
     // CI-stabilization round 3: the four secondary panels used to load
@@ -107,19 +118,23 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
     // calls are independent reads: fire them in parallel and the whole view
     // converges in ~one round-trip instead of four.
     const canManage = permRes.ok ? permRes.data.canManage : false;
+    const canApprove = permRes.ok ? permRes.data.canApprove : false;
     const notAllowed = async () => ({ ok: false as const, error: "permission" });
-    const [obxRes, offersRes, mineRes, fnRes] = await Promise.all([
+    const [obxRes, offersRes, mineRes, fnRes, apprRes] = await Promise.all([
       // R3 — outbox + offers are gated behind hiring:manage; skip the fetch
       // otherwise so MANAGERs never trigger a permission-denied error path.
       canManage ? getMailOutbox() : notAllowed(),
       canManage ? getOfferRecords() : notAllowed(),
       getMyInterviews(),
       getHiringFunnel(),
+      // F2.10 — the approver's queue (hiring:approve).
+      canApprove ? getOffersAwaitingApproval() : notAllowed(),
     ]);
     if (obxRes.ok) setOutbox(obxRes.data);
     if (offersRes.ok) setOffers(offersRes.data);
     if (mineRes.ok) setMyInterviews(mineRes.data);
     if (fnRes.ok) setFunnel(fnRes.data);
+    if (apprRes.ok) setApprovals(apprRes.data);
     setLoaded(true);
   }, []);
 
@@ -161,6 +176,18 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
   const detailHasSignedOffer = detail
     ? offers.some((o) => o.candidateId === detail.id && o.status === "SIGNED")
     : false;
+
+  // F2.10 — the four-eyes approval: a manager approves a DRAFT offer; the
+  // composer is refused server-side (and never sees this panel — HR lacks
+  // hiring:approve).
+  const approve = async (offerId: string) => {
+    setApprovingId(offerId);
+    const res = await approveOffer({ offerId });
+    setApprovingId(null);
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success("Offer approved — HR can now send the signing link.");
+    await load();
+  };
 
   return (
     <div className="p-6 space-y-5" data-testid="hiring-board">
@@ -278,6 +305,12 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
                 <div className="flex justify-between"><span className="text-muted-foreground">Awaiting signature</span><span className="tabular-nums font-medium">{funnel.offers.awaiting}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Signed</span><span className="tabular-nums font-medium text-success">{funnel.offers.signed}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Declined</span><span className="tabular-nums font-medium text-destructive">{funnel.offers.declined}</span></div>
+                {funnel.offers.expired > 0 && (
+                  <div className="flex justify-between" data-testid="funnel-offers-expired">
+                    <span className="text-muted-foreground">Expired links</span>
+                    <span className="tabular-nums font-medium text-zinc-500">{funnel.offers.expired}</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -395,6 +428,50 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
         </div>
       )}
 
+      {/* F2.10 (R11/D-20) — the manager's approval queue. Rendered for
+          hiring:approve holders (MANAGER/ADMIN — NOT the HR composer); the
+          four-eyes rule is enforced server-side in approveOffer. */}
+      {canApprove && (
+        <div className="rounded-lg border border-sky-500/30 bg-sky-500/5" data-testid="offer-approvals-panel">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
+            <ShieldCheck size={14} className="text-sky-600" />
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Offer approvals
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {approvals.length} draft{approvals.length === 1 ? "" : "s"} awaiting your approval
+            </span>
+          </div>
+          <div className="divide-y divide-border">
+            {approvals.map((o) => (
+              <div key={o.id} className="px-4 py-2.5 flex items-center gap-3 text-sm" data-testid="offer-approval-row">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">{o.candidateName} — {o.templateLabel || "Custom offer"}</div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    {o.position || "the role"} · CTC {formatMoney(o.ctc)}
+                    {o.createdBy ? ` · composed by ${o.createdBy}` : ""}
+                    {o.notes ? ` · ${o.notes}` : ""}
+                  </div>
+                </div>
+                <button
+                  className="f-btn f-btn-primary text-xs shrink-0"
+                  disabled={approvingId !== null}
+                  onClick={() => void approve(o.id)}
+                  data-testid={`approve-offer-${o.id}`}
+                >
+                  {approvingId === o.id ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Approve
+                </button>
+              </div>
+            ))}
+            {approvals.length === 0 && (
+              <div className="text-sm text-muted-foreground px-4 py-4 text-center">
+                No drafts awaiting approval — offers HR can compose and you approve before they are sent.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* R5 — offers panel (hiring:manage only) */}
       {canManage && (
         <div className="rounded-lg border border-border" data-testid="offers-panel">
@@ -418,9 +495,11 @@ export function HiringView({ currentUser }: { currentUser: { id: string; name: s
                   <span className={cn(
                     "text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0",
                     o.status === "DRAFT" && "bg-amber-500/10 text-amber-600",
+                    o.status === "APPROVED" && "bg-sky-500/10 text-sky-600",
                     o.status === "SENT" && "bg-indigo-500/10 text-indigo-600",
                     o.status === "SIGNED" && "bg-emerald-500/10 text-emerald-600",
                     o.status === "DECLINED" && "bg-destructive/10 text-destructive",
+                    o.status === "EXPIRED" && "bg-zinc-500/10 text-zinc-500",
                   )}>
                     {o.status}
                   </span>

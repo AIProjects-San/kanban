@@ -11,6 +11,13 @@ import { getSubtreeUserIds } from "@/lib/hierarchy";
 import { AuthorizationError } from "./auth-guard";
 import type { AuditAction } from "@/lib/audit-meta";
 import { headers as nextHeaders } from "next/headers";
+// F2.10 — the shared outbox sender + onboarding-template instantiation.
+import { createMailer } from "@/lib/mailer";
+import { Prisma } from "@prisma/client";
+import {
+  templateForKind,
+  type OnboardingTemplateTaskRow,
+} from "@/lib/onboarding-template";
 
 export { AuthorizationError };
 
@@ -430,4 +437,129 @@ export async function recalcMemberStats(memberId: string | null) {
     where: { id: memberId },
     data: { openTasks: open, completedTasks: completed, workload },
   });
+}
+
+// ---------------------------------------------------------------------------
+// F2.10 — joining-hardening shared helpers (used by hiring.ts AND
+// hr-onboarding.ts; shared.ts is the server-only home for cross-module
+// non-action helpers).
+// ---------------------------------------------------------------------------
+
+/**
+ * F-R16 (folded into F2.10) — the ONE audited-outbox send helper. The
+ * QUEUED → send → resolve dance was hand-rolled ×3 (sendOffer, markJoined,
+ * queueCandidateEmail); every new candidate-facing email (the F2.10
+ * interview invite) writes through here instead.
+ *
+ * Writes the MailOutbox row FIRST (status QUEUED — the audit copy exists
+ * even when the provider is down), attempts delivery best-effort, then
+ * resolves the row to SENT / SKIPPED / FAILED. Never throws: a provider
+ * outage must not fail the business action that triggered the email.
+ */
+export async function sendOutboxMail(input: {
+  kind: string;
+  candidateId?: string | null;
+  toAddress: string;
+  subject: string;
+  text: string;
+  html: string;
+  sentById: string;
+}): Promise<{ status: "SENT" | "SKIPPED" | "FAILED"; providerMessageId: string; error: string }> {
+  const row = await db.mailOutbox.create({
+    data: {
+      kind: input.kind,
+      candidateId: input.candidateId ?? null,
+      toAddress: input.toAddress,
+      subject: input.subject,
+      body: input.text,
+      status: "QUEUED",
+      sentById: input.sentById,
+    },
+  });
+  let status: "SENT" | "SKIPPED" | "FAILED" = "SKIPPED";
+  let providerMessageId = "";
+  let error = "";
+  try {
+    const result = await createMailer().sendMail({
+      to: input.toAddress,
+      subject: input.subject,
+      html: input.html,
+      text: input.text,
+    });
+    if (result.delivered) {
+      status = "SENT";
+      providerMessageId = result.messageId ?? "";
+    }
+  } catch (err) {
+    status = "FAILED";
+    error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+  }
+  await db.mailOutbox.update({
+    where: { id: row.id },
+    data: { status, providerMessageId, error, sentAt: new Date() },
+  });
+  return { status, providerMessageId, error };
+}
+
+/**
+ * F2.10 (F-R8) — read the onboarding template rows for a kind, falling back
+ * to the canonical constants when the table has no ACTIVE rows for it (a
+ * fresh install is never template-less). One read path shared by
+ * createChecklist and markJoined — the third copy (joiner-handout's client
+ * list) now rides markJoined's return value instead.
+ */
+export async function readOnboardingTemplate(
+  kind: "ONBOARDING" | "SEPARATION",
+): Promise<Omit<OnboardingTemplateTaskRow, "id" | "isActive" | "sortOrder">[]> {
+  const rows = await db.onboardingTemplateTask.findMany({
+    where: { kind },
+    orderBy: { sortOrder: "asc" },
+  });
+  return templateForKind(kind, rows);
+}
+
+/**
+ * F2.10 (F-R8) — instantiate a checklist from template rows INSIDE a
+ * transaction: self tasks to the hire/leaver, the rest to their manager
+ * when one exists (else unassigned — HR picks up). This is the exact
+ * createChecklist discipline markJoined previously drifted from; both
+ * writers now call this one function.
+ */
+export async function instantiateChecklist(
+  tx: Prisma.TransactionClient,
+  input: {
+    newHireId: string;
+    title: string;
+    kind: "ONBOARDING" | "SEPARATION";
+    template: Omit<OnboardingTemplateTaskRow, "id" | "isActive" | "sortOrder">[];
+  },
+) {
+  const created = await tx.onboardingChecklist.create({
+    data: {
+      newHireId: input.newHireId,
+      title: input.title,
+      kind: input.kind,
+      tasks: {
+        create: input.template.map((t, i) => ({
+          title: t.title,
+          dueOffsetDays: t.dueOffsetDays,
+          assigneeId: t.assignSelf ? input.newHireId : null,
+          order: i,
+        })),
+      },
+    },
+    include: { tasks: true },
+  });
+  const approvers = await tx.user.findUnique({
+    where: { id: input.newHireId },
+    select: { managerId: true },
+  });
+  const managerId = approvers?.managerId ?? null;
+  if (managerId) {
+    await tx.onboardingTask.updateMany({
+      where: { checklistId: created.id, assigneeId: null },
+      data: { assigneeId: managerId },
+    });
+  }
+  return created;
 }

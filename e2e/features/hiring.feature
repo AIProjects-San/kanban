@@ -123,25 +123,62 @@ Feature: Hiring pipeline (Recruitment R1)
     And I open the "Hiring" view
     Then the offers panel should not be visible
 
-  Scenario: HR sends the offer and the candidate signs on the public page (R6)
+  # F2.10 (R11/D-20) — the four-eyes approval step: a MANAGER (distinct
+  # from the HR composer) must approve the DRAFT before HR can send it.
+  Scenario: A manager approves the draft offer before it can be sent (F2.10)
+    When I sign in as "manager@fernly.app" with the demo password
+    And I open the "Hiring" view
+    Then the offer approvals panel should be visible
+    When I approve the draft offer
+    Then the offer approvals panel should show no drafts awaiting approval
+
+  Scenario: HR sends the approved offer and the candidate signs on the public page (R6)
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Hiring" view
     And I open the "Selected" pool
     And I open the candidate card "Priyanka Menon"
     And I open the offer builder
-    And I send the offer draft
+    And I send the approved offer
     Then the signing link should be displayed
     When the candidate opens the signing link
     And the candidate signs with their full legal name
     Then the public offer page should show the signed confirmation
+    And the signed page should offer the printable appointment letter (F2.10)
 
-  Scenario: HR marks the signed candidate as joined (R6)
+  # F2.10 (F-R9/E5) — the joining gate: markJoined refuses while a mandatory
+  # document is un-VERIFIED or a background check is non-terminal.
+  Scenario: The joining gate refuses while formalities are outstanding (F2.10)
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Hiring" view
     And I open the "Selected" pool
     And I open the candidate card "Priyanka Menon"
     And I mark the candidate as joined
+    Then a toast should mention "Joining blocked"
+    And the joining gate status should list the outstanding blockers
+
+  Scenario: HR completes the formalities and the gate lets the candidate join (F2.10)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the "Selected" pool
+    And I open the candidate card "Priyanka Menon"
+    And I verify the "bank_details" document
+    And I receive the "right_to_work" document
+    And I verify the "right_to_work" document
+    And I clear the background check
+    Then the joining gate status should show the gate satisfied
+    When I mark the candidate as joined
     Then the candidate detail should show the hired summary
+    And the hired summary should confirm the salary structure was copied (F2.10)
+
+  # F2.10 (F-R10) — scheduling an interview emails the candidate the invite
+  # through the reserved INTERVIEW_INVITE outbox kind.
+  Scenario: Scheduling an interview emails the candidate an invite (F2.10)
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Hiring" view
+    And I open the candidate card "Nadia Petrova"
+    And I open the schedule form for stage "interview_2"
+    And I submit the interview schedule form
+    Then the email outbox should show a recorded email to "nadia.petrova@example.com"
 
   Scenario: The recruitment funnel panel shows stage + offer analytics (R8)
     When I sign in as "remy@fernly.app" with the demo password

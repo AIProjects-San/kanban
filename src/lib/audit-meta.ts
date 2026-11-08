@@ -108,6 +108,9 @@ export type AuditAction =
   | "onboarding.task_added"
   | "onboarding.task_done"
   | "onboarding.task_undone"
+  // F2.10 (F-R8) — the configurable default-template source.
+  | "onboarding.template_task_saved"
+  | "onboarding.template_task_deleted"
   // F2.1 — offboarding & full-and-final lite (docs/Fernly_HR_Payroll_
   // Enhancement_Plan.md §7.2): the separation checklist rides the
   // onboarding task actions above; these are the exit-specific writers.
@@ -153,6 +156,10 @@ export type AuditAction =
   | "hiring.offer_signed"
   | "hiring.offer_declined"
   | "hiring.candidate_joined"
+  // F2.10 — joining hardening: the manager approval step (R11/D-20) and
+  // the lazy EXPIRED lapse (F-R5).
+  | "hiring.offer_approved"
+  | "hiring.offers_lapsed"
   // Recruitment R7 — payroll (ADMIN + HR only)
   | "payroll.structure_saved"
   | "payroll.structure_from_offer"
@@ -269,6 +276,8 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.fnf_settled": { icon: BadgeCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
+  "onboarding.template_task_saved": { icon: Plus, cls: "text-primary bg-primary/10" },
+  "onboarding.template_task_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 
   "hiring.candidate_created": { icon: UserPlus, cls: "text-primary bg-primary/10" },
   "hiring.candidate_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
@@ -296,6 +305,8 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.offer_created": { icon: FileText, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.offer_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hiring.offer_sent": { icon: Send, cls: "text-indigo-500 bg-indigo-500/10" },
+  "hiring.offer_approved": { icon: ClipboardCheck, cls: "text-sky-500 bg-sky-500/10" },
+  "hiring.offers_lapsed": { icon: Clock, cls: "text-zinc-500 bg-zinc-500/10" },
   "hiring.offer_signed": { icon: ClipboardCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.offer_declined": { icon: XCircle, cls: "text-destructive bg-destructive/10" },
   "hiring.candidate_joined": { icon: UserPlus, cls: "text-emerald-500 bg-emerald-500/10" },

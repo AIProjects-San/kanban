@@ -585,3 +585,193 @@ When("I close the candidate detail modal", async function () {
     "the candidate detail modal did not close after clicking X",
   );
 });
+
+// ---------------------------------------------------------------------------
+// F2.10 — joining hardening: the manager approval step (R11/D-20), the
+// printable appointment letter (R12), the joining gate (F-R9/E5), and the
+// interview-invite email (F-R10).
+// ---------------------------------------------------------------------------
+
+Then("the offer approvals panel should be visible", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="offer-approvals-panel"]')),
+    10_000,
+    "offer approvals panel did not render (manager holds hiring:approve?)",
+  );
+});
+
+Then("the offer approvals panel should show no drafts awaiting approval", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="offer-approvals-panel"]')),
+    10_000,
+  );
+  // The approved row leaves the queue; the empty state takes over.
+  await driver.wait(
+    async () => {
+      const rows = await driver.findElements(By.css('[data-testid="offer-approval-row"]'));
+      return rows.length === 0;
+    },
+    10_000,
+    "the approved draft is still listed in the approvals queue",
+  );
+});
+
+When("I approve the draft offer", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid^="approve-offer-"]')),
+    10_000,
+    "no Approve button — is there a DRAFT offer awaiting approval?",
+  );
+  await btn.click();
+  // The approvals panel reloads; wait for the row to clear.
+  await driver.wait(
+    async () => {
+      const rows = await driver.findElements(By.css('[data-testid="offer-approval-row"]'));
+      return rows.length === 0;
+    },
+    15_000,
+    "the approved draft never left the approvals queue",
+  );
+});
+
+When("I send the approved offer", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid^="send-offer-"]')),
+    10_000,
+    "no Send button — is the offer APPROVED (manager four-eyes step)?",
+  );
+  await btn.click();
+  await driver.wait(until.elementLocated(By.css('[data-testid="offer-link-box"]')), 15_000);
+});
+
+Then("the signed page should offer the printable appointment letter (F2.10)", async function () {
+  const driver = await this.getDriver();
+  const letter = await driver.wait(
+    until.elementLocated(By.css('[data-testid="appointment-letter"]')),
+    10_000,
+    "the appointment letter did not render on the signed state",
+  );
+  const text = await letter.getText();
+  assert.ok(text.includes("Letter of Appointment"), `letter heading missing, got: "${text.slice(0, 120)}"`);
+  assert.ok(text.includes("Accepted electronically"), "the signature block is missing");
+  const printBtn = await driver.wait(
+    until.elementLocated(By.css('[data-testid="appointment-letter-print"]')),
+    10_000,
+    "the print affordance did not render",
+  );
+  assert.ok(await printBtn.isDisplayed(), "the print button must be visible");
+});
+
+Then("the joining gate status should list the outstanding blockers", async function () {
+  const driver = await this.getDriver();
+  const gate = await driver.wait(
+    until.elementLocated(By.css('[data-testid="joining-gate-status"]')),
+    10_000,
+    "the joining-gate status block did not render",
+  );
+  const text = await gate.getText();
+  assert.ok(text.includes("Joining gate"), `gate summary missing, got: "${text.slice(0, 160)}"`);
+  assert.ok(
+    text.includes("Bank Details") && text.includes("Right to Work"),
+    "the gate should list the un-verified mandatory documents",
+  );
+  assert.ok(text.includes("Background check"), "the gate should list the pending background check");
+});
+
+Then("the joining gate status should show the gate satisfied", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    async () => {
+      const gate = await driver.findElement(By.css('[data-testid="joining-gate-status"]'));
+      const text = await gate.getText();
+      return text.includes("Joining gate") && !text.includes("not requested") && !text.includes("not yet verified") && !text.includes("in review");
+    },
+    15_000,
+    "the gate still lists outstanding blockers",
+  );
+});
+
+When("I verify the {string} document", async function (docKey) {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css(`[data-testid="verify-doc-${docKey}"]`)),
+    10_000,
+    `Verify button for ${docKey} did not render (document RECEIVED?)`,
+  );
+  await btn.click();
+  // The formalities bundle reloads in place; wait for the chip to flip.
+  await driver.wait(
+    until.elementLocated(By.css(`[data-testid="doc-status-${docKey}"]`)),
+    10_000,
+  );
+  await driver.sleep(600);
+});
+
+When("I receive the {string} document", async function (docKey) {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css(`[data-testid="receive-doc-${docKey}"]`)),
+    10_000,
+    `Mark-received button for ${docKey} did not render (document REQUESTED?)`,
+  );
+  await btn.click();
+  const submit = await driver.wait(
+    until.elementLocated(By.css(`[data-testid="doc-action-submit-${docKey}"]`)),
+    10_000,
+  );
+  await submit.click();
+  await driver.sleep(600);
+});
+
+When("I clear the background check", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css('[data-testid^="bg-clear-"]')),
+    10_000,
+    "no Clear button — is there a non-terminal background check?",
+  );
+  await btn.click();
+  await driver.sleep(600);
+});
+
+Then("the hired summary should confirm the salary structure was copied (F2.10)", async function () {
+  const driver = await this.getDriver();
+  const line = await driver.wait(
+    until.elementLocated(By.css('[data-testid="payroll-ready-line"]')),
+    15_000,
+    "the payroll-ready line did not render in the hired summary",
+  );
+  const text = await line.getText();
+  assert.ok(
+    text.includes("payroll-ready"),
+    `the payroll-ready verdict should confirm the structure copy, got: "${text}"`,
+  );
+});
+
+When("I submit the interview schedule form", async function () {
+  const driver = await this.getDriver();
+  // The form is already open (the previous step opened it); pick the first
+  // free slot tomorrow at 10:00 local time and submit.
+  const when = await driver.wait(
+    until.elementLocated(By.css('[data-testid="schedule-when"]')),
+    10_000,
+  );
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  const value = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}T10:00`;
+  await driver.executeScript(
+    "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input', { bubbles: true })); arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+    when,
+    value,
+  );
+  const submit = await driver.wait(
+    until.elementLocated(By.css('[data-testid="schedule-submit"]')),
+    10_000,
+  );
+  await submit.click();
+  await driver.sleep(1_500);
+});

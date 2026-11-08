@@ -113,7 +113,7 @@ beforeEach(() => {
   // R4 — formalities bundle default (empty checklist + no BGV).
   getJoiningFormalities.mockResolvedValue({
     ok: true,
-    data: { docTypes: [], documents: [], bgChecks: [] },
+    data: { docTypes: [], documents: [], bgChecks: [], gate: { enabled: false, allowed: true, blockers: [], summary: "no mandatory documents or checks configured" } },
   });
 });
 
@@ -407,6 +407,9 @@ const FORMALITIES = {
     bgChecks: [
       { id: "bg-1", candidateId: "cand-1", vendor: "VerifyRight", status: "IN_REVIEW", reportRef: "", notes: "ETA 5 days", initiatedBy: "Remy", initiatedAt: "2026-11-08T00:00:00.000Z", completedAt: null },
     ],
+    // F2.10 — the joining-gate verdict (id_proof RECEIVED + BGV in review →
+    // blocked, honestly listed).
+    gate: { enabled: true, allowed: false, blockers: ["ID Document: received, not yet verified", "Background check (VerifyRight): in review"], summary: "1 of 2 mandatory documents verified · background checks pending (1)" },
   },
 };
 
@@ -557,7 +560,7 @@ describe("CandidateDetailModal: R6 joining", () => {
   });
 
   it("Mark joined (SELECTED + SIGNED offer) calls markJoined and toasts the created account email", async () => {
-    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SENT" } });
+    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SENT", workspaceName: "Fernly Workspace", payrollReady: true, checklistTasks: [{ title: "Sign the employment contract", dueOffsetDays: 1 }] } });
     const { toast } = await import("sonner");
     render(
       <CandidateDetailModal
@@ -581,7 +584,7 @@ describe("CandidateDetailModal: R6 joining", () => {
   });
 
   it("Mark joined with the welcome email SKIPPED warns HR instead of claiming delivery", async () => {
-    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SKIPPED" } });
+    markJoined.mockResolvedValue({ ok: true, data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SKIPPED", workspaceName: "Fernly Workspace", payrollReady: true, checklistTasks: [{ title: "Sign the employment contract", dueOffsetDays: 1 }] } });
     const { toast } = await import("sonner");
     render(
       <CandidateDetailModal
@@ -604,7 +607,7 @@ describe("CandidateDetailModal: R6 joining", () => {
   it("a SKIPPED welcome email opens the day-one handout with set-password instructions (D-03)", async () => {
     markJoined.mockResolvedValue({
       ok: true,
-      data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SKIPPED", workspaceName: "Fernly Workspace" },
+      data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SKIPPED", workspaceName: "Fernly Workspace", payrollReady: true, checklistTasks: [{ title: "Sign the employment contract", dueOffsetDays: 1 }] },
     });
     render(
       <CandidateDetailModal
@@ -631,7 +634,7 @@ describe("CandidateDetailModal: R6 joining", () => {
   it("a SENT welcome email still offers the handout — without the not-delivered warning (D-03)", async () => {
     markJoined.mockResolvedValue({
       ok: true,
-      data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SENT", workspaceName: "Fernly Workspace" },
+      data: { userId: "u-new", email: "nadia.petrova@fernly.app", mailStatus: "SENT", workspaceName: "Fernly Workspace", payrollReady: true, checklistTasks: [{ title: "Sign the employment contract", dueOffsetDays: 1 }] },
     });
     render(
       <CandidateDetailModal

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["onboardingChecklist", "onboardingTask", "user", "auditLog", "notification"];
+  const models = ["onboardingChecklist", "onboardingTask", "onboardingTemplateTask", "user", "auditLog", "notification"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -38,9 +38,18 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
-vi.mock("@/server-actions/shared", () => ({
-  logAudit: (...a: unknown[]) => logAuditMock(...a),
-}));
+vi.mock("@/server-actions/shared", async () => {
+  // F2.10 — readOnboardingTemplate + instantiateChecklist run for real over
+  // the mocked db (createChecklist's own logic moved into them); only
+  // logAudit is a spy.
+  const actual = await vi.importActual<typeof import("@/server-actions/shared")>("@/server-actions/shared");
+  return {
+    logAudit: (...a: unknown[]) => logAuditMock(...a),
+    readOnboardingTemplate: actual.readOnboardingTemplate,
+    instantiateChecklist: actual.instantiateChecklist,
+    sendOutboxMail: actual.sendOutboxMail,
+  };
+});
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -50,6 +59,9 @@ import {
   setTaskDone,
   getOnboarding,
   getMyOnboardingTasks,
+  getOnboardingTemplates,
+  saveOnboardingTemplateTask,
+  deleteOnboardingTemplateTask,
 } from "../hr-onboarding";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Ada", email: "ada@x.co" };
@@ -76,6 +88,14 @@ beforeEach(() => {
   db.onboardingTask.count.mockResolvedValue(0);
   db.user.findUnique.mockResolvedValue(null);
   db.user.findMany.mockResolvedValue([]);
+  // F2.10 — empty template table: instantiation falls back to the canonical
+  // constants (the 5-task default the previous code copied inline).
+  db.onboardingTemplateTask.findMany.mockResolvedValue([]);
+  db.onboardingTemplateTask.findFirst.mockResolvedValue(null);
+  db.onboardingTemplateTask.findUnique.mockResolvedValue(null);
+  db.onboardingTemplateTask.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "tt-new", ...data }));
+  db.onboardingTemplateTask.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "tt-1", ...data }));
+  db.onboardingTemplateTask.delete.mockResolvedValue({ id: "tt-1", kind: "ONBOARDING", title: "Old task" });
 });
 
 describe("createChecklist", () => {
@@ -353,5 +373,132 @@ describe("PR-56 — remaining branch coverage", () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/task not found/i);
     expect(db.onboardingTask.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F2.10 (F-R8) — the ONE template source: table-driven instantiation + the
+// onboarding:manage CRUD for the default rows.
+// ---------------------------------------------------------------------------
+
+describe("F2.10 — table-driven template instantiation", () => {
+  it("createChecklist instantiates the TEMPLATE TABLE rows (empty table → the canonical constant fallback)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-diego", name: "Diego Morales", deletedAt: null });
+    const res = await createChecklist({ newHireId: "u-diego", title: "Nov onboarding", useTemplate: true });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTemplateTask.findMany).toHaveBeenCalledWith({ where: { kind: "ONBOARDING" }, orderBy: { sortOrder: "asc" } });
+    // Empty table → the 5 canonical tasks (the fallback constants).
+    const createCall = db.onboardingChecklist.create.mock.calls[0][0];
+    expect(createCall.data.tasks.create).toHaveLength(5);
+  });
+
+  it("the SEPARATION kind reads the separation rows — same one code path", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-leaver", name: "Soren Lindqvist", deletedAt: null });
+    db.onboardingTemplateTask.findMany.mockResolvedValue([
+      { id: "tt-1", kind: "SEPARATION", title: "Hand over ongoing work and documents", dueOffsetDays: 3, assignSelf: true, isActive: true, sortOrder: 10 },
+    ]);
+    const res = await createChecklist({ newHireId: "u-leaver", title: "Soren exit", useTemplate: true, kind: "SEPARATION" });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTemplateTask.findMany).toHaveBeenCalledWith({ where: { kind: "SEPARATION" }, orderBy: { sortOrder: "asc" } });
+    const createCall = db.onboardingChecklist.create.mock.calls[0][0];
+    expect(createCall.data.tasks.create).toEqual([
+      expect.objectContaining({ title: "Hand over ongoing work and documents", dueOffsetDays: 3, assigneeId: "u-leaver" }),
+    ]);
+  });
+
+  it("inactive rows are skipped; self rows go to the hire, the rest to the manager", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique
+      .mockResolvedValueOnce({ id: "u-diego", name: "Diego Morales", deletedAt: null })
+      .mockResolvedValueOnce({ managerId: "u-mgr" });
+    db.onboardingTemplateTask.findMany.mockResolvedValue([
+      { id: "tt-1", kind: "ONBOARDING", title: "Manager task", dueOffsetDays: 1, assignSelf: false, isActive: true, sortOrder: 10 },
+      { id: "tt-2", kind: "ONBOARDING", title: "Self task", dueOffsetDays: 2, assignSelf: true, isActive: true, sortOrder: 20 },
+      { id: "tt-3", kind: "ONBOARDING", title: "Off task", dueOffsetDays: 3, assignSelf: true, isActive: false, sortOrder: 30 },
+    ]);
+    const res = await createChecklist({ newHireId: "u-diego", title: "Nov onboarding", useTemplate: true });
+    expect(res.ok).toBe(true);
+    const createCall = db.onboardingChecklist.create.mock.calls[0][0];
+    expect(createCall.data.tasks.create).toEqual([
+      expect.objectContaining({ title: "Manager task", assigneeId: null }),
+      expect.objectContaining({ title: "Self task", assigneeId: "u-diego" }),
+    ]);
+    expect(db.onboardingTask.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ checklistId: "c-new", assigneeId: null }),
+        data: { assigneeId: "u-mgr" },
+      }),
+    );
+  });
+});
+
+describe("F2.10 — template CRUD (onboarding:manage)", () => {
+  it("getOnboardingTemplates serializes both kinds", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingTemplateTask.findMany.mockResolvedValue([
+      { id: "tt-1", kind: "ONBOARDING", title: "Sign the employment contract", dueOffsetDays: 1, assignSelf: false, isActive: true, sortOrder: 10 },
+      { id: "tt-2", kind: "WEIRD", title: "Unknown kind normalizes", dueOffsetDays: 2, assignSelf: true, isActive: true, sortOrder: 20 },
+    ]);
+    const res = await getOnboardingTemplates();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data[0]).toMatchObject({ id: "tt-1", kind: "ONBOARDING", dueOffsetDays: 1 });
+      expect(res.data[1].kind).toBe("ONBOARDING");
+    }
+  });
+
+  it("saveOnboardingTemplateTask creates with sortOrder defaulting to the kind's max + 1", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingTemplateTask.findFirst.mockResolvedValue({ sortOrder: 50 });
+    const res = await saveOnboardingTemplateTask({ kind: "ONBOARDING", title: "New task", dueOffsetDays: 3, assignSelf: true });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTemplateTask.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ title: "New task", sortOrder: 51 }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "onboarding.template_task_saved" }));
+  });
+
+  it("saveOnboardingTemplateTask edits by id (title/due/assignee/active)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingTemplateTask.findUnique.mockResolvedValue({ id: "tt-1", kind: "ONBOARDING", title: "Old" });
+    const res = await saveOnboardingTemplateTask({ id: "tt-1", kind: "ONBOARDING", title: "Renamed", dueOffsetDays: 5, assignSelf: false, isActive: false });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTemplateTask.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "tt-1" }, data: expect.objectContaining({ title: "Renamed", isActive: false }) }),
+    );
+  });
+
+  it("validation bounds: empty title / due day 0 / bad kind are refused", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    const badTitle = await saveOnboardingTemplateTask({ kind: "ONBOARDING", title: "  ", dueOffsetDays: 3 });
+    expect(badTitle.ok).toBe(false);
+    const badDay = await saveOnboardingTemplateTask({ kind: "ONBOARDING", title: "X", dueOffsetDays: 0 });
+    expect(badDay.ok).toBe(false);
+    const badKind = await saveOnboardingTemplateTask({ kind: "MIDWAY", title: "X", dueOffsetDays: 3 });
+    expect(badKind.ok).toBe(false);
+  });
+
+  it("deleteOnboardingTemplateTask removes the row and audits", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingTemplateTask.findUnique.mockResolvedValue({ id: "tt-1", kind: "ONBOARDING", title: "Old task" });
+    const res = await deleteOnboardingTemplateTask({ id: "tt-1" });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTemplateTask.delete).toHaveBeenCalledWith({ where: { id: "tt-1" } });
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "onboarding.template_task_deleted" }));
+  });
+
+  it("the CRUD is onboarding:manage-gated (MEMBER refused)", async () => {
+    requirePermissionMock.mockImplementation(async (perm: string) => {
+      if (perm === "onboarding:manage") {
+        throw new (class extends Error { digest = "AuthorizationError"; })("denied");
+      }
+      return MEMBER_AUTH;
+    });
+    const read = await getOnboardingTemplates();
+    const save = await saveOnboardingTemplateTask({ kind: "ONBOARDING", title: "X", dueOffsetDays: 3 });
+    const del = await deleteOnboardingTemplateTask({ id: "tt-1" });
+    expect(read.ok || save.ok || del.ok).toBe(false);
   });
 });

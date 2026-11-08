@@ -97,6 +97,12 @@ export interface WorkspaceSettingsT {
   auditRetentionDays: number;
   entityHistoryLimit: number;
   dashboardNotifLimit: number;
+  /** R6 — the deterministic hire-email domain. Typed here since F2.10:
+   * markJoined previously read it through a cast because the type omitted
+   * it (the field itself is as old as the hiring module). */
+  hiringEmailDomain: string;
+  /** F2.10 (F-R9/E5) — the joining gate on markJoined. Default true. */
+  joiningGateEnabled: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -261,6 +267,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           auditRetentionDays: workspace.auditRetentionDays,
           entityHistoryLimit: workspace.entityHistoryLimit,
           dashboardNotifLimit: workspace.dashboardNotifLimit,
+          hiringEmailDomain: workspace.hiringEmailDomain,
+          joiningGateEnabled: workspace.joiningGateEnabled,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -276,6 +284,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           auditRetentionDays: 180,
           entityHistoryLimit: 50,
           dashboardNotifLimit: 20,
+          hiringEmailDomain: "fernly.app",
+          joiningGateEnabled: true,
         },
 
     taskStatuses: taskStatuses.length

@@ -229,6 +229,10 @@ describe("permission matrix (full pin)", () => {
     "hiring:view":        [true, true, true, false],
     "hiring:manage":      [true, true, false, false],
     "hiring:config":      [true, true, false, false],
+    // F2.10 — the four-eyes approver: MANAGER yes, HR (the composer's
+    // role) no. ADMIN may approve but never its own composition
+    // (approveOffer's composer check).
+    "hiring:approve":     [true, false, true, false],
     "payroll:manage":     [true, true, false, false],
     // F1.3 — attendance records: HR/admin marking (docs/Fernly_HR_Payroll_
     // Enhancement_Plan.md §7.1, decision §9.1: no member self-marking).

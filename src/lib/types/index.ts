@@ -627,9 +627,12 @@ export interface OfferTemplateT {
   sortOrder: number;
 }
 
-/** R5 — one offer for one candidate. status: DRAFT → SENT → SIGNED | DECLINED.
+/** R5 — one offer for one candidate. status: DRAFT → APPROVED → SENT →
+ * SIGNED | DECLINED | EXPIRED (F2.10: APPROVED is the manager four-eyes
+ * step — approvedBy/At carry it; EXPIRED is the lapsed signing link).
  * R6 adds the e-sign fields: token (null while DRAFT), expiry, and the typed
- * signature capture (signedAt/signedName/signedIp). */
+ * signature capture (signedAt/signedName/signedIp). F2.10 adds startDate
+ * (the negotiated join date — F-R11). */
 export interface OfferRecordT {
   id: string;
   candidateId: string;
@@ -649,6 +652,11 @@ export interface OfferRecordT {
   tokenExpiresAt: string | null;
   signedAt: string | null;
   signedName: string;
+  /** F2.10 — the manager who approved the draft (null until APPROVED). */
+  approvedBy: string | null;
+  approvedAt: string | null;
+  /** F2.10 — the proposed join date ("YYYY-MM-DD", "" when unset). */
+  startDate: string;
 }
 
 /** R7 — one monthly money line on a payslip (see lib/payroll-math.ts). */
@@ -740,5 +748,19 @@ export interface PayslipT {
 export interface HiringFunnelT {
   totals: { total: number; active: number; selected: number; hired: number; rejected: number; withdrawn: number };
   stages: Array<{ stageKey: string; label: string; inStage: number; passed: number; avgDays: number | null }>;
-  offers: { total: number; awaiting: number; signed: number; declined: number; acceptRate: number | null };
+  /** F2.10 — expired counts lapsed/lapsing SENT links separately from
+   * awaiting (F-R5: stale links never inflate the awaiting number). */
+  offers: { total: number; awaiting: number; signed: number; declined: number; expired: number; acceptRate: number | null };
+}
+
+/** F2.10 — one row of the configurable onboarding template
+ * (OnboardingTemplateTask; the F-R8 single source). */
+export interface OnboardingTemplateTaskT {
+  id: string;
+  kind: string;
+  title: string;
+  dueOffsetDays: number;
+  assignSelf: boolean;
+  isActive: boolean;
+  sortOrder: number;
 }

@@ -107,8 +107,10 @@ async function main() {
   await db.projectAssignment.deleteMany();
   await db.workspace.deleteMany();
   await db.candidate.deleteMany();
+  await db.mailOutbox.deleteMany();
   await db.hiringStageConfig.deleteMany();
   await db.documentTypeConfig.deleteMany();
+  await db.onboardingTemplateTask.deleteMany();
   await db.offerTemplate.deleteMany();
   await db.offerRecord.deleteMany();
   await db.salaryStructure.deleteMany();
@@ -133,6 +135,9 @@ async function main() {
       auditLogLimit: 300,
       entityHistoryLimit: 50,
       dashboardNotifLimit: 20,
+      // F2.10 — the joining gate (mandatory docs VERIFIED + terminal BGV
+      // before markJoined). Default on; toggleable in Settings → General.
+      joiningGateEnabled: true,
     },
   });
 
@@ -1922,6 +1927,38 @@ async function main() {
       });
     }
   }
+  // F2.10 (F-R10) — an interview-invite email in the outbox: Sam
+  // Whitaker's interview_1 invite (SKIPPED — the sandbox preview has no
+  // RESEND_API_KEY, exactly like every live send from it).
+  {
+    const sam = await db.candidate.findUnique({ where: { email: "sam.whitaker@example.com" } });
+    const when = (sam ? (CANDIDATES.find((c) => c.email === sam.email)?.scheduled ?? {}) : {})["interview_1"];
+    if (sam && when) {
+      const d = when instanceof Date ? when : new Date(when);
+      const whenLabel = d.toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      await db.mailOutbox.create({
+        data: {
+          kind: "INTERVIEW_INVITE",
+          candidateId: sam.id,
+          toAddress: sam.email,
+          subject: `Interview invitation — ${sam.position || "the role"} at Fernly Workspace`,
+          body:
+            `Hi Sam,\n\n` +
+            `Thank you for your continued application for the ${sam.position || "Backend Engineer"} role at Fernly Workspace.\n` +
+            `We would like to invite you to an interview:\n\n` +
+            `  Stage: Interview 1 — Tech\n` +
+            `  When: ${whenLabel} (60 minutes)\n` +
+            `  With: Ingrid Solberg\n\n` +
+            `If the time does not work, just reply to this email and we will find another slot.\n\n` +
+            `Looking forward to speaking with you!\n\n` +
+            `Warm regards,\nThe Fernly Workspace Hiring Team`,
+          status: "SKIPPED",
+          sentById: hrUserId ?? demoUser.id,
+          sentAt: addDays(TODAY, -1),
+        },
+      });
+    }
+  }
   console.log(`  ✓ Hiring R2: ${CANDIDATES.reduce((n, c) => n + Object.keys(c.scheduled ?? {}).length, 0)} interviews scheduled on the calendar + 1 filled scorecard`);
   console.log(`  ✓ Hiring R3: 1 selected candidate (offer prep) + 1 rejection email in the outbox`);
   console.log(`  ✓ Hiring: ${STAGE_TEMPLATE.length}-stage template + ${CANDIDATES.length} candidates (4 active, 1 selected, 1 rejected, 1 withdrawn)`);
@@ -1965,6 +2002,29 @@ async function main() {
     }
   }
   console.log(`  ✓ Hiring R4: ${DOC_TYPES.length} document types + Priyanka's checklist (1 verified, 1 received, 1 requested, 1 rejected) + BGV in review`);
+
+  // -----------------------------------------------------------------
+  // F2.10 (F-R8) — the ONE onboarding template source: the canonical
+  // 5+5 tasks as table rows (both kinds). markJoined and createChecklist
+  // instantiate from these; the constants in lib/onboarding-template.ts
+  // are only the empty-table fallback.
+  // -----------------------------------------------------------------
+  const ONBOARDING_TEMPLATE_TASKS = [
+    { kind: "ONBOARDING", title: "Sign the employment contract", dueOffsetDays: 1, assignSelf: false, sortOrder: 10 },
+    { kind: "ONBOARDING", title: "Set up accounts and SSO access", dueOffsetDays: 2, assignSelf: false, sortOrder: 20 },
+    { kind: "ONBOARDING", title: "Meet your manager for the 1:1 kick-off", dueOffsetDays: 3, assignSelf: false, sortOrder: 30 },
+    { kind: "ONBOARDING", title: "Complete the workspace tour", dueOffsetDays: 5, assignSelf: true, sortOrder: 40 },
+    { kind: "ONBOARDING", title: "First small task shipped with a mentor", dueOffsetDays: 14, assignSelf: true, sortOrder: 50 },
+    { kind: "SEPARATION", title: "Hand over ongoing work and documents", dueOffsetDays: 3, assignSelf: true, sortOrder: 10 },
+    { kind: "SEPARATION", title: "Return laptop and access devices", dueOffsetDays: 5, assignSelf: true, sortOrder: 20 },
+    { kind: "SEPARATION", title: "Revoke accounts, SSO and tool access", dueOffsetDays: 5, assignSelf: false, sortOrder: 30 },
+    { kind: "SEPARATION", title: "Hold the exit interview", dueOffsetDays: 7, assignSelf: false, sortOrder: 40 },
+    { kind: "SEPARATION", title: "Settle the full-and-final statement", dueOffsetDays: 10, assignSelf: false, sortOrder: 50 },
+  ];
+  await db.onboardingTemplateTask.createMany({
+    data: ONBOARDING_TEMPLATE_TASKS.map((t) => ({ ...t, isActive: true })),
+  });
+  console.log(`  ✓ F2.10: onboarding template source seeded (${ONBOARDING_TEMPLATE_TASKS.length} rows — 5 onboarding + 5 separation)`);
 
   // -----------------------------------------------------------------
   // R5 — offer templates (NZ flavour: KiwiSaver 3% employer contribution
@@ -2031,6 +2091,10 @@ async function main() {
     const designerTpl = await db.offerTemplate.findUnique({ where: { key: "designer" } });
     if (priyanka && designerTpl) {
       const hrId = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+      // F2.10 (F-R11) — a real negotiated start date ~3 weeks out; the
+      // letter's {{startDate}} placeholder renders it (it used to be blank).
+      const startDate = addDays(TODAY, 21);
+      const startLabel = startDate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
       const comps = JSON.parse(designerTpl.components);
       const basic = comps.find((cp) => cp.key === "basic").amount;
       const ctc = comps.reduce((sum, cp) => sum + (cp.mode === "PERCENT_OF_BASIC" ? (basic * cp.amount) / 100 : cp.amount), 0);
@@ -2039,7 +2103,7 @@ async function main() {
         .replace(/{{candidateName}}/g, priyanka.fullName)
         .replace(/{{position}}/g, priyanka.position || "Product Designer")
         .replace(/{{workspaceName}}/g, "Fernly Workspace")
-        .replace(/{{startDate}}/g, "the first Monday after signing")
+        .replace(/{{startDate}}/g, startLabel)
         .replace(/{{annualCtc}}/g, `$${Math.round(ctc).toLocaleString("en-NZ")}`)
         .replace(/{{netPay}}/g, `$${Math.round(earnings).toLocaleString("en-NZ")}`);
       await db.offerRecord.create({
@@ -2050,14 +2114,47 @@ async function main() {
           components: designerTpl.components,
           benefits: designerTpl.benefits,
           letterText: letter,
+          startDate,
           status: "DRAFT",
-          notes: "Negotiating start date; numbers match the band.",
+          notes: `Negotiated start ${startLabel}; numbers match the band.`,
           createdById: hrId,
         },
       });
+      // F2.10 (F-R5) — an older attempt whose signing link lapsed: the
+      // funnel counts it as expired (never "awaiting"), the offers panel
+      // shows the EXPIRED chip with the honest hint.
+      const qaTpl = await db.offerTemplate.findUnique({ where: { key: "qa_engineer" } });
+      if (qaTpl) {
+        const qaComps = JSON.parse(qaTpl.components);
+        const qaBasic = qaComps.find((cp) => cp.key === "basic").amount;
+        const qaCtc = qaComps.reduce((sum, cp) => sum + (cp.mode === "PERCENT_OF_BASIC" ? (qaBasic * cp.amount) / 100 : cp.amount), 0);
+        const qaEarnings = qaComps.filter((cp) => cp.kind === "EARNING").reduce((sum, cp) => sum + (cp.mode === "PERCENT_OF_BASIC" ? (qaBasic * cp.amount) / 100 : cp.amount), 0);
+        await db.offerRecord.create({
+          data: {
+            candidateId: priyanka.id,
+            templateId: qaTpl.id,
+            templateLabel: qaTpl.label,
+            components: qaTpl.components,
+            benefits: qaTpl.benefits,
+            letterText: qaTpl.letterTemplate
+              .replace(/{{candidateName}}/g, priyanka.fullName)
+              .replace(/{{position}}/g, priyanka.position || "Product Designer")
+              .replace(/{{workspaceName}}/g, "Fernly Workspace")
+              .replace(/{{startDate}}/g, startLabel)
+              .replace(/{{annualCtc}}/g, `$${Math.round(qaCtc).toLocaleString("en-NZ")}`)
+              .replace(/{{netPay}}/g, `$${Math.round(qaEarnings).toLocaleString("en-NZ")}`),
+            startDate,
+            status: "EXPIRED",
+            notes: "First attempt (QA band) — the signing link expired; renegotiated on the designer band.",
+            createdById: hrId,
+            token: "seed-expired-offer-token-0000000000000000",
+            tokenExpiresAt: addDays(TODAY, -2),
+          },
+        });
+      }
     }
   }
-  console.log(`  ✓ Hiring R5: ${OFFER_TEMPLATES.length} offer templates + 1 draft offer for Priyanka (designer band)`);
+  console.log(`  ✓ Hiring R5: ${OFFER_TEMPLATES.length} offer templates + Priyanka's draft offer (designer band, start date set) + 1 expired earlier attempt`);
   console.log(`  ✓ Hiring R6 ready: send the draft from the offer builder — the public /offer/<token> page collects the signature, then "Mark joined" provisions the account`);
 
   // -----------------------------------------------------------------

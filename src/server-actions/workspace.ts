@@ -46,6 +46,8 @@ export async function updateWorkspaceSettings(input: Partial<{
   auditRetentionDays: number;
   entityHistoryLimit: number;
   dashboardNotifLimit: number;
+  /** F2.10 — the joining-gate toggle (Settings → General). */
+  joiningGateEnabled?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

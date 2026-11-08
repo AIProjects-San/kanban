@@ -238,6 +238,29 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
             />
           </Field>
         </FormRow>
+        <FormRow>
+          {/* F2.10 (F-R9/E5) — the joining gate: markJoined refuses while any
+              mandatory document is un-VERIFIED or a background check is
+              non-terminal. Default ON (the benchmark's
+              required_for_employee_creation discipline). */}
+          <label className="flex items-start gap-2.5 text-sm cursor-pointer rounded-md border border-border px-3 py-2.5">
+            <input
+              type="checkbox"
+              className="accent-primary mt-0.5"
+              checked={form.joiningGateEnabled ?? true}
+              onChange={(e) => setForm({ ...form, joiningGateEnabled: e.target.checked })}
+              data-testid="joining-gate-toggle"
+            />
+            <span>
+              <span className="font-medium">Joining gate</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                A candidate can only be marked joined when every mandatory document is VERIFIED and every
+                background check is terminal (cleared or flagged). Turn off for the advisory-only flow.
+              </span>
+            </span>
+          </label>
+          <div />
+        </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">
             {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Save size={14} /> Save settings</>}

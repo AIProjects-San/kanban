@@ -191,6 +191,8 @@ export const workspaceSettingsSchema = z.object({
   auditRetentionDays: z.number().int().finite().min(30).max(3650).optional(),
   entityHistoryLimit: z.number().int().finite().min(1).max(1000).optional(),
   dashboardNotifLimit: z.number().int().finite().min(1).max(200).optional(),
+  // F2.10 (F-R9/E5) — the joining-gate toggle (Settings → General).
+  joiningGateEnabled: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**
@@ -533,6 +535,22 @@ export const taskDoneSchema = z.object({
   done: z.boolean(),
 }).strict();
 
+// F2.10 (F-R8) — the configurable onboarding-template source
+// (OnboardingTemplateTask CRUD, onboarding:manage).
+export const saveOnboardingTemplateTaskSchema = z.object({
+  id: cuidish.optional(),
+  kind: z.enum(["ONBOARDING", "SEPARATION"]),
+  title: z.string().trim().min(1, "Task title is required.").max(200),
+  dueOffsetDays: z.number().int().min(1).max(365),
+  assignSelf: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(999).optional(),
+}).strict();
+
+export const deleteOnboardingTemplateTaskSchema = z.object({
+  id: cuidish,
+}).strict();
+
 // ---------------------------------------------------------------------------
 // F2.1 — offboarding & full-and-final lite
 // (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2).
@@ -745,6 +763,8 @@ export const createOfferRecordSchema = z.object({
   candidateId: cuidish,
   templateId: cuidish,
   notes: z.string().trim().max(2_000).default(""),
+  // F2.10 (F-R11) — the negotiated start date; feeds {{startDate}}.
+  startDate: isoDateStr.optional(),
 }).strict();
 
 export const updateOfferRecordSchema = z.object({
@@ -753,6 +773,14 @@ export const updateOfferRecordSchema = z.object({
   benefits: z.array(z.string().trim().min(1).max(200)).max(30),
   letterText: z.string().trim().max(10_000).default(""),
   notes: z.string().trim().max(2_000).default(""),
+  // F2.10 — editable alongside the letter (editing an APPROVED draft
+  // demotes it back to DRAFT: re-approval required).
+  startDate: isoDateStr.optional(),
+}).strict();
+
+// F2.10 — the manager approval step (R11/D-20): DRAFT → APPROVED.
+export const approveOfferSchema = z.object({
+  offerId: cuidish,
 }).strict();
 
 // ---------------------------------------------------------------------------

@@ -23,19 +23,13 @@ export interface JoinerHandout {
   email: string;
   workspaceName: string;
   mailStatus: string;
+  /** F2.10 (F-R7) — the salary-structure copy verdict. */
+  payrollReady: boolean;
+  /** F2.10 (F-R8) — the REAL instantiated checklist tasks (title + "day N"),
+   * replacing this file's former DAY_ONE_TASKS constant (the third drifted
+   * copy of the template — now the server sends the data it created). */
+  tasks: { title: string; due: string }[];
 }
-
-/** The day-one checklist shown on the handout — mirrors the five
- * onboardingChecklist tasks markJoined creates server-side
- * (src/server-actions/hiring.ts, markJoined). If that template changes,
- * change this list with it. */
-const DAY_ONE_TASKS: Array<{ title: string; due: string }> = [
-  { title: "Sign the employment contract", due: "day 1" },
-  { title: "Set up accounts and SSO access", due: "day 2" },
-  { title: "Meet your manager for the 1:1 kick-off", due: "day 3" },
-  { title: "Complete the workspace tour", due: "day 5" },
-  { title: "First small task shipped with a mentor", due: "day 14" },
-];
 
 export function JoinerHandoutModal({ handout, onClose }: { handout: JoinerHandout | null; onClose: () => void }) {
   if (!handout) return null;
@@ -74,6 +68,15 @@ export function JoinerHandoutModal({ handout, onClose }: { handout: JoinerHandou
             {handout.position && <div>Role: {handout.position}</div>}
           </div>
           {appUrl && <div className="text-xs text-muted-foreground">Sign in at {appUrl}</div>}
+          {/* F2.10 (F-R7) — the payroll-ready verdict rides the sheet too. */}
+          <div
+            className={"text-xs " + (handout.payrollReady ? "text-emerald-600" : "text-amber-600")}
+            data-testid="joiner-handout-payroll"
+          >
+            {handout.payrollReady
+              ? "Payroll-ready — your salary structure was created from the signed offer."
+              : "Payroll is NOT set up yet — no salary components were on the offer. Follow up with HR."}
+          </div>
         </div>
 
         <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Set your password</div>
@@ -92,7 +95,7 @@ export function JoinerHandoutModal({ handout, onClose }: { handout: JoinerHandou
 
         <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Your first two weeks</div>
         <ul className="space-y-1 text-sm">
-          {DAY_ONE_TASKS.map((t) => (
+          {handout.tasks.map((t) => (
             <li key={t.title} className="flex items-baseline gap-2">
               <span className="inline-block w-3.5 h-3.5 shrink-0 translate-y-[2px] rounded-[3px] border border-border" aria-hidden />
               <span className="grow">{t.title}</span>

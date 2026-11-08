@@ -283,6 +283,10 @@ model CalendarEvent {
   location    String   @default("")
   createdAt   DateTime @default(now())
 
+  // F2.10 (F-R6) — interview reminders link to their event so a reschedule
+  // can delete the stale pair instead of orphaning it.
+  reminders    Reminder[]
+
   // PR-16 — the dashboard's upcoming-events window and the ICS export both
   // filter + order on date; the model previously had zero indexes.
   @@index([date])
@@ -359,9 +363,17 @@ model Reminder {
   // so old data isn't lost on migrate. See dashboard.ts + reminders.ts.
   ownerId   String?
 
+  // F2.10 (F-R6) — when this reminder belongs to a calendar event (the
+  // interviewer's interview reminder), the event it was created for. A
+  // reschedule deletes the old pair via this link; null = standalone
+  // personal reminder (the pre-F2.10 shape).
+  eventId   String?
+  event     CalendarEvent? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
   // PR-16 — the dashboard widget filters on ownerId (personal vs broadcast);
   // the model previously had zero indexes.
   @@index([ownerId])
+  @@index([eventId])
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +519,13 @@ model Workspace {
   // joins: <first>.<last>@hiringEmailDomain (collisions get a numeric
   // suffix). Default matches the product's own domain.
   hiringEmailDomain    String   @default("fernly.app")
+  // F2.10 (F-R9/E5) — the joining gate: when true, markJoined refuses while
+  // any mandatory document is un-VERIFIED or any background check is
+  // non-terminal (INITIATED/IN_REVIEW), mirroring the benchmark's
+  // required_for_employee_creation. Default true (the gated behavior IS the
+  // epic's point); workspaces that want the old advisory flow can turn it
+  // off in Settings → General.
+  joiningGateEnabled   Boolean  @default(true)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -1110,6 +1129,32 @@ model OnboardingTask {
   @@index([assigneeId])
 }
 
+// F2.10 (F-R8) — the ONE onboarding template source. Before this table the
+// five-task template lived as THREE copies in code (hr-onboarding.ts's
+// DEFAULT_TEMPLATE, an inline copy inside markJoined that had already
+// drifted — its manager tasks were never auto-assigned — and a client copy
+// in joiner-handout.tsx). Rows are configurable (onboarding:manage CRUD);
+// an empty table falls back to the canonical constants
+// (lib/onboarding-template.ts) so a fresh install is never template-less.
+model OnboardingTemplateTask {
+  id            String   @id @default(cuid())
+  // ONBOARDING | SEPARATION — which default template the row belongs to.
+  kind          String   @default("ONBOARDING")
+  title         String
+  // Days after the checklist starts the task is due by.
+  dueOffsetDays Int      @default(7)
+  // true = the new hire / exiting employee ticks it themself; false = the
+  // hire's manager (or HR when no manager is set) owns it.
+  assignSelf    Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([kind])
+  @@index([sortOrder])
+}
+
 // F2.1 — exit interview (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2;
 // benchmark EM-15: frappe/hrms Exit Interview). One LIVE record per
 // employee: the action layer enforces "at most one non-cancelled row per
@@ -1447,10 +1492,22 @@ model OfferRecord {
   // Rendered letter text (placeholders resolved; the R6 signing page shows
   // this + a snapshot of components as the immutable record).
   letterText   String    @default("")
-  // DRAFT | SENT | SIGNED | DECLINED
+  // F2.10 — the proposed join date HR negotiated with the candidate. Feeds
+  // the {{startDate}} letter placeholder (F-R11: it rendered empty before)
+  // and the printable appointment letter.
+  startDate    DateTime?
+  // DRAFT | APPROVED | SENT | SIGNED | DECLINED | EXPIRED.
+  // F2.10 — APPROVED: a manager (hiring:approve, distinct from the HR
+  // composer) must approve the draft before sendOffer will send it
+  // (R11/D-20 four-eyes). EXPIRED: a SENT offer whose signing link passed
+  // tokenExpiresAt — lapsed lazily on hiring reads (F-R5: expired links
+  // stop counting as "awaiting" in the funnel).
   status       String    @default("DRAFT")
   notes        String    @default("")
   createdById  String    @default("")
+  // F2.10 — who approved the draft and when (approvedById "" = not yet).
+  approvedById String    @default("")
+  approvedAt   DateTime?
   // R6 — single-use signing token (NULL while DRAFT; unique so a token
   // can address at most one offer) + typed-signature capture.
   token        String?   @unique

@@ -117,3 +117,68 @@ describe("OfferLinkInvalid", () => {
     expect(box.textContent).toContain("single-use");
   });
 });
+
+// ---------------------------------------------------------------------------
+// F2.10 (R12) — the post-sign APPOINTMENT LETTER: the signed state renders
+// a printable confirmation (letter snapshot + package + signature record)
+// riding the .print-area / window.print() pattern.
+// ---------------------------------------------------------------------------
+
+describe("OfferSignView — the appointment letter (F2.10 / R12)", () => {
+  it("the signed state renders the printable letter: heading, letter text, package, signature block + print button", () => {
+    render(
+      <OfferSignView
+        offer={OFFER}
+        initialOutcome="signed"
+        signedAt="2026-11-14T10:30:00.000Z"
+        signedName="Priyanka Menon"
+      />,
+    );
+    const letter = screen.getByTestId("appointment-letter");
+    expect(letter.textContent).toContain("Letter of Appointment");
+    // The letter snapshot rides the sheet verbatim.
+    expect(letter.textContent).toContain("We are delighted to offer you");
+    // The package table with the CTC.
+    const pkg = screen.getByTestId("appointment-letter-package");
+    expect(pkg.textContent).toContain("Basic Salary");
+    expect(pkg.textContent).toContain("$70,040");
+    // The recorded signature block.
+    const sig = screen.getByTestId("appointment-letter-signature");
+    expect(sig.textContent).toContain("Accepted electronically");
+    expect(sig.textContent).toContain("Priyanka Menon");
+    expect(sig.textContent).toContain("14 Nov 2026");
+    // The print affordance (window.print()).
+    const printBtn = screen.getByTestId("appointment-letter-print");
+    expect(printBtn).toBeTruthy();
+  });
+
+  it("the print button calls window.print()", () => {
+    const printSpy = vi.fn();
+    vi.stubGlobal("print", printSpy);
+    try {
+      render(
+        <OfferSignView
+          offer={OFFER}
+          initialOutcome="signed"
+          signedAt="2026-11-14T10:30:00.000Z"
+          signedName="Priyanka Menon"
+        />,
+      );
+      fireEvent.click(screen.getByTestId("appointment-letter-print"));
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("the just-signed client path (no signedAt props) still renders the letter with the candidate's name", async () => {
+    signOffer.mockResolvedValue({ ok: true, data: { ok: true } });
+    render(<OfferSignView offer={OFFER} />);
+    fireEvent.change(screen.getByTestId("offer-sign-name"), { target: { value: "Priyanka Menon" } });
+    fireEvent.click(screen.getByTestId("offer-sign-submit"));
+    await waitFor(() => expect(screen.getByTestId("appointment-letter")).toBeTruthy());
+    // Without a recorded signedName the letter falls back to the offer's
+    // candidate name — never a blank signature block.
+    expect(screen.getByTestId("appointment-letter-signature").textContent).toContain("Priyanka Menon");
+  });
+});
