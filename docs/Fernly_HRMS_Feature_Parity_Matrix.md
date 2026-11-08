@@ -72,8 +72,8 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | PR-19 | `Salary Withholding` (+cycle child) | Draft → Withheld → Released, driven by JE doc_events | — | Missing | P13 |
 | PR-20 | `Gratuity` (submittable) | rule-driven payout doc, Draft/Unpaid/Paid | — | Missing | P16 / F3.3 |
 | PR-21 | `Gratuity Rule` (+slab +applicable-component children) | slab table (years → fraction), 3 experience methods, applicable earnings | — | Missing | P16 / F3.3 |
-| PR-22 | `Employee Incentive` (submittable) | one-off incentive → Additional Salary | — | Missing | — |
-| PR-23 | `Retention Bonus` (submittable) | retention payout with notification | — | Missing | — |
+| PR-22 | `Employee Incentive` (submittable) | one-off incentive → Additional Salary | P1/P6: the PayAdjustment manual writer's INCENTIVE source IS the one-off incentive (label/amount/period, audited `payroll.adjustment_created`) | **Parity (workspace scope)** (was Missing) | **P6 DONE (2026-11-09)** |
+| PR-23 | `Retention Bonus` (submittable) | retention payout with notification | P6: `createRetentionBonus` — the pure `planRetentionBonus` split (equal installments, the last absorbs rounding so Σ == total; 1–12 monthly ONE_SHOT rows through the adapter), the in-app notification + the RETENTION_BONUS outbox email (queued in the transaction, delivered outside — the INTERVIEW_INVITE pattern); the Retention bonus button + preview modal in the Payroll view. Remaining: the submittable-doc states | Partial | **P6 DONE (2026-11-09)** |
 | PR-24 | `Employee Other Income` (submittable) | other-income declaration for tax projection | — (pre-statutory, ADR-014) | Out of scope | P15 |
 | PR-25 | `Income Tax Slab` (+`Taxable Salary Slab`, `Income Tax Slab Other Charges` children) | slab engine with conditions, exemption regime switch, other taxes | — (ADR-014) | Out of scope | P15 |
 | PR-26–29 | `Employee Tax Exemption Category` / `Sub Category` / `Declaration` / `Proof Submission` (+2 children) | declaration-vs-proof exemption workflow | — (ADR-014) | Out of scope | P15 |
@@ -132,7 +132,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | PR-C04 | Chart `benefit_claims` | — | Missing | X7 |
 | PR-N01–06 | Cards: total_outgoing_salary, total_salary_structure, benefit_claims, tax_exemption_proofs, total_declaration_submitted, total_incentive_given | — (payroll-view YTD panel is the only aggregate) | Missing | X7 |
 | PR-P01–03 | Print formats: salary_slip_classic / compact / detailed | one payslip print layout (modal print CSS; F2.6 will formalize the PDF download) | Partial | P20 / F2.6 |
-| PR-T01 | Notification `Retention Bonus` | — | Missing | — |
+| PR-T01 | Notification `Retention Bonus` | — | P6: the RETENTION_BONUS outbox kind + the in-app notification on bonus creation (both surfaces, best-effort email) | **Parity (workspace scope)** (was Missing) | **P6 DONE** |
 
 ---
 
@@ -541,6 +541,8 @@ Counted over the **314 mapped rows** above (artifacts + behaviors + reports/char
 **P4 of the 2026-11-09 payroll sweep (F3.1, PR-14/PR-B12)** — 2 rows, Missing → Partial/Parity: PR-14 (LWP correction reversal through the pure `planLwpCorrection` kernel — preview + `reverseLwpDays` emitting LWP_CREDIT adapter rows with the days as `sourceDays` data; the submittable-doc shape remains → Partial) and PR-B12 (the reversal rule itself, cap included → Parity, workspace scope). Census after P4: **59 Parity · 84 Partial · 130 Missing · 36 Out of scope**.
 
 **P5 of the 2026-11-09 payroll sweep (F3.2, PR-15–18/PR-B04)** — 4 rows: PR-15 Missing → Partial (yearly capped elections + the Benefits panel; member self-service application and split frequencies remain), PR-17/PR-18/PR-B04 Missing → **Parity (workspace scope)** (claims against the accrued balance via the adapter; the append-only accrual ledger written at every run lock, ÷12 paid-days-scaled; the pro-rata election rules). Census after P5: **62 Parity · 85 Partial · 126 Missing · 36 Out of scope**.
+
+**P6 of the 2026-11-09 payroll sweep (PR-22/PR-23/PR-T01)** — 3 rows: PR-22 Missing → **Parity (workspace scope)** (the INCENTIVE source on the P1 manual writer), PR-23 Missing → Partial (the installments writer with rounding-honest splits + dual notification; the submittable-doc states remain), PR-T01 Missing → **Parity (workspace scope)** (RETENTION_BONUS outbox email + in-app notification). Census after P6: **64 Parity · 86 Partial · 123 Missing · 36 Out of scope**.
 
 Family-level (the plan's 77 families, statuses current at `bb2e046` — matches the reassessment): **12 Parity · 23 Partial · 36 Missing · 6 Out of scope**. Module-level: every row above is assigned to exactly one of the four domain logic modules — **hr 145 · admin 24 · account 93 · joining 52** — via the domain default plus 20 row-level exceptions, in `Fernly_Domain_Modules_Architecture_Plan.md` §5 (reproducible: `python3 scripts/module_rollup.py`, totals sanity-checked against this section).
 

@@ -14,7 +14,7 @@ import {
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
-  Scale, CircleDollarSign, Undo2, HeartPulse,
+  Scale, CircleDollarSign, Undo2, HeartPulse, Award,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -187,6 +187,8 @@ export type AuditAction =
   | "payroll.benefit_election_cancelled"
   | "payroll.benefit_claimed"
   | "payroll.benefits_accrued"
+  // P6 (PR-20/PR-23, PR-T01) — retention bonus.
+  | "payroll.retention_bonus_created"
   | "leave.encashment_requested"
   | "leave.encashment_approved"
   | "leave.encashment_rejected";
@@ -348,6 +350,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.benefit_election_cancelled": { icon: HeartPulse, cls: "text-zinc-500 bg-zinc-500/10" },
   "payroll.benefit_claimed": { icon: HeartPulse, cls: "text-sky-500 bg-sky-500/10" },
   "payroll.benefits_accrued": { icon: HeartPulse, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.retention_bonus_created": { icon: Award, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_requested": { icon: CircleDollarSign, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_approved": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_rejected": { icon: CircleDollarSign, cls: "text-rose-500 bg-rose-500/10" },

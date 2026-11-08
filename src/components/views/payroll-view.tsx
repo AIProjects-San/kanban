@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
+import { Award, BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -30,6 +30,7 @@ import { PayAdjustmentModal } from "../ui/pay-adjustment-modal";
 import { ArrearsModal } from "../ui/arrears-modal";
 import { LwpCorrectionModal } from "../ui/lwp-correction-modal";
 import { BenefitsModal } from "../ui/benefits-modal";
+import { RetentionBonusModal } from "../ui/retention-bonus-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -64,6 +65,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [lwpSlip, setLwpSlip] = useState<PayslipT | null>(null);
   // P5 (F3.2) — the flexible-benefits panel.
   const [benefitsOpen, setBenefitsOpen] = useState(false);
+  // P6 (PR-20/PR-23) — the retention-bonus writer.
+  const [retentionOpen, setRetentionOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -179,6 +182,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => setBenefitsOpen(true)} data-testid="benefits-btn">
             <HeartPulse size={15} /> Benefits
+          </button>
+          <button className="f-btn f-btn-ghost" onClick={() => setRetentionOpen(true)} data-testid="retention-btn">
+            <Award size={15} /> Retention bonus
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => { setEditStructure(null); setStructureModalOpen(true); }} data-testid="new-structure-btn">
             <Plus size={15} /> Salary structure
@@ -437,6 +443,12 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       <BenefitsModal
         open={benefitsOpen}
         onClose={() => setBenefitsOpen(false)}
+        onChanged={load}
+        employees={employees}
+      />
+      <RetentionBonusModal
+        open={retentionOpen}
+        onClose={() => setRetentionOpen(false)}
         onChanged={load}
         employees={employees}
       />

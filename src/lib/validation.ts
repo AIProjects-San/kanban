@@ -997,3 +997,12 @@ export const claimBenefitSchema = z.object({
   payoutPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a payout month (YYYY-MM)."),
   note: z.string().trim().max(500).default(""),
 }).strict();
+
+// P6 (PR-20/PR-23, PR-T01) — the retention-bonus writer.
+export const createRetentionBonusSchema = z.object({
+  userId: cuidish,
+  totalAmount: z.number().min(0.01, "The bonus total must be positive.").max(10_000_000),
+  installments: z.number().int().min(1).max(12),
+  firstPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a first payout month (YYYY-MM)."),
+  note: z.string().trim().max(500).default(""),
+}).strict();

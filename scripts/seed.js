@@ -2678,6 +2678,38 @@ async function main() {
       console.log(`  ✓ P5 (F3.2) flexible benefits: Hana's HEALTH election $1,200/yr (cap $2,000), ${prevPeriod} accrual +100, one $60 claim onto ${thisPeriod} (balance $40 claimable)`);
       void p5Election;
     }
+
+    // ------------------------------------------------------------------
+    // P6 (PR-20/PR-23, PR-T01) — retention bonus seed: Diego's 3-installment
+    // bonus ($1,500 → 500/month, Dec–Feb) with its outbox email — the
+    // adjustment rows land on future runs' queue.
+    // ------------------------------------------------------------------
+    const p6Diego = userByName.get("Diego Morales");
+    if (p6Diego) {
+      for (let i = 0; i < 3; i++) {
+        const period = i === 0 ? nextPeriod : periodOf(new Date(nextPeriodDate.getFullYear(), nextPeriodDate.getMonth() + i, 1));
+        await db.payAdjustment.create({
+          data: {
+            userId: p6Diego, sourceType: "RETENTION_BONUS", sourceId: "",
+            componentCode: "", label: "Retention bonus — Diego Morales", side: "EARNING",
+            recurrence: "ONE_SHOT", calcMode: "FIXED", amount: 500, period,
+            note: `Installment ${i + 1} of 3 ($1,500 total)`,
+            createdById: hrId,
+          },
+        });
+      }
+      await db.mailOutbox.create({
+        data: {
+          kind: "RETENTION_BONUS", candidateId: null,
+          toAddress: "diego@fernly.app",
+          subject: "Retention bonus",
+          body: `Hi Diego Morales,\n\nA retention bonus of $1,500 has been approved, paid in 3 monthly installments on the ${nextPeriod}-2027-02 payroll runs.\n\n\u2014 Fernly`,
+          status: "SENT", sentById: hrId, sentAt: addDays(TODAY, -1),
+          providerMessageId: "seed-retention-0000000000000000", error: "",
+        },
+      });
+      console.log(`  ✓ P6 (PR-20/PR-23) retention bonus: Diego's $1,500 in 3 installments (${nextPeriod} onward) + the SENT notification email`);
+    }
   }
 
   // -------------------------------------------------------------------------
