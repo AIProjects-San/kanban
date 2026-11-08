@@ -89,6 +89,13 @@ export function OnboardingTab() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
+  // F2.1 — separation checklists live in the Offboarding tab; this tab
+  // keeps the new-hire flow only.
+  const onboardingOnly = useMemo(
+    () => (checklists ?? []).filter((c) => c.kind !== "SEPARATION"),
+    [checklists],
+  );
+
   if (checklists === null) {
     return <div className="p-6 text-sm text-muted-foreground">Loading onboarding checklists…</div>;
   }
@@ -105,7 +112,7 @@ export function OnboardingTab() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {checklists.map((c) => {
+        {onboardingOnly.map((c) => {
           const { done, total, pct } = progressOf(c);
           return (
             <div key={c.id} className="f-card p-4" data-testid={`checklist-${c.title}`}>
@@ -141,7 +148,7 @@ export function OnboardingTab() {
             </div>
           );
         })}
-        {checklists.length === 0 && (
+        {onboardingOnly.length === 0 && (
           <div className="f-card p-6 text-sm text-muted-foreground lg:col-span-2">No onboarding checklists yet.</div>
         )}
       </div>

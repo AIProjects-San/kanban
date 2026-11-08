@@ -297,6 +297,20 @@ export async function createLeaveRequest(input: {
     });
     if (!type || !type.active) throw new AuthorizationError("Unknown or inactive leave type.");
 
+    // F2.1 — offboarding finality: an EXITED employee cannot request leave
+    // (the benchmark's active-employee check, at the one gate Fernly has).
+    // "" (not tracked) and every other status stay requestable — only the
+    // recorded exit ends the arc.
+    const requesterProfile = await db.employeeProfile.findUnique({
+      where: { userId: auth.userId },
+      select: { employmentStatus: true },
+    });
+    if (requesterProfile?.employmentStatus === "EXITED") {
+      throw new AuthorizationError(
+        "Your employment is recorded as exited — leave requests are closed. Contact HR if this is wrong.",
+      );
+    }
+
     const start = parseDay(data.startDate);
     const end = parseDay(data.endDate);
     if (daysBetween(start, end) < 0) {

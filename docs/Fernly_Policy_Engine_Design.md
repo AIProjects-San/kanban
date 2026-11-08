@@ -6,7 +6,7 @@
 | --- | --- |
 | Document | `docs/Fernly_Policy_Engine_Design.md` |
 | Date | 2026-11-08 |
-| Status | Design — the leave-policy half (§4) **landed as F2.4** (2026-11-08; see Appendix C as-built). The payroll half (§5) lands with F2.3/F2.8/F3.3; §7's module map is the M-track's target shape (files live under `src/lib/` until M1–M4 move them). Companion to `Fernly_Domain_Modules_Architecture_Plan.md` (structure) and `Fernly_HR_Payroll_Enhancement_Plan.md` (epics); this document defines *how business logic is expressed* in the four modules so that organizations differ by **rows in the database, not branches in the code** |
+| Status | Design — the leave-policy half (§4) **landed as F2.4** and the FnF lite half of §5.5 **landed as F2.1** (2026-11-08; see Appendices C/D as-built). The remaining payroll half (§5.1–§5.4, §5.5's knobs) lands with F2.3/F2.8/F3.3; §7's module map is the M-track's target shape (files live under `src/lib/` until M1–M4 move them). Companion to `Fernly_Domain_Modules_Architecture_Plan.md` (structure) and `Fernly_HR_Payroll_Enhancement_Plan.md` (epics); this document defines *how business logic is expressed* in the four modules so that organizations differ by **rows in the database, not branches in the code** |
 | Directive | "All modules should have pure code functions. Some business logic can be configurable from db like different deductions from net salary, number of leaves, holiday dates etc. Think all this business logic. Also some organizations allow leaves in negative i.e. take advanced leaves and add them monthly, some organization deposit all leaves after completion of a year of service etc." (2026-11-08) |
 | Fernly code state | `1fdc6a7` (`origin/main`; Phase 1 complete, parity matrix + module plan landed) |
 | Benchmark | Frappe HR (`frappe/hrms`) @ `88161025` — the matrix rows this design consumes are cited inline (`LV-*`, `PR-*`, `EM-16`) |
@@ -246,6 +246,8 @@ One typed workspace setting: `payroll.maxDeductionPercentOfGross` (null = today'
 
 FnF gains policy fields, all DB: encashment **rate basis** (`GROSS_OVER_WORKING_DAYS` — the F2.2 default — vs `BASIC_OVER_30`), notice-shortfall recovery formula toggle, and (F3.3) the gratuity slab table (`years → fraction` × final average earnings, non-statutory disclaimer mandatory). The FnF statement itself stays a computed snapshot (EM-16's lite scope).
 
+> **As built (F2.1, 2026-11-08):** the lite statement landed with the rate basis HARDCODED to `GROSS_OVER_WORKING_DAYS` (monthly gross ÷ the LWD month's holiday-aware working days) and no notice-shortfall toggle — both knobs ride F2.2/F2.3 as this section specifies. The advance-leave exit dock (§5.2's "the exit FnF encashes a negative balance") is live: negative paid-type balances are receivables at the same daily rate (`lib/full-and-final.ts`, Appendix D).
+
 ### 5.6 Snapshot discipline (unchanged, now load-bearing)
 
 A locked run is frozen policy: structure edits create a *new* revision (F-R1 retire-on-revision), catalog edits never rewrite existing slips, PayAdjustment consumption is one-way. The purity of `payroll-math` is what makes "re-simulate under a corrected input" (F3.1 arrears-lite) a function call on stored inputs.
@@ -344,3 +346,20 @@ The leave-policy engine (§4) landed as epic F2.4. Where the build refined the d
 | §10 open questions | Q1 FIFO consumption: landed (carry spent first, `carryLapseDelta`); Q2/Q3/Q4/Q5/Q6: unchanged, decided when F2.3/F2.2 land | only the leave-policy questions were in F2.4's scope |
 
 Everything else landed as written: the strategy space (§4.1), the guard shape (§4.3), the three organizations' ledger walks (§4.2 — the kernel tests walk them), the fail-loud enum pick (§10.6), the additive zero-behavior migration (§8), and the seeded demo type.
+
+---
+
+## Appendix D — As-built record (F2.1, 2026-11-08)
+
+The full-and-final lite statement (§5.5, EM-16's lite scope) landed as epic F2.1. Where the build refined the design:
+
+| Design (§) | As built | Why |
+| --- | --- | --- |
+| FnF "policy fields, all DB" (§5.5) | rate basis hardcoded to the F2.2 default `GROSS_OVER_WORKING_DAYS`; notice-shortfall and gratuity absent | F2.1 is the *statement* epic — the knobs land with F2.2 (encashment) and F3.3 (gratuity) where their consumers exist; the pure kernel takes the rate as an input, so adding the basis switch is a field, not a refactor |
+| "The FnF statement itself stays a computed snapshot" | computed LIVE on every read while UNSETTLED (the row carries only the generation-time snapshot for the audit trail); settlement freezes the live amounts — not the stale snapshot — inside its transaction | settling what HR *saw yesterday* would bake drift into money; the UI shows a drift hint when the two disagree |
+| Advance-leave exit dock (§5.2) | negative PAID-type balances are receivables at the same daily rate; unpaid types are excluded with a note | an unpaid type's advance has no cash value to recover — the paid-type rule keeps the dock honest |
+| Payables (benchmark EM-16 list) | every OPEN run's payslip net + encashment only; an OPEN run WITHOUT a payslip yields a visible note ("add one before settling if salary is owed") | bonuses (F2.3) and advances (F2.8) do not exist yet — the line space extends when they land, and the note keeps the gap visible instead of silently understated |
+| "Settlement locks editing" (plan F2.1) | `updatePayslip`/`addPayslip` refuse an employee with a SETTLED statement; `createLeaveRequest` refuses an EXITED employee (the benchmark's active-employee check) | the money freeze is only real if the payslip behind the frozen number cannot move; exit closes the leave gate too |
+| Module home (§7 map) | pure kernel `src/lib/full-and-final.ts` (statement math + the exit-interview status vocabulary) + service `src/server-actions/hr-offboarding.ts` | same M-track note as Appendix C: `rules/` is the target shape, `src/lib/` is today's |
+
+Everything else landed as written: the two-law split (kernel decides, service obeys — `asOf` injected), the one-row-per-employee statement, and the additive zero-behavior migration (`20261124000000_offboarding_fnf`).

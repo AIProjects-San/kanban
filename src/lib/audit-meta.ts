@@ -13,7 +13,7 @@ import {
   CheckCircle2, RotateCcw, Clock, LogIn, CircleDot, Bug, MessageSquare, Link2,
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
-  BookOpen,
+  BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -108,6 +108,16 @@ export type AuditAction =
   | "onboarding.task_added"
   | "onboarding.task_done"
   | "onboarding.task_undone"
+  // F2.1 — offboarding & full-and-final lite (docs/Fernly_HR_Payroll_
+  // Enhancement_Plan.md §7.2): the separation checklist rides the
+  // onboarding task actions above; these are the exit-specific writers.
+  | "hr.separation_checklist_created"
+  | "hr.exit_interview_recorded"
+  | "hr.exit_interview_scheduled"
+  | "hr.exit_interview_completed"
+  | "hr.exit_interview_cancelled"
+  | "hr.fnf_generated"
+  | "hr.fnf_settled"
   // Recruitment module lifecycle (docs/RECRUITMENT_MODULE_PLAN.md)
   | "hiring.candidate_created"
   | "hiring.candidate_updated"
@@ -250,6 +260,13 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
 
   "onboarding.created": { icon: Plus, cls: "text-primary bg-primary/10" },
   "onboarding.task_added": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.separation_checklist_created": { icon: ListChecks, cls: "text-zinc-500 bg-zinc-500/10" },
+  "hr.exit_interview_recorded": { icon: MessageSquareText, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.exit_interview_scheduled": { icon: CalendarClock, cls: "text-amber-500 bg-amber-500/10" },
+  "hr.exit_interview_completed": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.exit_interview_cancelled": { icon: CalendarX, cls: "text-zinc-500 bg-zinc-500/10" },
+  "hr.fnf_generated": { icon: FileText, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.fnf_settled": { icon: BadgeCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
 

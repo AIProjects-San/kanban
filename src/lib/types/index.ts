@@ -188,9 +188,103 @@ export interface OnboardingChecklistT {
   newHireId: string;
   hireName: string;
   title: string;
+  /** F2.1 — ONBOARDING (new hire) | SEPARATION (exit): which console tab
+   * owns the row; the default keeps every pre-F2.1 row onboarding. */
+  kind: ChecklistKind;
   completedAt: string | null;
   createdAt: string;
   tasks: OnboardingTaskT[];
+}
+
+/** F2.1 — the two checklist flavors sharing one machinery. */
+export type ChecklistKind = "ONBOARDING" | "SEPARATION";
+
+// ---------------------------------------------------------------------------
+// F2.1 — offboarding & full-and-final lite
+// (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2; benchmark EM-14/15/16).
+// ---------------------------------------------------------------------------
+
+/** Exit-interview status machine (benchmark EM-15). */
+export type ExitInterviewStatus = "PENDING" | "SCHEDULED" | "COMPLETED" | "CANCELLED";
+
+export interface ExitInterviewT {
+  id: string;
+  userId: string;
+  userName: string;
+  status: ExitInterviewStatus;
+  scheduledAt: string | null;
+  interviewerId: string | null;
+  interviewerName: string | null;
+  notes: string;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+/** One money line on a full-and-final statement. */
+export type FnFLineKind = "SALARY" | "ENCASHMENT" | "ADVANCE_LEAVE";
+
+export interface FnFLineT {
+  kind: FnFLineKind;
+  label: string;
+  /** Day count for leave-valued lines (null on pure salary lines). */
+  days: number | null;
+  /** Per-day rate for leave-valued lines (null on pure salary lines). */
+  rate: number | null;
+  /** Signed effect on net payable: positive = payable, negative = receivable. */
+  amount: number;
+}
+
+/** The computed statement (pure output of lib/full-and-final.ts). */
+export interface FnFComputedT {
+  /** yyyy-mm-dd — the asOf the computation ran at (injected clock). */
+  asOf: string;
+  lines: FnFLineT[];
+  /** Human-readable honesty notes (missing payslip, no structure, …). */
+  notes: string[];
+  payableTotal: number;
+  receivableTotal: number;
+  /** payables − receivables; may be negative (the employee owes back). */
+  netPayable: number;
+  /** How a day of leave was valued. */
+  rateBasis: {
+    /** The rate-basis period (the last-working-day month, "YYYY-MM"). */
+    period: string;
+    /** Holiday-aware working days of that period (F1.1 math). */
+    workingDays: number;
+    /** Monthly gross from the active structure (null = none). */
+    monthlyGross: number | null;
+    /** monthlyGross ÷ workingDays (0 when uncomputable). */
+    dailyRate: number;
+  };
+}
+
+/** The statement state the UI renders (row + live/frozen computation). */
+export type FnFStateT =
+  | { status: "NONE"; computed: FnFComputedT | null }
+  | { status: "UNSETTLED"; rowId: string; generatedAt: string; generatedBy: string | null; computed: FnFComputedT; snapshot: FnFComputedT }
+  | { status: "SETTLED"; rowId: string; generatedAt: string; settledAt: string; settledBy: string | null; frozen: FnFComputedT };
+
+/** One employee's offboarding case (the Offboarding tab card). */
+export interface OffboardingCaseT {
+  userId: string;
+  name: string;
+  jobTitle: string;
+  department: string;
+  employmentStatus: EmploymentStatus;
+  hireDate: string | null;
+  lastWorkingDay: string | null;
+  noticePeriodWeeks: number | null;
+  checklist: OnboardingChecklistT | null;
+  interview: ExitInterviewT | null;
+  fnf: FnFStateT;
+}
+
+export interface OffboardingOverviewT {
+  cases: OffboardingCaseT[];
+  /** User picker options for starting a separation (non-EXITED users). */
+  members: { userId: string; name: string }[];
+  /** Interviewer picker options (all active users). */
+  interviewers: { userId: string; name: string }[];
 }
 
 export interface EmployeeProfileT {

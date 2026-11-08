@@ -1304,6 +1304,27 @@ async function main() {
       data: { used: 5 },
     });
   }
+  // F2.1 — Soren's exit leave story: Annual 20 granted / 16 used (+4
+  // encashable), Sick fully used (0 — keeps the demo card clean), and
+  // Advance Annual taken 2 days AHEAD of accrual (−2, the FnF recovery
+  // line). No request rows — the history predates the seed's request
+  // stories, so the ledger writes BALANCE_IMPORT consumption rows (the
+  // F1.2 backfill's source type) and the cache mirrors them.
+  const sorenId = userByName.get("Soren Lindqvist");
+  if (sorenId) {
+    await db.leaveBalance.update({
+      where: { userId_leaveTypeId_year: { userId: sorenId, leaveTypeId: annualType.id, year: YEAR } },
+      data: { used: 16 },
+    });
+    await db.leaveBalance.update({
+      where: { userId_leaveTypeId_year: { userId: sorenId, leaveTypeId: sickType.id, year: YEAR } },
+      data: { used: 10 },
+    });
+    await db.leaveBalance.update({
+      where: { userId_leaveTypeId_year: { userId: sorenId, leaveTypeId: advanceType.id, year: YEAR } },
+      data: { used: advanceEntitled + 2 },
+    });
+  }
   // Yuki's APPROVED single day (below) consumes 1 — the cache `used` must
   // match the request rows the F1.2 ledger backfills from (invariant:
   // used == -Σ CONSUME deltas).
@@ -1408,6 +1429,27 @@ async function main() {
       });
     }
   }
+  // F2.1 — Soren's BALANCE_IMPORT consumption rows (the exit story above:
+  // no request rows, so the ledger explains the cache directly).
+  if (sorenId) {
+    consumeRows.push(
+      {
+        userId: sorenId, leaveTypeId: annualType.id, year: YEAR, delta: -16,
+        entryType: "CONSUME", sourceType: "BALANCE_IMPORT", sourceId: "",
+        note: "Past usage seeded (16 d)", isReversal: false,
+      },
+      {
+        userId: sorenId, leaveTypeId: sickType.id, year: YEAR, delta: -10,
+        entryType: "CONSUME", sourceType: "BALANCE_IMPORT", sourceId: "",
+        note: "Past usage seeded (10 d)", isReversal: false,
+      },
+      {
+        userId: sorenId, leaveTypeId: advanceType.id, year: YEAR, delta: -(advanceEntitled + 2),
+        entryType: "CONSUME", sourceType: "BALANCE_IMPORT", sourceId: "",
+        note: "Advance leave taken ahead of accrual (2 d over)", isReversal: false,
+      },
+    );
+  }
   if (grantRows.length || consumeRows.length) {
     await db.leaveLedgerEntry.createMany({
       data: [...grantRows, ...consumeRows],
@@ -1507,7 +1549,19 @@ async function main() {
   const noticeSeed = new Map([
     ["Mira Hale", 8],
     ["Ingrid Solberg", 4],
+    // F2.1 — the demo leaver carries a notice period for the exit card.
+    ["Soren Lindqvist", 4],
   ]);
+  // F2.1 — the offboarding story (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+  // §7.2): Soren is the demo leaver — EXITED with a last working day in
+  // the current month (stepped back to a weekday), so the OPEN run's
+  // payslip becomes the FnF's unprocessed-salary line and the rate basis
+  // is a live period.
+  const sorenLwd = day(-1);
+  while (sorenLwd.getUTCDay() === 0 || sorenLwd.getUTCDay() === 6) {
+    sorenLwd.setUTCDate(sorenLwd.getUTCDate() - 1);
+  }
+  const exitSeed = new Map([["Soren Lindqvist", sorenLwd]]);
   const profileSeed = [
     ["Mira Hale", "Founder & Workspace Admin", "MANAGEMENT", "2024-01-15", "Auckland, NZ", "+64 21 555 0001", "Strategy, hiring, coffee sourcing"],
     ["Ingrid Solberg", "Engineering Manager", "MANAGEMENT", "2024-03-04", "Oslo, Norway", "+47 405 55 002", "Team leadership, delivery, mentoring"],
@@ -1533,8 +1587,9 @@ async function main() {
         jobTitle,
         department,
         hireDate: new Date(`${hireDate}T00:00:00.000Z`),
-        employmentStatus: probationSeed.has(name) ? "PROBATION" : "ACTIVE",
+        employmentStatus: exitSeed.has(name) ? "EXITED" : probationSeed.has(name) ? "PROBATION" : "ACTIVE",
         ...(probationSeed.has(name) ? { probationEndsAt: probationSeed.get(name) } : {}),
+        ...(exitSeed.has(name) ? { lastWorkingDay: exitSeed.get(name) } : {}),
         ...(noticeSeed.has(name) ? { noticePeriodWeeks: noticeSeed.get(name) } : {}),
         location,
         phone,
@@ -1546,7 +1601,7 @@ async function main() {
     });
     profileCount += 1;
   }
-  console.log(`  ✓ HR directory: ${profileCount} employee profiles seeded (F1.6: ${profileCount - probationSeed.size} ACTIVE, ${probationSeed.size} PROBATION)`);
+  console.log(`  ✓ HR directory: ${profileCount} employee profiles seeded (F1.6: ${profileCount - probationSeed.size - exitSeed.size} ACTIVE, ${probationSeed.size} PROBATION, ${exitSeed.size} EXITED)`);
 
   // -------------------------------------------------------------------------
   // HR module seed — performance reviews (docs/HR_MODULE_PLAN.md §6).
@@ -2072,6 +2127,17 @@ async function main() {
         ],
         notes: "Data engineering band.",
       },
+      // F2.1 — the demo leaver holds a structure so his OPEN-run payslip
+      // (monthly gross 5,200) feeds the FnF's unprocessed-salary line and
+      // the encashment daily rate.
+      {
+        email: "soren@fernly.app",
+        components: [
+          { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 },
+          { key: "transport", label: "Transport Allowance", kind: "EARNING", mode: "FIXED", amount: 2_400 },
+        ],
+        notes: "QA band — final structure (exit seeded, F2.1).",
+      },
     ];
     const structures = [];
     for (const s of STRUCTURE_SEEDS) {
@@ -2253,6 +2319,99 @@ async function main() {
       },
     });
     console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line) + F1.5 component catalog (7 definitions, 1 retired)`);
+  }
+
+  // -------------------------------------------------------------------------
+  // F2.1 — offboarding & full-and-final seed
+  // (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2). Soren is the demo
+  // leaver: EXITED (profile section, LWD this month), an OPEN-run payslip
+  // (payroll section — the unprocessed-salary line), Annual +4 encashable
+  // and Advance Annual −2 owed (leave section — the encashment + recovery
+  // lines). The separation checklist is 3/5 done, the exit interview
+  // COMPLETED with notes, and the FnF row sits UNSETTLED with a
+  // generation-time snapshot so the demo (and the e2e) can settle it and
+  // watch the payslip lock bite.
+  // -------------------------------------------------------------------------
+  {
+    await db.exitInterview.deleteMany();
+    await db.fullAndFinalStatement.deleteMany();
+    const f21SorenId = userByName.get("Soren Lindqvist");
+    const f21HrId = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+    if (f21SorenId) {
+      // The separation checklist — kind SEPARATION reusing the onboarding
+      // machinery (EM-14). Handover/device/access are done; the interview
+      // happened; settlement is the open task.
+      await db.onboardingChecklist.create({
+        data: {
+          newHireId: f21SorenId,
+          title: "Separation — Soren Lindqvist",
+          kind: "SEPARATION",
+          tasks: {
+            create: [
+              { title: "Hand over ongoing work and documents", dueOffsetDays: 3, assigneeId: f21SorenId, done: true, doneAt: addDays(TODAY, -6), doneById: f21SorenId, order: 0 },
+              { title: "Return laptop and access devices", dueOffsetDays: 5, assigneeId: f21SorenId, done: true, doneAt: addDays(TODAY, -5), doneById: f21SorenId, order: 1 },
+              { title: "Revoke accounts, SSO and tool access", dueOffsetDays: 5, assigneeId: mgrIngrid ?? null, done: true, doneAt: addDays(TODAY, -4), doneById: f21HrId, order: 2 },
+              { title: "Hold the exit interview", dueOffsetDays: 7, assigneeId: f21HrId || null, order: 3 },
+              { title: "Settle the full-and-final statement", dueOffsetDays: 10, assigneeId: f21HrId || null, order: 4 },
+            ],
+          },
+        },
+      });
+
+      // The exit interview — COMPLETED (EM-15's full arc in one row).
+      await db.exitInterview.create({
+        data: {
+          userId: f21SorenId,
+          status: "COMPLETED",
+          scheduledAt: addDays(TODAY, -3),
+          interviewerId: f21HrId || null,
+          notes: "Loved the release discipline; would appreciate a handover-doc template for the next QA engineer.",
+          completedAt: addDays(TODAY, -3),
+          createdById: f21HrId,
+        },
+      });
+
+      // The UNSETTLED FnF row with the generation-time snapshot — mirrors
+      // computeFullAndFinal's math (rate = monthly gross ÷ the LWD month's
+      // holiday-aware working days; salary = his OPEN-run payslip net).
+      const openRun = await db.payrollRun.findFirst({
+        where: { status: "OPEN" },
+        orderBy: { period: "desc" },
+        select: { period: true },
+      });
+      const sorenSlip = openRun
+        ? await db.payslip.findFirst({
+            where: { userId: f21SorenId },
+            orderBy: { createdAt: "desc" },
+            select: { net: true },
+          })
+        : null;
+      const ratePeriod = `${sorenLwd.getUTCFullYear()}-${String(sorenLwd.getUTCMonth() + 1).padStart(2, "0")}`;
+      const rateDays = workingDaysInPeriod(ratePeriod);
+      const dailyRate = rateDays > 0 ? Math.round((5200 / rateDays) * 100) / 100 : 0;
+      const salaryNet = sorenSlip ? Math.round(sorenSlip.net * 100) / 100 : 0;
+      const fnfLines = [
+        { kind: "SALARY", label: `Unprocessed salary — ${openRun?.period ?? ratePeriod} run (net)`, days: null, rate: null, amount: salaryNet },
+        { kind: "ENCASHMENT", label: "Annual — 4 day(s) unused", days: 4, rate: dailyRate, amount: Math.round(4 * dailyRate * 100) / 100 },
+        { kind: "ADVANCE_LEAVE", label: "Advance Annual — 2 day(s) taken in advance", days: 2, rate: dailyRate, amount: -(Math.round(2 * dailyRate * 100) / 100) },
+      ];
+      const payableTotal = Math.round((salaryNet + fnfLines[1].amount) * 100) / 100;
+      const receivableTotal = Math.round(-fnfLines[2].amount * 100) / 100;
+      await db.fullAndFinalStatement.create({
+        data: {
+          userId: f21SorenId,
+          status: "UNSETTLED",
+          lastWorkingDay: sorenLwd,
+          asOf: addDays(TODAY, -1),
+          lines: JSON.stringify(fnfLines),
+          payableTotal,
+          receivableTotal,
+          netPayable: Math.round((payableTotal - receivableTotal) * 100) / 100,
+          generatedById: f21HrId,
+        },
+      });
+      console.log(`    ✓ F2.1 offboarding: Soren EXITED (LWD ${sorenLwd.toISOString().slice(0, 10)}) — separation checklist 3/5, exit interview COMPLETED, FnF UNSETTLED (payable $${payableTotal.toFixed(2)} − receivable $${receivableTotal.toFixed(2)})`);
+    }
   }
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);

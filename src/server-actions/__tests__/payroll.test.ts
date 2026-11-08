@@ -11,7 +11,7 @@ const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
     "salaryComponent", "payrollRun", "payslip", "auditLog", "holidayCalendarEntry",
-    "attendanceRecord", "leaveRequest", "leaveType",
+    "attendanceRecord", "leaveRequest", "leaveType", "fullAndFinalStatement",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -457,6 +457,30 @@ describe("R7 — payslips", () => {
     });
     expect(dup.ok).toBe(false);
     expect(db.payslip.update).not.toHaveBeenCalled();
+  });
+
+  // F2.1 — settlement locks editing: a SETTLED full-and-final froze the
+  // exit money the OPEN run's net feeds, so the payslip behind that number
+  // is final even while the run itself is still OPEN.
+  it("F2.1 — updatePayslip is refused for an employee with a SETTLED full-and-final", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow());
+    db.fullAndFinalStatement.findFirst.mockResolvedValueOnce({ id: "fnf-1", status: "SETTLED" });
+    const res = await updatePayslip({
+      payslipId: "ps-1", earnings: [], deductions: [], lopDays: 0,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("full-and-final statement is settled");
+    expect(db.payslip.update).not.toHaveBeenCalled();
+  });
+
+  it("F2.1 — addPayslip is refused for an employee with a SETTLED full-and-final", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...OPEN_RUN, payslips: [] });
+    db.payslip.findUnique.mockResolvedValue(null);
+    db.fullAndFinalStatement.findFirst.mockResolvedValueOnce({ id: "fnf-1", status: "SETTLED" });
+    const res = await addPayslip({ runId: "run-1", userId: "u-soren" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("settled");
+    expect(db.payslip.create).not.toHaveBeenCalled();
   });
 
   it("updatePayslip rejects LOP days beyond the run period's day count (persona-audit P0 fix)", async () => {

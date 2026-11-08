@@ -516,6 +516,9 @@ export const createChecklistSchema = z.object({
   newHireId: cuidish,
   title: z.string().trim().min(1, "Title is required.").max(200),
   useTemplate: z.boolean().default(true),
+  // F2.1 — the same machinery carries separation checklists; the default
+  // keeps every existing caller on the onboarding side.
+  kind: z.enum(["ONBOARDING", "SEPARATION"]).default("ONBOARDING"),
 }).strict();
 
 export const addTaskSchema = z.object({
@@ -528,6 +531,39 @@ export const addTaskSchema = z.object({
 export const taskDoneSchema = z.object({
   taskId: cuidish,
   done: z.boolean(),
+}).strict();
+
+// ---------------------------------------------------------------------------
+// F2.1 — offboarding & full-and-final lite
+// (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2).
+// ---------------------------------------------------------------------------
+
+export const exitInterviewCreateSchema = z.object({
+  userId: cuidish,
+}).strict();
+
+export const exitInterviewScheduleSchema = z.object({
+  interviewId: cuidish,
+  scheduledAt: isoDateStr,
+  interviewerId: cuidish.optional(),
+  notes: z.string().trim().max(10_000).optional(),
+}).strict();
+
+export const exitInterviewCompleteSchema = z.object({
+  interviewId: cuidish,
+  notes: z.string().trim().max(10_000).optional(),
+}).strict();
+
+export const exitInterviewCancelSchema = z.object({
+  interviewId: cuidish,
+}).strict();
+
+export const fnfGenerateSchema = z.object({
+  userId: cuidish,
+}).strict();
+
+export const fnfSettleSchema = z.object({
+  userId: cuidish,
 }).strict();
 
 // ---------------------------------------------------------------------------

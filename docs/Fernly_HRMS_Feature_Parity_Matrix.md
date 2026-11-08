@@ -278,9 +278,9 @@ The benchmark's `Employee` doctype lives in ERPNext but is functionally owned by
 | EM-11 | `Employee Onboarding` (submittable, 128 py lines) | creates Project + Tasks from template; `boarding_status` derived from Project percent; gates employee creation | `OnboardingChecklist` + `OnboardingTask` (5-task fixed template; createChecklist auto-assigns; auto-complete; markJoined creates a checklist) | Partial | E4 / F2.9+ |
 | EM-12 | `Employee Onboarding Template` (+`Employee Boarding Activity` child) | ordered activities; `user` XOR `role` assignee; begin-on offset in days; duration; `required_for_employee_creation`; holiday-aware task dates | — (hard-coded 5-task list duplicated in `markJoined` — F-R8 drift) | Missing | E4 / F2.9 |
 | EM-13 | Onboarding gate on employee creation (`IncompleteTaskError`) | every `required_for_employee_creation` task must be Completed | `markJoined` runs regardless of checklist state (F-R9: documents/BGV advisory) | Missing | E5 / F2.9 |
-| EM-14 | `Employee Separation` + Template | symmetric template flow gating the exit | — | Missing | E7 / **F2.1** |
-| EM-15 | `Exit Interview` (submittable, 177 py lines) | Pending → Scheduled → Completed/Cancelled; one per employee; questionnaire email-once via template + web form | — | Missing | E8 / F2.1 |
-| EM-16 | `Full and Final Statement` (submittable, 455 py lines) + `Full and Final Asset` / `Outstanding Statement` children | auto-assembles payables (withheld salary, gratuity, claims, bonuses, encashment) and receivables (advances, loans); asset reconstruction from Asset Movements; blocks settlement while unsettled; reactive JE status flips | — (F2.1 builds the lite version: computed statement + settlement flag) | Missing | E9 / **F2.1** |
+| EM-14 | `Employee Separation` + Template | symmetric template flow gating the exit | F2.1: separation checklists reuse the onboarding machinery verbatim — `OnboardingChecklist.kind = SEPARATION`, a 5-task default template (handover, device return, access revocation, exit interview, FnF settlement), manager auto-assignment, auto-completion, `addTask`/`setTaskDone`; the template itself stays hard-coded (unification rides F2.10's onboarding-template work) | Partial | E7 / **F2.1** |
+| EM-15 | `Exit Interview` (submittable, 177 py lines) | Pending → Scheduled → Completed/Cancelled; one per employee; questionnaire email-once via template + web form | F2.1: `ExitInterview` with the exact status machine (one LIVE record per employee, CANCELLED kept as history), interviewer + notes, in-app scheduling notification (EM-T01 lite); the questionnaire email/web form is not built (EM-B11) | Partial | E8 / **F2.1** |
+| EM-16 | `Full and Final Statement` (submittable, 455 py lines) + `Full and Final Asset` / `Outstanding Statement` children | auto-assembles payables (withheld salary, gratuity, claims, bonuses, encashment) and receivables (advances, loans); asset reconstruction from Asset Movements; blocks settlement while unsettled; reactive JE status flips | F2.1 lite: `FullAndFinalStatement` — computed live on every read (OPEN-run salary + paid-type encashment − advance-leave recovery, `lib/full-and-final.ts`), UNSETTLED → SETTLED freezes amounts + audits + locks payslip editing; bonuses (F2.3), advances/loans (F2.8), gratuity (F3.3) extend the line set when they land; asset reconstruction declined (EM-B13) | Partial | E9 / **F2.1** |
 | EM-17 | `Employee Referral` (submittable) | unique per email; Pending/In Process/Accepted/Rejected/Cancelled; referral-bonus payout riding Additional Salary | — | Missing | R4 |
 | EM-18 | `Employee Skill Map` (+`Employee Skill`, `Skill Assessment` children) | per-employee skill ratings by designation skill set | free-text `skills` on `EmployeeProfile` | Partial | F8 |
 | EM-19 | `Skill` master | shared between skill maps and interview Expected Skill Sets | — (free-text) | Partial | F8/R9 |
@@ -305,10 +305,10 @@ The benchmark's `Employee` doctype lives in ERPNext but is functionally owned by
 | EM-B08 | Employee creation gated on required tasks (`IncompleteTaskError`) | — | Missing | E5 / F2.9 |
 | EM-B09 | Employee creation back-flips Job Applicant + Job Offer to Accepted | `markJoined` sets Candidate → HIRED (+ offer stays SIGNED) inside the provisioning transaction | **Parity (workspace scope)** | — |
 | EM-B10 | Property-diff application (promotion/transfer) with history | — | Missing | E6 / F2.5 |
-| EM-B11 | Exit questionnaire email-once | — | Missing | E8 / F2.1 |
-| EM-B12 | FnF auto-assemble payables/receivables | — | Missing | E9 / F2.1 |
+| EM-B11 | Exit questionnaire email-once | — (F2.1 records interviewer + outcome notes in-app; the questionnaire email/web form itself is deferred with the email-notification work) | Missing | E8 / X6 |
+| EM-B12 | FnF auto-assemble payables/receivables | F2.1: `computeFullAndFinal` auto-assembles the modeled facts — every OPEN run's payslip net (paid runs are not owed), paid-type positive balances as encashment, paid-type negative balances as advance-leave recovery at the daily rate (monthly gross ÷ the LWD month's holiday-aware working days); unpaid types excluded with a note | Partial | E9 / **F2.1** |
 | EM-B13 | FnF asset-obligation reconstruction (Asset Movements) | — (no asset module) | Out of scope | E10 |
-| EM-B14 | FnF settlement gate + reactive status flips on JE submit | — (F2.1's UNSETTLED → SETTLED flag is the lite equivalent) | Missing | E9 / F2.1 |
+| EM-B14 | FnF settlement gate + reactive status flips on JE submit | F2.1 lite: UNSETTLED → SETTLED is a one-way freeze of the live amounts (audited with the totals) that also locks payslip editing (`updatePayslip`/`addPayslip` refuse a settled employee); no Journal-Entry coupling — payroll stays single-writer by design | Partial | E9 / **F2.1** |
 | EM-B15 | Probation confirmation (date-driven in benchmark) | F1.6 **hard gate**: PROBATION → ACTIVE refused unless a PROBATION-kind review reached REVIEWED/ACKNOWLEDGED — deliberately stricter than the benchmark | **Parity+ (stricter by design)** | E2 / F1.6 DONE |
 | EM-B16 | Suspension / reinstatement arcs | F1.6 legal arcs: ACTIVE↔SUSPENDED, EXITED terminal, no PROBATION→SUSPENDED bypass | **Parity (workspace scope)** | E2 / F1.6 DONE |
 
@@ -326,7 +326,7 @@ The benchmark's `Employee` doctype lives in ERPNext but is functionally owned by
 | EM-C08/09 | Charts `y_o_y_promotions` / `y_o_y_transfers` | — | Missing | X7 / F2.5 |
 | EM-N01 | Card `total_employees` | team roster + directory counts | Partial | X7 |
 | EM-N02–07 | Cards new_hires / employees_joining / employees_relieving / employee_exits / separations / onboardings | directory status badge (F1.6) surfaces probation/active/exited per person — no aggregates | Missing | X7 / F3.9 |
-| EM-T01 | Notification `Exit Interview Scheduled` (email, Days Before) | — | Missing | X6 / F2.1 |
+| EM-T01 | Notification `Exit Interview Scheduled` (email, Days Before) | F2.1 lite: in-app Notification to the employee on schedule/reschedule (immediate, not days-before; no email — the F-R17 zero-mail discipline) | Partial | X6 / **F2.1** |
 | EM-J01 | Daily job `send_birthday_reminders` | — | Missing | X6 / **F3.10** |
 | EM-J02 | Daily job `send_work_anniversary_reminders` | — | Missing | X6 / F3.10 |
 | EM-J03 | Weekly/monthly jobs `send_reminders_in_advance` (holiday reminders) | — | Missing | X6 / F3.10 |
@@ -520,17 +520,19 @@ Counted over the **314 mapped rows** above (artifacts + behaviors + reports/char
 | Status | Rows | Share | Notes |
 | --- | --- | --- | --- |
 | **Parity / Parity (workspace scope) / Parity+** | 37 | 12% | incl. the six F1.x landings, the deliberately-stricter probation gate, and six F2.4 landings (leave policy engine: strategies, floor, carry, service gate, daily job) |
-| **Partial** | 83 | 26% | working but materially thinner than the benchmark |
-| **Missing** | 156 | 50% | **83 of them already owned by a planned Phase 2/3 epic** (Family/epic column) |
+| **Partial** | 89 | 28% | working but materially thinner than the benchmark — incl. six F2.1 landings (separation checklist, exit interview, FnF statement + assemble/settlement behaviors, in-app notification) |
+| **Missing** | 150 | 48% | **79 of them already owned by a planned Phase 2/3 epic** (Family/epic column) |
 | **Out of scope (deliberate)** | 37 | 12% | ADR-014 statutory, accounting/GL, hardware check-in, timesheet payroll, product telemetry, locked product decisions |
 | **Beyond benchmark** | 1 | <1% | joining formalities — documents + background verification (the day-one handout rides RJ-18) |
 | **Total** | **314** | 100% | |
 
 **F2.4 (leave policy engine) status flips at this update** — 8 rows: to Parity: LV-B02 (earned-leave frequency/on-day/rounding), LV-B04 (carry cap + expiry job), LV-B05 (include-holiday), LV-B06 (allow-negative), LV-B07 (applicable-after), LV-J03 (daily `allocate_earned_leaves`); to Partial: LV-04 (allocation ledger writers, no submittable docs), LV-B18 (schedule failure counting, no retry queue/email). LV-01's note updated (strategy block landed; fraction/comp/encashment knobs remain).
 
+**F2.1 (offboarding & full-and-final lite) status flips at this update** — 6 rows, all Missing → Partial: EM-14 (separation checklist on the shared machinery, hard-coded template), EM-15 (exit-interview status machine + notes, no questionnaire email), EM-16 (lite computed FnF + settlement freeze/lock), EM-B12 (auto-assemble of the modeled payables/receivables), EM-B14 (UNSETTLED → SETTLED gate + payslip lock, no JE coupling), EM-T01 (in-app scheduling notification). EM-B11 retagged X6 (questionnaire email deferred with the notification work).
+
 Family-level (the plan's 77 families, statuses current at `bb2e046` — matches the reassessment): **12 Parity · 23 Partial · 36 Missing · 6 Out of scope**. Module-level: every row above is assigned to exactly one of the four domain logic modules — **hr 145 · admin 24 · account 93 · joining 52** — via the domain default plus 20 row-level exceptions, in `Fernly_Domain_Modules_Architecture_Plan.md` §5 (reproducible: `python3 scripts/module_rollup.py`, totals sanity-checked against this section).
 
-Where the row-level gap concentrates (Missing rows by domain): PR 33 · LV 26 · AT 22 · EM 29 · RJ 18 · PF 15 · EX 14 · PL 4. The **operational middle** verdict of the plan is unchanged — Phase 1 laid six floor stones; Phase 2's F2.1 (offboarding & FnF) remains the next structural move, with the joining-module hardening (F2.9, re-sequenced) directly behind it.
+Where the row-level gap concentrates (Missing rows by domain): PR 33 · LV 26 · AT 22 · EM 26 · RJ 18 · PF 15 · EX 14 · PL 4. The **operational middle** verdict of the plan advances with Phase 2 — F2.4 (leave policy engine) and F2.1 (offboarding & FnF) have landed; the joining-module hardening (F2.10) is the next structural move.
 
 **Newly surfaced by this pass** (not visible in the 77-family matrix): the analytics surface (35 charts + 37 number cards), 7 email notifications, 8 print formats, the public jobs board + application web form, the 16-job scheduler surface, the mobile/PWA API (34 methods), the roster app, and the engagement reminder engine — ~70 rows covering ~135 benchmark artifacts, nearly all Missing, now owned by epics F2.6/F2.9/F3.6/F3.9/F3.10 or the declination table.
 

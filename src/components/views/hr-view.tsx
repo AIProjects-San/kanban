@@ -6,9 +6,11 @@
 // the queue must not leak other teams' leave reasons to them).
 // Tab "Types & Policies" (hr:admin): leave type CRUD + policy editing.
 // Directory / Reviews / Onboarding tabs arrive with features 2–4.
+// Tab "Offboarding" (hr:admin, F2.1): separation checklists, exit
+// interviews and full-and-final settlement.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck } from "lucide-react";
+import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck, DoorOpen } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -27,6 +29,7 @@ import { ReviewsTab } from "./hr-reviews";
 import { OnboardingTab } from "./hr-onboarding";
 import { HolidaysTab } from "./hr-holidays";
 import { AttendanceTab } from "./hr-attendance";
+import { OffboardingTab } from "./hr-offboarding";
 
 interface CurrentUser {
   id: string;
@@ -34,7 +37,7 @@ interface CurrentUser {
   role: string;
 }
 
-type Tab = "requests" | "types" | "holidays" | "attendance" | "directory" | "reviews" | "onboarding";
+type Tab = "requests" | "types" | "holidays" | "attendance" | "directory" | "reviews" | "onboarding" | "offboarding";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
@@ -118,6 +121,11 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
         <TabButton active={tab === "onboarding"} onClick={() => setTab("onboarding")}>
           <ListChecks size={13} /> Onboarding
         </TabButton>
+        {canAdmin && (
+          <TabButton active={tab === "offboarding"} onClick={() => setTab("offboarding")}>
+            <DoorOpen size={13} /> Offboarding
+          </TabButton>
+        )}
       </div>
 
       {tab === "requests" && (
@@ -135,6 +143,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
       {tab === "directory" && <DirectoryTab />}
       {tab === "reviews" && <ReviewsTab />}
       {tab === "onboarding" && <OnboardingTab />}
+      {tab === "offboarding" && canAdmin && <OffboardingTab />}
     </div>
   );
 }

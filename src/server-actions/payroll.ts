@@ -536,6 +536,18 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     if (slip.run.status !== "OPEN") {
       throw new AuthorizationError(`The ${slip.run.period} run is locked — payslips are immutable once paid.`);
     }
+    // F2.1 — settlement locks editing: a SETTLED full-and-final statement
+    // froze this employee's exit money (the OPEN run's net was a payable
+    // line on it), so the payslip behind that number is final too.
+    const settledFnF = await db.fullAndFinalStatement.findFirst({
+      where: { userId: slip.userId, status: "SETTLED" },
+      select: { id: true },
+    });
+    if (settledFnF) {
+      throw new AuthorizationError(
+        "This employee's full-and-final statement is settled — their payslips are locked by the frozen settlement.",
+      );
+    }
     // A duplicated line key would break the LOP replace semantics — reject.
     const dupKey = (lines: PayslipLine[]) =>
       lines.some((l, i) => lines.findIndex((x) => x.key === l.key) !== i);
@@ -616,6 +628,18 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       select: { id: true },
     });
     if (existing) throw new AuthorizationError("This employee already has a payslip in the run.");
+    // F2.1 — a settled full-and-final froze the exit money; a NEW payslip
+    // would add unconsidered payables after the fact. Refuse (the exit's
+    // unprocessed-salary line was computed from the runs that existed).
+    const settledFnF = await db.fullAndFinalStatement.findFirst({
+      where: { userId: data.userId, status: "SETTLED" },
+      select: { id: true },
+    });
+    if (settledFnF) {
+      throw new AuthorizationError(
+        "This employee's full-and-final statement is settled — no payslips can be added for them anymore.",
+      );
+    }
     const structure = await db.salaryStructure.findFirst({
       where: { userId: data.userId, isActive: true },
     });

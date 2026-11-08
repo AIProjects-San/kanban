@@ -1062,10 +1062,20 @@ model PerformanceReview {
 // A checklist is instantiated per new hire from a default template; each
 // task has an assignee (a User) and a due offset from the hire date. The
 // checklist auto-completes when every task is done.
+// F2.1 — the same machinery carries SEPARATION checklists: `kind` splits
+// the onboarding (new hire) flow from the offboarding (exit) flow while
+// tasks, auto-completion, tick permissions and the manager auto-assignment
+// stay one code path. `newHireId` reads as "the user the checklist is
+// about" for separation rows (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.2 F2.1; benchmark EM-14).
 model OnboardingChecklist {
   id          String    @id @default(cuid())
   newHireId   String
   title       String
+  // ONBOARDING (new hire) | SEPARATION (exit) — picks the default template
+  // and which console tab owns the row. Default keeps every pre-F2.1 row
+  // on the onboarding side (zero-behavior rollout).
+  kind        String    @default("ONBOARDING")
   // Derived: when every task is done, the checklist is complete.
   completedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -1075,6 +1085,7 @@ model OnboardingChecklist {
 
   @@index([newHireId])
   @@index([createdAt])
+  @@index([kind])
 }
 
 model OnboardingTask {
@@ -1097,6 +1108,80 @@ model OnboardingTask {
 
   @@index([checklistId])
   @@index([assigneeId])
+}
+
+// F2.1 — exit interview (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2;
+// benchmark EM-15: frappe/hrms Exit Interview). One LIVE record per
+// employee: the action layer enforces "at most one non-cancelled row per
+// user" (CANCELLED rows stay as history, so a mistaken cancel never bricks
+// the employee — the benchmark's one-per-employee rule applied to live
+// records only). Status machine:
+//   PENDING → SCHEDULED → COMPLETED            (terminal)
+//   PENDING | SCHEDULED → CANCELLED            (terminal)
+// Scheduling notifies the employee in-app (EM-T01 lite — the HR module's
+// zero-mail-side-effects discipline F-R17 keeps this off the email path).
+model ExitInterview {
+  id            String    @id @default(cuid())
+  userId        String
+  // PENDING | SCHEDULED | COMPLETED | CANCELLED (lib/full-and-final.ts
+  // vocabulary lives beside the FnF kinds — one offboarding module file).
+  status        String    @default("PENDING")
+  // Set when SCHEDULED (rescheduling while SCHEDULED updates it).
+  scheduledAt   DateTime?
+  // The user conducting the interview (optional — HR may leave it open).
+  interviewerId String?
+  // Free-text notes; completed with the outcome summary.
+  notes         String    @default("")
+  completedAt   DateTime?
+  createdById   String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// F2.1 — full-and-final statement (docs/Fernly_HR_Payroll_Enhancement_Plan.md
+// §7.2; benchmark EM-16, deliberately LITE). One row per employee (unique —
+// settlement is final; corrections are F3.x statement-revision work, never
+// edits). Two states:
+//   UNSETTLED — generated, still COMPUTED LIVE on every read (the row holds
+//               only the generation-time snapshot for the audit trail);
+//   SETTLED   — the live computation was frozen into lines/totals at settle
+//               time; payslip edits for the employee are refused from then
+//               on ("settlement locks editing").
+// Payables: unprocessed salary (OPEN runs' payslip nets — a LOCKED run was
+// paid, so it is not owed) + unused-leave encashment (paid types, positive
+// ledger balances × daily rate = monthly gross ÷ working days, the F2.2
+// default basis GROSS_OVER_WORKING_DAYS until F2.2's knobs land).
+// Receivables: advance (negative) leave balances recovered at the daily
+// rate — the F2.4 advance-leave exit dock (Fernly_Policy_Engine_Design.md
+// §5.2/§5.5). Bonuses (F2.3) and advances/loans (F2.8) extend the line set
+// when those epics land.
+model FullAndFinalStatement {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  // UNSETTLED | SETTLED.
+  status           String    @default("UNSETTLED")
+  // The exit basis snapshot at generation (the transition guard guarantees
+  // an EXITED employee always carries a lastWorkingDay).
+  lastWorkingDay   DateTime?
+  // When the stored snapshot was computed (generation or settlement).
+  asOf             DateTime?
+  // JSON FnFLineT[] — the generation preview while UNSETTLED, the frozen
+  // settlement lines once SETTLED (lib/types).
+  lines            String    @default("[]")
+  payableTotal     Float     @default(0)
+  receivableTotal  Float     @default(0)
+  netPayable       Float     @default(0)
+  generatedById    String    @default("")
+  settledById      String    @default("")
+  settledAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
 }
 
 // ---------------------------------------------------------------------------

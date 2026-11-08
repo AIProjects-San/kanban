@@ -4,6 +4,13 @@
 // HR Module feature 4 — onboarding server actions
 // (docs/HR_MODULE_PLAN.md §7).
 //
+// F2.1 — the same machinery carries SEPARATION checklists (benchmark
+// EM-14): createChecklist takes a kind, ONBOARDING keeps the new-hire
+// template, SEPARATION instantiates the exit template; tasks, tick
+// permissions, auto-completion and manager auto-assignment are ONE code
+// path. The Offboarding tab owns SEPARATION rows (getOnboarding returns
+// both kinds serialized; the tabs filter client-side).
+//
 // RBAC:
 //   onboarding:manage — create checklists, add tasks, see all of them
 //                     (Admin, HR)
@@ -38,9 +45,25 @@ const DEFAULT_TEMPLATE: { title: string; dueOffsetDays: number; assignSelf: bool
   { title: "First small task shipped with a mentor", dueOffsetDays: 14, assignSelf: true },
 ];
 
+/** F2.1 — the default SEPARATION template (benchmark EM-14's symmetric
+ * exit flow). Offsets count from the separation checklist's creation
+ * (typically around the exit), not the last working day — the assignee
+ * reads them as "within N days" guidance. */
+const DEFAULT_SEPARATION_TEMPLATE: { title: string; dueOffsetDays: number; assignSelf: boolean }[] = [
+  { title: "Hand over ongoing work and documents", dueOffsetDays: 3, assignSelf: true },
+  { title: "Return laptop and access devices", dueOffsetDays: 5, assignSelf: true },
+  { title: "Revoke accounts, SSO and tool access", dueOffsetDays: 5, assignSelf: false },
+  { title: "Hold the exit interview", dueOffsetDays: 7, assignSelf: false },
+  { title: "Settle the full-and-final statement", dueOffsetDays: 10, assignSelf: false },
+];
+
+function templateFor(kind: string) {
+  return kind === "SEPARATION" ? DEFAULT_SEPARATION_TEMPLATE : DEFAULT_TEMPLATE;
+}
+
 function serialize(
   c: {
-    id: string; newHireId: string; title: string;
+    id: string; newHireId: string; title: string; kind: string;
     completedAt: Date | null; createdAt: Date; updatedAt: Date;
     tasks: {
       id: string; checklistId: string; title: string; assigneeId: string | null;
@@ -56,6 +79,7 @@ function serialize(
     newHireId: c.newHireId,
     hireName,
     title: c.title,
+    kind: c.kind === "SEPARATION" ? "SEPARATION" : "ONBOARDING",
     completedAt: c.completedAt ? c.completedAt.toISOString() : null,
     createdAt: c.createdAt.toISOString(),
     tasks: c.tasks
@@ -140,16 +164,23 @@ export async function createChecklist(input: {
   newHireId: string;
   title: string;
   useTemplate: boolean;
+  kind?: "ONBOARDING" | "SEPARATION";
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("onboarding:manage");
     const data = parseOrThrow(createChecklistSchema, input);
+    const kind = data.kind;
+    const template = templateFor(kind);
 
     const hire = await db.user.findUnique({
       where: { id: data.newHireId },
       select: { id: true, name: true, deletedAt: true },
     });
     if (!hire || hire.deletedAt) throw new AuthorizationError("New hire not found.");
+
+    // F2.1 — a separation checklist targets an EXITING employee; the
+    // exiting person themself still ticks the handover tasks (assignSelf),
+    // so the deleted-user refusal is the only extra guard needed here.
 
     // PR-15 (production-readiness audit) — the checklist row, its template
     // tasks and the manager auto-assignment are one logical creation. The
@@ -161,10 +192,11 @@ export async function createChecklist(input: {
         data: {
           newHireId: data.newHireId,
           title: data.title,
+          kind,
           ...(data.useTemplate
             ? {
                 tasks: {
-                  create: DEFAULT_TEMPLATE.map((t, i) => ({
+                  create: template.map((t, i) => ({
                     title: t.title,
                     dueOffsetDays: t.dueOffsetDays,
                     // Self tasks go to the hire; manager tasks default to the
@@ -180,6 +212,8 @@ export async function createChecklist(input: {
       });
 
       // The manager tasks belong to the hire's manager — assign them now.
+      // (Separation: the handover/revoke owners default to the manager the
+      // same way — one code path, symmetric flow.)
       if (data.useTemplate) {
         const approvers = await tx.user.findUnique({
           where: { id: data.newHireId },
@@ -198,11 +232,11 @@ export async function createChecklist(input: {
 
     await logAudit({
       actor: auth,
-      action: "onboarding.created",
+      action: kind === "SEPARATION" ? "hr.separation_checklist_created" : "onboarding.created",
       entityType: "ONBOARDING_CHECKLIST",
       entityId: checklist.id,
       entityLabel: data.title,
-      detail: `${auth.name} started onboarding "${data.title}" for ${hire.name}${data.useTemplate ? ` (${DEFAULT_TEMPLATE.length} template tasks)` : ""}.`,
+      detail: `${auth.name} ${kind === "SEPARATION" ? "started the separation checklist" : "started onboarding"} "${data.title}" for ${hire.name}${data.useTemplate ? ` (${template.length} template tasks)` : ""}.`,
     });
     revalidatePath("/");
     return { id: checklist.id };

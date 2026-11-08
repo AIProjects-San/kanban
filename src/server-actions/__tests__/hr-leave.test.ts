@@ -353,6 +353,32 @@ describe("createLeaveRequest", () => {
     expect(db.leaveRequest.create).not.toHaveBeenCalled();
   });
 
+  // F2.1 — offboarding finality: the exit arc closes the request gate
+  // (every other status, including "" not-tracked, stays requestable).
+  it("F2.1 — rejects a request from an EXITED employee", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.employeeProfile.findUnique.mockResolvedValueOnce({ employmentStatus: "EXITED" });
+    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(8) });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/exited/i);
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("F2.1 — an ACTIVE employee (and an untracked profile) still requests leave", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.employeeProfile.findUnique.mockResolvedValueOnce({ employmentStatus: "ACTIVE" });
+    const active = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(8) });
+    expect(active.ok).toBe(true);
+
+    db.employeeProfile.findUnique.mockResolvedValue(null);
+    const untracked = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(8) });
+    expect(untracked.ok).toBe(true);
+    // Restore the permissive default for the suites after this one.
+    db.employeeProfile.findUnique.mockResolvedValue(undefined);
+  });
+
   it("rejects an end date before the start date", async () => {
     db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
     const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(9), endDate: isoDay(7) });
