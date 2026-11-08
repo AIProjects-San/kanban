@@ -212,6 +212,40 @@ describe("getApproverIdsFor / assertLeaveDecider", () => {
     db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
     await expect(assertLeaveDecider(HR_AUTH, "u-theo")).rejects.toThrow(/manager/i);
   });
+
+  it("S14 — the profile's leave-approver OVERRIDE outranks the manager", async () => {
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.employeeProfile.findUnique.mockResolvedValue({ leaveApproverId: "u-remy" });
+    expect(await getApproverIdsFor("u-theo")).toEqual(["u-remy"]);
+    // The override user may decide even as a plain MANAGER-role member…
+    const REMY_AUTH = { userId: "u-remy", role: "MANAGER" as const, name: "Remy", email: "remy@x.co" };
+    await expect(assertLeaveDecider(REMY_AUTH, "u-theo")).resolves.toBeUndefined();
+    // …and the profile-less user keeps the manager rule (null-safe).
+    db.employeeProfile.findUnique.mockResolvedValue(null);
+    expect(await getApproverIdsFor("u-theo")).toEqual(["u-mgr"]);
+  });
+
+  it("S14 — the override routes the request notifications too (createLeaveRequest)", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.employeeProfile.findUnique.mockResolvedValue({ leaveApproverId: "u-remy" });
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveRequest.findFirst.mockResolvedValue(null);
+    db.leaveRequest.findMany.mockResolvedValue([]);
+    db.payslip.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "override routing",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.notification.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([expect.objectContaining({ recipientUserId: "u-remy" })]),
+      }),
+    );
+    // The bypassed manager is NOT notified.
+    const notified = (db.notification.createMany.mock.calls[0][0] as { data: Array<{ recipientUserId: string }> }).data;
+    expect(notified.some((n) => n.recipientUserId === "u-mgr")).toBe(false);
+  });
 });
 
 describe("getOrCreateBalance", () => {

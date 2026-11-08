@@ -250,6 +250,7 @@ export function DirectoryTab() {
 
       <EditProfileModal
         profile={editing}
+        roster={(profiles ?? []).map((p) => ({ userId: p.userId, name: p.name }))}
         onClose={() => setEditing(null)}
         // No bumpRefresh here: it remounts the HR console and flips the
         // active tab back to Requests — the directory reload suffices.
@@ -260,8 +261,14 @@ export function DirectoryTab() {
 }
 
 function EditProfileModal({
-  profile, onClose, onSaved,
-}: { profile: EmployeeProfileT | null; onClose: () => void; onSaved: () => Promise<void> }) {
+  profile, roster, onClose, onSaved,
+}: {
+  profile: EmployeeProfileT | null;
+  /** S14 — the roster feeds the leave-approver override picker. */
+  roster: { userId: string; name: string }[];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
   const [jobTitle, setJobTitle] = useState("");
   const [department, setDepartment] = useState("ENGINEERING");
   const [phone, setPhone] = useState("");
@@ -278,6 +285,8 @@ function EditProfileModal({
   const [probationEndsAt, setProbationEndsAt] = useState("");
   const [noticeWeeks, setNoticeWeeks] = useState("");
   const [lastWorkingDay, setLastWorkingDay] = useState("");
+  // S14 — the leave-approver override ("" = the reporting-manager rule).
+  const [leaveApproverId, setLeaveApproverId] = useState("");
   const [busy, setBusy] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -295,6 +304,7 @@ function EditProfileModal({
       setProbationEndsAt(profile.probationEndsAt ?? "");
       setNoticeWeeks(profile.noticePeriodWeeks != null ? String(profile.noticePeriodWeeks) : "");
       setLastWorkingDay(profile.lastWorkingDay ?? "");
+      setLeaveApproverId(profile.leaveApproverId ?? "");
     }
   }, [profile]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -338,6 +348,7 @@ function EditProfileModal({
             probationEndsAt: probationEndsAt || null,
             noticePeriodWeeks: noticeWeeks === "" ? null : Number(noticeWeeks),
             lastWorkingDay: lastWorkingDay || null,
+            leaveApproverId: leaveApproverId || null,
           });
           setBusy(false);
           if (res.ok) {
@@ -435,6 +446,24 @@ function EditProfileModal({
                 />
               </Field>
             </div>
+            {/* S14 (EM-B04/LV-B13) — the leave-approver override: the chosen
+                member decides this employee's leave (and is notified)
+                instead of the reporting manager. Empty = the manager rule. */}
+            <Field label="Leave approver (overrides the reporting manager)">
+              <select
+                className="f-input"
+                value={leaveApproverId}
+                data-testid="leave-approver-select"
+                onChange={(e) => setLeaveApproverId(e.target.value)}
+              >
+                <option value="">Reporting manager decides (default)</option>
+                {roster
+                  .filter((r) => r.userId !== profile?.userId)
+                  .map((r) => (
+                    <option key={r.userId} value={r.userId}>{r.name}</option>
+                  ))}
+              </select>
+            </Field>
             {statusChanged && employmentStatus === "ACTIVE" && profile.employmentStatus === "PROBATION" ? (
               <div className="text-[0.6875rem] text-muted-foreground" data-testid="probation-gate-hint">
                 Confirmation requires the probation review to be completed first — it will be refused while the cycle is outstanding.

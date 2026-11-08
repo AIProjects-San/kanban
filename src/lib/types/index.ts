@@ -301,6 +301,9 @@ export interface EmployeeProfileT {
   userId: string;
   /** EM-B01 (S13) — the workspace series (EMP-0001…); null = pre-S13 row. */
   employeeNumber: string | null;
+  /** S14 (EM-B04/LV-B13) — the leave-approver override; null = the
+   * reporting manager decides. */
+  leaveApproverId: string | null;
   name: string;
   email: string;
   role: string;

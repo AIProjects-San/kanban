@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["performanceReview", "user", "auditLog", "notification"];
+  const models = ["performanceReview", "user", "auditLog", "notification", "employeeProfile"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",

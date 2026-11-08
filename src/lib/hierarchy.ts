@@ -153,3 +153,18 @@ export async function assertNoCycle(userId: string, newManagerId: string | null 
     );
   }
 }
+
+/**
+ * EM-B04/LV-B13 (S14) — resolve who decides one employee's leave requests.
+ * Pure: the employee's explicit override outranks the reporting manager;
+ * neither present = the caller's ADMIN fallback. Returns the winning
+ * approver id (null = no personal approver) and where it came from.
+ */
+export function resolveLeaveApprover(input: {
+  leaveApproverId?: string | null;
+  managerId?: string | null;
+}): { approverId: string | null; source: "OVERRIDE" | "MANAGER" | "NONE" } {
+  if (input.leaveApproverId) return { approverId: input.leaveApproverId, source: "OVERRIDE" };
+  if (input.managerId) return { approverId: input.managerId, source: "MANAGER" };
+  return { approverId: null, source: "NONE" };
+}

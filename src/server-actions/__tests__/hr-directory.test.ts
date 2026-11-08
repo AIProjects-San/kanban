@@ -243,6 +243,48 @@ describe("updateProfileAsAdmin", () => {
     expect(call.create.department).toBe("");
   });
 
+  it("S14 — sets the leave-approver override (validated target) and clears it with null", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    // First call: the TARGET; second: the APPROVER candidate.
+    db.user.findUnique
+      .mockResolvedValueOnce({ id: "u-theo", name: "Theo Vance", deletedAt: null })
+      .mockResolvedValueOnce({ id: "u-remy", name: "Remy Laurent", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { leaveApproverId: "u-remy" });
+    expect(res.ok).toBe(true);
+    expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "u-theo" },
+        update: expect.objectContaining({ leaveApproverId: "u-remy" }),
+      }),
+    );
+
+    // Clearing: null rides both branches.
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const clear = await updateProfileAsAdmin("u-theo", { leaveApproverId: null });
+    expect(clear.ok).toBe(true);
+    expect(db.employeeProfile.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ leaveApproverId: null }),
+      }),
+    );
+  });
+
+  it("S14 — self-override and ghost approver are refused with friendly errors", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const self = await updateProfileAsAdmin("u-theo", { leaveApproverId: "u-theo" });
+    expect(self.ok).toBe(false);
+    if (!self.ok) expect(self.error).toContain("their own leave approver");
+
+    db.user.findUnique
+      .mockResolvedValueOnce({ id: "u-theo", name: "Theo Vance", deletedAt: null })
+      .mockResolvedValueOnce(null);
+    const ghost = await updateProfileAsAdmin("u-theo", { leaveApproverId: "u-ghost" });
+    expect(ghost.ok).toBe(false);
+    if (!ghost.ok) expect(ghost.error).toContain("Leave approver not found");
+    expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
+  });
+
   it("rejects an unknown target user", async () => {
     requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
     db.user.findUnique.mockResolvedValue(null);

@@ -27,6 +27,7 @@ import {
   getSubtreeUserIds,
   getDirectReports,
   assertNoCycle,
+  resolveLeaveApprover,
 } from "@/lib/hierarchy";
 import { AuthorizationError } from "@/server-actions/auth-guard";
 import type { Role } from "@/lib/rbac";
@@ -306,5 +307,24 @@ describe("assertNoCycle", () => {
       .mockResolvedValueOnce([{ id: "rep-x" }])
       .mockResolvedValueOnce([]);
     await expect(assertNoCycle("u-1", "other-mgr")).resolves.toBeUndefined();
+  });
+});
+
+
+describe("resolveLeaveApprover (S14 / EM-B04 / LV-B13)", () => {
+  it("the explicit override outranks the reporting manager", () => {
+    expect(resolveLeaveApprover({ leaveApproverId: "u-override", managerId: "u-manager" }))
+      .toEqual({ approverId: "u-override", source: "OVERRIDE" });
+  });
+
+  it("no override → the manager decides (today's rule)", () => {
+    expect(resolveLeaveApprover({ leaveApproverId: null, managerId: "u-manager" }))
+      .toEqual({ approverId: "u-manager", source: "MANAGER" });
+  });
+
+  it("neither → the caller's ADMIN fallback (source NONE)", () => {
+    expect(resolveLeaveApprover({ leaveApproverId: null, managerId: null }))
+      .toEqual({ approverId: null, source: "NONE" });
+    expect(resolveLeaveApprover({})).toEqual({ approverId: null, source: "NONE" });
   });
 });

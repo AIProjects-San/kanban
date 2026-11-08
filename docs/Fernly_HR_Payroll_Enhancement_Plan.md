@@ -393,7 +393,7 @@ The 2026-11-08 audit re-verified every Phase 1 family against the row-level matr
 | S11 | LV-B11 | **DONE** Attendance-conflict guard in the leave chain | refuse on explicit (non-derived) marks in range |
 | S12 | LV-B08 | Cross-request max-consecutive-days walk | pure helper, adjacency by calendar day |
 | S13 | EM-B01 | **DONE** Employee-number series EMP-0001 | zero-padded 4-digit, deterministic backfill |
-| S14 | EM-B04/LV-B13 | Leave-approver override | `EmployeeProfile.leaveApproverId`, chain: override → manager → ADMIN/HR |
+| S14 | EM-B04/LV-B13 | **DONE** Leave-approver override | `EmployeeProfile.leaveApproverId`, chain: override → manager → ADMINs (HR stays chain-scoped per the existing decision) |
 | S15 | F-R3 (B) | YTD dual-basis note in the payslip modal | one honesty line |
 | S16 | F-R14 (C) | Dead enum/constants cleanup | remove `IMPORT` source + dead exports, fix comment drift |
 | S17 | F-R12 (B) | Transactional multi-row hiring mutations | one `$transaction` per action |

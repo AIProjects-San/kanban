@@ -1054,6 +1054,12 @@ model EmployeeProfile {
   // backfills existing profiles deterministically by (createdAt, id).
   // Nullable only so pre-S13 rows and exotic integrations stay legal.
   employeeNumber String? @unique
+  // EM-B04/LV-B13 (S14) — the leave-approver override: when set, THIS user
+  // decides the employee's leave requests (and is notified) instead of the
+  // reporting manager. Null = the manager chain decides (today's rule).
+  // Scalar (no FK relation) like the profile's other references — the
+  // resolver validates the target at write time.
+  leaveApproverId String?
   id                   String    @id @default(cuid())
   userId               String    @unique
   jobTitle             String    @default("")

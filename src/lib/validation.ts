@@ -451,6 +451,8 @@ export const employeeProfileSchema = z.object({
   // transitionEmployment action (§9.3 hard gate + audit), never a plain
   // profile save.
   probationEndsAt: isoDateish,
+  // S14 (EM-B04/LV-B13) — the leave-approver override (null clears it).
+  leaveApproverId: cuidish.nullable().optional(),
   noticePeriodWeeks: z
     .number({ message: "Notice period must be a number of weeks." })
     .int("Notice period must be a whole number of weeks.")

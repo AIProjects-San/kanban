@@ -32,7 +32,7 @@ const VALID_DEPARTMENTS = new Set<string>(DEPARTMENT_LABELS.map((d) => d.key));
 
 function serialize(
   row: {
-    id: string; userId: string; employeeNumber: string | null; jobTitle: string; department: string;
+    id: string; userId: string; employeeNumber: string | null; leaveApproverId: string | null; jobTitle: string; department: string;
     hireDate: Date | null; phone: string; location: string;
     emergencyContactName: string; emergencyContactPhone: string;
     skills: string; notes: string; createdAt: Date; updatedAt: Date;
@@ -45,6 +45,7 @@ function serialize(
     id: row.id,
     userId: row.userId,
     employeeNumber: row.employeeNumber,
+    leaveApproverId: row.leaveApproverId ?? null,
     name: user.name,
     email: user.email,
     role: user.role,
@@ -196,6 +197,9 @@ export async function updateProfileAsAdmin(userId: string, input: {
   probationEndsAt?: string | null;
   noticePeriodWeeks?: number | null;
   lastWorkingDay?: string | null;
+  /** S14 — the leave-approver override (null clears it back to the
+   * reporting-manager rule). */
+  leaveApproverId?: string | null;
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("hr:admin");
@@ -205,6 +209,22 @@ export async function updateProfileAsAdmin(userId: string, input: {
     }
     const target = await db.user.findUnique({ where: { id: userId }, select: { id: true, name: true, deletedAt: true } });
     if (!target || target.deletedAt) throw new AuthorizationError("User not found.");
+
+    // S14 — the override target must be a real, live member and NOT the
+    // employee themselves (deciding your own leave is the manager chain's
+    // job, never a self-assignment).
+    if (data.leaveApproverId) {
+      if (data.leaveApproverId === userId) {
+        throw new AuthorizationError("An employee cannot be their own leave approver — pick another member or clear the override.");
+      }
+      const approver = await db.user.findUnique({
+        where: { id: data.leaveApproverId },
+        select: { id: true, name: true, deletedAt: true },
+      });
+      if (!approver || approver.deletedAt) {
+        throw new AuthorizationError("Leave approver not found — pick a current member.");
+      }
+    }
 
     const hireDate = data.hireDate !== undefined
       ? data.hireDate ? new Date(`${data.hireDate}T00:00:00.000Z`) : null
@@ -235,6 +255,7 @@ export async function updateProfileAsAdmin(userId: string, input: {
         ...(probationEndsAt ? { probationEndsAt } : {}),
         ...(data.noticePeriodWeeks != null ? { noticePeriodWeeks: data.noticePeriodWeeks } : {}),
         ...(lastWorkingDay ? { lastWorkingDay } : {}),
+        ...(data.leaveApproverId !== undefined ? { leaveApproverId: data.leaveApproverId } : {}),
       },
       update: {
         ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
@@ -249,6 +270,7 @@ export async function updateProfileAsAdmin(userId: string, input: {
         ...(probationEndsAt !== undefined ? { probationEndsAt } : {}),
         ...(data.noticePeriodWeeks !== undefined ? { noticePeriodWeeks: data.noticePeriodWeeks } : {}),
         ...(lastWorkingDay !== undefined ? { lastWorkingDay } : {}),
+        ...(data.leaveApproverId !== undefined ? { leaveApproverId: data.leaveApproverId } : {}),
       },
     });
 

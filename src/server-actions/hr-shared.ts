@@ -16,6 +16,7 @@ import {
 } from "@/lib/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
 import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/employment";
+import { resolveLeaveApprover } from "@/lib/hierarchy";
 import {
   resolveLeavePolicy,
   dueGrantOps,
@@ -105,12 +106,25 @@ export function todayUTC(): Date {
 // ---------------------------------------------------------------------------
 
 export async function getApproverIdsFor(userId: string): Promise<string[]> {
-  const user = await db.user.findUnique({
-    where: { id: userId },
-    select: { managerId: true },
+  // S14 (EM-B04/LV-B13) — the employee's explicit override outranks the
+  // reporting manager (resolveLeaveApprover); the pure rule lives in
+  // lib/hierarchy.ts, this is its one DB-backed reader.
+  const [user, profile] = await Promise.all([
+    db.user.findUnique({
+      where: { id: userId },
+      select: { managerId: true },
+    }),
+    db.employeeProfile.findUnique({
+      where: { userId },
+      select: { leaveApproverId: true },
+    }),
+  ]);
+  const resolved = resolveLeaveApprover({
+    leaveApproverId: profile?.leaveApproverId ?? null,
+    managerId: user?.managerId ?? null,
   });
-  if (user?.managerId) return [user.managerId];
-  // No manager on record — every ADMIN may decide.
+  if (resolved.approverId) return [resolved.approverId];
+  // No manager and no override on record — every ADMIN may decide.
   // PR-21 — take 50: a workspace with >50 admins is a config smell; the cap
   // just bounds the IN-clause built from this list.
   const admins = await db.user.findMany({
