@@ -867,6 +867,41 @@ describe("R7 — payslips", () => {
     expect(deductions.find((l) => l.key === "lop")?.amount).toBe(619.05);
   });
 
+  it("PR-B23 (S7) — ROUND_NET_NEAREST appends the auto rounding line so net lands whole", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED", payrollRoundingMode: "ROUND_NET_NEAREST" } });
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const created = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; gross: number; net: number }> } };
+    };
+    const slip = created.data.payslips.create[0];
+    // 6,700.00 is already whole — no rounding line, byte-identical default
+    // path for whole-dollar slips.
+    const lines = JSON.parse(slip.earnings) as Array<{ key: string }>;
+    expect(lines.some((l) => l.key === "rounding")).toBe(false);
+    expect(slip.net).toBe(6_700);
+
+    // December run with a half-day LOP: 23 working days → 6,700 × 0.5/23
+    // = 145.65 docked → net 6,554.35 → rounding line −0.35 (deduction side),
+    // final net 6,554.00.
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { userId: "u-yuki", date: new Date("2026-12-02T00:00:00Z"), status: "HALF_DAY" },
+    ]);
+    const res2 = await createPayrollRun({ period: "2026-12" });
+    expect(res2.ok).toBe(true);
+    // The SECOND create call is the December run.
+    const created2 = db.payrollRun.create.mock.calls[1][0] as {
+      data: { payslips: { create: Array<{ earnings: string; deductions: string; net: number }> } };
+    };
+    const slip2 = created2.data.payslips.create[0];
+    const deductions2 = JSON.parse(slip2.deductions) as Array<{ key: string; amount: number }>;
+    expect(deductions2.find((l) => l.key === "rounding")?.amount).toBe(0.35);
+    expect(slip2.net).toBe(6_554);
+  });
+
   it("addPayslip appends a mid-period joiner with the next slip number", async () => {
     db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
     db.payslip.findUnique.mockResolvedValue(null);

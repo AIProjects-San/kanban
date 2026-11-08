@@ -44,6 +44,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [payslips, setPayslips] = useState<PayslipT[]>([]);
   const [payslipsRun, setPayslipsRun] = useState<PayrollRunT | null>(null);
   const [unmarkedMode, setUnmarkedMode] = useState<"IGNORED" | "ABSENT">("IGNORED");
+  const [roundingMode, setRoundingMode] = useState<"ROUND_2DP" | "ROUND_NET_NEAREST">("ROUND_2DP");
   const [openPayslip, setOpenPayslip] = useState<PayslipT | null>(null);
   const [structureModalOpen, setStructureModalOpen] = useState(false);
   const [editStructure, setEditStructure] = useState<SalaryStructureT | null>(null);
@@ -85,6 +86,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       // in the payslip modal (the derivation itself is a creation-time
       // snapshot; the note states the policy, not a re-derivation).
       setUnmarkedMode(res.data.unmarkedMode);
+      setRoundingMode(res.data.roundingMode);
     } else {
       toast.error(res.error);
       setPayslips([]);
@@ -348,6 +350,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       <PayslipModal
         payslip={openPayslip}
         unmarkedMode={unmarkedMode}
+        roundingMode={roundingMode}
         onClose={() => { setOpenPayslip(null); if (selectedRunId) void loadPayslips(selectedRunId); void load(); }}
         onChanged={() => { if (selectedRunId) void loadPayslips(selectedRunId); void load(); }}
       />

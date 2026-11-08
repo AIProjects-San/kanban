@@ -537,6 +537,11 @@ model Workspace {
   // attendance data is not absence. ABSENT = the LOP derivation charges
   // unmarked working days (inside the employment window) as absent.
   unmarkedAttendanceMode String @default("IGNORED") // IGNORED | ABSENT
+  // PR-B23 (S7) — the payslip rounding policy. ROUND_2DP (default) = the
+  // historical discipline, no rounding line. ROUND_NET_NEAREST = every slip
+  // carries an auto "Rounding" line bringing net to the nearest whole
+  // dollar (the benchmark's rounded-total row as visible money).
+  payrollRoundingMode  String   @default("ROUND_2DP") // ROUND_2DP | ROUND_NET_NEAREST
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

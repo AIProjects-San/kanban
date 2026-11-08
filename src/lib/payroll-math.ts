@@ -114,6 +114,51 @@ export function computeLop(gross: number, lopDays: number, period: string, worki
 /** The auto-managed LOP deduction line key (replaced, never duplicated). */
 export const LOP_LINE_KEY = "lop";
 
+/** PR-B23 (S7) — the auto-managed rounding line key (the benchmark's
+ * rounded-total row, as a visible line so net always equals Σ lines). */
+export const ROUNDING_LINE_KEY = "rounding";
+
+/** PR-B23 (S7) — the workspace rounding policy. ROUND_2DP (default) = the
+ * historical discipline, no rounding line. ROUND_NET_NEAREST = the slip
+ * carries an auto "Rounding" line (earning when it pays up, deduction when
+ * it docks down) that brings NET to the nearest whole dollar. Pure. */
+export type PayrollRoundingMode = "ROUND_2DP" | "ROUND_NET_NEAREST";
+
+/** The adjustment that rounds net to the nearest integer:
+ * nearest − net (positive → the slip pays up; negative → docks down). */
+export function computeRoundingAdjustment(net: number, mode: PayrollRoundingMode): number {
+  if (mode !== "ROUND_NET_NEAREST") return 0;
+  return round2(Math.round(net) - net);
+}
+
+/** Place (or remove) the auto rounding line on a slip's line sets: the
+ * adjustment rides EARNINGS when positive and DEDUCTIONS when negative, so
+ * amount signs stay non-negative everywhere. Replaces, never duplicates. */
+export function withRoundingLine(
+  earnings: PayslipLine[],
+  deductions: PayslipLine[],
+  mode: PayrollRoundingMode,
+): { earnings: PayslipLine[]; deductions: PayslipLine[] } {
+  const cleanEarnings = earnings.filter((l) => l.key !== ROUNDING_LINE_KEY);
+  const cleanDeductions = deductions.filter((l) => l.key !== ROUNDING_LINE_KEY);
+  const net = round2(
+    cleanEarnings.reduce((s, l) => s + (Number.isFinite(l.amount) ? l.amount : 0), 0) -
+      cleanDeductions.reduce((s, l) => s + (Number.isFinite(l.amount) ? l.amount : 0), 0),
+  );
+  const adj = computeRoundingAdjustment(net, mode);
+  if (adj === 0) return { earnings: cleanEarnings, deductions: cleanDeductions };
+  if (adj > 0) {
+    return {
+      earnings: [...cleanEarnings, { key: ROUNDING_LINE_KEY, label: "Rounding", amount: adj }],
+      deductions: cleanDeductions,
+    };
+  }
+  return {
+    earnings: cleanEarnings,
+    deductions: [...cleanDeductions, { key: ROUNDING_LINE_KEY, label: "Rounding", amount: -adj }],
+  };
+}
+
 /** Replace (or remove) the LOP deduction line for the given inputs; manual
  * deduction lines are preserved untouched. `workingDays` (F1.1) overrides
  * the denominator — see computeLop. */

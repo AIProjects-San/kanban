@@ -45,6 +45,7 @@ import {
   payslipTotals,
   scaleEarningsToPaidDays,
   lopBasisGross,
+  withRoundingLine,
   withLopLine,
   daysInPeriod,
   parsePayslipLines,
@@ -436,6 +437,9 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       new Date(Date.UTC(y, m, 0)),
     );
     const runWorkingDays = workingDaysInPeriod(data.period, periodHolidays);
+    // S7 (PR-B23) — the workspace rounding policy rides run creation
+    // (snapshot: flips affect future runs, never stored slips).
+    const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
 
     // F1.4 — derive each payslip's loss-of-pay days from attendance marks
     // (ABSENT / HALF_DAY) + unpaid approved leave, charged only on working
@@ -475,14 +479,17 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
             // honest immediately — no per-slip save needed to see the dock).
             // S6 — the LOP basis excludes window-exempt lines (a flat
             // allowance is not reduced by absent days).
-            const deductions = lopDays > 0
+            const lopDeductions = lopDays > 0
               ? withLopLine([], lopBasisGross(earnings), lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
               : [];
-            const { gross, net } = payslipTotals(earnings, deductions);
+            // S7 — the rounding line lands last (auto-managed like the LOP
+            // line; ROUND_2DP default emits nothing).
+            const { earnings: finalEarnings, deductions } = withRoundingLine(earnings, lopDeductions, roundingMode);
+            const { gross, net } = payslipTotals(finalEarnings, deductions);
             return {
               userId: s.userId,
               slipNo: slipNumber(data.period, i + 1),
-              earnings: JSON.stringify(earnings),
+              earnings: JSON.stringify(finalEarnings),
               deductions: JSON.stringify(deductions),
               lopDays,
               lopSource: "AUTO",
@@ -513,7 +520,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
  * including this run — OPEN periods count so the current month is live). */
 export async function getPayrollRun(
   runId: string,
-): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT" }>> {
+): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT"; roundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST" }>> {
   return toResult(async () => {
     await requirePermission("payroll:manage");
     const id = String(runId ?? "").trim();
@@ -585,9 +592,11 @@ export async function getPayrollRun(
         createdAt: run.createdAt.toISOString(),
       },
       payslips,
-      // PR-B07 (S4) — the CURRENT workspace policy for the modal's honesty
-      // note (the derivation itself is a creation-time snapshot).
+      // PR-B07 (S4) + PR-B23 (S7) — the CURRENT workspace policies for the
+      // modal's honesty note + live preview (the derivation itself is a
+      // creation-time snapshot).
       unmarkedMode: (await getWorkspaceConfig()).workspace.unmarkedAttendanceMode,
+      roundingMode: (await getWorkspaceConfig()).workspace.payrollRoundingMode,
     };
   });
 }
@@ -670,8 +679,12 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     const netBefore = slip.net;
     // S6 — the LOP basis excludes window-exempt lines (flags ride the
     // submitted lines' snapshots).
-    const deductions = withLopLine(data.deductions, lopBasisGross(data.earnings), lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
-    const { gross, net } = payslipTotals(data.earnings, deductions);
+    const lopDeductions = withLopLine(data.deductions, lopBasisGross(data.earnings), lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
+    // S7 — the rounding line is auto-managed on save too (replaced, never
+    // duplicated); the editor never submits it.
+    const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
+    const { earnings: finalEarnings, deductions } = withRoundingLine(data.earnings, lopDeductions, roundingMode);
+    const { gross, net } = payslipTotals(finalEarnings, deductions);
     if (net < 0) {
       const totalDeductions = gross - net;
       throw new AuthorizationError(
@@ -681,7 +694,7 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     await db.payslip.update({
       where: { id: slip.id },
       data: {
-        earnings: JSON.stringify(data.earnings),
+        earnings: JSON.stringify(finalEarnings),
         deductions: JSON.stringify(deductions),
         lopDays,
         lopSource,
@@ -758,15 +771,18 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       run.workingDays > 0 ? run.workingDays : undefined,
     );
     // S6 — the LOP basis excludes window-exempt lines.
-    const deductions = lopDays > 0
+    const lopDeductions = lopDays > 0
       ? withLopLine([], lopBasisGross(scaledEarnings), lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
       : [];
-    const { gross, net } = payslipTotals(scaledEarnings, deductions);
+    // S7 — the rounding line lands last (auto-managed).
+    const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
+    const { earnings: finalEarnings, deductions } = withRoundingLine(scaledEarnings, lopDeductions, roundingMode);
+    const { gross, net } = payslipTotals(finalEarnings, deductions);
     const createData = {
       runId: run.id,
       userId: data.userId,
       slipNo: slipNumber(run.period, count + 1),
-      earnings: JSON.stringify(scaledEarnings),
+      earnings: JSON.stringify(finalEarnings),
       deductions: JSON.stringify(deductions),
       lopDays,
       lopSource: "AUTO",

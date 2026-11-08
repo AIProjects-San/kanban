@@ -108,7 +108,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | PR-B20 | Compensation engine: prospective SSA, derive CTC or solve base for target CTC, ctc_breakup | `offer-math.ts` computes component resolution + CTC totals on offers/structures; no solve-for-target-CTA inverse mode | Partial | R10 |
 | PR-B21 | SSA opening balances (taxable/tax deducted till date) | — | Missing | P4 |
 | PR-B22 | Cost-center split Σ=100% validation | — | Out of scope | P18 |
-| PR-B23 | Configurable rounding policy (`disable_rounded_total`) | fixed `round2` discipline | Partial | — |
+| PR-B23 | Configurable rounding policy (`disable_rounded_total`) | S7: `Workspace.payrollRoundingMode ROUND_2DP\|ROUND_NET_NEAREST` (Settings → General, default ROUND_2DP = zero behavior change). ROUND_NET_NEAREST appends an auto "Rounding" line (earning when it pays up, deduction when it docks down) so NET lands on a whole dollar while still equaling Σ lines exactly — in createPayrollRun/addPayslip/updatePayslip + the modal's live preview (auto-managed like the LOP line, replaced never duplicated) | **Parity (workspace scope)** (was Partial) | **S7 DONE** |
 | PR-B24 | `email_salary_slip_to_employee` + `encrypt_salary_slips_in_emails` + password policy | — (download-only decision §9.2) | Out of scope | P20 |
 | PR-B25 | `show_leave_balances_in_salary_slip` | payslip shows the LOP line only, not leave balances | Missing | — |
 | PR-B26 | Overtime slip creation setting | — | Missing | L17 |

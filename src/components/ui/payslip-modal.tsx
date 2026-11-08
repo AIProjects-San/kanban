@@ -17,7 +17,7 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { PayslipT, PayslipLineT } from "@/lib/types";
 import { updatePayslip } from "@/server-actions/payroll";
-import { computeLop, payslipTotals, lopBasisGross, LOP_LINE_KEY } from "@/lib/payroll-math";
+import { computeLop, payslipTotals, lopBasisGross, withRoundingLine, LOP_LINE_KEY, ROUNDING_LINE_KEY, type PayrollRoundingMode } from "@/lib/payroll-math";
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -36,6 +36,7 @@ function keyFromLabel(label: string, fallbackIdx: number): string {
 export function PayslipModal({
   payslip,
   unmarkedMode = "IGNORED",
+  roundingMode = "ROUND_2DP",
   onClose,
   onChanged,
 }: {
@@ -45,6 +46,9 @@ export function PayslipModal({
    * provenance note (the derivation is a creation-time snapshot; the note
    * states the policy that produced it). */
   unmarkedMode?: "IGNORED" | "ABSENT";
+  /** PR-B23 (S7) — the workspace's rounding policy; drives the live
+   * preview's auto rounding line exactly as the server will store it. */
+  roundingMode?: PayrollRoundingMode;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -59,7 +63,7 @@ export function PayslipModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (payslip) { setEarnings(payslip.earnings.map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDaysInput(String(payslip.lopDays)); setNote(payslip.note); }
+    if (payslip) { setEarnings(payslip.earnings.filter((l) => l.key !== ROUNDING_LINE_KEY).map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY && l.key !== ROUNDING_LINE_KEY).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDaysInput(String(payslip.lopDays)); setNote(payslip.note); }
   }, [payslip]);
 
   const editable = payslip?.runStatus === "OPEN";
@@ -72,7 +76,9 @@ export function PayslipModal({
       const manual = payslip.deductions
         .filter((l) => l.key !== LOP_LINE_KEY)
         .reduce((s, l) => s + l.amount, 0);
-      return { gross: payslip.gross, lop, manualDeductions: manual, net: payslip.net };
+      const roundingAdj = payslip.earnings.find((l) => l.key === ROUNDING_LINE_KEY)?.amount
+        ?? payslip.deductions.find((l) => l.key === ROUNDING_LINE_KEY)?.amount ?? 0;
+      return { gross: payslip.gross, lop, manualDeductions: manual, roundingAdj, net: payslip.net };
     }
     // S6 — the LOP basis excludes window-exempt lines (the server's
     // lopBasisGross); the live preview matches the stored math exactly.
@@ -88,8 +94,17 @@ export function PayslipModal({
       payslip && payslip.runWorkingDays > 0 ? payslip.runWorkingDays : undefined,
     );
     const manualDeductions = deductions.reduce((s, l) => s + l.amount, 0);
-    return { gross, lop, manualDeductions, net: Math.round((gross - lop - manualDeductions) * 100) / 100 };
-  }, [editable, payslip, earnings, deductions, lopDays]);
+    // S7 — the auto rounding line rides the preview exactly as saved.
+    const rounded = withRoundingLine(
+      [...earnings, ...(lop > 0 ? [{ key: LOP_LINE_KEY, label: "Loss of pay", amount: lop }] : [])],
+      deductions,
+      roundingMode,
+    );
+    const roundingAdj = rounded.earnings.find((l) => l.key === ROUNDING_LINE_KEY)?.amount
+      ?? rounded.deductions.find((l) => l.key === ROUNDING_LINE_KEY)?.amount ?? 0;
+    const net = Math.round((gross - lop - manualDeductions) * 100) / 100;
+    return { gross, lop, manualDeductions, roundingAdj, net: Math.round((net + roundingAdj) * 100) / 100 };
+  }, [editable, payslip, earnings, deductions, lopDays, roundingMode]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -228,7 +243,7 @@ export function PayslipModal({
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 grid grid-cols-3 gap-2 text-xs" data-testid="payslip-totals">
           <div><div className="text-muted-foreground">Gross</div><div className="font-semibold tabular-nums">{money(totals.gross)}</div></div>
           <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions)}</div></div>
-          <div><div className="text-muted-foreground">Net pay</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
+          <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
         </div>
         <div className="text-xs text-muted-foreground">
           YTD net (through {p.runPeriod}): <strong data-testid="payslip-ytd">{money(p.ytdNet)}</strong>

@@ -55,6 +55,9 @@ export async function updateWorkspaceSettings(input: Partial<{
   /** PR-B07 (S4) — consider_unmarked_attendance_as (Settings → General;
    * lib/lop-derivation.ts consumes it at run creation). */
   unmarkedAttendanceMode?: "IGNORED" | "ABSENT";
+  /** PR-B23 (S7) — the payslip rounding policy (Settings → General;
+   * lib/payroll-math.ts withRoundingLine consumes it). */
+  payrollRoundingMode?: "ROUND_2DP" | "ROUND_NET_NEAREST";
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

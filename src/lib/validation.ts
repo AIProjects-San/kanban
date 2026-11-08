@@ -200,6 +200,8 @@ export const workspaceSettingsSchema = z.object({
   // PR-B07 (S4) — consider_unmarked_attendance_as. IGNORED keeps the
   // pre-S4 semantics (unmarked days never charge LOP).
   unmarkedAttendanceMode: z.enum(["IGNORED", "ABSENT"]).optional(),
+  // PR-B23 (S7) — the payslip rounding policy (default ROUND_2DP).
+  payrollRoundingMode: z.enum(["ROUND_2DP", "ROUND_NET_NEAREST"]).optional(),
 }).strict(); // reject unknown keys
 
 /**

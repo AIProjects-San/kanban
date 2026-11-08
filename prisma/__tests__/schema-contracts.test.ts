@@ -209,6 +209,16 @@ describe("S2 (AT-B02/B03) — attendance timing facts + reference day", () => {
     expect(block).toMatch(/attendanceDayEnd\s+String\s+@default\("17:30"\)/);
   });
 
+  it("PR-B23 (S7) — Workspace declares the payroll rounding policy (default ROUND_2DP)", () => {
+    expect(modelBlock("Workspace")).toMatch(/payrollRoundingMode\s+String\s+@default\("ROUND_2DP"\)/);
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261126500000_payroll_rounding_mode");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+    expect(readFileSync(resolve(dir, "migration.sql"), "utf8")).toMatch(
+      /ADD COLUMN "payrollRoundingMode" TEXT NOT NULL DEFAULT 'ROUND_2DP'/,
+    );
+  });
+
   it("PR-B07 (S4) — Workspace declares the unmarked-day mode knob (default IGNORED)", () => {
     expect(modelBlock("Workspace")).toMatch(/unmarkedAttendanceMode\s+String\s+@default\("IGNORED"\)/);
     const dir = resolve(repoRoot, "prisma", "migrations", "20261126200000_unmarked_attendance_mode");

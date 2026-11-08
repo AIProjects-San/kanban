@@ -386,7 +386,7 @@ The 2026-11-08 audit re-verified every Phase 1 family against the row-level matr
 | S4 | PR-B07/AT-B08 | **DONE** `unmarkedAttendanceMode IGNORED\|ABSENT` knob feeding the LOP derivation (+ employment-window charging) | default IGNORED (zero behavior change, ADR-008) |
 | S5 | PR-B06 | **DONE** Joiner/exiter payment-day clipping (DOJ/LWD within the period) | default ON — deliberate correctness fix (F2.10 gate precedent), e2e-pinned |
 | S6 | PR-B02 | **DONE** Per-component `dependsOnPaymentDays` opt-out (catalog + snapshot) | default true (today's implicit behavior) |
-| S7 | PR-B23 | Configurable payroll rounding policy | default ROUND_2DP (zero behavior change) |
+| S7 | PR-B23 | **DONE** Configurable payroll rounding policy | default ROUND_2DP (zero behavior change) |
 | S8 | PR-B03 | Statistical components (display-only, excluded from net) | new STATISTICAL kind |
 | S9 | LV-10 | HR leave adjustment tool — user-facing ADJUST ledger writer | `hr:admin`, reason required, floor-honest |
 | S10 | LV-B10 | Salary-processed guard — unpaid leave cannot overlap a LOCKED slip | validation-chain step |

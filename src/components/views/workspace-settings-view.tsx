@@ -301,7 +301,20 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               <option value="ABSENT">Count as absent (charge loss-of-pay)</option>
             </select>
           </Field>
-          <div />
+          {/* PR-B23 (S7) — the payslip rounding policy. The rule is pure
+              (lib/payroll-math.ts withRoundingLine); this row owns the
+              instance. Applies to slips created/saved while it is on. */}
+          <Field label="Payslip rounding">
+            <select
+              className="f-input"
+              value={form.payrollRoundingMode ?? "ROUND_2DP"}
+              onChange={(e) => setForm({ ...form, payrollRoundingMode: e.target.value as "ROUND_2DP" | "ROUND_NET_NEAREST" })}
+              data-testid="rounding-mode-select"
+            >
+              <option value="ROUND_2DP">Two decimals (no rounding line)</option>
+              <option value="ROUND_NET_NEAREST">Round net to whole dollars (auto line)</option>
+            </select>
+          </Field>
         </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">

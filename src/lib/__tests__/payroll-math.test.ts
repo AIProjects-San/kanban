@@ -17,6 +17,9 @@ import {
   LOP_LINE_KEY,
   scaleEarningsToPaidDays,
   lopBasisGross,
+  withRoundingLine,
+  computeRoundingAdjustment,
+  ROUNDING_LINE_KEY,
 } from "@/lib/payroll-math";
 
 const STRUCTURE = [
@@ -180,5 +183,55 @@ describe("PR-B02 (S6) — payment-days exemption", () => {
       { key: "basic", label: "Basic", amount: 6_500 },
       { key: "car", label: "Car", amount: 300, dependsOnPaymentDays: false },
     ]);
+  });
+});
+
+
+describe("PR-B23 (S7) — the payslip rounding policy", () => {
+  it("ROUND_2DP (default) never emits a rounding line and changes nothing", () => {
+    const earnings = [{ key: "basic", label: "Basic", amount: 6_547.62 }];
+    const out = withRoundingLine(earnings, [], "ROUND_2DP");
+    expect(out.earnings).toEqual(earnings);
+    expect(out.deductions).toEqual([]);
+    expect(computeRoundingAdjustment(6_547.62, "ROUND_2DP")).toBe(0);
+  });
+
+  it("ROUND_NET_NEAREST pays UP with an earning line when the fraction is ≥ 0.5", () => {
+    // net 100.60 → rounding +0.40 (earning side).
+    const out = withRoundingLine([{ key: "basic", label: "Basic", amount: 100.6 }], [], "ROUND_NET_NEAREST");
+    expect(out.earnings).toEqual([
+      { key: "basic", label: "Basic", amount: 100.6 },
+      { key: ROUNDING_LINE_KEY, label: "Rounding", amount: 0.4 },
+    ]);
+    expect(out.deductions).toEqual([]);
+  });
+
+  it("ROUND_NET_NEAREST docks DOWN with a deduction line when the fraction is < 0.5", () => {
+    // net 100.40 → rounding −0.40 (deduction side, non-negative amount).
+    const out = withRoundingLine([{ key: "basic", label: "Basic", amount: 100.4 }], [], "ROUND_NET_NEAREST");
+    expect(out.earnings).toEqual([{ key: "basic", label: "Basic", amount: 100.4 }]);
+    expect(out.deductions).toEqual([{ key: ROUNDING_LINE_KEY, label: "Rounding", amount: 0.4 }]);
+  });
+
+  it("an already-whole net emits nothing", () => {
+    const out = withRoundingLine([{ key: "basic", label: "Basic", amount: 100 }], [], "ROUND_NET_NEAREST");
+    expect(out.earnings).toEqual([{ key: "basic", label: "Basic", amount: 100 }]);
+    expect(out.deductions).toEqual([]);
+  });
+
+  it("the line is replaced, never duplicated (idempotent re-run)", () => {
+    const first = withRoundingLine([{ key: "basic", label: "Basic", amount: 100.6 }], [], "ROUND_NET_NEAREST");
+    const second = withRoundingLine(first.earnings, first.deductions, "ROUND_NET_NEAREST");
+    expect(second).toEqual(first);
+  });
+
+  it("computeRoundingAdjustment is the nearest-integer delta", () => {
+    expect(computeRoundingAdjustment(99.4, "ROUND_NET_NEAREST")).toBe(-0.4);
+    expect(computeRoundingAdjustment(99.5, "ROUND_NET_NEAREST")).toBe(0.5);
+    expect(computeRoundingAdjustment(99.6, "ROUND_NET_NEAREST")).toBe(0.4);
+    expect(computeRoundingAdjustment(0.01, "ROUND_NET_NEAREST")).toBe(-0.01);
+    expect(computeRoundingAdjustment(0.99, "ROUND_NET_NEAREST")).toBe(0.01);
+    expect(computeRoundingAdjustment(-10.4, "ROUND_NET_NEAREST")).toBe(0.4);
+    expect(computeRoundingAdjustment(-10.6, "ROUND_NET_NEAREST")).toBe(-0.4);
   });
 });

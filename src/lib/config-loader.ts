@@ -112,6 +112,10 @@ export interface WorkspaceSettingsT {
    * pre-S4 semantics) or ABSENT (unmarked working days charge LOP).
    * Consumed by the pure lib/lop-derivation.ts kernel at run creation. */
   unmarkedAttendanceMode: "IGNORED" | "ABSENT";
+  /** PR-B23 (S7) — the payslip rounding policy: ROUND_2DP (default, no
+   * rounding line) or ROUND_NET_NEAREST (auto "Rounding" line to a whole
+   * dollar). Consumed by lib/payroll-math.ts withRoundingLine. */
+  payrollRoundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST";
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -281,6 +285,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           attendanceDayStart: workspace.attendanceDayStart,
           attendanceDayEnd: workspace.attendanceDayEnd,
           unmarkedAttendanceMode: (workspace.unmarkedAttendanceMode === "ABSENT" ? "ABSENT" : "IGNORED"),
+          payrollRoundingMode: (workspace.payrollRoundingMode === "ROUND_NET_NEAREST" ? "ROUND_NET_NEAREST" : "ROUND_2DP"),
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -301,6 +306,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           attendanceDayStart: "09:00",
           attendanceDayEnd: "17:30",
           unmarkedAttendanceMode: "IGNORED",
+          payrollRoundingMode: "ROUND_2DP",
         },
 
     taskStatuses: taskStatuses.length
