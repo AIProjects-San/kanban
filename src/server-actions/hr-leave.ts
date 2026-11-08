@@ -42,6 +42,7 @@ import {
   type LeavePolicyRow,
 } from "@/lib/leave-policy";
 import { planLeaveAdjustment } from "@/lib/leave-ledger";
+import { monthsInRange } from "@/lib/payroll-math";
 import {
   parseDay,
   daysBetween,
@@ -400,6 +401,25 @@ export async function createLeaveRequest(input: {
         throw new AuthorizationError(
           `${type.name} requires ${resolvedPolicy.minServiceMonths} month(s) of service before it can be taken — ` +
             `you have ${eligibility.monthsOfService ?? 0} so far.`,
+        );
+      }
+    }
+
+    // LV-B10 (S10) — salary-processed guard: UNPAID leave charges loss of
+    // pay, and a LOCKED run's slips are immutable — the request is refused
+    // when its range touches a month already processed (paid types and OPEN
+    // runs are fine: corrections still land).
+    if (!type.paid) {
+      const lockedPeriods = new Set(
+        (await db.payslip.findMany({
+          where: { userId: auth.userId, run: { status: "LOCKED" } },
+          select: { run: { select: { period: true } } },
+        })).map((p) => p.run.period),
+      );
+      const clash = monthsInRange(start, end).filter((m) => lockedPeriods.has(m));
+      if (clash.length > 0) {
+        throw new AuthorizationError(
+          `Salary for ${clash.join(", ")} has already been processed (locked payroll run) — unpaid ${type.name} can't dock pay in a processed period. Shorten the range past those months or use a paid leave type.`,
         );
       }
     }

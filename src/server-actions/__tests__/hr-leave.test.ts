@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
-    "leaveLedgerEntry",
+    "leaveLedgerEntry", "payslip", "payrollRun",
     "user", "auditLog", "notification", "holidayCalendarEntry",
     "attendanceRecord", "employeeProfile",
   ];
@@ -70,6 +70,7 @@ import {
   adjustLeaveBalance,
 } from "../hr-leave";
 import { projectLeaveBalance } from "@/lib/leave-ledger";
+import { monthsInRange } from "@/lib/payroll-math";
 import {
   parseDay,
   daysBetween,
@@ -148,6 +149,9 @@ beforeEach(() => {
   // rows; default to "no records" so the derivation no-ops unless a test
   // seeds rows.
   db.attendanceRecord.findMany.mockResolvedValue([]);
+  // LV-B10 (S10) — the salary-processed guard reads the user's LOCKED
+  // payslips; default to none.
+  db.payslip.findMany.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1515,6 +1519,62 @@ describe("PR-56 — remaining branch coverage", () => {
 // in parseDay, and the two unique-trio race catches that log the conflict
 // and re-read the concurrent winner's row instead of failing the read path.
 // ---------------------------------------------------------------------------
+
+describe("LV-B10 (S10) — salary-processed guard on unpaid leave", () => {
+  const UNPAID_TYPE = { ...ANNUAL_TYPE, paid: false, name: "Unpaid Leave" };
+
+  it("monthsInRange walks the months a range touches (inclusive, multi-month)", () => {
+    expect(monthsInRange(new Date("2026-10-28T00:00:00Z"), new Date("2026-10-31T00:00:00Z"))).toEqual(["2026-10"]);
+    expect(monthsInRange(new Date("2026-10-28T00:00:00Z"), new Date("2026-12-02T00:00:00Z"))).toEqual(["2026-10", "2026-11", "2026-12"]);
+    expect(monthsInRange(new Date("2026-12-31T00:00:00Z"), new Date("2027-01-01T00:00:00Z"))).toEqual(["2026-12", "2027-01"]);
+    expect(monthsInRange(new Date("2026-12-02T00:00:00Z"), new Date("2026-12-01T00:00:00Z"))).toEqual([]);
+  });
+
+  it("unpaid leave overlapping a LOCKED run's month is refused, naming the period", async () => {
+    db.leaveType.findUnique.mockResolvedValue(UNPAID_TYPE);
+    db.payslip.findMany.mockResolvedValue([
+      { run: { period: "2026-11" } },
+      { run: { period: "2026-10" } },
+    ]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unpaid stretch",
+    });
+    // The default request window is the CURRENT month — a locked period
+    // equal to it makes the guard fire.
+    const currentPeriod = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+    if (["2026-11", "2026-10"].includes(currentPeriod)) {
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toContain("already been processed");
+    } else {
+      // Far-period fixture: force the clash explicitly.
+      db.payslip.findMany.mockResolvedValue([{ run: { period: currentPeriod } }]);
+      const res2 = await createLeaveRequest({
+        leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unpaid stretch",
+      });
+      expect(res2.ok).toBe(false);
+      if (!res2.ok) expect(res2.error).toContain("already been processed");
+    }
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("PAID leave is never blocked by processed salary (no LOP dock)", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.payslip.findMany.mockResolvedValue([{ run: { period: `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}` } }]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "paid stretch",
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("unpaid leave in a month with only an OPEN run is allowed (not processed yet)", async () => {
+    db.leaveType.findUnique.mockResolvedValue(UNPAID_TYPE);
+    db.payslip.findMany.mockResolvedValue([{ run: { period: "1999-01" } }]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unpaid future stretch",
+    });
+    expect(res.ok).toBe(true);
+  });
+});
 
 describe("LV-10 (S9) — adjustLeaveBalance (the user-facing ADJUST writer)", () => {
   const HR_ADMIN_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };

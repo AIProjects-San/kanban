@@ -170,7 +170,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | LV-B07 | `applicable_after` days-in-service before leave allowed | F2.4: `minServiceMonths` gates submission (LV-B07) and doubles as AFTER_SERVICE's deposit threshold; no hire date on record passes (unknown ≠ ineligible) | **Parity (workspace scope)** | L1 / **F2.4 DONE** |
 | LV-B08 | Max-consecutive-days walk across adjacent applications | per-request `maxConsecutiveDays` guard; cross-request walk unverified/absent | Partial | L5 |
 | LV-B09 | Block-list validation with department scoping | — | Missing | L8 |
-| LV-B10 | Salary-processed guard (LWP cannot overlap a processed slip) | — | Missing | L5 |
+| LV-B10 | Salary-processed guard (LWP cannot overlap a processed slip) | S10: createLeaveRequest refuses UNPAID-type ranges whose months (pure `monthsInRange`) intersect a LOCKED run's period — processed pay is immutable, so unpaid leave can't dock it retroactively; paid types and OPEN runs stay correctable | **Parity (workspace scope)** (was Missing) | L5 / **S10 DONE** |
 | LV-B11 | Attendance conflict guard in the leave chain | leave↔attendance derivation both directions (F1.3: approve → ON_LEAVE rows, cancel → reversal); no refusal on marked days | Partial | L5 / F1.3 |
 | LV-B12 | Self-approval policy per leave type | requests decided by manager-of-requester or ADMIN/HR only — the benchmark's default posture, fixed | **Parity** | L5 |
 | LV-B13 | Approver chain: employee-level → department → workflow | manager → ADMIN/HR (no department approver wiring) | Partial | E1/L5 |

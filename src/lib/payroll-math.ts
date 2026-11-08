@@ -206,6 +206,21 @@ export function currentPeriod(now: Date = new Date()): string {
 }
 
 /** True when `period` parses as a valid "YYYY-MM" month. */
+/** LV-B10 (S10) — the "YYYY-MM" months a date range touches (inclusive),
+ * in ascending order. Pure input of the salary-processed guard: unpaid leave
+ * cannot overlap a month whose payroll run is already LOCKED. */
+export function monthsInRange(start: Date, end: Date): string[] {
+  const out: string[] = [];
+  if (!(start <= end)) return out;
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+  while (cursor <= last) {
+    out.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return out;
+}
+
 export function isPayrollPeriod(period: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(period);
 }
