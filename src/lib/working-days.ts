@@ -68,3 +68,20 @@ export function workingDaysInPeriod(period: string, holidays?: HolidayLookup): n
   const end = new Date(Date.UTC(y, m, 0)); // day 0 = last day of previous month
   return workingDaysBetween(start, end, holidays);
 }
+
+/**
+ * F-R15 (S3) — why a date is NOT markable for attendance, or null when it
+ * is a working day. Pure: the caller supplies the calendar row (if any).
+ * Half-day holidays ARE working (half) days — marking stays allowed; the
+ * S2 timing facts and the F1.4 LOP derivation handle their halfness.
+ */
+export function nonWorkingDayReason(
+  d: Date,
+  holiday?: { label: string; isHalfDay: boolean } | null,
+): string | null {
+  const dow = d.getUTCDay(); // 0 Sun … 6 Sat
+  if (dow === 0) return "a Sunday";
+  if (dow === 6) return "a Saturday";
+  if (holiday && !holiday.isHalfDay) return `a holiday (${holiday.label})`;
+  return null;
+}

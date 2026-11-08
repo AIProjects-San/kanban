@@ -76,6 +76,8 @@ beforeEach(() => {
     id: "att-1", ...data,
   }));
   db.attendanceRecord.delete.mockResolvedValue({});
+  // S3 (F-R15) — no holiday on the marked date by default (working day).
+  db.holidayCalendarEntry.findFirst.mockResolvedValue(null);
   // S2 — default reference day: 09:00 / 17:30 (the schema defaults).
   getWorkspaceConfigMock.mockResolvedValue({
     workspace: { attendanceDayStart: "09:00", attendanceDayEnd: "17:30" },
@@ -327,6 +329,59 @@ describe("S2 — the month payload carries the reference day", () => {
     if (!res.ok) throw new Error("expected success");
     expect(res.data.dayStart).toBe("08:30");
     expect(res.data.dayEnd).toBe("17:00");
+  });
+});
+
+describe("S3 (F-R15) — non-working-day marks are refused server-side", () => {
+  it("a Saturday mark is refused with the weekend named", async () => {
+    const res = await upsertAttendanceRecord({
+      userId: "u-theo", date: "2026-11-07", status: "PRESENT", // Saturday
+    });
+    if (res.ok) throw new Error("expected failure");
+    expect(res.error).toContain("2026-11-07 is a Saturday");
+    expect(res.error).toContain("not marked on non-working days");
+    expect(db.attendanceRecord.create).not.toHaveBeenCalled();
+  });
+
+  it("a Sunday mark is refused too", async () => {
+    const res = await upsertAttendanceRecord({
+      userId: "u-theo", date: "2026-11-08", status: "WFH", // Sunday
+    });
+    if (res.ok) throw new Error("expected failure");
+    expect(res.error).toContain("2026-11-08 is a Sunday");
+  });
+
+  it("a full-holiday mark is refused with the calendar label named", async () => {
+    db.holidayCalendarEntry.findFirst.mockResolvedValue({ label: "Christmas Day", isHalfDay: false });
+    const res = await upsertAttendanceRecord({
+      userId: "u-theo", date: "2026-12-25", status: "PRESENT",
+    });
+    if (res.ok) throw new Error("expected failure");
+    expect(res.error).toContain("2026-12-25 is a holiday (Christmas Day)");
+  });
+
+  it("a HALF-DAY holiday stays markable (it is a working half-day)", async () => {
+    db.holidayCalendarEntry.findFirst.mockResolvedValue({ label: "Christmas Eve", isHalfDay: true });
+    const res = await upsertAttendanceRecord({
+      userId: "u-theo", date: "2026-12-24", status: "PRESENT", inTime: "09:00", outTime: "13:00",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.attendanceRecord.create).toHaveBeenCalled();
+  });
+
+  it("moving an existing record's date onto a non-working day is refused (update path)", async () => {
+    db.attendanceRecord.findUnique.mockResolvedValue({
+      id: "att-1", userId: "u-theo", date: new Date("2026-11-05T00:00:00Z"),
+      status: "PRESENT", inTime: null, outTime: null,
+      lateMinutes: null, earlyMinutes: null, workingHours: null,
+      note: "", source: "MANUAL",
+    });
+    const res = await upsertAttendanceRecord({
+      id: "att-1", userId: "u-theo", date: "2026-11-07", status: "PRESENT", // Saturday
+    });
+    if (res.ok) throw new Error("expected failure");
+    expect(res.error).toContain("a Saturday");
+    expect(db.attendanceRecord.update).not.toHaveBeenCalled();
   });
 });
 

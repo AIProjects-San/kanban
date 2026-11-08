@@ -101,6 +101,14 @@ When("I mark {string} {string} on that same Monday again", async function (userN
   await markOn(this, userName, status, this.e2eAttMonday);
 });
 
+// S3 (F-R15) — the non-working-day guard: the Saturday AFTER the far-future
+// Monday. The mark is refused server-side; the toast carries the reason.
+When("I mark {string} {string} on a far-future Saturday", async function (userName, status) {
+  const monday = await farFutureMonday(this);
+  const saturday = new Date(monday.getTime() + 5 * 86_400_000);
+  await markOn(this, userName, status, saturday);
+});
+
 Then("the attendance grid should show a row for {string}", async function (userName) {
   const driver = await this.getDriver();
   await driver.wait(

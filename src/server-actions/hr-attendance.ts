@@ -32,6 +32,7 @@ import { toResult, isUniqueConstraintError } from "./result";
 import { parseDay } from "./hr-shared";
 import { deriveAttendanceTiming, type AttendanceTimingFacts } from "@/lib/attendance-flags";
 import { getWorkspaceConfig } from "@/lib/config-loader";
+import { nonWorkingDayReason } from "@/lib/working-days";
 
 /** Clamp/normalize a (year, month) pair; invalid input falls back to the
  * current UTC month (getHolidayCalendar's year convention). */
@@ -161,6 +162,22 @@ export async function upsertAttendanceRecord(input: {
     if (!target || target.deletedAt) throw new AuthorizationError("Member not found.");
 
     const date = parseDay(data.date);
+    // F-R15 (S3) — the server-side half of the grid-shading honesty: marks
+    // on non-working days are REJECTED (weekends + full holidays; half-day
+    // holidays stay markable — they are working half-days). The pure rule
+    // lives in lib/working-days.ts; this is the friendly-error writer.
+    // The leave→ON_LEAVE derivation bypasses this guard BY DESIGN (it is
+    // server-driven and LOP never charges non-working days either way).
+    const holiday = await db.holidayCalendarEntry.findFirst({
+      where: { date },
+      select: { label: true, isHalfDay: true },
+    });
+    const reason = nonWorkingDayReason(date, holiday);
+    if (reason) {
+      throw new AuthorizationError(
+        `${data.date} is ${reason} — attendance is not marked on non-working days (they never charge loss-of-pay either).`,
+      );
+    }
     // AT-B02/B03 (S2) — derive the timing facts from the times against the
     // workspace default day at WRITE time (derived-statuses discipline;
     // pure kernel, no clock, no I/O beyond the config read).

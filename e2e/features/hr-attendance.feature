@@ -41,6 +41,19 @@ Feature: Attendance records (F1.3)
     And I delete the attendance record for "Theo Vance" on that Monday
     Then the attendance grid should show no record for "Theo Vance" on that Monday
 
+  Scenario: A non-working day refuses the mark (F-R15 server-side guard)
+    The Saturday after the far-future Monday is rejected at write time —
+    the grid's weekend shading becomes a server guarantee, with the same
+    friendly-error pattern as the duplicate guard. No record is written,
+    so nothing needs undoing.
+
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Attendance" tab
+    And I mark "Theo Vance" "PRESENT" on a far-future Saturday
+    Then the attendance form should show an error mentioning "is a Saturday"
+    And the attendance grid should show no record for "Theo Vance" on that Monday
+
   Scenario: Approved leave derives ON_LEAVE in My Attendance — and cancelling removes it
     The member requests a far-future Monday→Tuesday annual leave (a DIFFERENT
     Monday than the marking scenario above — 320 vs 300 days out, so the
