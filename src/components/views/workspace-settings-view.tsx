@@ -261,6 +261,30 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
           </label>
           <div />
         </FormRow>
+        <FormRow>
+          {/* AT-B02/B03 (S2) — the reference day for attendance late/early
+              flags + working hours. The rule is pure (lib/attendance-flags.ts);
+              this row owns the instance (policy-as-data). Shifts (F3.5) will
+              supersede the reference. */}
+          <Field label="Attendance day start (HH:MM)">
+            <input
+              type="time"
+              className="f-input"
+              value={form.attendanceDayStart ?? "09:00"}
+              onChange={(e) => setForm({ ...form, attendanceDayStart: e.target.value })}
+              data-testid="attendance-day-start"
+            />
+          </Field>
+          <Field label="Attendance day end (HH:MM)">
+            <input
+              type="time"
+              className="f-input"
+              value={form.attendanceDayEnd ?? "17:30"}
+              onChange={(e) => setForm({ ...form, attendanceDayEnd: e.target.value })}
+              data-testid="attendance-day-end"
+            />
+          </Field>
+        </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">
             {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Save size={14} /> Save settings</>}

@@ -48,6 +48,10 @@ export async function updateWorkspaceSettings(input: Partial<{
   dashboardNotifLimit: number;
   /** F2.10 — the joining-gate toggle (Settings → General). */
   joiningGateEnabled?: boolean;
+  /** AT-B02/B03 (S2) — the reference day (HH:MM) behind the late/early
+   * flags + working hours (Settings → General; lib/attendance-flags.ts). */
+  attendanceDayStart?: string;
+  attendanceDayEnd?: string;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

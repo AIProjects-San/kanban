@@ -526,6 +526,12 @@ model Workspace {
   // epic's point); workspaces that want the old advisory flow can turn it
   // off in Settings → General.
   joiningGateEnabled   Boolean  @default(true)
+  // AT-B02/B03 (S2) — the reference day for late/early flags + working
+  // hours ("HH:MM" 24-hour). Until shifts land (F3.5) the workspace default
+  // day defines "late"; the rule itself is pure (lib/attendance-flags.ts)
+  // and this row owns the instance (policy-as-data).
+  attendanceDayStart  String   @default("09:00")
+  attendanceDayEnd    String   @default("17:30")
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -971,6 +977,16 @@ model AttendanceRecord {
   status    String   @default("PRESENT")
   inTime    String?
   outTime   String?
+  // AT-B02/B03 (S2) — derived timing facts, computed by the pure
+  // lib/attendance-flags.ts kernel against the workspace default day at
+  // WRITE time (derived-statuses discipline: never a form input, never
+  // hand-edited; editing in/out recomputes). null = not computable (the
+  // dependent time is absent). A config change does not retro-rewrite —
+  // rows keep the facts they were marked with (F1.1 denormalization
+  // discipline). Shifts arrive in F3.5 and will replace the reference.
+  lateMinutes  Int?
+  earlyMinutes Int?
+  workingHours Float?
   note      String   @default("")
   source    String   @default("MANUAL")
   createdAt DateTime @default(now())

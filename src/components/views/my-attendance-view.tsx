@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { ATTENDANCE_STATUS_BADGE, ATTENDANCE_STATUS_LABELS } from "@/lib/config";
 import type { AttendanceT, AttendanceStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { describeAttendanceTiming, formatMinutes } from "@/lib/attendance-flags";
 import { getMyAttendance } from "@/server-actions/hr-attendance";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -180,7 +181,7 @@ export function MyAttendanceView({ currentUser }: { currentUser: { id: string; n
                 {rec && (
                   <span
                     className={cn("inline-flex px-1.5 py-0.5 rounded text-[0.625rem] font-medium w-fit", ATTENDANCE_STATUS_BADGE[rec.status])}
-                    title={`${ATTENDANCE_STATUS_LABELS[rec.status]}${rec.source === "DERIVED" ? " (from approved leave)" : ""}${rec.inTime ? ` · in ${rec.inTime}` : ""}${rec.outTime ? ` · out ${rec.outTime}` : ""}${rec.note ? ` · ${rec.note}` : ""}`}
+                    title={`${ATTENDANCE_STATUS_LABELS[rec.status]}${rec.source === "DERIVED" ? " (from approved leave)" : ""}${rec.inTime ? ` · in ${rec.inTime}` : ""}${rec.outTime ? ` · out ${rec.outTime}` : ""}${describeAttendanceTiming(rec) ? ` · ${describeAttendanceTiming(rec)}` : ""}${rec.note ? ` · ${rec.note}` : ""}`}
                   >
                     {ATTENDANCE_STATUS_LABELS[rec.status]}
                   </span>
@@ -220,6 +221,24 @@ export function MyAttendanceView({ currentUser }: { currentUser: { id: string; n
                 {(r.inTime || r.outTime) && (
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {r.inTime ?? "—"} → {r.outTime ?? "—"}
+                  </span>
+                )}
+                {/* AT-B02/B03 (S2) — the derived timing facts as honest badges:
+                    late/early only when they actually happened, hours worked
+                    whenever the pair is complete. */}
+                {r.lateMinutes !== null && r.lateMinutes > 0 && (
+                  <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400" data-testid="my-att-late">
+                    Late {formatMinutes(r.lateMinutes)}
+                  </span>
+                )}
+                {r.earlyMinutes !== null && r.earlyMinutes > 0 && (
+                  <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-700 dark:text-sky-400" data-testid="my-att-early">
+                    Early {formatMinutes(r.earlyMinutes)}
+                  </span>
+                )}
+                {r.workingHours !== null && (
+                  <span className="text-[0.625rem] text-muted-foreground tabular-nums" data-testid="my-att-hours">
+                    {formatMinutes(Math.round(r.workingHours * 60))} worked
                   </span>
                 )}
                 {r.note && (

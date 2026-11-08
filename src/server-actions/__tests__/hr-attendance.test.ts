@@ -41,6 +41,15 @@ vi.mock("@/server-actions/shared", () => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
+// S2 (AT-B02/B03) — the timing derivation reads the workspace default day
+// through the cached config loader; mocked so the pure kernel stays the
+// unit under test and the day is fixture-controllable.
+const getWorkspaceConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/config-loader", () => ({
+  getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
+  bumpConfigCache: vi.fn(),
+}));
+
 import {
   getAttendanceMonth,
   upsertAttendanceRecord,
@@ -67,6 +76,10 @@ beforeEach(() => {
     id: "att-1", ...data,
   }));
   db.attendanceRecord.delete.mockResolvedValue({});
+  // S2 — default reference day: 09:00 / 17:30 (the schema defaults).
+  getWorkspaceConfigMock.mockResolvedValue({
+    workspace: { attendanceDayStart: "09:00", attendanceDayEnd: "17:30" },
+  });
 });
 
 describe("getAttendanceMonth", () => {
@@ -135,6 +148,10 @@ describe("upsertAttendanceRecord", () => {
         status: "WFH",
         inTime: null,
         outTime: null,
+        // S2 — no times → null facts (unknown, not zero).
+        lateMinutes: null,
+        earlyMinutes: null,
+        workingHours: null,
         note: "From home",
         source: "MANUAL",
       },
@@ -170,6 +187,11 @@ describe("upsertAttendanceRecord", () => {
         status: "HALF_DAY",
         inTime: "09:00",
         outTime: "13:00",
+        // S2 — 09:00–13:00 against the 09:00–17:30 reference: on time,
+        // 4h30m early, 4 hours worked.
+        lateMinutes: 0,
+        earlyMinutes: 270,
+        workingHours: 4,
         note: "",
         source: "MANUAL",
       },
@@ -229,6 +251,82 @@ describe("upsertAttendanceRecord", () => {
     });
     if (res.ok) throw new Error("expected failure");
     expect(res.error).toContain("Member not found");
+  });
+
+  it("S2/AT-B02/B03 — derives and stores the timing facts against the workspace reference day", async () => {
+    const res = await upsertAttendanceRecord({
+      userId: "u-theo", date: "2026-11-05", status: "PRESENT",
+      inTime: "09:25", outTime: "17:10",
+    });
+    expect(res.ok).toBe(true);
+    const created = db.attendanceRecord.create.mock.calls[0][0] as {
+      data: { lateMinutes: number | null; earlyMinutes: number | null; workingHours: number | null };
+    };
+    // 09:00–17:30 reference: 25 late, 20 early, 7h45m worked.
+    expect(created.data.lateMinutes).toBe(25);
+    expect(created.data.earlyMinutes).toBe(20);
+    expect(created.data.workingHours).toBe(7.75);
+  });
+
+  it("S2 — an absent time means null facts (unknown, not zero)", async () => {
+    await upsertAttendanceRecord({
+      userId: "u-theo", date: "2026-11-05", status: "ABSENT",
+    });
+    const created = db.attendanceRecord.create.mock.calls[0][0] as {
+      data: { lateMinutes: number | null; earlyMinutes: number | null; workingHours: number | null };
+    };
+    expect(created.data.lateMinutes).toBeNull();
+    expect(created.data.earlyMinutes).toBeNull();
+    expect(created.data.workingHours).toBeNull();
+  });
+
+  it("S2 — a custom reference day (config-as-data) changes the verdict, not the rule", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { attendanceDayStart: "10:00", attendanceDayEnd: "18:00" },
+    });
+    await upsertAttendanceRecord({
+      userId: "u-theo", date: "2026-11-05", status: "PRESENT",
+      inTime: "09:30", outTime: "18:00",
+    });
+    const created = db.attendanceRecord.create.mock.calls[0][0] as {
+      data: { lateMinutes: number | null; earlyMinutes: number | null; workingHours: number | null };
+    };
+    // Against 10:00 the 09:30 arrival is EARLY, not late; out exactly on time.
+    expect(created.data.lateMinutes).toBe(0);
+    expect(created.data.earlyMinutes).toBe(0);
+    expect(created.data.workingHours).toBe(8.5);
+  });
+
+  it("S2 — editing times recomputes the stored facts (update path)", async () => {
+    db.attendanceRecord.findUnique.mockResolvedValue({
+      id: "att-1", userId: "u-theo", date: new Date("2026-11-05T00:00:00Z"),
+      status: "PRESENT", inTime: "09:00", outTime: "17:30",
+      lateMinutes: 0, earlyMinutes: 0, workingHours: 8.5,
+      note: "", source: "MANUAL",
+    });
+    const res = await upsertAttendanceRecord({
+      id: "att-1", userId: "u-theo", date: "2026-11-05", status: "PRESENT",
+      inTime: "09:40", outTime: "17:30",
+    });
+    expect(res.ok).toBe(true);
+    const updated = db.attendanceRecord.update.mock.calls[0][0] as {
+      data: { lateMinutes: number | null; earlyMinutes: number | null; workingHours: number | null };
+    };
+    expect(updated.data.lateMinutes).toBe(40);
+    expect(updated.data.earlyMinutes).toBe(0);
+    expect(updated.data.workingHours).toBe(7.83);
+  });
+});
+
+describe("S2 — the month payload carries the reference day", () => {
+  it("getAttendanceMonth exposes dayStart/dayEnd from the workspace config", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { attendanceDayStart: "08:30", attendanceDayEnd: "17:00" },
+    });
+    const res = await getAttendanceMonth(2026, 11);
+    if (!res.ok) throw new Error("expected success");
+    expect(res.data.dayStart).toBe("08:30");
+    expect(res.data.dayEnd).toBe("17:00");
   });
 });
 

@@ -60,6 +60,11 @@ export interface AttendanceT {
   status: AttendanceStatus;
   inTime: string | null;
   outTime: string | null;
+  /** AT-B02/B03 (S2) — derived at write time against the workspace default
+   * day (lib/attendance-flags.ts). null = not computable. */
+  lateMinutes: number | null;
+  earlyMinutes: number | null;
+  workingHours: number | null;
   note: string;
   source: AttendanceSource;
 }
@@ -73,6 +78,10 @@ export interface AttendanceMonthT {
   members: { userId: string; userName: string }[];
   records: AttendanceT[];
   holidays: { date: string; label: string }[];
+  /** AT-B02/B03 (S2) — the workspace reference day (HH:MM) the late/early
+   * facts were derived against; the marking modal explains "late" with it. */
+  dayStart: string;
+  dayEnd: string;
 }
 
 // F2.4 — leave allocation strategy vocabulary (docs/Fernly_Policy_Engine_

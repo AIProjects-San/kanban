@@ -138,6 +138,11 @@ async function main() {
       // F2.10 — the joining gate (mandatory docs VERIFIED + terminal BGV
       // before markJoined). Default on; toggleable in Settings → General.
       joiningGateEnabled: true,
+      // AT-B02/B03 (S2) — the reference day behind the late/early flags +
+      // working hours. Defaults mirror the schema; explicit so the demo
+      // story is self-documenting.
+      attendanceDayStart: "09:00",
+      attendanceDayEnd: "17:30",
     },
   });
 
@@ -1492,6 +1497,28 @@ async function main() {
       });
     }
   }
+  // Mirror of lib/attendance-flags.ts deriveAttendanceTiming — the seed
+  // must use the SAME math as production ("seed mirrors production math").
+  // Reference day: the workspace defaults above (09:00 / 17:30).
+  const parseHm = (v) => {
+    if (typeof v !== "string") return null;
+    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(v.trim());
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  };
+  const deriveTiming = (inTime, outTime) => {
+    const dayStart = parseHm("09:00");
+    const dayEnd = parseHm("17:30");
+    const inMin = parseHm(inTime);
+    const outMin = parseHm(outTime);
+    return {
+      lateMinutes: inMin !== null && dayStart !== null ? Math.max(0, inMin - dayStart) : null,
+      earlyMinutes: outMin !== null && dayEnd !== null ? Math.max(0, dayEnd - outMin) : null,
+      workingHours:
+        inMin !== null && outMin !== null && outMin > inMin
+          ? Math.round(((outMin - inMin) / 60) * 100) / 100
+          : null,
+    };
+  };
   const manualAttendance = [
     ["Yuki Tanaka", -1, "WFH", "09:15", "17:40", "Design review from home"],
     ["Theo Vance", -1, "PRESENT", "09:00", "17:30", ""],
@@ -1507,7 +1534,10 @@ async function main() {
     // per day, and the derivation is authoritative for approved leave.
     if (takenAttendance.has(key)) continue;
     takenAttendance.add(key);
-    attendanceRows.push({ userId, date: d, status, inTime, outTime, note, source: "MANUAL" });
+    // S2 — the timing facts ride on the row, mirroring the production
+    // write path (upsertAttendanceRecord derives before storing).
+    const timing = deriveTiming(inTime, outTime);
+    attendanceRows.push({ userId, date: d, status, inTime, outTime, ...timing, note, source: "MANUAL" });
   }
   // F1.4 — Hana (a salary-structure holder) gets an ABSENT working day so
   // the current-month OPEN run has a genuine AUTO-derived LOP example next

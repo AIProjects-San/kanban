@@ -30,6 +30,8 @@ import { attendanceRecordSchema, deleteAttendanceRecordSchema, parseOrThrow } fr
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import { parseDay } from "./hr-shared";
+import { deriveAttendanceTiming, type AttendanceTimingFacts } from "@/lib/attendance-flags";
+import { getWorkspaceConfig } from "@/lib/config-loader";
 
 /** Clamp/normalize a (year, month) pair; invalid input falls back to the
  * current UTC month (getHolidayCalendar's year convention). */
@@ -62,6 +64,9 @@ function serializeAttendance(
     status: string;
     inTime: string | null;
     outTime: string | null;
+    lateMinutes: number | null;
+    earlyMinutes: number | null;
+    workingHours: number | null;
     note: string;
     source: string;
   },
@@ -75,6 +80,11 @@ function serializeAttendance(
     status: r.status as AttendanceStatus,
     inTime: r.inTime,
     outTime: r.outTime,
+    // AT-B02/B03 (S2) — the derived timing facts ride along; the client
+    // renders badges/tooltips from them (never re-derives).
+    lateMinutes: r.lateMinutes ?? null,
+    earlyMinutes: r.earlyMinutes ?? null,
+    workingHours: r.workingHours ?? null,
     note: r.note,
     source: r.source as AttendanceSource,
   };
@@ -112,12 +122,18 @@ export async function getAttendanceMonth(
     ]);
     const names = new Map(users.map((u) => [u.id, u.name]));
 
+    // AT-B02/B03 (S2) — the reference day rides on the month payload so the
+    // grid/marking modal can explain what "late" means here.
+    const config = await getWorkspaceConfig();
+
     return {
       year,
       month,
       members: users.map((u) => ({ userId: u.id, userName: u.name })),
       records: records.map((r) => serializeAttendance(r, names.get(r.userId) ?? "(former user)")),
       holidays: holidays.map((h) => ({ date: h.date.toISOString().slice(0, 10), label: h.label })),
+      dayStart: config.workspace.attendanceDayStart,
+      dayEnd: config.workspace.attendanceDayEnd,
     };
   });
 }
@@ -145,12 +161,25 @@ export async function upsertAttendanceRecord(input: {
     if (!target || target.deletedAt) throw new AuthorizationError("Member not found.");
 
     const date = parseDay(data.date);
+    // AT-B02/B03 (S2) — derive the timing facts from the times against the
+    // workspace default day at WRITE time (derived-statuses discipline;
+    // pure kernel, no clock, no I/O beyond the config read).
+    const config = await getWorkspaceConfig();
+    const timing: AttendanceTimingFacts = deriveAttendanceTiming({
+      inTime: data.inTime ?? null,
+      outTime: data.outTime ?? null,
+      dayStart: config.workspace.attendanceDayStart,
+      dayEnd: config.workspace.attendanceDayEnd,
+    });
     const payload = {
       userId: data.userId,
       date,
       status: data.status,
       inTime: data.inTime ?? null,
       outTime: data.outTime ?? null,
+      lateMinutes: timing.lateMinutes,
+      earlyMinutes: timing.earlyMinutes,
+      workingHours: timing.workingHours,
       note: data.note,
       // An explicit HR save is MANUAL by definition — including when it
       // overwrites a DERIVED row (source is part of the edit, never a

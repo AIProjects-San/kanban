@@ -193,6 +193,10 @@ export const workspaceSettingsSchema = z.object({
   dashboardNotifLimit: z.number().int().finite().min(1).max(200).optional(),
   // F2.10 (F-R9/E5) — the joining-gate toggle (Settings → General).
   joiningGateEnabled: z.boolean().optional(),
+  // AT-B02/B03 (S2) — the reference day for late/early flags + working
+  // hours. Same HH:MM shape the attendance form already uses.
+  attendanceDayStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Day start must be HH:MM (24-hour clock).").optional(),
+  attendanceDayEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Day end must be HH:MM (24-hour clock).").optional(),
 }).strict(); // reject unknown keys
 
 /**

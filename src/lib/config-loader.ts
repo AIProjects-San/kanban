@@ -103,6 +103,11 @@ export interface WorkspaceSettingsT {
   hiringEmailDomain: string;
   /** F2.10 (F-R9/E5) — the joining gate on markJoined. Default true. */
   joiningGateEnabled: boolean;
+  /** AT-B02/B03 (S2) — the reference day for late/early flags + working
+   * hours ("HH:MM"). The knob behind Settings → General; the rule is the
+   * pure lib/attendance-flags.ts kernel. Defaults 09:00 / 17:30. */
+  attendanceDayStart: string;
+  attendanceDayEnd: string;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -269,6 +274,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           dashboardNotifLimit: workspace.dashboardNotifLimit,
           hiringEmailDomain: workspace.hiringEmailDomain,
           joiningGateEnabled: workspace.joiningGateEnabled,
+          attendanceDayStart: workspace.attendanceDayStart,
+          attendanceDayEnd: workspace.attendanceDayEnd,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -286,6 +293,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           dashboardNotifLimit: 20,
           hiringEmailDomain: "fernly.app",
           joiningGateEnabled: true,
+          attendanceDayStart: "09:00",
+          attendanceDayEnd: "17:30",
         },
 
     taskStatuses: taskStatuses.length

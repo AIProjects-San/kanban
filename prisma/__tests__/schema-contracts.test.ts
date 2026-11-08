@@ -195,6 +195,33 @@ describe("HR module leave models are declared", () => {
   });
 });
 
+describe("S2 (AT-B02/B03) — attendance timing facts + reference day", () => {
+  it("AttendanceRecord declares the derived timing columns (nullable = not computable)", () => {
+    const block = modelBlock("AttendanceRecord");
+    expect(block).toMatch(/lateMinutes\s+Int\?/);
+    expect(block).toMatch(/earlyMinutes\s+Int\?/);
+    expect(block).toMatch(/workingHours\s+Float\?/);
+  });
+
+  it("Workspace declares the reference-day knobs with HH:MM defaults", () => {
+    const block = modelBlock("Workspace");
+    expect(block).toMatch(/attendanceDayStart\s+String\s+@default\("09:00"\)/);
+    expect(block).toMatch(/attendanceDayEnd\s+String\s+@default\("17:30"\)/);
+  });
+
+  it("the timing migration exists with a down.sql rollback (repo convention)", () => {
+    const dir = resolve(repoRoot, "prisma", "migrations", "20261126100000_attendance_timing");
+    expect(existsSync(resolve(dir, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(dir, "down.sql"))).toBe(true);
+    const up = readFileSync(resolve(dir, "migration.sql"), "utf8");
+    expect(up).toMatch(/ADD COLUMN "lateMinutes" INTEGER/);
+    expect(up).toMatch(/ADD COLUMN "earlyMinutes" INTEGER/);
+    expect(up).toMatch(/ADD COLUMN "workingHours" DOUBLE PRECISION/);
+    expect(up).toMatch(/ADD COLUMN "attendanceDayStart" TEXT NOT NULL DEFAULT '09:00'/);
+    expect(up).toMatch(/ADD COLUMN "attendanceDayEnd" TEXT NOT NULL DEFAULT '17:30'/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Recruitment module R1 (docs/RECRUITMENT_MODULE_PLAN.md §2) — the pipeline
 // schema contract: unique candidate email, per-candidate stage uniqueness,

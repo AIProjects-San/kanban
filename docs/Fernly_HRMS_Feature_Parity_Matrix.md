@@ -208,7 +208,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 
 | ID | Benchmark artifact | Key features (from controller) | Fernly surface @ `bb2e046` | Status | Family / epic |
 | --- | --- | --- | --- | --- | --- |
-| AT-01 | `Attendance` (submittable, 555 py lines) | Present/Absent/On Leave/Half Day (+half_day_status)/WFH; late-entry/early-exit flags; in/out times; working hours; shift linkage; duplicate row-lock guard | `AttendanceRecord` (F1.3: 5 statuses incl. ON_LEAVE, inTime/outTime optional, note, source MANUAL/IMPORT/DERIVED; unique user+date; HR marking at `attendance:manage`) — no late/early flags, no working-hours calc, no shift linkage | Partial | L12 / F1.3 DONE |
+| AT-01 | `Attendance` (submittable, 555 py lines) | Present/Absent/On Leave/Half Day (+half_day_status)/WFH; late-entry/early-exit flags; in/out times; working hours; shift linkage; duplicate row-lock guard | `AttendanceRecord` (F1.3: 5 statuses incl. ON_LEAVE, inTime/outTime optional, note, source MANUAL/IMPORT/DERIVED; unique user+date; HR marking at `attendance:manage`) + S2 timing facts (lateMinutes/earlyMinutes/workingHours derived at write time vs the workspace default day) — no shift linkage (F3.5) | Partial | L12 / F1.3 DONE |
 | AT-02 | `Attendance Request` (submittable, 421 py lines) | employee correction flow (WFH/On Duty over a range); shift-consistency; Skip/Overwrite semantics | — (**declined by locked decision §9.1: no member self-marking**, ever) | Out of scope | L13 |
 | AT-03 | `Employee Checkin` (514 py lines) | device/API IN-OUT log with lat/long, geo-fencing radius vs shift locations, auto-attendance pairing | — (hardware boundary; manual + future CSV import) | Out of scope | L14 |
 | AT-04 | `Shift Type` (546 py lines) | timing windows, check-in/out buffers, grace, pairing modes, auto-attendance thresholds | — | Missing | L15 / F3.5 |
@@ -226,8 +226,8 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | ID | Benchmark behavior | Fernly @ `bb2e046` | Status | Family / epic |
 | --- | --- | --- | --- | --- |
 | AT-B01 | `half_day_status` on attendance | HALF_DAY status exists (F1.3) and drives 0.5 LOP (F1.4) — the payroll-relevant half | Partial | L6 / F1.3+F1.4 |
-| AT-B02 | Late-entry / early-exit flags | — | Missing | L12 |
-| AT-B03 | Working-hours computation from in/out | inTime/outTime stored, not computed into hours | Missing | L12 |
+| AT-B02 | Late-entry / early-exit flags | S2: derived at write time by the pure kernel `lib/attendance-flags.ts` against the workspace default day (`Workspace.attendanceDayStart/End`, Settings → General, defaults 09:00/17:30 — policy-as-data); stored `lateMinutes/earlyMinutes` (null = not computable), rendered as badges in My-attendance + tooltips in the grid + a live preview in the marking modal; a config change never retro-rewrites history | **Parity (workspace scope)** (was Missing) | L12 / **S2 DONE** |
+| AT-B03 | Working-hours computation from in/out | S2: `workingHours` (Float, 2-dec) rides the same derivation + columns; shown as "7h 45m worked" | **Parity (workspace scope)** (was Missing) | L12 / **S2 DONE** |
 | AT-B04 | Duplicate guard per employee+date with row locks | unique(user, date) + upsert semantics | **Parity** | L12 / F1.3 |
 | AT-B05 | Skip/Overwrite correction semantics | — (declined with AT-02) | Out of scope | L13 |
 | AT-B06 | Geo-fencing radius vs shift locations | — | Out of scope | L14 |

@@ -17,6 +17,7 @@ import { Field, FormRow } from "../ui/field";
 import { ATTENDANCE_STATUS_CODE, ATTENDANCE_STATUS_LABELS } from "@/lib/config";
 import type { AttendanceT, AttendanceMonthT, AttendanceStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { deriveAttendanceTiming, describeAttendanceTiming } from "@/lib/attendance-flags";
 import { getAttendanceMonth, upsertAttendanceRecord, deleteAttendanceRecord } from "@/server-actions/hr-attendance";
 
 /** Statuses HR may set from the form — ON_LEAVE is derived-only. */
@@ -215,7 +216,7 @@ export function AttendanceTab() {
                           )}
                           title={
                             rec
-                              ? `${m.userName} · ${d.iso} · ${ATTENDANCE_STATUS_LABELS[rec.status]}${rec.source === "DERIVED" ? " (derived from approved leave)" : ""}${rec.inTime ? ` · in ${rec.inTime}` : ""}${rec.outTime ? ` · out ${rec.outTime}` : ""}${rec.note ? ` · ${rec.note}` : ""}`
+                              ? `${m.userName} · ${d.iso} · ${ATTENDANCE_STATUS_LABELS[rec.status]}${rec.source === "DERIVED" ? " (derived from approved leave)" : ""}${rec.inTime ? ` · in ${rec.inTime}` : ""}${rec.outTime ? ` · out ${rec.outTime}` : ""}${describeAttendanceTiming(rec) ? ` · ${describeAttendanceTiming(rec)}` : ""}${rec.note ? ` · ${rec.note}` : ""}`
                               : holiday
                                 ? `${d.iso} — ${holiday}`
                                 : `${m.userName} · ${d.iso} — click to mark`
@@ -241,6 +242,8 @@ export function AttendanceTab() {
           open={marking !== null}
           members={data?.members ?? []}
           prefill={marking}
+          dayStart={data?.dayStart ?? "09:00"}
+          dayEnd={data?.dayEnd ?? "17:30"}
           onClose={() => setMarking(null)}
           onChanged={onChanged}
         />
@@ -252,6 +255,8 @@ export function AttendanceTab() {
           open={editing !== null}
           members={data?.members ?? []}
           record={editing}
+          dayStart={data?.dayStart ?? "09:00"}
+          dayEnd={data?.dayEnd ?? "17:30"}
           onClose={() => setEditing(null)}
           onChanged={onChanged}
         />
@@ -272,7 +277,7 @@ function statusCellClass(status: AttendanceStatus): string {
 }
 
 function AttendanceFormModal({
-  open, members, prefill, record, onClose, onChanged,
+  open, members, prefill, record, dayStart, dayEnd, onClose, onChanged,
 }: {
   open: boolean;
   members: { userId: string; userName: string }[];
@@ -280,6 +285,10 @@ function AttendanceFormModal({
   prefill?: { userId: string; date: string } | null;
   /** The record being edited (edit mode). */
   record?: AttendanceT | null;
+  /** AT-B02/B03 (S2) — the workspace reference day; the modal live-previews
+   * the late/early facts exactly as the server's pure kernel will store them. */
+  dayStart?: string;
+  dayEnd?: string;
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
@@ -420,6 +429,20 @@ function AttendanceFormModal({
             </Field>
           </div>
         </FormRow>
+        {/* AT-B02/B03 (S2) — live preview of the derived timing facts, the
+            exact numbers the server's pure kernel will store (reference day:
+            the workspace defaults). Blank when nothing is computable yet. */}
+        {(inTime || outTime) && (
+          <div
+            className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+            data-testid="att-timing-preview"
+          >
+            Reference day {dayStart ?? "09:00"}–{dayEnd ?? "17:30"} ·{" "}
+            {describeAttendanceTiming(
+              deriveAttendanceTiming({ inTime: inTime || null, outTime: outTime || null, dayStart: dayStart ?? "09:00", dayEnd: dayEnd ?? "17:30" }),
+            ) || "no timing facts yet — enter in/out times"}
+          </div>
+        )}
         <Field label="Note (optional)">
           <input
             id="att-note"
