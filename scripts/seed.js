@@ -2558,6 +2558,72 @@ async function main() {
       p1Seeded.push("Yuki's recurring recovery");
     }
     console.log(`  ✓ P1 (F2.3) PayAdjustment adapter: ${p1Seeded.length} rows (${p1Seeded.join(", ")}) — provenance for the seeded bonus + the queue the December run will consume`);
+
+    // ------------------------------------------------------------------
+    // P2 (LV-09, F2.2) — leave encashment seed: Annual Leave becomes
+    // encashable (max 5/request, floor 5 stays), Hana has a PENDING request
+    // waiting in the HR console queue, and Mira carries an APPROVED one
+    // whose CONSUME ledger row + adapter row landed together (the Leave
+    // view's "lands on the December run" story).
+    // ------------------------------------------------------------------
+    await db.leaveEncashment.deleteMany();
+    const annualType = await db.leaveType.findUnique({ where: { code: "ANNUAL" }, include: { policy: true } });
+    let p2Encashable = false;
+    if (annualType) {
+      await db.leavePolicy.upsert({
+        where: { leaveTypeId: annualType.id },
+        create: { leaveTypeId: annualType.id, encashable: true, maxEncashableDays: 5, nonEncashableDays: 5 },
+        update: { encashable: true, maxEncashableDays: 5, nonEncashableDays: 5 },
+      });
+      p2Encashable = true;
+    }
+    const p2Hana = userByName.get("Hana Park");
+    const p2Mira = userByName.get("Mira Hale");
+    const p2Seeded = [];
+    if (annualType && p2Hana) {
+      await db.leaveEncashment.create({
+        data: {
+          userId: p2Hana, leaveTypeId: annualType.id, year: TODAY.getFullYear(),
+          days: 3, status: "PENDING", payoutPeriod: nextPeriod,
+          reason: "Offsetting a tuition payment",
+          createdById: p2Hana,
+        },
+      });
+      p2Seeded.push("Hana's pending request");
+    }
+    if (annualType && p2Mira) {
+      const miraEnc = await db.leaveEncashment.create({
+        data: {
+          userId: p2Mira, leaveTypeId: annualType.id, year: TODAY.getFullYear(),
+          days: 2, status: "APPROVED", payoutPeriod: nextPeriod,
+          amount: 575.04, dailyRate: 287.52,
+          reason: "Year-end encashment",
+          createdById: p2Mira, decidedById: hrId, decidedAt: addDays(TODAY, -2),
+          decisionNote: "Approved per policy.",
+        },
+      });
+      // The approval's two transactional writes, mirrored by hand:
+      // the CONSUME ledger row + the adapter row.
+      await db.leaveLedgerEntry.create({
+        data: {
+          userId: p2Mira, leaveTypeId: annualType.id, year: TODAY.getFullYear(),
+          delta: -2, entryType: "CONSUME", sourceType: "LEAVE_ENCASHMENT", sourceId: miraEnc.id,
+          note: `Annual Leave encashment (2 d → ${nextPeriod})`,
+          isReversal: false,
+        },
+      });
+      await db.payAdjustment.create({
+        data: {
+          userId: p2Mira, sourceType: "ENCASHMENT", sourceId: miraEnc.id,
+          componentCode: "", label: "Leave encashment — Annual Leave (2d)", side: "EARNING",
+          recurrence: "ONE_SHOT", calcMode: "FIXED", amount: 575.04, period: nextPeriod,
+          note: "2 day(s) × $287.52 (daily rate)",
+          createdById: hrId,
+        },
+      });
+      p2Seeded.push("Mira's approved request (CONSUME + adapter row)");
+    }
+    console.log(`  ✓ P2 (F2.2) leave encashment: Annual Leave encashable=${p2Encashable}, ${p2Seeded.length} requests (${p2Seeded.join(", ")})`);
   }
 
   // -------------------------------------------------------------------------

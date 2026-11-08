@@ -932,9 +932,25 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
     if (!run) throw new AuthorizationError("Payroll run not found.");
     if (run.status !== "OPEN") throw new AuthorizationError("The run is already locked.");
     if (run.payslips.length === 0) throw new AuthorizationError("Nothing to pay — the run has no payslips.");
-    await db.payrollRun.update({
-      where: { id: run.id },
-      data: { status: "LOCKED", lockedById: auth.userId, lockedAt: new Date() },
+    // P2 (LV-09, F2.2) — encashment rows whose money rode this run (the
+    // adapter rows consumed by it) flip PAID with the run, in the same
+    // transaction as the lock itself.
+    const encashmentAdjustments = await db.payAdjustment.findMany({
+      where: { consumedRunId: run.id, sourceType: "ENCASHMENT" },
+      select: { sourceId: true },
+    });
+    const encashmentIds = encashmentAdjustments.map((a) => a.sourceId).filter((id) => id !== "");
+    await db.$transaction(async (tx) => {
+      await tx.payrollRun.update({
+        where: { id: run.id },
+        data: { status: "LOCKED", lockedById: auth.userId, lockedAt: new Date() },
+      });
+      if (encashmentIds.length > 0) {
+        await tx.leaveEncashment.updateMany({
+          where: { id: { in: encashmentIds }, status: "APPROVED" },
+          data: { status: "PAID", paidRunId: run.id, paidAt: new Date() },
+        });
+      }
     });
     const total = Math.round(run.payslips.reduce((s, p) => s + p.net, 0) * 100) / 100;
     await logAudit({
@@ -943,7 +959,7 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} locked the ${run.period} payroll run (paid) — ${run.payslips.length} payslips, net $${total.toLocaleString("en-NZ")}.`,
+      detail: `${auth.name} locked the ${run.period} payroll run (paid) — ${run.payslips.length} payslips, net $${total.toLocaleString("en-NZ")}${encashmentIds.length > 0 ? `, ${encashmentIds.length} leave encashment(s) marked paid` : ""}.`,
     });
     revalidatePath("/");
     return { ok: true };

@@ -125,6 +125,11 @@ export interface LeaveTypeT {
     negativeFloor?: number;
     carryExpiresAfterMonths?: number | null;
     countHolidaysInLeave?: boolean;
+    // P2 (LV-09, F2.2) — encashment knobs (optional for the same
+    // snapshot-compat reason as the strategy block above).
+    encashable?: boolean;
+    maxEncashableDays?: number;
+    nonEncashableDays?: number;
   } | null;
 }
 
@@ -797,6 +802,32 @@ export interface PayAdjustmentT {
   skipReason: string;
   note: string;
   consumedRunPeriod: string;
+  createdAt: string;
+}
+
+/** P2 (LV-09, F2.2) — one encashment request: days sold back from a leave
+ * balance, paying through the P1 PayAdjustment adapter on the payout
+ * period's run. status: PENDING → APPROVED | REJECTED; APPROVED → PAID
+ * when the consuming run locks. amount/dailyRate snapshot at approval. */
+export interface LeaveEncashmentT {
+  id: string;
+  userId: string;
+  userName: string;
+  leaveTypeId: string;
+  typeName: string;
+  typeColor: string;
+  year: number;
+  days: number;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "PAID";
+  payoutPeriod: string;
+  amount: number;
+  dailyRate: number;
+  reason: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionNote: string;
+  /** The consuming run's id (paidRunId) while PAID; null otherwise. */
+  paidRunPeriod: string | null;
   createdAt: string;
 }
 

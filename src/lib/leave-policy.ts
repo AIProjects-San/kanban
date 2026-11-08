@@ -84,6 +84,11 @@ export interface LeavePolicyRow {
   negativeFloor?: number | null;
   carryExpiresAfterMonths?: number | null;
   countHolidaysInLeave?: boolean | null;
+  // P2 (LV-09, F2.2) — encashment knobs (the benchmark's
+  // allow_encashment / max_encashable_days / non_encashable_days).
+  encashable?: boolean | null;
+  maxEncashableDays?: number | null;
+  nonEncashableDays?: number | null;
 }
 
 /** The defaulted policy every rule consumes (no nulls, no unknowns). */
@@ -108,6 +113,15 @@ export interface ResolvedLeavePolicy {
   negativeFloor: number;
   carryExpiresAfterMonths: number | null;
   countHolidaysInLeave: boolean;
+  /** P2 (LV-09, F2.2) — may this type's days be sold back? Default false
+   * (zero-behavior: no type is encashable until an admin opts in). */
+  encashable: boolean;
+  /** Max days ONE encashment request may take (≤ 0 = no per-request cap
+   * beyond the balance floor). */
+  maxEncashableDays: number;
+  /** The balance floor that can never be encashed (available − requested
+   * must stay ≥ this). */
+  nonEncashableDays: number;
 }
 
 const STRATEGIES: LeaveAllocationStrategy[] = ["MANUAL", "ANNUAL_LUMP_SUM", "EARNED", "AFTER_SERVICE"];
@@ -161,6 +175,9 @@ export function resolveLeavePolicy(row: LeavePolicyRow | null | undefined): Reso
         ? Math.max(1, Math.round(row.carryExpiresAfterMonths))
         : null,
     countHolidaysInLeave: pickBool(row?.countHolidaysInLeave, false),
+    encashable: pickBool(row?.encashable, false),
+    maxEncashableDays: Math.max(0, pickNumber(row?.maxEncashableDays, 5)),
+    nonEncashableDays: Math.max(0, pickNumber(row?.nonEncashableDays, 5)),
   };
 }
 

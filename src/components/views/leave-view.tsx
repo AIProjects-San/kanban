@@ -6,16 +6,19 @@
 // Decision actions live in the HR console (hr-view), not here.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, Plus, X } from "lucide-react";
+import { CalendarDays, CircleDollarSign, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
 import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/config";
-import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT } from "@/lib/types";
+import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT, LeaveEncashmentT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { getMyLeaveData, createLeaveRequest, cancelLeaveRequest } from "@/server-actions/hr-leave";
 import { holidayLookupFrom, workingDaysBetween } from "@/lib/working-days";
 import { useApp } from "@/store/app-store";
+import { getMyEncashments, requestLeaveEncashment } from "@/server-actions/leave-encashment";
+import { planLeaveEncashment, type EncashmentPolicy } from "@/lib/leave-encashment";
+import { currentPeriod } from "@/lib/payroll-math";
 
 interface CurrentUser {
   id: string;
@@ -47,6 +50,9 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
   const [year, setYear] = useState<number>(new Date().getUTCFullYear());
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  // P2 (LV-09, F2.2) — the encashment request flow (encashable types only).
+  const [encashments, setEncashments] = useState<LeaveEncashmentT[]>([]);
+  const [encashTypeId, setEncashTypeId] = useState<string | null>(null);
   const { bumpRefresh } = useApp();
 
   const load = useCallback(async () => {
@@ -60,6 +66,8 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
     } else {
       toast.error(res.error);
     }
+    const enc = await getMyEncashments();
+    if (enc.ok) setEncashments(enc.data);
     setLoaded(true);
   }, []);
 
@@ -71,6 +79,14 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
   }
 
   const pendingCount = requests.filter((r) => r.status === "PENDING").length;
+
+  // P2 — the encashable knob comes from the type's policy (resolveLeavePolicy
+  // defaults false; the server refuses everything the UI shows anyway).
+  const encashableTypeIds = new Set(
+    types
+      .filter((t) => (t.policy?.encashable ?? false) === true && t.active)
+      .map((t) => t.id),
+  );
 
   return (
     <div className="space-y-5">
@@ -119,6 +135,16 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
                 {b.available < 0 ? "days in advance" : "days left"}
               </div>
             </div>
+            {encashableTypeIds.has(b.leaveTypeId) && (
+              <button
+                className="f-btn f-btn-ghost f-btn-sm shrink-0"
+                onClick={() => setEncashTypeId(b.leaveTypeId)}
+                title="Sell days back for money (pays on the chosen run)"
+                data-testid={`encash-${b.leaveTypeId}`}
+              >
+                <CircleDollarSign size={13} /> Encash
+              </button>
+            )}
           </div>
         ))}
         {balances.length === 0 && (
@@ -197,6 +223,80 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
         balanceYear={year}
         onCreated={async () => {
           setShowForm(false);
+          await load();
+          bumpRefresh();
+        }}
+      />
+
+      {/* P2 (LV-09, F2.2) — encashment history */}
+      {encashments.length > 0 && (
+        <div className="f-card overflow-hidden" data-testid="encashment-history">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <CircleDollarSign size={14} className="text-teal-500" /> My encashments
+            </h2>
+            <span className="text-[0.6875rem] text-muted-foreground">{encashments.length} total</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[0.6875rem] uppercase tracking-wider text-muted-foreground border-b border-border">
+                <th className="px-4 py-2 font-semibold">Type</th>
+                <th className="px-4 py-2 font-semibold">Days</th>
+                <th className="px-4 py-2 font-semibold">Payout run</th>
+                <th className="px-4 py-2 font-semibold">Amount</th>
+                <th className="px-4 py-2 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {encashments.map((e) => (
+                <tr key={e.id} className="border-b border-border last:border-0" data-testid="encashment-row">
+                  <td className="px-4 py-2.5">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: e.typeColor }} aria-hidden />
+                      {e.typeName}
+                    </span>
+                    {e.reason && (
+                      <div className="text-[0.6875rem] text-muted-foreground mt-0.5 max-w-48 truncate" title={e.reason}>
+                        “{e.reason}”
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums">{e.days}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{e.payoutPeriod}</td>
+                  <td className="px-4 py-2.5 tabular-nums">{e.amount > 0 ? `$${e.amount.toLocaleString("en-NZ")}` : "—"}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={cn(
+                      "inline-flex px-2 py-0.5 rounded text-[0.6875rem] font-medium",
+                      e.status === "PAID" ? "bg-emerald-500/10 text-emerald-600"
+                        : e.status === "APPROVED" ? "bg-sky-500/10 text-sky-600"
+                          : e.status === "REJECTED" ? "bg-rose-500/10 text-rose-600"
+                            : "bg-amber-500/10 text-amber-600",
+                    )}>
+                      {e.status}
+                    </span>
+                    {e.status === "APPROVED" && (
+                      <div className="text-[0.6875rem] text-muted-foreground mt-0.5">lands on the {e.payoutPeriod} run</div>
+                    )}
+                    {e.status === "REJECTED" && e.decisionNote && (
+                      <div className="text-[0.6875rem] text-muted-foreground mt-0.5 max-w-48 truncate" title={e.decisionNote}>
+                        {e.decisionNote}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <EncashmentRequestModal
+        open={encashTypeId != null}
+        onClose={() => setEncashTypeId(null)}
+        types={types}
+        balances={balances}
+        onCreated={async () => {
+          setEncashTypeId(null);
           await load();
           bumpRefresh();
         }}
@@ -443,6 +543,103 @@ function RequestFormModal({
             }
           >
             {busy ? "Submitting…" : "Submit request"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// P2 (LV-09, F2.2) — the encashment request modal: days + payout period +
+// reason, with the pure kernel's live validation (the same planLeaveEncashment
+// the server runs — one rule, two surfaces). The amount shown is an
+// ESTIMATE from the balance-year's entitled context; the snapshot lands at
+// approval (days × the payout period's daily rate).
+function EncashmentRequestModal({
+  open, onClose, types, balances, onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  types: LeaveTypeT[];
+  balances: LeaveBalanceT[];
+  onCreated: () => Promise<void>;
+}) {
+  // The first encashable type is the default (the modal opens from a card's
+  // Encash button; types always carries the full list).
+  const encashableTypes = types.filter((t) => (t.policy?.encashable ?? false) === true && t.active);
+  const [typeId, setTypeId] = useState(encashableTypes[0]?.id ?? "");
+  const [daysStr, setDaysStr] = useState("");
+  const [payoutPeriod, setPayoutPeriod] = useState(currentPeriod());
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const selectedType = encashableTypes.find((t) => t.id === typeId);
+  const selectedBalance = balances.find((b) => b.leaveTypeId === typeId);
+  const policy: EncashmentPolicy = {
+    encashable: selectedType?.policy?.encashable ?? false,
+    maxEncashableDays: selectedType?.policy?.maxEncashableDays ?? 5,
+    nonEncashableDays: selectedType?.policy?.nonEncashableDays ?? 5,
+  };
+  const days = Number(daysStr);
+  const plan = daysStr !== "" && Number.isFinite(days)
+    ? planLeaveEncashment(policy, days, selectedBalance?.available ?? 0)
+    : null;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!typeId || !payoutPeriod) { toast.error("Pick a leave type and a payout period."); return; }
+    setBusy(true);
+    const res = await requestLeaveEncashment({
+      leaveTypeId: typeId, days, payoutPeriod, reason: reason.trim(),
+    });
+    setBusy(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success("Encashment requested — your approver decides next.");
+    setDaysStr(""); setReason("");
+    await onCreated();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Encash leave days"
+      description="Sell days back for money. Approval consumes the days and pays them on the chosen payroll run.">
+      <form onSubmit={submit} className="space-y-3" data-testid="encashment-form">
+        <FormRow>
+          <Field label="Leave type">
+            <select className="f-input" value={typeId} onChange={(e) => setTypeId(e.target.value)} data-testid="encashment-type">
+              {encashableTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Days">
+            <input
+              className="f-input" type="number" min={0.25} step={0.25}
+              value={daysStr} onChange={(e) => setDaysStr(e.target.value)}
+              placeholder="3" data-testid="encashment-days"
+            />
+          </Field>
+          <Field label="Payout period">
+            <input
+              className="f-input" type="month" value={payoutPeriod}
+              onChange={(e) => setPayoutPeriod(e.target.value)} data-testid="encashment-period"
+            />
+          </Field>
+        </FormRow>
+        <Field label="Reason (optional)">
+          <input className="f-input" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
+        </Field>
+        {plan && !plan.ok && (
+          <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-600" data-testid="encashment-plan-error">
+            {plan.reason}
+          </div>
+        )}
+        {plan?.ok && (
+          <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400" data-testid="encashment-plan-ok">
+            {plan.days} day(s) encashed · the amount snapshots at approval (daily rate = monthly gross ÷ the payout period&apos;s working days).
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button type="button" className="f-btn f-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="f-btn f-btn-primary" disabled={busy || !plan?.ok} data-testid="encashment-submit">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <CircleDollarSign size={15} />} Request encashment
           </button>
         </div>
       </form>

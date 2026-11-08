@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
-    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "auditLog", "holidayCalendarEntry",
+    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "leaveEncashment", "auditLog", "holidayCalendarEntry",
     "attendanceRecord", "leaveRequest", "leaveType", "fullAndFinalStatement",
   ];
   const methods = [
@@ -170,6 +170,7 @@ beforeEach(() => {
   db.payAdjustment.findUnique.mockResolvedValue(null);
   db.payAdjustment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "adj-new", createdAt: new Date(), updatedAt: new Date(), ...data }));
   db.payAdjustment.update.mockResolvedValue({});
+  db.leaveEncashment.updateMany.mockResolvedValue({ count: 0 });
   // S4 — default policy: IGNORED (pre-S4 semantics byte-for-byte).
   getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
 });
@@ -1040,6 +1041,27 @@ describe("R7 — payslips", () => {
     const empty = await lockPayrollRun({ runId: "run-1" });
     expect(empty.ok).toBe(false);
     expect(db.payrollRun.update).not.toHaveBeenCalled();
+  });
+
+  it("P2 (LV-09) — locking flips the run's consumed ENCASHMENT adjustments' source rows PAID, in the same transaction", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...OPEN_RUN, payslips: [{ net: 6_700 }] });
+    db.payAdjustment.findMany.mockResolvedValue([
+      { sourceId: "enc-1" },
+      { sourceId: "enc-2" },
+      { sourceId: "" }, // a MANUAL row riding the run — no encashment flip
+    ]);
+    const res = await lockPayrollRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveEncashment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ["enc-1", "enc-2"] }, status: "APPROVED" },
+        data: expect.objectContaining({ status: "PAID", paidRunId: "run-1" }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.run_locked",
+      detail: expect.stringContaining("2 leave encashment(s) marked paid"),
+    }));
   });
 });
 

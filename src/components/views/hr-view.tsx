@@ -10,7 +10,7 @@
 // interviews and full-and-final settlement.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck, DoorOpen, Scale } from "lucide-react";
+import { Briefcase, Check, CircleDollarSign, Loader2, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck, DoorOpen, Scale } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -31,6 +31,8 @@ import { OnboardingTab } from "./hr-onboarding";
 import { HolidaysTab } from "./hr-holidays";
 import { AttendanceTab } from "./hr-attendance";
 import { OffboardingTab } from "./hr-offboarding";
+import { getEncashmentQueue, decideLeaveEncashment } from "@/server-actions/leave-encashment";
+import type { LeaveEncashmentT } from "@/lib/types";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 interface CurrentUser {
@@ -54,6 +56,8 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
   const [canAdmin, setCanAdmin] = useState(false);
   // F1.3 — the Attendance tab's gate (attendance:manage; NOT hr:admin).
   const [canManageAttendance, setCanManageAttendance] = useState(false);
+  // P2 (LV-09, F2.2) — the encashment decision queue rides the Requests tab.
+  const [encashments, setEncashments] = useState<LeaveEncashmentT[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
@@ -66,6 +70,8 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
     } else {
       toast.error(res.error);
     }
+    const enc = await getEncashmentQueue();
+    if (enc.ok) setEncashments(enc.data.requests);
     setLoaded(true);
   }, []);
 
@@ -137,6 +143,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
           canAdmin={canAdmin}
           currentUserId={currentUser.id}
           onChanged={load}
+          encashments={encashments}
         />
       )}
       {tab === "types" && canAdmin && (
@@ -175,13 +182,14 @@ function TabButton({
 // ---------------------------------------------------------------------------
 
 function RequestsTab({
-  requests, types, canAdmin, currentUserId, onChanged,
+  requests, types, canAdmin, currentUserId, onChanged, encashments,
 }: {
   requests: LeaveRequestT[];
   types: LeaveTypeT[];
   canAdmin: boolean;
   currentUserId: string;
   onChanged: () => Promise<void>;
+  encashments: LeaveEncashmentT[];
 }) {
   const [statusFilter, setStatusFilter] = useState("PENDING");
   const [deciding, setDeciding] = useState<LeaveRequestT | null>(null);
@@ -276,6 +284,52 @@ function RequestsTab({
         onClose={() => setDeciding(null)}
         onChanged={onChanged}
       />
+
+      {/* P2 (LV-09, F2.2) — the encashment queue: days sold back, decided
+          by the same chain as time-off. Approve = CONSUME + adapter row. */}
+      {encashments.length > 0 && (
+        <div className="f-card overflow-hidden" data-testid="encashment-queue">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <CircleDollarSign size={14} className="text-teal-500" /> Encashment requests
+            </h2>
+            <span className="text-[0.6875rem] text-muted-foreground">{encashments.length} pending</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[0.6875rem] uppercase tracking-wider text-muted-foreground border-b border-border">
+                <th className="px-4 py-2 font-semibold">Member</th>
+                <th className="px-4 py-2 font-semibold">Type</th>
+                <th className="px-4 py-2 font-semibold">Days</th>
+                <th className="px-4 py-2 font-semibold">Payout run</th>
+                <th className="px-4 py-2 font-semibold">Reason</th>
+                <th className="px-4 py-2 font-semibold"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {encashments.map((e) => (
+                <tr key={e.id} className="border-b border-border last:border-0" data-testid="encashment-queue-row">
+                  <td className="px-4 py-2.5 font-medium">{e.userName}</td>
+                  <td className="px-4 py-2.5">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: e.typeColor }} aria-hidden />
+                      {e.typeName}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums">{e.days}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{e.payoutPeriod}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground text-[0.8125rem] max-w-48 truncate" title={e.reason}>
+                    {e.reason || "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    {e.userId !== currentUserId && <EncashmentDecideButtons encashment={e} onChanged={onChanged} />}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* LV-10 (S9) — the ADJUST ledger writer: signed days, reason
           required, floor-honest. Mount-on-open keeps the form pristine. */}
@@ -390,6 +444,47 @@ function DecideButton({ request, onDecide }: { request: LeaveRequestT; onDecide:
     <button onClick={onDecide} className="f-btn f-btn-primary f-btn-sm" data-testid={`decide-${request.id}`}>
       Decide
     </button>
+  );
+}
+
+// P2 (LV-09, F2.2) — inline approve/reject for an encashment request: no
+// modal (no extra facts to collect beyond the row), a busy lock, and the
+// same toast + reload discipline as the leave decision modal.
+function EncashmentDecideButtons({
+  encashment, onChanged,
+}: { encashment: LeaveEncashmentT; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState<"" | "APPROVE" | "REJECT">("");
+  const decide = async (decision: "APPROVE" | "REJECT") => {
+    setBusy(decision);
+    const res = await decideLeaveEncashment({ encashmentId: encashment.id, decision });
+    setBusy("");
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success(
+      decision === "APPROVE"
+        ? `Encashment approved — the amount lands on the ${encashment.payoutPeriod} run.`
+        : "Encashment rejected.",
+    );
+    await onChanged();
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <button
+        className="f-btn f-btn-secondary f-btn-sm"
+        disabled={busy !== ""}
+        onClick={() => void decide("APPROVE")}
+        data-testid={`encashment-approve-${encashment.id}`}
+      >
+        {busy === "APPROVE" ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Approve
+      </button>
+      <button
+        className="f-btn f-btn-ghost f-btn-sm"
+        disabled={busy !== ""}
+        onClick={() => void decide("REJECT")}
+        data-testid={`encashment-reject-${encashment.id}`}
+      >
+        {busy === "REJECT" ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} Reject
+      </button>
+    </span>
   );
 }
 
@@ -596,6 +691,10 @@ interface PolicyFormState {
   negativeFloor: number;
   carryExpiresAfterMonths: number | null;
   countHolidaysInLeave: boolean;
+  // P2 (LV-09, F2.2) — encashment knobs.
+  encashable: boolean;
+  maxEncashableDays: number;
+  nonEncashableDays: number;
 }
 
 function defaultPolicyForm(): PolicyFormState {
@@ -617,6 +716,9 @@ function defaultPolicyForm(): PolicyFormState {
     negativeFloor: 0,
     carryExpiresAfterMonths: null,
     countHolidaysInLeave: false,
+    encashable: false,
+    maxEncashableDays: 5,
+    nonEncashableDays: 5,
   };
 }
 
@@ -641,6 +743,9 @@ function policyFormFrom(policy: LeaveTypeT["policy"]): PolicyFormState {
     negativeFloor: policy.negativeFloor ?? d.negativeFloor,
     carryExpiresAfterMonths: policy.carryExpiresAfterMonths ?? null,
     countHolidaysInLeave: policy.countHolidaysInLeave ?? d.countHolidaysInLeave,
+    encashable: policy.encashable ?? d.encashable,
+    maxEncashableDays: policy.maxEncashableDays ?? d.maxEncashableDays,
+    nonEncashableDays: policy.nonEncashableDays ?? d.nonEncashableDays,
   };
 }
 
@@ -962,6 +1067,40 @@ function PolicyFields({
             Accrue while on probation
           </label>
         )}
+
+        {/* P2 (LV-09, F2.2) — encashment knobs (default off: no type sells
+            days back until an admin opts in). */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Field label="Encashable">
+            <label className="flex items-center gap-2 text-sm text-foreground h-9">
+              <input
+                id="pf-encashable"
+                type="checkbox"
+                checked={policy.encashable}
+                onChange={(e) => set({ encashable: e.target.checked })}
+              />
+              Allow
+            </label>
+          </Field>
+          <Field label="Max / request (days)">
+            <input
+              id="pf-encashmax"
+              type="number" min={0} max={365} step={0.5} className="f-input"
+              value={policy.maxEncashableDays}
+              disabled={!policy.encashable}
+              onChange={(e) => set({ maxEncashableDays: num(e.target.value) })}
+            />
+          </Field>
+          <Field label="Floor stays (days)">
+            <input
+              id="pf-encashfloor"
+              type="number" min={0} max={365} step={0.5} className="f-input"
+              value={policy.nonEncashableDays}
+              disabled={!policy.encashable}
+              onChange={(e) => set({ nonEncashableDays: num(e.target.value) })}
+            />
+          </Field>
+        </div>
         <p className="text-xs text-muted-foreground">
           {strategy === "MANUAL" && "The full entitlement is granted the first time a balance is needed — the classic behavior."}
           {strategy === "ANNUAL_LUMP_SUM" && "The whole year's entitlement is granted once (Jan 1 or the hire anniversary); mid-year joiners are pro-rated by remaining calendar days."}

@@ -840,6 +840,10 @@ export async function createLeaveType(input: {
     negativeFloor?: number;
     carryExpiresAfterMonths?: number | null;
     countHolidaysInLeave?: boolean;
+    // P2 (LV-09, F2.2) — encashment knobs (same defaults as the schema).
+    encashable?: boolean;
+    maxEncashableDays?: number;
+    nonEncashableDays?: number;
   };
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
@@ -913,6 +917,10 @@ export async function updateLeaveType(id: string, input: {
     negativeFloor?: number;
     carryExpiresAfterMonths?: number | null;
     countHolidaysInLeave?: boolean;
+    // P2 (LV-09, F2.2) — encashment knobs (same defaults as the schema).
+    encashable?: boolean;
+    maxEncashableDays?: number;
+    nonEncashableDays?: number;
   };
 }): Promise<ActionResult<void>> {
   return toResult(async () => {

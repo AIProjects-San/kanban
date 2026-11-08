@@ -848,7 +848,56 @@ model LeavePolicy {
   // Holidays inside a request range consume leave days (LV-B01/B05's
   // include_holiday; default false = the F1.1 holiday-aware count).
   countHolidaysInLeave Boolean  @default(false)
+  // P2 (LV-09, F2.2) — encashment knobs (the benchmark's allow_encashment /
+  // max_encashable_days / non_encashable_days). Default false = zero
+  // behavior change: no type sells days back until an admin opts in.
+  encashable           Boolean  @default(false)
+  // Max days ONE encashment request may take (0 = no per-request cap
+  // beyond the balance floor).
+  maxEncashableDays    Float    @default(5)
+  // The balance floor that can never be encashed:
+  // available − requested must stay ≥ this.
+  nonEncashableDays    Float    @default(5)
   updatedAt           DateTime  @updatedAt
+}
+
+// P2 (LV-09, F2.2) — one encashment request: days sold back from a leave
+// balance, paying through the P1 PayAdjustment adapter. The member requests
+// (against the LEDGER projection), the leave-approver chain decides
+// (assertLeaveDecider — same decider as time-off), approval writes the
+// CONSUME ledger row + the ENCASHMENT adjustment in ONE transaction, and
+// the consuming run's lock flips the row PAID (paidRunId back-link).
+model LeaveEncashment {
+  id          String    @id @default(cuid())
+  userId      String
+  leaveTypeId String
+  // The ledger year the request validated against (the CONSUME row lands
+  // in this year — the year the days were actually held).
+  year        Int
+  // Days sold (quarter-day steps like every leave fraction).
+  days        Float
+  // PENDING → APPROVED | REJECTED; APPROVED → PAID (on the consuming
+  // run's lock, via the adapter row's consumedRunId).
+  status      String    @default("PENDING")
+  // The payout period ("YYYY-MM") the money rides — must not be a LOCKED
+  // run at request AND approval time.
+  payoutPeriod String
+  // Amount snapshots at approval (days × dailyRate — the daily rate of the
+  // payout period's working days, F2.1's GROSS_OVER_WORKING_DAYS basis).
+  amount      Float     @default(0)
+  dailyRate   Float     @default(0)
+  reason      String    @default("")
+  createdById String    @default("")
+  decidedById String?
+  decidedAt   DateTime?
+  decisionNote String   @default("")
+  paidRunId   String    @default("")
+  paidAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, status])
+  @@index([status])
 }
 
 // A member's time-off request. `days` is denormalized at creation from the

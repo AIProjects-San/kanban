@@ -360,6 +360,10 @@ export const leaveTypeSchema = z.object({
     negativeFloor: z.number().min(0).max(365).default(0),
     carryExpiresAfterMonths: z.number().int().min(1).max(24).nullable().default(null),
     countHolidaysInLeave: z.boolean().default(false),
+    // P2 (LV-09, F2.2) — encashment knobs (default off = zero behavior).
+    encashable: z.boolean().default(false),
+    maxEncashableDays: z.number().min(0).max(365).default(5),
+    nonEncashableDays: z.number().min(0).max(365).default(5),
   }).strict(),
 }).strict();
 
@@ -922,5 +926,24 @@ export const createPayAdjustmentSchema = z.object({
   amount: z.number().min(0).max(10_000_000).default(0),
   period: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM)."),
   endPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM).").nullish(),
+  note: z.string().trim().max(500).default(""),
+}).strict();
+
+// P2 (LV-09, F2.2) — leave encashment request + decision. The semantic
+// matrix (encashable flag, quarter steps, per-request cap, balance floor)
+// lives in the pure planLeaveEncashment kernel; these are shape rules.
+export const requestLeaveEncashmentSchema = z.object({
+  leaveTypeId: cuidish,
+  days: z.number()
+    .refine((n) => n > 0, "Encashment needs a positive number of days.")
+    .refine((n) => n <= 365, "Encashment is capped at 365 days.")
+    .refine((n) => Math.round(n * 4) === n * 4, "Encashment moves in quarter-day steps."),
+  payoutPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a payout month (YYYY-MM)."),
+  reason: z.string().trim().max(500).default(""),
+}).strict();
+
+export const decideLeaveEncashmentSchema = z.object({
+  encashmentId: cuidish,
+  decision: z.enum(["APPROVE", "REJECT"]),
   note: z.string().trim().max(500).default(""),
 }).strict();
