@@ -63,7 +63,7 @@ export function PayslipModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (payslip) { setEarnings(payslip.earnings.filter((l) => l.key !== ROUNDING_LINE_KEY).map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY && l.key !== ROUNDING_LINE_KEY).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDaysInput(String(payslip.lopDays)); setNote(payslip.note); }
+    if (payslip) { setEarnings(payslip.earnings.filter((l) => l.key !== ROUNDING_LINE_KEY && !l.statistical).map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY && l.key !== ROUNDING_LINE_KEY).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDaysInput(String(payslip.lopDays)); setNote(payslip.note); }
   }, [payslip]);
 
   const editable = payslip?.runStatus === "OPEN";
@@ -186,6 +186,25 @@ export function PayslipModal({
     >
       <form onSubmit={submit} className="space-y-3 print-area" data-testid="payslip-modal">
         {lineEditor(earnings, setEarnings, "earnings")}
+
+        {/* PR-B03 (S8) — statistical lines: display-only info rows from the
+            structure snapshot; never editable, never money. */}
+        {(payslip.earnings.filter((l) => l.statistical)).length > 0 && (
+          <div
+            className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 space-y-1"
+            data-testid="payslip-statistical"
+          >
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              For information (not counted in pay)
+            </div>
+            {payslip.earnings.filter((l) => l.statistical).map((l) => (
+              <div key={l.key} className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+                <span>{l.label}</span>
+                <span className="tabular-nums">{money(l.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* LOP — days in, pro-rated money out (edit affordance only) */}
         {editable ? (

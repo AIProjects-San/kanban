@@ -1025,7 +1025,7 @@ model SalaryComponent {
   id            String   @id @default(cuid())
   code          String   @unique
   label         String
-  kind          String   @default("EARNING") // EARNING | EMPLOYER_CONTRIBUTION | DEDUCTION
+  kind          String   @default("EARNING") // EARNING | EMPLOYER_CONTRIBUTION | DEDUCTION | STATISTICAL (S8: display-only, never money)
   mode          String   @default("FIXED")   // FIXED | PERCENT_OF_BASIC
   defaultAmount Float    @default(0)
   // PR-B02 (S6) — depends_on_payment_days: true (default) = payslip lines

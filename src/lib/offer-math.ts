@@ -12,7 +12,14 @@
 // All amounts are ANNUAL, whole currency units, stored as numbers in JSON.
 // ---------------------------------------------------------------------------
 
-export type OfferComponentKind = "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION";
+export type OfferComponentKind =
+  | "EARNING"
+  | "EMPLOYER_CONTRIBUTION"
+  | "DEDUCTION"
+  /** PR-B03 (S8) — display-only: resolves like any component but never
+   * enters earnings/deductions/net/ctc (a slip info line, e.g. a package
+   * total), and payslip statistical lines never affect money. */
+  | "STATISTICAL";
 export type OfferComponentMode = "FIXED" | "PERCENT_OF_BASIC";
 
 export interface OfferComponent {
@@ -73,7 +80,9 @@ export function computeOffer(components: OfferComponent[]): OfferTotals {
     resolved[c.key] = value;
     if (c.kind === "EARNING") earnings += value;
     else if (c.kind === "EMPLOYER_CONTRIBUTION") employerContributions += value;
-    else deductions += value;
+    else if (c.kind === "STATISTICAL") {
+      // S8 — display-only: resolved for the info line, counted nowhere.
+    } else deductions += value;
   }
 
   return {
@@ -102,7 +111,7 @@ export function parseComponents(json: string): OfferComponent[] {
         typeof (c as OfferComponent).key === "string" &&
         typeof (c as OfferComponent).label === "string" &&
         typeof (c as OfferComponent).amount === "number" &&
-        ["EARNING", "EMPLOYER_CONTRIBUTION", "DEDUCTION"].includes((c as OfferComponent).kind) &&
+        ["EARNING", "EMPLOYER_CONTRIBUTION", "DEDUCTION", "STATISTICAL"].includes((c as OfferComponent).kind) &&
         ["FIXED", "PERCENT_OF_BASIC"].includes((c as OfferComponent).mode),
     );
   } catch {

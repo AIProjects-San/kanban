@@ -24,6 +24,7 @@ const KIND_LABEL: Record<string, string> = {
   EARNING: "Earning",
   EMPLOYER_CONTRIBUTION: "Employer",
   DEDUCTION: "Deduction",
+  STATISTICAL: "Statistical (info)",
 };
 
 const BLANK = {

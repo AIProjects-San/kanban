@@ -235,3 +235,37 @@ describe("PR-B23 (S7) — the payslip rounding policy", () => {
     expect(computeRoundingAdjustment(-10.6, "ROUND_NET_NEAREST")).toBe(-0.4);
   });
 });
+
+
+describe("PR-B03 (S8) — statistical (display-only) lines", () => {
+  const structure = [
+    { key: "basic", label: "Basic Salary", kind: "EARNING" as const, mode: "FIXED" as const, amount: 78_000 },
+    { key: "package_note", label: "Total package", kind: "STATISTICAL" as const, mode: "FIXED" as const, amount: 120_000 },
+  ];
+
+  it("monthlyEarningsFromStructure rides statistical lines flagged, money unchanged", () => {
+    const lines = monthlyEarningsFromStructure(structure);
+    expect(lines).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 6_500 },
+      { key: "package_note", label: "Total package", amount: 10_000, statistical: true },
+    ]);
+  });
+
+  it("computeOffer counts STATISTICAL nowhere (earnings/net/ctc unchanged)", () => {
+    const withStat = monthlyEarningsFromStructure(structure);
+    const without = monthlyEarningsFromStructure(structure.filter((c) => c.kind !== "STATISTICAL"));
+    expect(payslipTotals(withStat, []).gross).toBe(payslipTotals(without, []).gross);
+    expect(payslipTotals(without, []).gross).toBe(6_500);
+  });
+
+  it("lineSum / lopBasisGross / scaling / rounding all skip statistical lines", () => {
+    const lines = monthlyEarningsFromStructure(structure);
+    expect(payslipTotals(lines, []).net).toBe(6_500);
+    expect(lopBasisGross(lines)).toBe(6_500);
+    const scaled = scaleEarningsToPaidDays(lines, 10, 20);
+    expect(scaled.find((l) => l.key === "basic")?.amount).toBe(3_250);
+    expect(scaled.find((l) => l.key === "package_note")?.amount).toBe(10_000);
+    const rounded = withRoundingLine(lines, [], "ROUND_NET_NEAREST");
+    expect(rounded.earnings.find((l) => l.key === "rounding")).toBeUndefined();
+  });
+});

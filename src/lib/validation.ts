@@ -741,7 +741,9 @@ export const updateBackgroundCheckSchema = z.object({
 // R5 — offer builder: templates + per-candidate offers
 // ---------------------------------------------------------------------------
 
-export const OFFER_COMPONENT_KINDS = ["EARNING", "EMPLOYER_CONTRIBUTION", "DEDUCTION"] as const;
+// PR-B03 (S8) — STATISTICAL: display-only component (slip info line,
+// never money).
+export const OFFER_COMPONENT_KINDS = ["EARNING", "EMPLOYER_CONTRIBUTION", "DEDUCTION", "STATISTICAL"] as const;
 export const OFFER_COMPONENT_MODES = ["FIXED", "PERCENT_OF_BASIC"] as const;
 
 export const offerComponentSchema = z.object({
@@ -811,6 +813,8 @@ export const payslipLineSchema = z.object({
   // only false is meaningful; absent = true). Submitted lines carry it so
   // updatePayslip can recompute the LOP on the day-scaled basis only.
   dependsOnPaymentDays: z.boolean().optional(),
+  // PR-B03 (S8) — display-only line flag (sparse).
+  statistical: z.boolean().optional(),
 }).strict();
 
 export const saveSalaryStructureSchema = z.object({

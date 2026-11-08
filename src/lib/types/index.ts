@@ -618,7 +618,7 @@ export interface BackgroundCheckT {
 export type OfferComponentT = {
   key: string;
   label: string;
-  kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION";
+  kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION" | "STATISTICAL";
   mode: "FIXED" | "PERCENT_OF_BASIC";
   amount: number;
   /** PR-B02 (S6) — payment-days exemption snapshot (sparse: only false is
@@ -676,6 +676,8 @@ export interface PayslipLineT {
   key: string;
   label: string;
   amount: number;
+  /** PR-B03 (S8) — display-only line (sparse): never counted into totals. */
+  statistical?: boolean;
 }
 
 /** R7 — an employee's standing salary structure (annual components; the
@@ -704,7 +706,7 @@ export interface SalaryComponentT {
   id: string;
   code: string;
   label: string;
-  kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION";
+  kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION" | "STATISTICAL";
   mode: "FIXED" | "PERCENT_OF_BASIC";
   defaultAmount: number;
   /** PR-B02 (S6) — depends_on_payment_days: false = window-exempt flat

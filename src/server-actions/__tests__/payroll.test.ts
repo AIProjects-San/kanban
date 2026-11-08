@@ -902,6 +902,55 @@ describe("R7 — payslips", () => {
     expect(slip2.net).toBe(6_554);
   });
 
+  it("PR-B03 (S8) — statistical structure lines reach the payslip as info rows, money unchanged", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([{
+      ...STRUCTURE_ROW,
+      components: JSON.stringify([
+        ...COMPONENTS,
+        { key: "package_note", label: "Total package", kind: "STATISTICAL", mode: "FIXED", amount: 120_000 },
+      ]),
+    }]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const created = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; gross: number; net: number }> } };
+    };
+    const slip = created.data.payslips.create[0];
+    const lines = JSON.parse(slip.earnings) as Array<{ key: string; statistical?: boolean }>;
+    const note = lines.find((l) => l.key === "package_note");
+    expect(note?.statistical).toBe(true);
+    // Money unchanged: 6,700 gross/net as without the info line.
+    expect(slip.gross).toBe(6_700);
+    expect(slip.net).toBe(6_700);
+  });
+
+  it("PR-B03 (S8) — updatePayslip preserves the stored statistical lines (never editable)", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow({
+      earnings: JSON.stringify([
+        { key: "basic", label: "Basic Salary", amount: 6_500 },
+        { key: "transport", label: "Transport Allowance", amount: 200 },
+        { key: "package_note", label: "Total package", amount: 10_000, statistical: true },
+      ]),
+    }));
+    const res = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [
+        { key: "basic", label: "Basic Salary", amount: 6_500 },
+        { key: "transport", label: "Transport Allowance", amount: 200 },
+      ],
+      deductions: [],
+      lopDays: 0,
+      note: "",
+    });
+    expect(res.ok).toBe(true);
+    const updateArg = db.payslip.update.mock.calls[0][0] as { data: { earnings: string } };
+    const lines = JSON.parse(updateArg.data.earnings) as Array<{ key: string; statistical?: boolean }>;
+    expect(lines.find((l) => l.key === "package_note")?.statistical).toBe(true);
+    expect(lines.filter((l) => !l.statistical)).toHaveLength(2);
+  });
+
   it("addPayslip appends a mid-period joiner with the next slip number", async () => {
     db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
     db.payslip.findUnique.mockResolvedValue(null);

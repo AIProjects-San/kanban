@@ -22,6 +22,9 @@ export interface PayslipLine {
    * window-exempt (flat). Stored sparsely: only false is written, so every
    * pre-S6 JSON line (and every default-true line) stays byte-identical. */
   dependsOnPaymentDays?: boolean;
+  /** PR-B03 (S8) — display-only info line (STATISTICAL components): never
+   * counted into gross/net, never scaled, never docked. Sparse. */
+  statistical?: boolean;
 }
 
 export function round2(n: number): number {
@@ -41,13 +44,15 @@ export function daysInPeriod(period: string): number {
 export function monthlyEarningsFromStructure(components: OfferComponent[]): PayslipLine[] {
   const totals = computeOffer(components);
   return components
-    .filter((c) => c.kind === "EARNING")
+    .filter((c) => c.kind === "EARNING" || c.kind === "STATISTICAL")
     .map((c) => ({
       key: c.key,
       label: c.label,
       amount: round2((totals.resolved[c.key] ?? 0) / 12),
       // S6 — snapshot the payment-days exemption sparsely (only false).
       ...(c.dependsOnPaymentDays === false ? { dependsOnPaymentDays: false } : {}),
+      // S8 — statistical lines ride the snapshot flagged, counted nowhere.
+      ...(c.kind === "STATISTICAL" ? { statistical: true } : {}),
     }));
 }
 
@@ -75,7 +80,7 @@ export function scaleEarningsToPaidDays(
   // PR-B02 (S6) — window-exempt lines (dependsOnPaymentDays === false) stay
   // flat: they pay the same whether the month was clipped or not.
   return earnings.map((l) =>
-    l.dependsOnPaymentDays === false ? l : { ...l, amount: round2(l.amount * fraction) },
+    l.dependsOnPaymentDays === false || l.statistical ? l : { ...l, amount: round2(l.amount * fraction) },
   );
 }
 
@@ -85,14 +90,15 @@ export function scaleEarningsToPaidDays(
 export function lopBasisGross(earnings: PayslipLine[]): number {
   return round2(
     earnings.reduce(
-      (sum, l) => (Number.isFinite(l.amount) && l.dependsOnPaymentDays !== false ? sum + l.amount : sum),
+      (sum, l) => (Number.isFinite(l.amount) && l.dependsOnPaymentDays !== false && !l.statistical ? sum + l.amount : sum),
       0,
     ),
   );
 }
 
 export function lineSum(lines: PayslipLine[]): number {
-  return round2(lines.reduce((sum, l) => sum + (Number.isFinite(l.amount) ? l.amount : 0), 0));
+  // S8 — statistical (display-only) lines are never money.
+  return round2(lines.reduce((sum, l) => (Number.isFinite(l.amount) && !l.statistical ? sum + l.amount : sum), 0));
 }
 
 /** gross = Σ earnings; net = gross − Σ deductions (both rounded). */
@@ -142,7 +148,7 @@ export function withRoundingLine(
   const cleanEarnings = earnings.filter((l) => l.key !== ROUNDING_LINE_KEY);
   const cleanDeductions = deductions.filter((l) => l.key !== ROUNDING_LINE_KEY);
   const net = round2(
-    cleanEarnings.reduce((s, l) => s + (Number.isFinite(l.amount) ? l.amount : 0), 0) -
+    cleanEarnings.reduce((s, l) => (Number.isFinite(l.amount) && !l.statistical ? s + l.amount : s), 0) -
       cleanDeductions.reduce((s, l) => s + (Number.isFinite(l.amount) ? l.amount : 0), 0),
   );
   const adj = computeRoundingAdjustment(net, mode);

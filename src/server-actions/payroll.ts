@@ -680,10 +680,15 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     // S6 — the LOP basis excludes window-exempt lines (flags ride the
     // submitted lines' snapshots).
     const lopDeductions = withLopLine(data.deductions, lopBasisGross(data.earnings), lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
+    // S8 — statistical lines are display-only and never editable: the
+    // stored snapshot's statistical rows ride along untouched (the editor
+    // never submits them).
+    const statisticalLines = parsePayslipLines(slip.earnings).filter((l) => l.statistical);
+    const submittedEarnings = data.earnings.filter((l) => !l.statistical);
     // S7 — the rounding line is auto-managed on save too (replaced, never
     // duplicated); the editor never submits it.
     const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
-    const { earnings: finalEarnings, deductions } = withRoundingLine(data.earnings, lopDeductions, roundingMode);
+    const { earnings: finalEarnings, deductions } = withRoundingLine([...submittedEarnings, ...statisticalLines], lopDeductions, roundingMode);
     const { gross, net } = payslipTotals(finalEarnings, deductions);
     if (net < 0) {
       const totalDeductions = gross - net;
