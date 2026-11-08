@@ -803,6 +803,70 @@ describe("R7 — payslips", () => {
     expect(createArg.data.gross).toBe(3_509.52);
   });
 
+  it("PR-B02 (S6) — a window-exempt line stays flat and out of the LOP basis at run creation", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([{
+      ...STRUCTURE_ROW,
+      components: JSON.stringify([
+        ...COMPONENTS,
+        { key: "car", label: "Car Allowance", kind: "EARNING", mode: "FIXED", amount: 3_600, dependsOnPaymentDays: false },
+      ]),
+    }]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    // LWD Fri Nov 6 → paidDays 5 of 21.
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-yuki", jobTitle: "Data Engineer", department: "ENGINEERING", hireDate: null, lastWorkingDay: new Date("2026-11-06T00:00:00Z") },
+    ]);
+    // One ABSENT day (Nov 4) inside the window.
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { userId: "u-yuki", date: new Date("2026-11-04T00:00:00Z"), status: "ABSENT" },
+    ]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    const created = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; deductions: string; gross: number; net: number }> } };
+    };
+    const slip = created.data.payslips.create[0];
+    const lines = JSON.parse(slip.earnings) as Array<{ key: string; amount: number; dependsOnPaymentDays?: boolean }>;
+    // Day-scaled: 6,500 × 5/21 = 1,547.62; 200 × 5/21 = 47.62.
+    expect(lines.find((l) => l.key === "basic")?.amount).toBe(1_547.62);
+    expect(lines.find((l) => l.key === "transport")?.amount).toBe(47.62);
+    // Exempt: flat 300 (3,600/12) with the sparse snapshot flag.
+    const car = lines.find((l) => l.key === "car");
+    expect(car?.amount).toBe(300);
+    expect(car?.dependsOnPaymentDays).toBe(false);
+    // gross = 1,547.62 + 47.62 + 300 = 1,895.24.
+    expect(slip.gross).toBe(1_895.24);
+    // LOP basis = day-scaled lines only (1,595.24) × 1/21 = 75.96.
+    const deductions = JSON.parse(slip.deductions) as Array<{ key: string; amount: number }>;
+    expect(deductions.find((l) => l.key === "lop")?.amount).toBe(75.96);
+    expect(slip.net).toBe(1_819.28);
+  });
+
+  it("PR-B02 (S6) — updatePayslip computes the LOP line on the day-scaled basis only", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow({
+      run: { ...OPEN_RUN, workingDays: 21 },
+      earnings: JSON.stringify([
+        { key: "basic", label: "Basic Salary", amount: 6_500 },
+        { key: "car", label: "Car Allowance", amount: 300, dependsOnPaymentDays: false },
+      ]),
+    }));
+    const res = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [
+        { key: "basic", label: "Basic Salary", amount: 6_500 },
+        { key: "car", label: "Car Allowance", amount: 300, dependsOnPaymentDays: false },
+      ],
+      deductions: [],
+      lopDays: 2,
+      note: "",
+    });
+    expect(res.ok).toBe(true);
+    const updateArg = db.payslip.update.mock.calls[0][0] as { data: { deductions: string } };
+    const deductions = JSON.parse(updateArg.data.deductions) as Array<{ key: string; amount: number }>;
+    // LOP = 6,500 (basis) × 2 / 21 = 619.05 — NOT 6,800 × 2 / 21.
+    expect(deductions.find((l) => l.key === "lop")?.amount).toBe(619.05);
+  });
+
   it("addPayslip appends a mid-period joiner with the next slip number", async () => {
     db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
     db.payslip.findUnique.mockResolvedValue(null);

@@ -17,6 +17,11 @@ export interface PayslipLine {
   key: string;
   label: string;
   amount: number;
+  /** PR-B02 (S6) — snapshot of the component's depends_on_payment_days.
+   * Undefined or true = scales with paid days + docked by LOP; false =
+   * window-exempt (flat). Stored sparsely: only false is written, so every
+   * pre-S6 JSON line (and every default-true line) stays byte-identical. */
+  dependsOnPaymentDays?: boolean;
 }
 
 export function round2(n: number): number {
@@ -41,6 +46,8 @@ export function monthlyEarningsFromStructure(components: OfferComponent[]): Pays
       key: c.key,
       label: c.label,
       amount: round2((totals.resolved[c.key] ?? 0) / 12),
+      // S6 — snapshot the payment-days exemption sparsely (only false).
+      ...(c.dependsOnPaymentDays === false ? { dependsOnPaymentDays: false } : {}),
     }));
 }
 
@@ -65,7 +72,23 @@ export function scaleEarningsToPaidDays(
     return earnings;
   }
   const fraction = paidDays / denominator;
-  return earnings.map((l) => ({ ...l, amount: round2(l.amount * fraction) }));
+  // PR-B02 (S6) — window-exempt lines (dependsOnPaymentDays === false) stay
+  // flat: they pay the same whether the month was clipped or not.
+  return earnings.map((l) =>
+    l.dependsOnPaymentDays === false ? l : { ...l, amount: round2(l.amount * fraction) },
+  );
+}
+
+/** PR-B02 (S6) — the loss-of-pay basis: Σ earnings that still depend on
+ * payment days (exempt lines are not docked by LOP either — a flat
+ * allowance cannot be reduced by absent days). Rounded like gross. */
+export function lopBasisGross(earnings: PayslipLine[]): number {
+  return round2(
+    earnings.reduce(
+      (sum, l) => (Number.isFinite(l.amount) && l.dependsOnPaymentDays !== false ? sum + l.amount : sum),
+      0,
+    ),
+  );
 }
 
 export function lineSum(lines: PayslipLine[]): number {

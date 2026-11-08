@@ -1023,6 +1023,12 @@ model SalaryComponent {
   kind          String   @default("EARNING") // EARNING | EMPLOYER_CONTRIBUTION | DEDUCTION
   mode          String   @default("FIXED")   // FIXED | PERCENT_OF_BASIC
   defaultAmount Float    @default(0)
+  // PR-B02 (S6) — depends_on_payment_days: true (default) = payslip lines
+  // from this component scale with the employment-window paid days and are
+  // docked by loss-of-pay; false = window-exempt flat line. The catalog row
+  // owns the knob; structures/payslips snapshot copies per line (sparse:
+  // only false is stored in the JSON).
+  dependsOnPaymentDays Boolean @default(true)
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())

@@ -44,6 +44,7 @@ import {
   monthlyEarningsFromStructure,
   payslipTotals,
   scaleEarningsToPaidDays,
+  lopBasisGross,
   withLopLine,
   daysInPeriod,
   parsePayslipLines,
@@ -201,14 +202,22 @@ export async function createStructureFromOffer(input: { userId: string }): Promi
     // amount) so the catalog converges on everything actually in use — the
     // structure editor's picker then offers them next time.
     const catalogRows = await db.salaryComponent.findMany({
-      select: { code: true, label: true, kind: true, mode: true },
+      select: { code: true, label: true, kind: true, mode: true, dependsOnPaymentDays: true },
     });
     const catalogByCode = new Map(catalogRows.map((r) => [r.code, r]));
     const toRegister = components.filter((c) => !catalogByCode.has(c.key));
     const mapped = components.map((c) => {
       const cat = catalogByCode.get(c.key);
+      // S6 — the catalog's depends_on_payment_days rides the snapshot
+      // (sparse: only false is written into the JSON).
       return cat
-        ? { ...c, label: cat.label, kind: cat.kind as OfferComponent["kind"], mode: cat.mode as OfferComponent["mode"] }
+        ? {
+            ...c,
+            label: cat.label,
+            kind: cat.kind as OfferComponent["kind"],
+            mode: cat.mode as OfferComponent["mode"],
+            ...(cat.dependsOnPaymentDays === false ? { dependsOnPaymentDays: false } : { dependsOnPaymentDays: undefined }),
+          }
         : c;
     });
 
@@ -225,6 +234,9 @@ export async function createStructureFromOffer(input: { userId: string }): Promi
             kind: c.kind,
             mode: c.mode,
             defaultAmount: c.amount,
+            // S6 — offer lines carry no exemption knowledge; new codes
+            // register as payment-day scaled (the default knob).
+            dependsOnPaymentDays: true,
             isActive: true,
             sortOrder: 1000,
           },
@@ -461,8 +473,10 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
             const lopDays = facts.lopDays;
             // The auto LOP line is materialized at creation (net totals are
             // honest immediately — no per-slip save needed to see the dock).
+            // S6 — the LOP basis excludes window-exempt lines (a flat
+            // allowance is not reduced by absent days).
             const deductions = lopDays > 0
-              ? withLopLine([], payslipTotals(earnings, []).gross, lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
+              ? withLopLine([], lopBasisGross(earnings), lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
               : [];
             const { gross, net } = payslipTotals(earnings, deductions);
             return {
@@ -654,7 +668,9 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     const lopSource = lopDaysChanged ? "MANUAL" : (slip.lopSource === "MANUAL" ? "MANUAL" : "AUTO");
     const grossBefore = slip.gross;
     const netBefore = slip.net;
-    const deductions = withLopLine(data.deductions, payslipTotals(data.earnings, []).gross, lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
+    // S6 — the LOP basis excludes window-exempt lines (flags ride the
+    // submitted lines' snapshots).
+    const deductions = withLopLine(data.deductions, lopBasisGross(data.earnings), lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
     const { gross, net } = payslipTotals(data.earnings, deductions);
     if (net < 0) {
       const totalDeductions = gross - net;
@@ -741,8 +757,9 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       facts.paidDays,
       run.workingDays > 0 ? run.workingDays : undefined,
     );
+    // S6 — the LOP basis excludes window-exempt lines.
     const deductions = lopDays > 0
-      ? withLopLine([], payslipTotals(scaledEarnings, []).gross, lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
+      ? withLopLine([], lopBasisGross(scaledEarnings), lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
       : [];
     const { gross, net } = payslipTotals(scaledEarnings, deductions);
     const createData = {

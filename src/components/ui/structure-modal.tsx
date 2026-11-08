@@ -74,7 +74,16 @@ export function StructureModal({
   const addFromCatalog = (code: string) => {
     const row = catalog.find((c) => c.code === code);
     if (!row) return;
-    setComponents((prev) => [...prev, { key: row.code, label: row.label, kind: row.kind, mode: row.mode, amount: row.defaultAmount }]);
+    setComponents((prev) => [...prev, {
+      key: row.code,
+      label: row.label,
+      kind: row.kind,
+      mode: row.mode,
+      amount: row.defaultAmount,
+      // S6 — the catalog's payment-days knob rides the snapshot (sparse:
+      // only false is meaningful).
+      ...(row.dependsOnPaymentDays === false ? { dependsOnPaymentDays: false } : {}),
+    }]);
   };
 
   const annual = useMemo(() => computeOffer(components), [components]);
@@ -182,6 +191,24 @@ export function StructureModal({
               <span className="text-xs text-muted-foreground w-20 text-right tabular-nums">
                 {comp.mode === "PERCENT_OF_BASIC" ? formatMoney(annual.resolved[comp.key] ?? 0) : ""}
               </span>
+              {/* S6 — payment-days exemption: earnings scale with the
+                  employment window and are docked by LOP unless exempt. */}
+              {comp.kind === "EARNING" && (
+                <label
+                  className="inline-flex items-center gap-1 text-[0.625rem] text-muted-foreground cursor-pointer"
+                  title="Window-exempt lines pay flat regardless of paid days / loss-of-pay (the catalog row's knob; this snapshot overrides it for this structure)."
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-primary"
+                    checked={comp.dependsOnPaymentDays !== false}
+                    onChange={(e) => patch(i, { dependsOnPaymentDays: e.target.checked ? undefined : false })}
+                    aria-label={`${comp.label || "component"} scales with payment days`}
+                    data-testid={`structure-component-${i}-payment-days`}
+                  />
+                  day-scaled
+                </label>
+              )}
               <button
                 type="button" className="f-btn f-btn-icon text-destructive" aria-label={`Remove ${comp.label || "component"}`}
                 onClick={() => setComponents((prev) => prev.filter((_, idx) => idx !== i))}

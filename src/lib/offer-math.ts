@@ -22,6 +22,12 @@ export interface OfferComponent {
   mode: OfferComponentMode;
   /** Annual amount (FIXED) or percentage of basic (PERCENT_OF_BASIC, 12 = 12%). */
   amount: number;
+  /** PR-B02 (S6) — depends_on_payment_days, snapshotted per line. Undefined
+   * or true = the line scales with the employment-window paid days and is
+   * docked by loss-of-pay (the implicit pre-S6 behavior for every line).
+   * false = window-exempt: flat regardless of paid days / LOP. The catalog
+   * row owns the knob; structures and payslips keep snapshot copies. */
+  dependsOnPaymentDays?: boolean;
 }
 
 export interface OfferTotals {

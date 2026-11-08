@@ -432,6 +432,12 @@ describe("Recruitment R1 models are declared", () => {
     expect(comp).toMatch(/kind\s+String\s+@default\("EARNING"\)/);
     expect(comp).toMatch(/mode\s+String\s+@default\("FIXED"\)/);
     expect(comp).toMatch(/defaultAmount\s+Float\s+@default\(0\)/);
+    // PR-B02 (S6) — the payment-days knob on the catalog row (default true).
+    expect(comp).toMatch(/dependsOnPaymentDays\s+Boolean\s+@default\(true\)/);
+    const s6 = resolve(repoRoot, "prisma", "migrations", "20261126400000_component_payment_days");
+    expect(existsSync(resolve(s6, "migration.sql"))).toBe(true);
+    expect(existsSync(resolve(s6, "down.sql"))).toBe(true);
+    expect(readFileSync(resolve(s6, "migration.sql"), "utf8")).toMatch(/ADD COLUMN "dependsOnPaymentDays" BOOLEAN NOT NULL DEFAULT true/);
     expect(comp).toMatch(/isActive\s+Boolean\s+@default\(true\)/);
     expect(comp).toMatch(/@@index\(\[isActive\]\)/);
     const f15 = resolve(repoRoot, "prisma", "migrations", "20261121000000_salary_component_catalog");

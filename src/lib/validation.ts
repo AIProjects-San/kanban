@@ -748,6 +748,9 @@ export const offerComponentSchema = z.object({
   kind: z.enum(OFFER_COMPONENT_KINDS),
   mode: z.enum(OFFER_COMPONENT_MODES),
   amount: z.number().min(0).max(100_000_000),
+  // PR-B02 (S6) — snapshot of the payment-days exemption (sparse: only
+  // false is meaningful; absent = true).
+  dependsOnPaymentDays: z.boolean().optional(),
 }).strict();
 
 export const saveOfferTemplateSchema = z.object({
@@ -802,6 +805,10 @@ export const payslipLineSchema = z.object({
   key: z.string().trim().min(1).max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
   label: z.string().trim().min(1, "A label is required.").max(120),
   amount: z.number().min(0).max(10_000_000),
+  // PR-B02 (S6) — the payment-days exemption snapshot on the line (sparse:
+  // only false is meaningful; absent = true). Submitted lines carry it so
+  // updatePayslip can recompute the LOP on the day-scaled basis only.
+  dependsOnPaymentDays: z.boolean().optional(),
 }).strict();
 
 export const saveSalaryStructureSchema = z.object({
@@ -825,6 +832,10 @@ export const saveSalaryComponentSchema = z.object({
   kind: z.enum(OFFER_COMPONENT_KINDS),
   mode: z.enum(OFFER_COMPONENT_MODES),
   defaultAmount: z.number().min(0).max(100_000_000),
+  // PR-B02 (S6) — depends_on_payment_days: default true (the pre-S6
+  // implicit behavior — every line scaled with the employment window and
+  // was docked by LOP). false = window-exempt flat line.
+  dependsOnPaymentDays: z.boolean().default(true),
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(9_999).default(0),
 }).strict();

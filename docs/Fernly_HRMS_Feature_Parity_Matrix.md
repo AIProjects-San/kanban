@@ -87,7 +87,7 @@ Every row below carries: the benchmark artifact, its key features (states / vali
 | ID | Benchmark behavior | Fernly @ `bb2e046` | Status | Family / epic |
 | --- | --- | --- | --- | --- |
 | PR-B01 | AST-sandboxed `formula`/`condition` per component | FIXED / PERCENT_OF_BASIC only — **declined** (§7.0 declination table) | Out of scope | P3 |
-| PR-B02 | `depends_on_payment_days` per component | one auto "lop" line = gross × lopDays / days-in-period (`payroll-math.ts`); no per-component opt-in | Partial | P6 |
+| PR-B02 | `depends_on_payment_days` per component | S6: `SalaryComponent.dependsOnPaymentDays` (catalog CRUD + checkbox, default true) snapshots sparsely onto structure/payslip lines (only false is stored); window-exempt lines stay flat under the S5 scaling AND stay out of the LOP basis (`lopBasisGross`) in createPayrollRun/addPayslip/updatePayslip + the modal's live preview; structure editor exposes the per-line toggle | **Parity (workspace scope)** (was Partial) | P6 / **S6 DONE** |
 | PR-B03 | Statistical components (display-only totals) | — | Missing | — |
 | PR-B04 | Flexible-benefit election & pro-rata | — | Missing | P14 / F3.2 |
 | PR-B05 | Five payroll frequencies | monthly only | Partial | P5 |

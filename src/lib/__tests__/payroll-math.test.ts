@@ -16,6 +16,7 @@ import {
   isPayrollPeriod,
   LOP_LINE_KEY,
   scaleEarningsToPaidDays,
+  lopBasisGross,
 } from "@/lib/payroll-math";
 
 const STRUCTURE = [
@@ -145,5 +146,39 @@ describe("scaleEarningsToPaidDays (S5 / PR-B06)", () => {
     const input = [{ key: "basic", label: "Basic Salary", amount: 6_500 }];
     scaleEarningsToPaidDays(input, 5, 21);
     expect(input[0].amount).toBe(6_500);
+  });
+});
+
+
+describe("PR-B02 (S6) — payment-days exemption", () => {
+  const lines = [
+    { key: "basic", label: "Basic Salary", amount: 6_500 },
+    { key: "car", label: "Car Allowance", amount: 300, dependsOnPaymentDays: false },
+    { key: "transport", label: "Transport Allowance", amount: 200 },
+  ];
+
+  it("scaleEarningsToPaidDays leaves exempt lines flat, scales the rest", () => {
+    const scaled = scaleEarningsToPaidDays(lines, 10, 20);
+    expect(scaled).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 3_250 },
+      { key: "car", label: "Car Allowance", amount: 300, dependsOnPaymentDays: false },
+      { key: "transport", label: "Transport Allowance", amount: 100 },
+    ]);
+  });
+
+  it("lopBasisGross sums only day-scaled lines (exempt never docked by LOP)", () => {
+    expect(lopBasisGross(lines)).toBe(6_700);
+    expect(lopBasisGross([{ key: "car", label: "Car", amount: 300, dependsOnPaymentDays: false }])).toBe(0);
+  });
+
+  it("monthlyEarningsFromStructure snapshots the flag sparsely (only false)", () => {
+    const out = monthlyEarningsFromStructure([
+      { key: "basic", label: "Basic", kind: "EARNING", mode: "FIXED", amount: 78_000 },
+      { key: "car", label: "Car", kind: "EARNING", mode: "FIXED", amount: 3_600, dependsOnPaymentDays: false },
+    ]);
+    expect(out).toEqual([
+      { key: "basic", label: "Basic", amount: 6_500 },
+      { key: "car", label: "Car", amount: 300, dependsOnPaymentDays: false },
+    ]);
   });
 });

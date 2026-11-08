@@ -181,7 +181,9 @@ describe("F1.5 — catalog CRUD", () => {
     expect(db.salaryComponent.create).toHaveBeenCalledWith({
       data: {
         code: "senior_basic", label: "Senior Basic Salary", kind: "EARNING",
-        mode: "FIXED", defaultAmount: 84_000, isActive: true, sortOrder: 10,
+        mode: "FIXED", defaultAmount: 84_000,
+        dependsOnPaymentDays: true, // S6 — schema default rides the payload
+        isActive: true, sortOrder: 10,
       },
     });
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "payroll.component_created" }));

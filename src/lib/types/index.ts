@@ -621,6 +621,9 @@ export type OfferComponentT = {
   kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION";
   mode: "FIXED" | "PERCENT_OF_BASIC";
   amount: number;
+  /** PR-B02 (S6) — payment-days exemption snapshot (sparse: only false is
+   * meaningful; absent = true). */
+  dependsOnPaymentDays?: boolean;
 };
 
 /** R5 — a per-role offer template (hiring:config). */
@@ -704,6 +707,9 @@ export interface SalaryComponentT {
   kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION";
   mode: "FIXED" | "PERCENT_OF_BASIC";
   defaultAmount: number;
+  /** PR-B02 (S6) — depends_on_payment_days: false = window-exempt flat
+   * line (no S5 scaling, no LOP docking). Default true. */
+  dependsOnPaymentDays: boolean;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;

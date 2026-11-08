@@ -41,6 +41,7 @@ function serialize(r: {
   kind: string;
   mode: string;
   defaultAmount: number;
+  dependsOnPaymentDays: boolean;
   isActive: boolean;
   sortOrder: number;
   createdAt: Date;
@@ -52,6 +53,8 @@ function serialize(r: {
     kind: r.kind as SalaryComponentT["kind"],
     mode: r.mode as SalaryComponentT["mode"],
     defaultAmount: r.defaultAmount,
+    // S6 — the payment-days knob rides the serialization (UI checkbox).
+    dependsOnPaymentDays: r.dependsOnPaymentDays,
     isActive: r.isActive,
     sortOrder: r.sortOrder,
     createdAt: r.createdAt.toISOString(),
@@ -85,6 +88,7 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
       kind: data.kind,
       mode: data.mode,
       defaultAmount: data.defaultAmount,
+      dependsOnPaymentDays: data.dependsOnPaymentDays,
       isActive: data.isActive,
       sortOrder: data.sortOrder,
     };
@@ -100,7 +104,7 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
           entityType: "SALARY_COMPONENT",
           entityId: updated.id,
           entityLabel: `${updated.code} (${updated.label})`,
-          detail: `${auth.name} updated the salary component ${updated.code} — ${updated.label} (${updated.kind}, ${updated.mode === "PERCENT_OF_BASIC" ? `${updated.defaultAmount}% of basic` : `$${updated.defaultAmount}/yr suggestion`}, ${updated.isActive ? "active" : "retired"}).`,
+          detail: `${auth.name} updated the salary component ${updated.code} — ${updated.label} (${updated.kind}, ${updated.mode === "PERCENT_OF_BASIC" ? `${updated.defaultAmount}% of basic` : `$${updated.defaultAmount}/yr suggestion`}, ${updated.dependsOnPaymentDays ? "payment-day scaled" : "window-exempt"}, ${updated.isActive ? "active" : "retired"}).`,
         });
         revalidatePath("/");
         return { id: updated.id };
@@ -122,7 +126,7 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
         entityType: "SALARY_COMPONENT",
         entityId: created.id,
         entityLabel: `${created.code} (${created.label})`,
-        detail: `${auth.name} added the salary component ${created.code} — ${created.label} (${created.kind}, ${created.mode === "PERCENT_OF_BASIC" ? `${created.defaultAmount}% of basic` : `$${created.defaultAmount}/yr suggestion`}).`,
+        detail: `${auth.name} added the salary component ${created.code} — ${created.label} (${created.kind}, ${created.mode === "PERCENT_OF_BASIC" ? `${created.defaultAmount}% of basic` : `$${created.defaultAmount}/yr suggestion`}${created.dependsOnPaymentDays ? "" : ", window-exempt"}).`,
       });
       revalidatePath("/");
       return { id: created.id };

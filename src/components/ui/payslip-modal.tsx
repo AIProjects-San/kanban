@@ -17,7 +17,7 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { PayslipT, PayslipLineT } from "@/lib/types";
 import { updatePayslip } from "@/server-actions/payroll";
-import { computeLop, payslipTotals, LOP_LINE_KEY } from "@/lib/payroll-math";
+import { computeLop, payslipTotals, lopBasisGross, LOP_LINE_KEY } from "@/lib/payroll-math";
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -74,12 +74,15 @@ export function PayslipModal({
         .reduce((s, l) => s + l.amount, 0);
       return { gross: payslip.gross, lop, manualDeductions: manual, net: payslip.net };
     }
+    // S6 — the LOP basis excludes window-exempt lines (the server's
+    // lopBasisGross); the live preview matches the stored math exactly.
     const gross = payslipTotals(earnings, []).gross;
+    const lopBasis = lopBasisGross(earnings);
     // F1.1 — divide by the run's holiday-aware working-day count when the
     // run carries one (post-F1.1 runs), so the live preview matches the
     // server's stored LOP math exactly.
     const lop = computeLop(
-      gross,
+      lopBasis,
       lopDays,
       payslip?.runPeriod ?? "2026-01",
       payslip && payslip.runWorkingDays > 0 ? payslip.runWorkingDays : undefined,

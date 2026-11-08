@@ -33,6 +33,7 @@ const BLANK = {
   kind: "EARNING",
   mode: "FIXED",
   defaultAmount: 0,
+  dependsOnPaymentDays: true,
   isActive: true,
   sortOrder: 0,
 };
@@ -85,6 +86,7 @@ export function ComponentCatalogModal({
       kind: editing.kind,
       mode: editing.mode,
       defaultAmount: Number(editing.defaultAmount),
+      dependsOnPaymentDays: editing.dependsOnPaymentDays !== false,
       isActive: editing.isActive,
       sortOrder: Number(editing.sortOrder),
     });
@@ -126,6 +128,11 @@ export function ComponentCatalogModal({
               <span className="shrink-0 text-muted-foreground tabular-nums">
                 {r.mode === "PERCENT_OF_BASIC" ? `${r.defaultAmount}% basic` : `$${r.defaultAmount.toLocaleString("en-NZ")}/yr`}
               </span>
+              {!r.dependsOnPaymentDays && (
+                <span className="shrink-0 text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-700 dark:text-sky-400">
+                  window-exempt
+                </span>
+              )}
               <span className="flex items-center gap-1 shrink-0">
                 <button
                   type="button" className="f-btn f-btn-ghost text-xs px-1.5 py-0.5"
@@ -217,6 +224,15 @@ export function ComponentCatalogModal({
                 />
               </Field>
             </div>
+            <label className="flex items-center gap-2 text-xs" title="Window-exempt lines pay flat regardless of employment-window paid days and are not docked by loss-of-pay (PR-B02).">
+              <input
+                type="checkbox"
+                checked={editing.dependsOnPaymentDays !== false}
+                onChange={(e) => setEditing({ ...editing, dependsOnPaymentDays: e.target.checked })}
+                data-testid="catalog-payment-days"
+              />
+              Scales with payment days (uncheck = flat / window-exempt)
+            </label>
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
