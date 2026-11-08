@@ -46,10 +46,15 @@ vi.mock("@/server-actions/shared", async () => {
   // F2.10 — sendOutboxMail / readOnboardingTemplate / instantiateChecklist
   // run for real (over the mocked db + injectable mailer), exactly like the
   // code under test uses them; only logAudit is a spy.
+  // F-R12 (S17) — queueOutboxMail / deliverOutboxMail ride the same rule:
+  // real implementations over the mocked db (the $transaction mock passes
+  // db itself as tx, so tx.mailOutbox.create === db.mailOutbox.create).
   const actual = await vi.importActual<typeof import("@/server-actions/shared")>("@/server-actions/shared");
   return {
     logAudit: (...a: unknown[]) => logAuditMock(...a),
     sendOutboxMail: actual.sendOutboxMail,
+    queueOutboxMail: actual.queueOutboxMail,
+    deliverOutboxMail: actual.deliverOutboxMail,
     readOnboardingTemplate: actual.readOnboardingTemplate,
     instantiateChecklist: actual.instantiateChecklist,
   };
@@ -362,6 +367,28 @@ describe("advanceStage", () => {
     const res = await advanceStage({ candidateId: "cand-1" });
     expect(res.ok).toBe(false);
   });
+
+  it("S17/F-R12 — wraps the close+open pair in ONE $transaction (no orphaned all-closed pipeline)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await advanceStage({ candidateId: "cand-1" });
+    expect(res.ok).toBe(true);
+    // The hoisted $transaction mock is bolted on via a Record cast, so
+    // narrow it locally to read .mock.calls.
+    const tx = db.$transaction as unknown as ReturnType<typeof vi.fn>;
+    expect(tx).toHaveBeenCalledTimes(1);
+    expect(typeof tx.mock.calls[0][0]).toBe("function");
+  });
+
+  it("S17/F-R12 — a failure opening the next stage fails the WHOLE step (the pair is atomic)", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    db.candidateStage.update.mockImplementation(async ({ data }: { data: { status?: string } }) => {
+      if (data?.status === "IN_PROGRESS") throw new Error("db write failed");
+      return {};
+    });
+    const res = await advanceStage({ candidateId: "cand-1" });
+    expect(res.ok).toBe(false);
+    expect(logAuditMock).not.toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.stage_advanced" }));
+  });
 });
 
 describe("setStageStatus", () => {
@@ -410,6 +437,20 @@ describe("addCandidateStage", () => {
     expect(res.ok).toBe(true);
     const created = db.candidateStage.create.mock.calls[0][0] as { data: { sortOrder: number } };
     expect(created.data.sortOrder).toBe(71);
+  });
+
+  it("S17/F-R12 — the sortOrder shift and the new stage land in ONE $transaction, shift first", async () => {
+    db.candidate.findUnique.mockResolvedValue(candidateWithStages());
+    const res = await addCandidateStage({
+      candidateId: "cand-1", label: "Second technical loop", stageType: "INTERVIEW", beforeStageId: "st-3",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    // The shift runs BEFORE the create inside the tx — order is the
+    // guarantee (a parallel Promise.all could interleave a duplicate).
+    const shiftOrder = db.candidateStage.update.mock.invocationCallOrder[0];
+    const createOrder = db.candidateStage.create.mock.invocationCallOrder[0];
+    expect(shiftOrder).toBeLessThan(createOrder);
   });
 });
 
@@ -1468,6 +1509,40 @@ describe("R6 — sendOffer", () => {
     const resolveArg = db.mailOutbox.update.mock.calls[0][0] as { data: { status: string; error: string } };
     expect(resolveArg.data.status).toBe("FAILED");
     expect(resolveArg.data.error).toContain("Resend unreachable");
+  });
+
+  it("S17/F-R12 — SENT flip + outbox row commit in ONE transaction; provider I/O runs strictly outside it", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(R6_OFFER);
+    const sendMailMock = vi.fn().mockResolvedValue({ delivered: true, messageId: "re-test-1" });
+    createMailerMock.mockReturnValue({ sendMail: sendMailMock });
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(true);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    // Durable writes (SENT flip + QUEUED row) complete BEFORE the provider
+    // call; the resolve update lands only after it — network I/O never runs
+    // while the write transaction is open.
+    const sentFlip = db.offerRecord.update.mock.invocationCallOrder[0];
+    const queueRow = db.mailOutbox.create.mock.invocationCallOrder[0];
+    const providerCall = sendMailMock.mock.invocationCallOrder[0];
+    const resolveRow = db.mailOutbox.update.mock.invocationCallOrder[0];
+    expect(sentFlip).toBeLessThan(providerCall);
+    expect(queueRow).toBeLessThan(providerCall);
+    expect(providerCall).toBeLessThan(resolveRow);
+  });
+
+  it("S17/F-R12 — a failed queue-write fails the whole send: no email escapes without its durable record", async () => {
+    db.offerRecord.findUnique.mockResolvedValue(R6_OFFER);
+    const sendMailMock = vi.fn().mockResolvedValue({ delivered: true, messageId: "re-test-1" });
+    createMailerMock.mockReturnValue({ sendMail: sendMailMock });
+    db.mailOutbox.create.mockRejectedValue(new Error("outbox write failed"));
+    const res = await sendOffer({ offerId: "or-1" });
+    expect(res.ok).toBe(false);
+    // Delivery never started: the mailer was never consulted, the row was
+    // never resolved, and no audit trail claims a send (the old crash
+    // window left a SENT offer with no emailed link).
+    expect(sendMailMock).not.toHaveBeenCalled();
+    expect(db.mailOutbox.update).not.toHaveBeenCalled();
+    expect(logAuditMock).not.toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.offer_sent" }));
   });
 
   it("refuses to send a DRAFT offer — manager approval is required first (F2.10)", async () => {

@@ -465,7 +465,27 @@ export async function sendOutboxMail(input: {
   html: string;
   sentById: string;
 }): Promise<{ status: "SENT" | "SKIPPED" | "FAILED"; providerMessageId: string; error: string }> {
-  const row = await db.mailOutbox.create({
+  const row = await queueOutboxMail(db, input);
+  return deliverOutboxMail(row.id, input);
+}
+
+/**
+ * F-R12 (S17) — the queue half: creates the QUEUED outbox row on the GIVEN
+ * client (db or a transaction's tx), so a business write and its outbox row
+ * can land atomically. Returns the created row.
+ */
+export async function queueOutboxMail(
+  tx: Pick<Prisma.TransactionClient, "mailOutbox">,
+  input: {
+    kind: string;
+    candidateId?: string | null;
+    toAddress: string;
+    subject: string;
+    text: string;
+    sentById: string;
+  },
+) {
+  return tx.mailOutbox.create({
     data: {
       kind: input.kind,
       candidateId: input.candidateId ?? null,
@@ -476,6 +496,17 @@ export async function sendOutboxMail(input: {
       sentById: input.sentById,
     },
   });
+}
+
+/**
+ * F-R12 (S17) — the delivery half: attempts the provider send best-effort
+ * and resolves the row to SENT / SKIPPED / FAILED. NEVER called inside a
+ * transaction (network I/O); never throws.
+ */
+export async function deliverOutboxMail(
+  rowId: string,
+  input: { toAddress: string; subject: string; html: string; text: string },
+): Promise<{ status: "SENT" | "SKIPPED" | "FAILED"; providerMessageId: string; error: string }> {
   let status: "SENT" | "SKIPPED" | "FAILED" = "SKIPPED";
   let providerMessageId = "";
   let error = "";
@@ -495,7 +526,7 @@ export async function sendOutboxMail(input: {
     error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
   }
   await db.mailOutbox.update({
-    where: { id: row.id },
+    where: { id: rowId },
     data: { status, providerMessageId, error, sentAt: new Date() },
   });
   return { status, providerMessageId, error };

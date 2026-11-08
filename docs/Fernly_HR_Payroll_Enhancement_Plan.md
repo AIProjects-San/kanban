@@ -391,12 +391,12 @@ The 2026-11-08 audit re-verified every Phase 1 family against the row-level matr
 | S9 | LV-10 | **DONE** HR leave adjustment tool — user-facing ADJUST ledger writer | `hr:admin`, reason required, floor-honest |
 | S10 | LV-B10 | **DONE** Salary-processed guard — unpaid leave cannot overlap a LOCKED slip | validation-chain step |
 | S11 | LV-B11 | **DONE** Attendance-conflict guard in the leave chain | refuse on explicit (non-derived) marks in range |
-| S12 | LV-B08 | Cross-request max-consecutive-days walk | pure helper, adjacency by calendar day |
+| S12 | LV-B08 | **DONE** Cross-request max-consecutive-days walk | pure helper; chains merge when the calendar gap holds no working day |
 | S13 | EM-B01 | **DONE** Employee-number series EMP-0001 | zero-padded 4-digit, deterministic backfill |
 | S14 | EM-B04/LV-B13 | **DONE** Leave-approver override | `EmployeeProfile.leaveApproverId`, chain: override → manager → ADMINs (HR stays chain-scoped per the existing decision) |
-| S15 | F-R3 (B) | YTD dual-basis note in the payslip modal | one honesty line |
-| S16 | F-R14 (C) | Dead enum/constants cleanup | remove `IMPORT` source + dead exports, fix comment drift |
-| S17 | F-R12 (B) | Transactional multi-row hiring mutations | one `$transaction` per action |
+| S15 | F-R3 (B) | **DONE** YTD dual-basis note in the payslip modal | one honesty line, in the modal + My-payslips |
+| S16 | F-R14 (C) | **DONE** Dead enum/constants cleanup | remove `IMPORT` source + dead exports, fix comment drift |
+| S17 | F-R12 (B) | **DONE** Transactional multi-row hiring mutations | one `$transaction` per action; `queueOutboxMail`/`deliverOutboxMail` split keeps provider I/O outside the tx |
 | S18 | F-R18 (C) | Interview-event timezone honesty | day-basis consistency for the duplicate guard |
 
 **Explicitly out of this sweep** (not Phase-1 families): E1 employee-master breadth (branch/grade/employment-type grouping axes, EM-03/EM-09 — the E1 breadth epic), encashment (F2.2), PayAdjustment (F2.3), property history (F2.5), payslip PDF (F2.6), half-day request shape (F2.9), shifts (F3.5), reports/cards (X7/F3.9). Stale matrix rows found by the audit (e.g. LV-B17, satisfied by F2.4's `prorateForJoiners`) are corrected in the matrix as each landing updates it.

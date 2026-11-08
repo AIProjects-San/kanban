@@ -62,7 +62,7 @@ import {
   approveOfferSchema,
   parseOrThrow,
 } from "@/lib/validation";
-import { logAudit, sendOutboxMail, readOnboardingTemplate, instantiateChecklist } from "./shared";
+import { logAudit, sendOutboxMail, readOnboardingTemplate, instantiateChecklist, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { nextEmployeeNumber } from "./hr-shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -364,16 +364,21 @@ export async function advanceStage(input: { candidateId: string }): Promise<Acti
     const next = ordered.find((s) => s.status === "PENDING" && s.sortOrder > current.sortOrder);
 
     const now = new Date();
-    await db.candidateStage.update({
-      where: { id: current.id },
-      data: { status: "PASSED", completedAt: now },
-    });
-    if (next) {
-      await db.candidateStage.update({
-        where: { id: next.id },
-        data: { status: "IN_PROGRESS", startedAt: now },
+    // F-R12 (S17) — closing one stage and opening the next is ONE atomic
+    // step: a crash between the two writes could otherwise leave a pipeline
+    // with no open stage at all.
+    await db.$transaction(async (tx) => {
+      await tx.candidateStage.update({
+        where: { id: current.id },
+        data: { status: "PASSED", completedAt: now },
       });
-    }
+      if (next) {
+        await tx.candidateStage.update({
+          where: { id: next.id },
+          data: { status: "IN_PROGRESS", startedAt: now },
+        });
+      }
+    });
     await logAudit({
       actor: auth,
       action: "hiring.stage_advanced",
@@ -444,30 +449,32 @@ export async function addCandidateStage(input: unknown): Promise<ActionResult<{ 
       const anchor = ordered.find((s) => s.id === data.beforeStageId);
       if (!anchor) throw new AuthorizationError("Insertion point stage not found.");
       sortOrder = anchor.sortOrder;
-      // Shift every stage at or after the insertion point up by one so the
-      // new stage slots in exactly there (order stays dense within reason).
-      await Promise.all(
-        ordered
-          .filter((s) => s.sortOrder >= sortOrder)
-          .map((s) =>
-            db.candidateStage.update({
-              where: { id: s.id },
-              data: { sortOrder: s.sortOrder + 1 },
-            }),
-          ),
-      );
     } else {
       sortOrder = ordered.length > 0 ? ordered[ordered.length - 1].sortOrder + 1 : 0;
     }
-    const created = await db.candidateStage.create({
-      data: {
-        candidateId: candidate.id,
-        stageKey: `custom:${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`,
-        label: data.label,
-        stageType: data.stageType,
-        status: "PENDING",
-        sortOrder,
-      },
+    // F-R12 (S17) — the sortOrder shift AND the new row land in ONE
+    // transaction (previously a parallel Promise.all outside any tx: a
+    // mid-flight failure could leave duplicate sortOrders with no inserted
+    // stage). Sequential inside the tx — the order is the guarantee.
+    const created = await db.$transaction(async (tx) => {
+      if (data.beforeStageId) {
+        for (const st of ordered.filter((x) => x.sortOrder >= sortOrder)) {
+          await tx.candidateStage.update({
+            where: { id: st.id },
+            data: { sortOrder: st.sortOrder + 1 },
+          });
+        }
+      }
+      return tx.candidateStage.create({
+        data: {
+          candidateId: candidate.id,
+          stageKey: `custom:${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`,
+          label: data.label,
+          stageType: data.stageType,
+          status: "PENDING",
+          sortOrder,
+        },
+      });
     });
     await logAudit({
       actor: auth,
@@ -504,6 +511,11 @@ export async function decideCandidate(input: unknown): Promise<ActionResult<{ ok
 
     let mailStatus: string | null = null;
 
+    // F-R12 (S17) — every decision path below writes exactly ONE row (the
+    // candidate status flip): single-row writes are atomic by themselves,
+    // and the optional rejection email is DELIBERATELY outside any
+    // transaction (a provider outage must not roll back the decision —
+    // see queueCandidateEmail's contract).
     if (data.decision === "REACTIVATE") {
       if (
         candidate.status !== "REJECTED" &&
@@ -1906,10 +1918,6 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
 
     const token = generateOfferToken();
     const tokenExpiresAt = new Date(Date.now() + OFFER_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
-    await db.offerRecord.update({
-      where: { id: offer.id },
-      data: { status: "SENT", token, tokenExpiresAt },
-    });
 
     // Email the signing link via the audited outbox (best-effort like the
     // rejection email; a provider outage never fails the send itself).
@@ -1934,14 +1942,31 @@ export async function sendOffer(input: { offerId: string }): Promise<ActionResul
       `<p>We are looking forward to having you on the team!</p>` +
       `<p>The ${escapeHtml(config.workspace.name)} Hiring Team</p>`;
 
-    const { status } = await sendOutboxMail({
-      kind: "OFFER",
-      candidateId: offer.candidateId,
+    // F-R12 (S17) — the SENT flip and the outbox row land in ONE
+    // transaction (previously the status flip preceded the outbox write:
+    // a crash between them left a SENT offer with no emailed link). The
+    // provider delivery itself stays OUTSIDE the transaction on purpose —
+    // network I/O never holds a write lock; a provider outage resolves the
+    // row to FAILED without touching the (already durable) SENT state.
+    const outboxRow = await db.$transaction(async (tx) => {
+      await tx.offerRecord.update({
+        where: { id: offer.id },
+        data: { status: "SENT", token, tokenExpiresAt },
+      });
+      return queueOutboxMail(tx, {
+        kind: "OFFER",
+        candidateId: offer.candidateId,
+        toAddress: offer.candidate.email,
+        subject,
+        text,
+        sentById: auth.userId,
+      });
+    });
+    const { status } = await deliverOutboxMail(outboxRow.id, {
       toAddress: offer.candidate.email,
       subject,
-      text,
       html,
-      sentById: auth.userId,
+      text,
     });
 
     await logAudit({
