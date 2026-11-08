@@ -373,6 +373,35 @@ The load-bearing gaps. Each is a prerequisite for Phase 2 features and each land
 
 **F1.6 Employment lifecycle fields.** *Goal:* `employmentStatus PROBATION/ACTIVE/SUSPENDED/EXITED` + `probationEndsAt`, `noticePeriodWeeks`, `lastWorkingDay` on EmployeeProfile; guarded transitions with audit; hireDate feeds probation defaults. *Decision (§9.3):* `PROBATION → ACTIVE` is a **hard gate** — the transition is rejected while the probation review is outstanding. *Acceptance:* transition tests incl. the gate (review pending → transition refused; completed → allowed); directory shows status; exit path (Phase F2.1) can rely on it. *Size:* **S**. *Depends on:* none.
 
+
+### 7.1.1 Phase 1 — Residual Sweep (added 2026-11-08, user-directed)
+
+The 2026-11-08 audit re-verified every Phase 1 family against the row-level matrix and the code. All six epics hold at epic-spec level, but each family left residuals. This sweep closes them **one item per commit**, in risk-first order (defects → attendance → pay-day engine → leave tools → lifecycle → hygiene), under the standing directives: core domain logic in pure functions, every organization-variable knob a DB/config row, same plan→develop→review→commit steps.
+
+| # | ID(s) | Item | Decision (2026-11-08 answers) |
+| --- | --- | --- | --- |
+| S1 | F-R2 (A) | `updatePayslip` optimistic lock — `Payslip.version`, expected-version refusal, conflict surfaced in the modal | version column, friendly conflict error |
+| S2 | AT-B02/B03 | Late-entry/early-exit flags + working hours computed from in/out | reference = workspace default day (Settings, default 09:00–17:30), computed on save |
+| S3 | F-R15 (C) | Server-side guard: attendance marks rejected on non-working days | hard guard matching the grid shading |
+| S4 | PR-B07/AT-B08 | `unmarkedAttendanceMode IGNORED\|ABSENT` knob feeding the LOP derivation | default IGNORED (zero behavior change, ADR-008) |
+| S5 | PR-B06 | Joiner/exiter payment-day clipping (DOJ/LWD within the period) | default ON — deliberate correctness fix (F2.10 gate precedent), e2e-pinned |
+| S6 | PR-B02 | Per-component `dependsOnPaymentDays` opt-out (catalog + snapshot) | default true (today's implicit behavior) |
+| S7 | PR-B23 | Configurable payroll rounding policy | default ROUND_2DP (zero behavior change) |
+| S8 | PR-B03 | Statistical components (display-only, excluded from net) | new STATISTICAL kind |
+| S9 | LV-10 | HR leave adjustment tool — user-facing ADJUST ledger writer | `hr:admin`, reason required, floor-honest |
+| S10 | LV-B10 | Salary-processed guard — unpaid leave cannot overlap a LOCKED slip | validation-chain step |
+| S11 | LV-B11 | Attendance-conflict guard in the leave chain | refuse on explicit (non-derived) marks in range |
+| S12 | LV-B08 | Cross-request max-consecutive-days walk | pure helper, adjacency by calendar day |
+| S13 | EM-B01 | Employee-number series EMP-0001 | zero-padded 4-digit, deterministic backfill |
+| S14 | EM-B04/LV-B13 | Leave-approver override | `EmployeeProfile.leaveApproverId`, chain: override → manager → ADMIN/HR |
+| S15 | F-R3 (B) | YTD dual-basis note in the payslip modal | one honesty line |
+| S16 | F-R14 (C) | Dead enum/constants cleanup | remove `IMPORT` source + dead exports, fix comment drift |
+| S17 | F-R12 (B) | Transactional multi-row hiring mutations | one `$transaction` per action |
+| S18 | F-R18 (C) | Interview-event timezone honesty | day-basis consistency for the duplicate guard |
+
+**Explicitly out of this sweep** (not Phase-1 families): E1 employee-master breadth (branch/grade/employment-type grouping axes, EM-03/EM-09 — the E1 breadth epic), encashment (F2.2), PayAdjustment (F2.3), property history (F2.5), payslip PDF (F2.6), half-day request shape (F2.9), shifts (F3.5), reports/cards (X7/F3.9). Stale matrix rows found by the audit (e.g. LV-B17, satisfied by F2.4's `prorateForJoiners`) are corrected in the matrix as each landing updates it.
+
+
 ### 7.2 Phase 2 — Growth (10 epics)
 
 Operational parity for daily HR running. Ordered by user-visible value.
