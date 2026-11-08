@@ -1771,6 +1771,11 @@ model PayAdjustment {
   // The run that consumed the row (blank while PENDING; the RECURNING
   // intermediate case records the LAST consuming run).
   consumedRunId String @default("")
+  // P4 (PR-14/PR-B12, F3.1) — the day-quantity the source row moved (null =
+  // not a day-denominated source). LWP_CREDIT rows carry the reversed LOP
+  // days here so the per-slip reversal cap can be enforced without
+  // note-parsing (the honest-data version of provenance).
+  sourceDays  Float?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

@@ -805,6 +805,23 @@ export interface PayAdjustmentT {
   createdAt: string;
 }
 
+/** P4 (PR-14/PR-B12, F3.1) — one paid slip's LWP-reversal facts for the
+ * correction modal: what was docked (days + the stored LOP line's amount),
+ * what was already reversed (Σ sourceDays of LWP_CREDIT rows), and the
+ * per-day price the refund uses. */
+export interface LwpCorrectionPreviewT {
+  payslipId: string;
+  userId: string;
+  userName: string;
+  slipNo: string;
+  period: string;
+  storedLopDays: number;
+  storedLopAmount: number;
+  alreadyReversedDays: number;
+  reversibleDays: number;
+  perDay: number;
+}
+
 /** P3 (PR-13/PR-B11, F3.1) — one LOCKED slip's arrears verdict from the
  * preview: what it paid, what it would pay under the current structure,
  * the positive delta owed (arrears), and whether an ARREARS row already

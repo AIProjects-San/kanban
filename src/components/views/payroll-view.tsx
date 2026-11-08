@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, CalendarPlus, CircleDollarSign, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Wallet } from "lucide-react";
+import { BookOpen, CalendarPlus, CircleDollarSign, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -28,6 +28,7 @@ import { PayslipModal } from "../ui/payslip-modal";
 import { ComponentCatalogModal } from "../ui/component-catalog-modal";
 import { PayAdjustmentModal } from "../ui/pay-adjustment-modal";
 import { ArrearsModal } from "../ui/arrears-modal";
+import { LwpCorrectionModal } from "../ui/lwp-correction-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -58,6 +59,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [applyingAdjustments, setApplyingAdjustments] = useState(false);
   // P3 (F3.1) — the arrears reverse-simulation (LOCKED runs only).
   const [arrearsRun, setArrearsRun] = useState<PayrollRunT | null>(null);
+  // P4 (F3.1) — the LWP correction reversal (LOCKED slips with LOP only).
+  const [lwpSlip, setLwpSlip] = useState<PayslipT | null>(null);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -312,23 +315,35 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           </div>
           <div className="divide-y divide-border">
             {payslips.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setOpenPayslip(p)}
-                className="w-full text-left px-4 py-2.5 hover:bg-muted/50 transition-colors flex items-center gap-3 text-sm"
-                data-testid="payslip-row"
-              >
-                <span className="text-xs font-mono text-muted-foreground shrink-0">{p.slipNo}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{p.userName}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    gross {money(p.gross)} · deductions {money(p.gross - p.net)}
-                    {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}
+              <div key={p.id} className="w-full px-4 py-2.5 hover:bg-muted/50 transition-colors flex items-center gap-3 text-sm">
+                <button
+                  onClick={() => setOpenPayslip(p)}
+                  className="text-left min-w-0 flex-1 flex items-center gap-3"
+                  data-testid="payslip-row"
+                >
+                  <span className="text-xs font-mono text-muted-foreground shrink-0">{p.slipNo}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{p.userName}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      gross {money(p.gross)} · deductions {money(p.gross - p.net)}
+                      {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}
+                    </span>
                   </span>
-                </span>
-                <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {money(p.ytdNet)}</span>
-                <span className="font-semibold tabular-nums text-primary shrink-0">{money(p.net)}</span>
-              </button>
+                  <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {money(p.ytdNet)}</span>
+                  <span className="font-semibold tabular-nums text-primary shrink-0">{money(p.net)}</span>
+                </button>
+                {payslipsRun.status === "LOCKED" && p.lopDays > 0 && (
+                  <button
+                    className="f-btn f-btn-ghost text-xs shrink-0 no-print"
+                    onClick={() => setLwpSlip(p)}
+                    type="button"
+                    data-testid={`lwp-btn-${p.slipNo}`}
+                    title="Refund docked loss-of-pay days on this paid slip"
+                  >
+                    <Undo2 size={13} /> Reverse LWP
+                  </button>
+                )}
+              </div>
             ))}
             {payslips.length === 0 && (
               <div className="text-sm text-muted-foreground px-4 py-6 text-center">No payslips in this run.</div>
@@ -403,6 +418,14 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           runId={arrearsRun.id}
           runPeriod={arrearsRun.period}
           onGenerated={load}
+        />
+      )}
+      {lwpSlip && (
+        <LwpCorrectionModal
+          open={lwpSlip != null}
+          onClose={() => setLwpSlip(null)}
+          payslipId={lwpSlip.id}
+          onReversed={load}
         />
       )}
       <StructureModal

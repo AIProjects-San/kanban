@@ -957,3 +957,18 @@ export const generateArrearsSchema = z.object({
   runId: cuidish,
   payoutPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a payout month (YYYY-MM)."),
 }).strict();
+
+// P4 (PR-14/PR-B12, F3.1) — LWP correction preview + reversal.
+export const previewLwpCorrectionSchema = z.object({
+  payslipId: cuidish,
+}).strict();
+
+export const reverseLwpDaysSchema = z.object({
+  payslipId: cuidish,
+  days: z.number()
+    .refine((n) => n > 0, "Reversal needs a positive number of days.")
+    .refine((n) => n <= 31, "Reversals are capped at 31 days.")
+    .refine((n) => Math.round(n * 4) === n * 4, "Reversals move in quarter-day steps."),
+  payoutPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a payout month (YYYY-MM)."),
+  note: z.string().trim().max(500).default(""),
+}).strict();
