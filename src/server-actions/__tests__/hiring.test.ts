@@ -605,7 +605,7 @@ describe("scheduleInterview", () => {
       }
       return MANAGER_AUTH;
     });
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString(), wallClock: "2026-11-10T09:30" });
     expect(res.ok).toBe(false);
     expect(db.calendarEvent.create).not.toHaveBeenCalled();
   });
@@ -614,7 +614,7 @@ describe("scheduleInterview", () => {
     db.candidateStage.findUnique.mockResolvedValue({
       ...INTERVIEW_STAGE, stageType: "SCREENING",
     });
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString(), wallClock: "2026-11-10T09:30" });
     expect(res.ok).toBe(false);
     expect(db.calendarEvent.create).not.toHaveBeenCalled();
   });
@@ -625,7 +625,7 @@ describe("scheduleInterview", () => {
       { label: "Interview 1 — Technical", candidate: { fullName: "Sam Whitaker" } },
     ]);
     const res = await scheduleInterview({
-      stageId: "st-2", scheduledAt: new Date().toISOString(), interviewerId: "u-mgr",
+      stageId: "st-2", scheduledAt: new Date().toISOString(), wallClock: "2026-11-10T09:30", interviewerId: "u-mgr",
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("Scheduling conflict");
@@ -636,7 +636,7 @@ describe("scheduleInterview", () => {
     db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
     db.candidateStage.findMany.mockResolvedValue([]);
     const when = new Date("2026-11-10T09:30:00.000Z").toISOString();
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, interviewerId: "u-mgr" });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, wallClock: "2026-11-10T09:30", interviewerId: "u-mgr" });
     expect(res.ok).toBe(true);
     expect(db.calendarEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -655,9 +655,72 @@ describe("scheduleInterview", () => {
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.interview_scheduled" }));
   });
 
+  it("F-R18/S18 — the calendar event rides the PICKED wall-clock (UTC-midnight day + HH:MM), the instant drives the rest", async () => {
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    db.candidateStage.findMany.mockResolvedValue([]);
+    // A UTC-browser's pair: the instant and the wall-clock agree on
+    // 2026-11-10 09:30. The stored pair must be the generic-events basis.
+    const res = await scheduleInterview({
+      stageId: "st-2",
+      scheduledAt: new Date("2026-11-10T09:30:00.000Z").toISOString(),
+      wallClock: "2026-11-10T09:30",
+      interviewerId: "u-mgr",
+    });
+    expect(res.ok).toBe(true);
+    const eventArg = db.calendarEvent.create.mock.calls[0][0] as {
+      data: { date: Date; time: string };
+    };
+    expect(eventArg.data.date.toISOString()).toBe("2026-11-10T00:00:00.000Z");
+    expect(eventArg.data.time).toBe("09:30");
+    // The scheduling semantics stay on the TRUE instant (the two-fact
+    // split — display truth above, scheduling truth here).
+    expect(db.reminder.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ dueDate: new Date("2026-11-10T09:30:00.000Z") }) }),
+    );
+    expect(db.candidateStage.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ scheduledAt: new Date("2026-11-10T09:30:00.000Z") }) }),
+    );
+  });
+
+  it("F-R18/S18 — an evening wall-clock keeps its PICKED day (the midnight-flip fix), instant semantics unchanged", async () => {
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    db.candidateStage.findMany.mockResolvedValue([]);
+    // 22:30 on Nov 10: under the old basis a server behind UTC could flip
+    // the event onto Nov 9; the planned pair pins the picked day.
+    const res = await scheduleInterview({
+      stageId: "st-2",
+      scheduledAt: new Date("2026-11-10T22:30:00.000Z").toISOString(),
+      wallClock: "2026-11-10T22:30",
+      interviewerId: "u-mgr",
+    });
+    expect(res.ok).toBe(true);
+    const eventArg = db.calendarEvent.create.mock.calls[0][0] as {
+      data: { date: Date; time: string };
+    };
+    expect(eventArg.data.date.toISOString()).toBe("2026-11-10T00:00:00.000Z");
+    expect(eventArg.data.time).toBe("22:30");
+    expect(db.reminder.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ dueDate: new Date("2026-11-10T22:30:00.000Z") }) }),
+    );
+  });
+
+  it("F-R18/S18 — a malformed wall-clock is refused at the boundary (the schema mirrors the kernel)", async () => {
+    db.candidateStage.findUnique.mockResolvedValue(INTERVIEW_STAGE);
+    db.candidateStage.findMany.mockResolvedValue([]);
+    const res = await scheduleInterview({
+      stageId: "st-2",
+      scheduledAt: new Date("2026-11-10T09:30:00.000Z").toISOString(),
+      wallClock: "2026-11-10 09:30",
+      interviewerId: "u-mgr",
+    });
+    expect(res.ok).toBe(false);
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+    expect(db.candidateStage.update).not.toHaveBeenCalled();
+  });
+
   it("refuses without an interviewer (no owner on the stage and none picked)", async () => {
     db.candidateStage.findUnique.mockResolvedValue({ ...INTERVIEW_STAGE, ownerUserId: null });
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString(), wallClock: "2026-11-10T09:30" });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("interviewer");
   });
@@ -805,7 +868,7 @@ describe("getMyInterviews", () => {
 
 describe("R2 edge branches", () => {
   it("refuses an invalid schedule date string", async () => {
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: "not-a-date" });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: "not-a-date", wallClock: "2026-11-10T09:30" });
     expect(res.ok).toBe(false);
     expect(db.calendarEvent.create).not.toHaveBeenCalled();
   });
@@ -815,7 +878,7 @@ describe("R2 edge branches", () => {
       ...INTERVIEW_STAGE,
       candidate: { id: "cand-1", fullName: "Nadia Petrova", position: "SWE", status: "HIRED" },
     });
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString() });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date().toISOString(), wallClock: "2026-11-10T09:30" });
     expect(res.ok).toBe(false);
     expect(db.calendarEvent.create).not.toHaveBeenCalled();
   });
@@ -825,7 +888,7 @@ describe("R2 edge branches", () => {
       ...INTERVIEW_STAGE, scheduledAt: new Date("2026-11-05T09:30:00Z"), eventId: "ev-old",
     });
     db.candidateStage.findMany.mockResolvedValue([]);
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date("2026-11-10T09:30:00Z").toISOString() });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: new Date("2026-11-10T09:30:00Z").toISOString(), wallClock: "2026-11-10T09:30" });
     expect(res.ok).toBe(true);
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "hiring.interview_rescheduled" }));
   });
@@ -2221,7 +2284,7 @@ describe("F2.10 — interview invite + reschedule cleanup (F-R10/F-R6)", () => {
     db.candidateStage.findMany.mockResolvedValue([]);
     db.user.findUnique.mockResolvedValue({ name: "Ingrid Solberg" });
     const when = new Date("2026-11-10T09:30:00.000Z").toISOString();
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, interviewerId: "u-mgr" });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, wallClock: "2026-11-10T09:30", interviewerId: "u-mgr" });
     expect(res.ok).toBe(true);
     const outboxArg = db.mailOutbox.create.mock.calls[0][0] as { data: { kind: string; toAddress: string; subject: string } };
     expect(outboxArg.data.kind).toBe("INTERVIEW_INVITE");
@@ -2236,7 +2299,7 @@ describe("F2.10 — interview invite + reschedule cleanup (F-R10/F-R6)", () => {
     db.candidateStage.findMany.mockResolvedValue([]);
     db.user.findUnique.mockResolvedValue({ name: "Ingrid Solberg" });
     const when = new Date("2026-11-12T14:00:00.000Z").toISOString();
-    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, interviewerId: "u-mgr" });
+    const res = await scheduleInterview({ stageId: "st-2", scheduledAt: when, wallClock: "2026-11-12T14:00", interviewerId: "u-mgr" });
     expect(res.ok).toBe(true);
     // The stale pair goes via the eventId link (F-R6 — no more orphans).
     expect(db.reminder.deleteMany).toHaveBeenCalledWith({ where: { eventId: "ev-old" } });

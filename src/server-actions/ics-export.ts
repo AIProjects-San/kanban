@@ -92,7 +92,10 @@ export async function exportCalendarIcs(): Promise<ActionResult<IcsExport>> {
 
     for (const e of events) {
       // The model stores a date + a "HH:MM" time string. Parse both as UTC
-      // for determinism (the UI renders in the viewer's timezone).
+      // for determinism (the UI renders in the viewer's timezone). F-R18
+      // (S18): every writer — generic events AND interview events — now
+      // stores the same basis (UTC-midnight day + wall-clock label), so
+      // this recombination means one thing for the whole calendar.
       const [y, m, d] = [
         e.date.getUTCFullYear(),
         e.date.getUTCMonth(),

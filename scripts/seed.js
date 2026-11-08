@@ -1912,16 +1912,23 @@ async function main() {
   }
   // R2 — scheduled interviews also appear on the shared Calendar + as
   // personal reminders for the interviewer (exactly what scheduleInterview
-  // creates in the app).
+  // creates in the app). F-R18 (S18) — the calendar event rides the same
+  // basis the action now writes: UTC-midnight of the interview's calendar
+  // day + the wall-clock HH:MM (the seed "user" is the server itself, so
+  // the label is the instant's own UTC rendering); the reminder keeps the
+  // true instant.
   for (const c of CANDIDATES) {
     for (const [key, when] of Object.entries(c.scheduled ?? {})) {
       const d = when instanceof Date ? when : new Date(when);
+      const pad = (n) => String(n).padStart(2, "0");
+      const eventDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      const eventTime = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
       await db.calendarEvent.create({
         data: {
           title: `Interview: ${c.fullName} — ${STAGE_TEMPLATE.find((t) => t.key === key)?.label ?? key}`,
           description: `${c.position || "Position n/a"} · ${c.email}`,
-          date: d,
-          time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+          date: eventDay,
+          time: eventTime,
           durationMin: 60,
           type: "MEETING",
         },

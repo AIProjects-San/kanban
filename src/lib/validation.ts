@@ -669,7 +669,17 @@ export const SCORECARD_RECOMMENDATIONS = ["STRONG_HIRE", "HIRE", "NO_HIRE"] as c
 
 export const scheduleInterviewSchema = z.object({
   stageId: cuidish,
+  // F-R18 (S18) — TWO facts, each on the basis where it is true: the
+  // instant (ISO with offset) drives scheduling semantics (clash guard,
+  // stage row, reminder); the wall-clock string the user picked (the raw
+  // datetime-local value) drives the calendar event's day + label via the
+  // pure planInterviewEvent kernel. The shape check here mirrors the
+  // kernel's rules (real calendar date + 24-hour ranges land there).
   scheduledAt: z.string().min(4, "A date/time is required.").max(40),
+  wallClock: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Wall-clock must be 'YYYY-MM-DDTHH:MM' (a datetime-local value).")
+    .max(20),
   interviewerId: cuidish.nullable().optional(),
 }).strict();
 

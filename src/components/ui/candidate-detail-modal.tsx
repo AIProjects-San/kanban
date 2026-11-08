@@ -393,7 +393,11 @@ export function CandidateDetailModal({
     const okDone = await run(
       () => scheduleInterview({
         stageId: s.id,
+        // F-R18 (S18) — two facts: the instant (this browser's true
+        // UTC moment) + the raw datetime-local wall-clock the user picked
+        // (the calendar event's day + label derive from it server-side).
         scheduledAt: new Date(schedWhen).toISOString(),
+        wallClock: schedWhen,
         interviewerId: schedInterviewer || null,
       }),
       "Interview scheduled — calendar event + reminder created.",

@@ -133,7 +133,15 @@ describe("CandidateDetailModal: scheduling", () => {
     fireEvent.click(screen.getByTestId("schedule-submit"));
     await waitFor(() =>
       expect(scheduleInterview).toHaveBeenCalledWith(
-        expect.objectContaining({ stageId: "st-2", interviewerId: "u-mgr" }),
+        // F-R18 (S18) — two facts: the browser's true instant + the raw
+        // datetime-local wall-clock the user picked (the calendar event's
+        // day + label derive from it server-side).
+        expect.objectContaining({
+          stageId: "st-2",
+          interviewerId: "u-mgr",
+          wallClock: "2026-11-10T09:30",
+          scheduledAt: new Date("2026-11-10T09:30").toISOString(),
+        }),
       ),
     );
     expect(onChanged).toHaveBeenCalled();

@@ -378,6 +378,8 @@ The load-bearing gaps. Each is a prerequisite for Phase 2 features and each land
 
 The 2026-11-08 audit re-verified every Phase 1 family against the row-level matrix and the code. All six epics hold at epic-spec level, but each family left residuals. This sweep closes them **one item per commit**, in risk-first order (defects → attendance → pay-day engine → leave tools → lifecycle → hygiene), under the standing directives: core domain logic in pure functions, every organization-variable knob a DB/config row, same plan→develop→review→commit steps.
 
+> **STATUS: COMPLETE (2026-11-09).** All 18 items landed one commit each (S1…S18), each with its review chain green (full vitest suite → lint → typecheck → build; schema items additionally db-push + reseed). Local suite at completion: 115 files / 2222 tests green. Every new knob carries its zero-behavior-change default (IGNORED, ROUND_2DP, clipping ON as the deliberate correctness exception, per the 2026-11-08 answers); every new domain rule is a pure kernel (`attendance-flags`, `nonWorkingDayReason`, `paymentWindow`/`scaleEarningsToPaidDays`, `lopBasisGross`, `withRoundingLine`, `monthsInRange`, `checkCrossRequestConsecutive`, `resolveLeaveApprover`, `planInterviewEvent`); reassessment findings F-R2/F-R3/F-R12/F-R14/F-R15(server half)/F-R18 closed, matrix rows moved where parity changed.
+
 | # | ID(s) | Item | Decision (2026-11-08 answers) |
 | --- | --- | --- | --- |
 | S1 | F-R2 (A) | **DONE** `updatePayslip` optimistic lock — `Payslip.version`, expected-version refusal, conflict surfaced in the modal | version column, friendly conflict error |
@@ -397,7 +399,7 @@ The 2026-11-08 audit re-verified every Phase 1 family against the row-level matr
 | S15 | F-R3 (B) | **DONE** YTD dual-basis note in the payslip modal | one honesty line, in the modal + My-payslips |
 | S16 | F-R14 (C) | **DONE** Dead enum/constants cleanup | remove `IMPORT` source + dead exports, fix comment drift |
 | S17 | F-R12 (B) | **DONE** Transactional multi-row hiring mutations | one `$transaction` per action; `queueOutboxMail`/`deliverOutboxMail` split keeps provider I/O outside the tx |
-| S18 | F-R18 (C) | Interview-event timezone honesty | day-basis consistency for the duplicate guard |
+| S18 | F-R18 (C) | **DONE** Interview-event timezone honesty | two-fact model: instant = scheduling truth, picked wall-clock = display truth (generic-events day basis) |
 
 **Explicitly out of this sweep** (not Phase-1 families): E1 employee-master breadth (branch/grade/employment-type grouping axes, EM-03/EM-09 — the E1 breadth epic), encashment (F2.2), PayAdjustment (F2.3), property history (F2.5), payslip PDF (F2.6), half-day request shape (F2.9), shifts (F3.5), reports/cards (X7/F3.9). Stale matrix rows found by the audit (e.g. LV-B17, satisfied by F2.4's `prorateForJoiners`) are corrected in the matrix as each landing updates it.
 

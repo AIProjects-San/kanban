@@ -68,6 +68,8 @@ import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 // R3 — decisions & candidate email outbox.
 import { composeRejectionEmail, composeInterviewInviteEmail } from "@/lib/hiring-email";
+// F-R18 (S18) — the interview calendar-event day basis kernel.
+import { planInterviewEvent } from "@/lib/interview-event";
 import { createMailer } from "@/lib/mailer";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 // R5 — offer builder math + letter rendering.
@@ -824,6 +826,14 @@ export async function scheduleInterview(input: unknown): Promise<ActionResult<{ 
     if (Number.isNaN(when.getTime())) {
       throw new AuthorizationError("The scheduled date/time is invalid.");
     }
+    // F-R18 (S18) — the display pair rides the pure kernel: the wall-clock
+    // the user picked becomes the calendar event's UTC-midnight day + HH:MM
+    // label (the generic-events house convention), so the day on screen is
+    // the day that was picked regardless of the server's timezone. The
+    // instant `when` below stays the scheduling truth (clash guard, stage
+    // row, reminder) — the two facts are intentionally on different bases,
+    // each where it is true.
+    const planned = planInterviewEvent(data.wallClock);
     const stage = await db.candidateStage.findUnique({
       where: { id: data.stageId },
       include: { candidate: true },
@@ -873,8 +883,12 @@ export async function scheduleInterview(input: unknown): Promise<ActionResult<{ 
         data: {
           title: `Interview: ${stage.candidate.fullName} — ${stage.label}`,
           description: `${stage.candidate.position || "Position n/a"} · ${stage.candidate.email}`,
-          date: when,
-          time: `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`,
+          // F-R18 (S18) — the planned pair (UTC-midnight day + picked
+          // HH:MM), NOT the instant + its server-local rendering: interview
+          // events share the generic-events basis so every reader renders
+          // one answer.
+          date: planned.date,
+          time: planned.time,
           durationMin: 60,
           type: "MEETING",
           location: stage.candidate.department || "",
