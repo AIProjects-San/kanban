@@ -2501,6 +2501,63 @@ async function main() {
       },
     });
     console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line${clippedCount > 0 ? `, ${clippedCount} scaled to employment windows (S5)` : ""}) + F1.5 component catalog (7 definitions, 1 retired)`);
+
+    // ------------------------------------------------------------------
+    // P1 (F2.3) — the PayAdjustment adapter seed: one CONSUMED row whose
+    // money already rides Hana's OPEN-run bonus line (the "how the Q4
+    // bonus arrived" provenance), one PENDING one-shot incentive waiting
+    // for next month's run, and one PENDING recurring recovery with an
+    // end period — the watermark story the December run will advance.
+    // ------------------------------------------------------------------
+    await db.payAdjustment.deleteMany();
+    const nextPeriodDate = new Date(TODAY.getFullYear(), TODAY.getMonth() + 1, 1);
+    const nextPeriod = periodOf(nextPeriodDate);
+    const endPeriodDate = new Date(TODAY.getFullYear(), TODAY.getMonth() + 3, 1);
+    const endPeriod = periodOf(endPeriodDate);
+    const openRunId = (await db.payrollRun.findFirst({ where: { period: thisPeriod }, select: { id: true } }))?.id ?? "";
+    const p1Hana = structures.find((s) => s.user.name === "Hana Park")?.user.id;
+    const p1Yuki = structures.find((s) => s.user.name === "Yuki Tanaka")?.user.id;
+    const p1Seeded = [];
+    if (p1Hana && openRunId) {
+      await db.payAdjustment.create({
+        data: {
+          userId: p1Hana, sourceType: "INCENTIVE", sourceId: "",
+          componentCode: "bonus", label: "Q4 performance bonus", side: "EARNING",
+          recurrence: "ONE_SHOT", calcMode: "FIXED", amount: 500,
+          period: thisPeriod, status: "CONSUMED", consumedRunId: openRunId,
+          lastConsumedPeriod: thisPeriod, note: "The bonus line on Hana's open payslip",
+          createdById: hrId,
+        },
+      });
+      p1Seeded.push("Hana's consumed incentive");
+    }
+    if (p1Hana) {
+      await db.payAdjustment.create({
+        data: {
+          userId: p1Hana, sourceType: "INCENTIVE", sourceId: "",
+          componentCode: "", label: "Year-end spot bonus", side: "EARNING",
+          recurrence: "ONE_SHOT", calcMode: "FIXED", amount: 600,
+          period: nextPeriod, status: "PENDING",
+          note: "Lands on the December run when it is created",
+          createdById: hrId,
+        },
+      });
+      p1Seeded.push("Hana's pending one-shot");
+    }
+    if (p1Yuki) {
+      await db.payAdjustment.create({
+        data: {
+          userId: p1Yuki, sourceType: "MANUAL", sourceId: "",
+          componentCode: "", label: "Equipment recovery", side: "DEDUCTION",
+          recurrence: "RECURRING", calcMode: "FIXED", amount: 75,
+          period: nextPeriod, endPeriod, status: "PENDING",
+          note: "Three monthly instalments, then done",
+          createdById: hrId,
+        },
+      });
+      p1Seeded.push("Yuki's recurring recovery");
+    }
+    console.log(`  ✓ P1 (F2.3) PayAdjustment adapter: ${p1Seeded.length} rows (${p1Seeded.join(", ")}) — provenance for the seeded bonus + the queue the December run will consume`);
   }
 
   // -------------------------------------------------------------------------

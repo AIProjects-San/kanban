@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
-    "salaryComponent", "payrollRun", "payslip", "auditLog", "holidayCalendarEntry",
+    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "auditLog", "holidayCalendarEntry",
     "attendanceRecord", "leaveRequest", "leaveType", "fullAndFinalStatement",
   ];
   const methods = [
@@ -69,6 +69,9 @@ import {
   lockPayrollRun,
   getPayrollData,
   getMyPayslips,
+  createPayAdjustment,
+  listPayAdjustments,
+  applyPayAdjustmentsToRun,
 } from "../payroll";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
@@ -161,6 +164,12 @@ beforeEach(() => {
   db.payslip.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ps-new", ...data }));
   db.payslip.update.mockResolvedValue({});
   db.payslip.count.mockResolvedValue(0);
+  // P1 (F2.3) — the adjustment adapter: empty by default (existing run
+  // creation tests must stay byte-identical — no adjustments consumed).
+  db.payAdjustment.findMany.mockResolvedValue([]);
+  db.payAdjustment.findUnique.mockResolvedValue(null);
+  db.payAdjustment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "adj-new", createdAt: new Date(), updatedAt: new Date(), ...data }));
+  db.payAdjustment.update.mockResolvedValue({});
   // S4 — default policy: IGNORED (pre-S4 semantics byte-for-byte).
   getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
 });
@@ -1101,5 +1110,285 @@ describe("P0-1 — payslip self-service (getMyPayslips, persona-audit D-02)", ()
     const res = await getMyPayslips();
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data[0].jobTitle).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1 (PR-12/PR-B10, F2.3) — the PayAdjustment universal adapter
+// ---------------------------------------------------------------------------
+
+function adjustmentRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "adj-1",
+    userId: "u-yuki",
+    sourceType: "MANUAL",
+    sourceId: "",
+    componentCode: "",
+    label: "Q4 bonus",
+    side: "EARNING",
+    recurrence: "ONE_SHOT",
+    calcMode: "FIXED",
+    percent: null,
+    amount: 800,
+    period: "2026-12",
+    endPeriod: null,
+    lastConsumedPeriod: "",
+    status: "PENDING",
+    skipReason: "",
+    note: "",
+    createdById: "u-hr",
+    consumedRunId: "",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+describe("P1 — createPayAdjustment (the manual writer)", () => {
+  it("requires payroll:manage", async () => {
+    requirePermissionMock.mockRejectedValueOnce(new Error("denied"));
+    const res = await createPayAdjustment({ userId: "u-yuki", side: "EARNING", period: "2026-12", amount: 500 });
+    expect(res.ok).toBe(false);
+  });
+
+  it("creates a well-formed ONE_SHOT FIXED earning and audits it", async () => {
+    const res = await createPayAdjustment({
+      userId: "u-yuki", side: "EARNING", period: "2026-12", amount: 500, label: "Q4 bonus",
+    });
+    expect(res.ok).toBe(true);
+    const createArg = db.payAdjustment.create.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(createArg.data).toMatchObject({
+      userId: "u-yuki", sourceType: "MANUAL", side: "EARNING", recurrence: "ONE_SHOT",
+      calcMode: "FIXED", amount: 500, period: "2026-12",
+    });
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "payroll.adjustment_created" }));
+  });
+
+  it("refuses a percent-of-net EARNING (deduction-only mode, kernel rule shared with the UI)", async () => {
+    const res = await createPayAdjustment({
+      userId: "u-yuki", side: "EARNING", calcMode: "PERCENT_OF_NET", percent: 5, period: "2026-12",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("deduction-only");
+    expect(db.payAdjustment.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a target period whose run is already LOCKED (paid runs take no new inputs)", async () => {
+    db.payrollRun.findUnique.mockResolvedValueOnce({ status: "LOCKED" });
+    const res = await createPayAdjustment({
+      userId: "u-yuki", side: "EARNING", period: "2026-10", amount: 500, label: "X",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("already locked");
+  });
+
+  it("refuses an unknown employee", async () => {
+    db.user.findUnique.mockResolvedValueOnce(null);
+    const res = await createPayAdjustment({ userId: "u-ghost", side: "EARNING", period: "2026-12", amount: 5 });
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("P1 — createPayrollRun consumes the adapter transactionally", () => {
+  it("a ONE_SHOT earning lands on its employee's slip and flips the row CONSUMED", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.payAdjustment.findMany.mockResolvedValue([adjustmentRow()]);
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.adjustmentsApplied).toBe(1);
+      expect(res.data.adjustmentsSkipped).toBe(0);
+    }
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ userId: string; earnings: string; gross: number; net: number }> } };
+    };
+    const slip = createArg.data.payslips.create[0];
+    const lines = JSON.parse(slip.earnings);
+    expect(lines.find((l: { key: string }) => l.key === "adj:adj-1")).toMatchObject({
+      label: "Q4 bonus", amount: 800,
+    });
+    expect(slip.gross).toBe(6_700 + 800);
+    expect(slip.net).toBe(6_700 + 800);
+    // The row update rode the same transaction (tx === db in the mock).
+    expect(db.payAdjustment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "adj-1" },
+        data: expect.objectContaining({ status: "CONSUMED", lastConsumedPeriod: "2026-12", consumedRunId: "run-new" }),
+      }),
+    );
+  });
+
+  it("a RECURRING row consumed before its endPeriod watermarks but stays PENDING; final period flips CONSUMED", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    const recurring = adjustmentRow({
+      id: "adj-r", recurrence: "RECURRING", period: "2026-10", endPeriod: "2027-02", amount: 50,
+    });
+    db.payAdjustment.findMany.mockResolvedValue([recurring]);
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    expect(db.payAdjustment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "adj-r" },
+        data: expect.objectContaining({ status: "PENDING", lastConsumedPeriod: "2026-12", consumedRunId: "run-new" }),
+      }),
+    );
+    // Final period: endPeriod === consumption period → CONSUMED.
+    db.payAdjustment.update.mockClear();
+    db.payrollRun.findUnique.mockResolvedValue(null);
+    const final = await createPayrollRun({ period: "2027-02" });
+    expect(final.ok).toBe(true);
+    expect(db.payAdjustment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "adj-r" },
+        data: expect.objectContaining({ status: "CONSUMED", lastConsumedPeriod: "2027-02" }),
+      }),
+    );
+  });
+
+  it("a due row whose employee has NO slip in the run is SKIPPED with a reason (RECURRING stays PENDING)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]); // u-yuki only
+    db.payAdjustment.findMany.mockResolvedValue([
+      adjustmentRow({ id: "adj-ghost", userId: "u-elsewhere", amount: 100 }),
+      adjustmentRow({ id: "adj-rec", userId: "u-elsewhere", recurrence: "RECURRING", period: "2026-10", endPeriod: null }),
+    ]);
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.adjustmentsSkipped).toBe(1);
+    expect(db.payAdjustment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "adj-ghost" },
+        data: expect.objectContaining({ status: "SKIPPED", skipReason: expect.stringContaining("no payslip") }),
+      }),
+    );
+    // The RECURRING row was never touched — future periods may include them.
+    const touched = db.payAdjustment.update.mock.calls.map((c: Array<{ where: { id: string } }>) => c[0].where.id);
+    expect(touched).not.toContain("adj-rec");
+  });
+
+  it("PERCENT_OF_NET deduction resolves on the slip's post-LOP running net", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { userId: "u-yuki", date: new Date("2026-12-07T00:00:00.000Z"), status: "ABSENT" },
+    ]);
+    db.payAdjustment.findMany.mockResolvedValue([
+      adjustmentRow({
+        id: "adj-net", label: "Net levy", side: "DEDUCTION", calcMode: "PERCENT_OF_NET", percent: 10, amount: 0,
+      }),
+    ]);
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { workingDays: number; payslips: { create: Array<{ earnings: string; deductions: string; net: number }> } };
+    };
+    const deductions = JSON.parse(createArg.data.payslips.create[0].deductions);
+    // December 2026: 23 Mon–Fri days; 1 ABSENT → LOP = 6700 × 1/23 ≈ 291.30;
+    // net after LOP = 6408.70 → levy = 640.87.
+    expect(deductions.find((l: { key: string }) => l.key === "lop")?.amount).toBeCloseTo(291.3, 2);
+    expect(deductions.find((l: { key: string }) => l.key === "adj:adj-net")?.amount).toBeCloseTo(640.87, 2);
+    expect(createArg.data.payslips.create[0].net).toBeCloseTo(5767.83, 2);
+  });
+
+  it("an empty adapter table keeps run creation byte-identical (zero-behavior change)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    const res = await createPayrollRun({ period: "2026-11" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.adjustmentsApplied).toBe(0);
+    expect(db.payAdjustment.update).not.toHaveBeenCalled();
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; gross: number }> } };
+    };
+    expect(JSON.parse(createArg.data.payslips.create[0].earnings)).toHaveLength(2);
+    expect(createArg.data.payslips.create[0].gross).toBe(6_700);
+  });
+});
+
+describe("P1 — addPayslip consumes the joiner's due adjustments", () => {
+  it("the joiner's ONE_SHOT rows land on the new slip in the same transaction", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
+    db.salaryStructure.findFirst.mockResolvedValue(STRUCTURE_ROW);
+    db.fullAndFinalStatement.findFirst.mockResolvedValue(null);
+    db.payslip.findUnique.mockResolvedValue(null);
+    db.payslip.count.mockResolvedValue(3);
+    db.payAdjustment.findMany.mockResolvedValue([adjustmentRow({ period: "2026-11" })]);
+    const res = await addPayslip({ runId: "run-1", userId: "u-yuki" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payslip.create.mock.calls[0][0] as { data: { earnings: string; gross: number } };
+    const lines = JSON.parse(createArg.data.earnings);
+    expect(lines.find((l: { key: string }) => l.key === "adj:adj-1")?.amount).toBe(800);
+    expect(createArg.data.gross).toBe(7_500);
+    expect(db.payAdjustment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "adj-1" },
+        data: expect.objectContaining({ status: "CONSUMED", consumedRunId: "run-1" }),
+      }),
+    );
+  });
+});
+
+describe("P1 — applyPayAdjustmentsToRun (the explicit OPEN-run application)", () => {
+  it("applies pending rows onto stored lines, bumps versions, and re-derives rounding", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
+    db.payslip.findMany.mockResolvedValue([
+      payslipRow({ id: "ps-1", version: 2, earnings: JSON.stringify([
+        { key: "basic", label: "Basic Salary", amount: 6_500 },
+        { key: "transport", label: "Transport Allowance", amount: 200 },
+      ]) }),
+    ]);
+    db.payAdjustment.findMany.mockResolvedValue([adjustmentRow({ period: "2026-11" })]);
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { payrollRoundingMode: "ROUND_NET_NEAREST" } });
+    const res = await applyPayAdjustmentsToRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.applied).toBe(1);
+      expect(res.data.slipsTouched).toBe(1);
+    }
+    const updateArg = db.payslip.update.mock.calls[0][0] as {
+      where: { id: string };
+      data: { earnings: string; deductions: string; gross: number; net: number; version: number };
+    };
+    expect(updateArg.where.id).toBe("ps-1");
+    expect(updateArg.data.version).toBe(3);
+    expect(updateArg.data.gross).toBe(7_500);
+    // ROUND_NET_NEAREST: 7500 is already whole — no rounding line.
+    expect(JSON.parse(updateArg.data.deductions)).toHaveLength(0);
+    expect(db.payAdjustment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "adj-1" }, data: expect.objectContaining({ status: "CONSUMED" }) }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "payroll.adjustments_applied" }));
+  });
+
+  it("refuses a LOCKED run (paid slips are immutable)", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(LOCKED_RUN);
+    const res = await applyPayAdjustmentsToRun({ runId: "run-0" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("locked");
+  });
+
+  it("no pending due rows → a clean no-op (nothing written, nothing audited)", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
+    db.payAdjustment.findMany.mockResolvedValue([]);
+    const res = await applyPayAdjustmentsToRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data).toEqual({ applied: 0, skipped: 0, slipsTouched: 0 });
+    expect(db.payslip.update).not.toHaveBeenCalled();
+    expect(logAuditMock).not.toHaveBeenCalledWith(expect.objectContaining({ action: "payroll.adjustments_applied" }));
+  });
+});
+
+describe("P1 — listPayAdjustments", () => {
+  it("serializes names, statuses and the consuming run's period", async () => {
+    db.payAdjustment.findMany.mockResolvedValue([
+      adjustmentRow({ id: "adj-9", consumedRunId: "run-9", status: "CONSUMED" }),
+    ]);
+    db.payrollRun.findMany.mockResolvedValue([{ id: "run-9", period: "2026-12" }]);
+    const res = await listPayAdjustments();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data).toHaveLength(1);
+      expect(res.data[0]).toMatchObject({
+        id: "adj-9", userName: "Yuki Tanaka", status: "CONSUMED", consumedRunPeriod: "2026-12",
+        side: "EARNING", recurrence: "ONE_SHOT", calcMode: "FIXED",
+      });
+    }
   });
 });

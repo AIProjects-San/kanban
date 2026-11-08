@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, CalendarPlus, Landmark, Loader2, Lock, Plus, Scale, Wallet } from "lucide-react";
+import { BookOpen, CalendarPlus, CircleDollarSign, Landmark, Loader2, Lock, Plus, Scale, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -19,12 +19,14 @@ import {
   getPayrollData,
   getPayrollRun,
   lockPayrollRun,
+  applyPayAdjustmentsToRun,
 } from "@/server-actions/payroll";
 import { currentPeriod } from "@/lib/payroll-math";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 import { StructureModal } from "../ui/structure-modal";
 import { PayslipModal } from "../ui/payslip-modal";
 import { ComponentCatalogModal } from "../ui/component-catalog-modal";
+import { PayAdjustmentModal } from "../ui/pay-adjustment-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -50,6 +52,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [editStructure, setEditStructure] = useState<SalaryStructureT | null>(null);
   // F1.5 — the component catalog manager (same permission surface).
   const [catalogOpen, setCatalogOpen] = useState(false);
+  // P1 (F2.3) — the adjustment adapter panel + the explicit apply action.
+  const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
+  const [applyingAdjustments, setApplyingAdjustments] = useState(false);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -106,7 +111,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     const res = await createPayrollRun({ period: newPeriod });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    toast.success(`Run for ${newPeriod} created — ${res.data.payslipCount} payslips from the active structures.`);
+    toast.success(`Run for ${newPeriod} created — ${res.data.payslipCount} payslips from the active structures${res.data.adjustmentsApplied > 0 ? `, ${res.data.adjustmentsApplied} adjustment(s) consumed` : ""}${res.data.adjustmentsSkipped > 0 ? `, ${res.data.adjustmentsSkipped} skipped` : ""}.`);
     setSelectedRunId(null);
     await load();
     // Select the fresh run (the newest one for that period).
@@ -128,6 +133,22 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     if (selectedRunId === runId) await loadPayslips(runId);
   };
 
+  // P1 — the explicit application: adjustments queued AFTER the run was
+  // created land through this button (never silently on a read).
+  const applyAdjustments = async (runId: string, period: string) => {
+    setApplyingAdjustments(true);
+    const res = await applyPayAdjustmentsToRun({ runId });
+    setApplyingAdjustments(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    if (res.data.applied === 0 && res.data.skipped === 0) {
+      toast.info(`No pending adjustments for ${period}.`);
+      return;
+    }
+    toast.success(`${res.data.applied} adjustment(s) applied to ${res.data.slipsTouched} payslip(s)${res.data.skipped > 0 ? `, ${res.data.skipped} skipped with reason` : ""}.`);
+    await loadPayslips(runId);
+    await load();
+  };
+
   return (
     <div className="p-6 space-y-5" data-testid="payroll-view">
       {/* Header */}
@@ -143,6 +164,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         <div className="flex items-center gap-2">
           <button className="f-btn f-btn-ghost" onClick={() => setCatalogOpen(true)} data-testid="component-catalog-btn">
             <BookOpen size={15} /> Component catalog
+          </button>
+          <button className="f-btn f-btn-ghost" onClick={() => setAdjustmentModalOpen(true)} data-testid="adjustments-btn">
+            <CircleDollarSign size={15} /> Adjustments
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => { setEditStructure(null); setStructureModalOpen(true); }} data-testid="new-structure-btn">
             <Plus size={15} /> Salary structure
@@ -260,6 +284,17 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
             <span className="text-xs text-muted-foreground ml-auto">
               net total {money(payslipsRun.totalNet)}
             </span>
+            {payslipsRun.status === "OPEN" && (
+              <button
+                className="f-btn f-btn-ghost text-xs ml-2"
+                disabled={applyingAdjustments}
+                onClick={() => void applyAdjustments(payslipsRun.id, payslipsRun.period)}
+                type="button"
+                data-testid="apply-adjustments-btn"
+              >
+                {applyingAdjustments ? <Loader2 size={13} className="animate-spin" /> : <CircleDollarSign size={13} />} Apply pending adjustments
+              </button>
+            )}
           </div>
           <div className="divide-y divide-border">
             {payslips.map((p) => (
@@ -339,6 +374,13 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         open={catalogOpen}
         onClose={() => setCatalogOpen(false)}
         onChanged={load}
+      />
+      <PayAdjustmentModal
+        open={adjustmentModalOpen}
+        onClose={() => setAdjustmentModalOpen(false)}
+        onChanged={load}
+        employees={employees}
+        defaultPeriod={payslipsRun?.period ?? newPeriod}
       />
       <StructureModal
         open={structureModalOpen}

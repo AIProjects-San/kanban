@@ -23,13 +23,14 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
-import type { PayslipT, PayrollRunT, SalaryStructureT } from "@/lib/types";
+import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT } from "@/lib/types";
 import {
   saveSalaryStructureSchema,
   createPayrollRunSchema,
   updatePayslipSchema,
   lockPayrollRunSchema,
   addPayslipSchema,
+  createPayAdjustmentSchema,
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit } from "./shared";
@@ -52,6 +53,13 @@ import {
   round2,
   type PayslipLine,
 } from "@/lib/payroll-math";
+// P1 (PR-12/PR-B10, F2.3) — the universal adjustment adapter kernel.
+import {
+  applyAdjustments,
+  isDueInPeriod,
+  validateAdjustmentInput,
+  type PayAdjustmentRow,
+} from "@/lib/pay-adjustment";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -414,7 +422,7 @@ export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
  * (monthly = annual ÷ 12). One run per period (unique). F1.4: each slip's
  * loss-of-pay days are pre-derived from attendance + unpaid leave
  * (lopSource AUTO) and the LOP deduction line is materialized at creation. */
-export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number }>> {
+export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number; adjustmentsApplied: number; adjustmentsSkipped: number }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
     const data = parseOrThrow(createPayrollRunSchema, input);
@@ -459,49 +467,113 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     const autoLopCount = [...lopByUser.values()].filter((f) => f.lopDays > 0).length;
     const clippedCount = [...lopByUser.values()].filter((f) => f.clippedFrom || f.clippedUntil).length;
 
-    const run = await db.payrollRun.create({
-      data: {
-        period: data.period,
-        status: "OPEN",
-        createdById: auth.userId,
-        workingDays: runWorkingDays,
-        payslips: {
-          create: structures.map((s, i) => {
-            const facts = lopByUser.get(s.userId)
-              ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false };
-            const earnings = scaleEarningsToPaidDays(
-              monthlyEarningsFromStructure(parseComponents(s.components)),
-              facts.paidDays,
-              runWorkingDays,
-            );
-            const lopDays = facts.lopDays;
-            // The auto LOP line is materialized at creation (net totals are
-            // honest immediately — no per-slip save needed to see the dock).
-            // S6 — the LOP basis excludes window-exempt lines (a flat
-            // allowance is not reduced by absent days).
-            const lopDeductions = lopDays > 0
-              ? withLopLine([], lopBasisGross(earnings), lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
-              : [];
-            // S7 — the rounding line lands last (auto-managed like the LOP
-            // line; ROUND_2DP default emits nothing).
-            const { earnings: finalEarnings, deductions } = withRoundingLine(earnings, lopDeductions, roundingMode);
-            const { gross, net } = payslipTotals(finalEarnings, deductions);
-            return {
-              userId: s.userId,
-              slipNo: slipNumber(data.period, i + 1),
-              earnings: JSON.stringify(finalEarnings),
-              deductions: JSON.stringify(deductions),
-              lopDays,
-              lopSource: "AUTO",
-              paidDays: facts.paidDays,
-              gross,
-              net,
-            };
-          }),
-        },
-      },
-      include: { payslips: { select: { id: true } } },
+    // P1 (PR-12/PR-B10, F2.3) — the adjustment adapter consumption: every
+    // PENDING row due in this period resolves onto its employee's payslip
+    // through the pure two-pass kernel, and the row updates commit in the
+    // SAME transaction as the run (a consumed row without its money, or
+    // money without its row, is impossible — the S17 discipline).
+    const pendingAdjustments = await db.payAdjustment.findMany({
+      where: { status: "PENDING", period: { lte: data.period } },
+      orderBy: { createdAt: "asc" },
     });
+    const dueByUser = new Map<string, PayAdjustmentRow[]>();
+    for (const row of pendingAdjustments) {
+      if (!isDueInPeriod(row, data.period)) continue;
+      const list = dueByUser.get(row.userId);
+      if (list) list.push(row);
+      else dueByUser.set(row.userId, [row]);
+    }
+    const slipUserIds = new Set(structures.map((s) => s.userId));
+    // Due rows whose employee has no slip in this run: ONE_SHOT/OVERWRITE
+    // periods never come back, so they are SKIPPED with a visible reason;
+    // RECURRING rows stay PENDING (a future run may yet include them).
+    const noSlipSkips = pendingAdjustments.filter(
+      (row) => isDueInPeriod(row, data.period) && !slipUserIds.has(row.userId) && row.recurrence !== "RECURRING",
+    );
+    type ConsumedEntry = { row: PayAdjustmentRow; final: boolean };
+    const consumedEntries: ConsumedEntry[] = [];
+    const kernelSkips: Array<{ id: string; reason: string }> = [];
+
+    const run = await db.$transaction(async (tx) => {
+      const created = await tx.payrollRun.create({
+        data: {
+          period: data.period,
+          status: "OPEN",
+          createdById: auth.userId,
+          workingDays: runWorkingDays,
+          payslips: {
+            create: structures.map((s, i) => {
+              const facts = lopByUser.get(s.userId)
+                ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false };
+              const earnings = scaleEarningsToPaidDays(
+                monthlyEarningsFromStructure(parseComponents(s.components)),
+                facts.paidDays,
+                runWorkingDays,
+              );
+              const lopDays = facts.lopDays;
+              // The auto LOP line is materialized at creation (net totals are
+              // honest immediately — no per-slip save needed to see the dock).
+              // S6 — the LOP basis excludes window-exempt lines (a flat
+              // allowance is not reduced by absent days).
+              const lopDeductions = lopDays > 0
+                ? withLopLine([], lopBasisGross(earnings), lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
+                : [];
+              // P1 — adjustments land on the docked base (post scaling,
+              // post LOP), the rounding line wraps the final net.
+              const applied = applyAdjustments(
+                { earnings, deductions: lopDeductions },
+                dueByUser.get(s.userId) ?? [],
+                data.period,
+              );
+              for (const c of applied.consumed) {
+                const row = (dueByUser.get(s.userId) ?? []).find((r) => r.id === c.id);
+                if (row) consumedEntries.push({ row, final: c.final });
+              }
+              kernelSkips.push(...applied.skipped);
+              const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
+              const { gross, net } = payslipTotals(finalEarnings, deductions);
+              return {
+                userId: s.userId,
+                slipNo: slipNumber(data.period, i + 1),
+                earnings: JSON.stringify(finalEarnings),
+                deductions: JSON.stringify(deductions),
+                lopDays,
+                lopSource: "AUTO",
+                paidDays: facts.paidDays,
+                gross,
+                net,
+              };
+            }),
+          },
+        },
+        include: { payslips: { select: { id: true } } },
+      });
+
+      // P1 — persist the consumption outcomes atomically with the run:
+      // final consumptions flip CONSUMED; RECURRING intermediates watermark
+      // lastConsumedPeriod and stay PENDING; refuses flip SKIPPED with the
+      // kernel's reason (visible, never silent).
+      for (const { row, final } of consumedEntries) {
+        await tx.payAdjustment.update({
+          where: { id: row.id },
+          data: {
+            status: final ? "CONSUMED" : "PENDING",
+            lastConsumedPeriod: data.period,
+            consumedRunId: created.id,
+          },
+        });
+      }
+      const skipById = new Map<string, string>();
+      for (const s of kernelSkips) skipById.set(s.id, s.reason);
+      for (const row of noSlipSkips) skipById.set(row.id, `no payslip for the employee in the ${data.period} run`);
+      for (const [id, reason] of skipById) {
+        await tx.payAdjustment.update({ where: { id }, data: { status: "SKIPPED", skipReason: reason } });
+      }
+      return created;
+    });
+
+    const adjustmentsApplied = consumedEntries.length;
+    const adjustmentsSkipped = new Set([...kernelSkips.map((s) => s.id), ...noSlipSkips.map((r) => r.id)]).size;
 
     await logAudit({
       actor: auth,
@@ -509,10 +581,10 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}`,
+      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
     });
     revalidatePath("/");
-    return { id: run.id, payslipCount: run.payslips.length };
+    return { id: run.id, payslipCount: run.payslips.length, adjustmentsApplied, adjustmentsSkipped };
   });
 }
 
@@ -781,12 +853,19 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       : [];
     // S7 — the rounding line lands last (auto-managed).
     const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
-    const { earnings: finalEarnings, deductions } = withRoundingLine(scaledEarnings, lopDeductions, roundingMode);
+    // P1 (F2.3) — this joiner's due adjustments ride the new slip (same
+    // kernel + same transaction discipline as run creation).
+    const pendingAdjustments = await db.payAdjustment.findMany({
+      where: { status: "PENDING", period: { lte: run.period }, userId: data.userId },
+      orderBy: { createdAt: "asc" },
+    });
+    const due = pendingAdjustments.filter((row) => isDueInPeriod(row, run.period));
+    const applied = applyAdjustments({ earnings: scaledEarnings, deductions: lopDeductions }, due, run.period);
+    const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
     const { gross, net } = payslipTotals(finalEarnings, deductions);
     const createData = {
       runId: run.id,
       userId: data.userId,
-      slipNo: slipNumber(run.period, count + 1),
       earnings: JSON.stringify(finalEarnings),
       deductions: JSON.stringify(deductions),
       lopDays,
@@ -795,16 +874,34 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       gross,
       net,
     };
+    const createSlipWithAdjustments = async (seq: number) =>
+      db.$transaction(async (tx) => {
+        const slip = await tx.payslip.create({ data: { ...createData, slipNo: slipNumber(run.period, seq) } });
+        for (const c of applied.consumed) {
+          const row = due.find((r) => r.id === c.id);
+          if (!row) continue;
+          await tx.payAdjustment.update({
+            where: { id: row.id },
+            data: {
+              status: c.final ? "CONSUMED" : "PENDING",
+              lastConsumedPeriod: run.period,
+              consumedRunId: run.id,
+            },
+          });
+        }
+        for (const s of applied.skipped) {
+          await tx.payAdjustment.update({ where: { id: s.id }, data: { status: "SKIPPED", skipReason: s.reason } });
+        }
+        return slip;
+      });
     let slip;
     try {
-      slip = await db.payslip.create({ data: createData });
+      slip = await createSlipWithAdjustments(count + 1);
     } catch (err) {
       if (isUniqueConstraintError(err)) {
         // Two HR users racing: recompute the sequence from the live count.
         const recount = await db.payslip.count({ where: { runId: run.id } });
-        slip = await db.payslip.create({
-          data: { ...createData, slipNo: slipNumber(run.period, recount + 1) },
-        });
+        slip = await createSlipWithAdjustments(recount + 1);
       } else {
         throw err;
       }
@@ -815,7 +912,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       entityType: "PAYSLIP",
       entityId: slip.id,
       entityLabel: slip.slipNo,
-      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run.`,
+      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run${applied.consumed.length > 0 ? ` (${applied.consumed.length} adjustment(s) consumed)` : ""}.`,
     });
     revalidatePath("/");
     return { id: slip.id };
@@ -930,5 +1027,249 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         net: p.net,
         ytdNet: ytdBySlip.get(p.id) ?? p.net,
       }));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// P1 (PR-12/PR-B10, F2.3) — the PayAdjustment universal adapter
+// ---------------------------------------------------------------------------
+
+/** Serialize one adapter row for the payroll view's Adjustments panel. */
+function serializeAdjustment(
+  row: PayAdjustmentRow & { createdAt: Date },
+  userName: string,
+  consumedRunPeriod: string,
+): PayAdjustmentT {
+  return {
+    id: row.id,
+    userId: row.userId,
+    userName,
+    sourceType: row.sourceType,
+    sourceId: row.sourceId,
+    componentCode: row.componentCode,
+    label: row.label || row.componentCode,
+    side: (row.side === "DEDUCTION" ? "DEDUCTION" : "EARNING") as "EARNING" | "DEDUCTION",
+    recurrence: (["ONE_SHOT", "RECURRING", "OVERWRITE"].includes(row.recurrence)
+      ? row.recurrence
+      : "ONE_SHOT") as "ONE_SHOT" | "RECURRING" | "OVERWRITE",
+    calcMode: (["FIXED", "PERCENT_OF_GROSS", "PERCENT_OF_NET"].includes(row.calcMode)
+      ? row.calcMode
+      : "FIXED") as "FIXED" | "PERCENT_OF_GROSS" | "PERCENT_OF_NET",
+    percent: row.percent ?? null,
+    amount: row.amount,
+    period: row.period,
+    endPeriod: row.endPeriod ?? null,
+    lastConsumedPeriod: row.lastConsumedPeriod,
+    status: (["PENDING", "CONSUMED", "SKIPPED"].includes(row.status) ? row.status : "PENDING") as
+      | "PENDING"
+      | "CONSUMED"
+      | "SKIPPED",
+    skipReason: row.skipReason,
+    note: row.note,
+    consumedRunPeriod,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** The manual adjustment writer (payroll:manage). Shape validation in the
+ * zod schema; the semantic matrix (percent-vs-side, endPeriod order,
+ * label-or-code) in the pure kernel's validateAdjustmentInput — one rule
+ * shared with the UI. MANUAL/INCENTIVE sources only: feature-owned sources
+ * (ENCASHMENT, ARREARS, …) are written by their own actions with their own
+ * provenance, never through this hand-made path. */
+export async function createPayAdjustment(input: unknown): Promise<ActionResult<{ id: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("payroll:manage");
+    const data = parseOrThrow(createPayAdjustmentSchema, input);
+    const semanticError = validateAdjustmentInput({
+      side: data.side,
+      recurrence: data.recurrence,
+      calcMode: data.calcMode,
+      percent: data.percent ?? null,
+      amount: data.amount,
+      period: data.period,
+      endPeriod: data.endPeriod ?? null,
+      label: data.label,
+      componentCode: data.componentCode,
+    });
+    if (semanticError) throw new AuthorizationError(semanticError);
+    const user = await db.user.findUnique({ where: { id: data.userId }, select: { id: true, name: true } });
+    if (!user) throw new AuthorizationError("Employee not found.");
+    // A locked period never takes new adjustments: paid runs are immutable
+    // and no new run will ever consume the row (dead input by construction).
+    const targetRun = await db.payrollRun.findUnique({
+      where: { period: data.period },
+      select: { status: true },
+    });
+    if (targetRun?.status === "LOCKED") {
+      throw new AuthorizationError("That period is already locked — paid runs never take new adjustments.");
+    }
+    const row = await db.payAdjustment.create({
+      data: {
+        userId: data.userId,
+        sourceType: data.sourceType,
+        sourceId: "",
+        componentCode: data.componentCode,
+        label: data.label,
+        side: data.side,
+        recurrence: data.recurrence,
+        calcMode: data.calcMode,
+        percent: data.percent ?? null,
+        amount: data.amount,
+        period: data.period,
+        endPeriod: data.endPeriod ?? null,
+        note: data.note,
+        createdById: auth.userId,
+      },
+    });
+    await logAudit({
+      actor: auth,
+      action: "payroll.adjustment_created",
+      entityType: "PAY_ADJUSTMENT",
+      entityId: row.id,
+      entityLabel: `${user.name} — ${data.label || data.componentCode}`,
+      detail: `${auth.name} added a ${data.recurrence.toLowerCase()} ${data.side.toLowerCase()} adjustment for ${user.name}: ${
+        data.calcMode === "FIXED"
+          ? `$${data.amount.toLocaleString("en-NZ")}`
+          : `${data.percent}% of ${data.calcMode === "PERCENT_OF_GROSS" ? "gross" : "net"}`
+      }, first period ${data.period}${data.endPeriod ? ` through ${data.endPeriod}` : ""}.`,
+    });
+    revalidatePath("/");
+    return { id: row.id };
+  });
+}
+
+/** Every adapter row (newest first, capped) with names + the consuming
+ * run's period — the Adjustments panel's data. payroll:manage. */
+export async function listPayAdjustments(): Promise<ActionResult<PayAdjustmentT[]>> {
+  return toResult(async () => {
+    await requirePermission("payroll:manage");
+    const rows = await db.payAdjustment.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
+    if (rows.length === 0) return [];
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const users = await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } });
+    const nameById = new Map(users.map((u) => [u.id, u.name]));
+    const runIds = [...new Set(rows.map((r) => r.consumedRunId).filter((id) => id !== ""))];
+    const runs = runIds.length > 0
+      ? await db.payrollRun.findMany({ where: { id: { in: runIds } }, select: { id: true, period: true } })
+      : [];
+    const periodByRunId = new Map(runs.map((r) => [r.id, r.period]));
+    return rows.map((row) =>
+      serializeAdjustment(
+        row,
+        nameById.get(row.userId) ?? "Unknown",
+        periodByRunId.get(row.consumedRunId) ?? "",
+      ),
+    );
+  });
+}
+
+/** Explicitly apply the period's PENDING adjustments to an OPEN run's
+ * existing payslips (created after the run was). The rows resolve through
+ * the same two-pass kernel onto the STORED lines (manual edits preserved;
+ * the stale rounding line is re-derived after), each touched slip's
+ * optimistic-lock version increments, and the row updates commit in one
+ * transaction with the line writes — no silent re-derivation, ever. */
+export async function applyPayAdjustmentsToRun(
+  input: unknown,
+): Promise<ActionResult<{ applied: number; skipped: number; slipsTouched: number }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("payroll:manage");
+    const data = parseOrThrow(lockPayrollRunSchema, input);
+    const run = await db.payrollRun.findUnique({ where: { id: data.runId } });
+    if (!run) throw new AuthorizationError("Payroll run not found.");
+    if (run.status !== "OPEN") throw new AuthorizationError("The run is locked — payslips are immutable once paid.");
+
+    const pendingAdjustments = await db.payAdjustment.findMany({
+      where: { status: "PENDING", period: { lte: run.period } },
+      orderBy: { createdAt: "asc" },
+    });
+    const dueRows = pendingAdjustments.filter((row) => isDueInPeriod(row, run.period));
+    if (dueRows.length === 0) return { applied: 0, skipped: 0, slipsTouched: 0 };
+
+    const dueByUser = new Map<string, PayAdjustmentRow[]>();
+    for (const row of dueRows) {
+      const list = dueByUser.get(row.userId);
+      if (list) list.push(row);
+      else dueByUser.set(row.userId, [row]);
+    }
+    const slips = await db.payslip.findMany({ where: { runId: run.id } });
+    const slipUserIds = new Set(slips.map((s) => s.userId));
+    const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
+
+    type ConsumedEntry = { row: PayAdjustmentRow; final: boolean };
+    const consumedEntries: ConsumedEntry[] = [];
+    const skipById = new Map<string, string>();
+    // Due rows whose employee has no slip: ONE_SHOT/OVERWRITE periods never
+    // come back — SKIPPED with reason; RECURRING stays PENDING for the future.
+    const noSlipSkips = dueRows.filter(
+      (row) => !slipUserIds.has(row.userId) && row.recurrence !== "RECURRING",
+    );
+
+    let slipsTouched = 0;
+    await db.$transaction(async (tx) => {
+      for (const slip of slips) {
+        const due = dueByUser.get(slip.userId) ?? [];
+        if (due.length === 0) continue;
+        // The stored lines (manual edits included) are the base; the stale
+        // rounding line is cleaned and re-derived by withRoundingLine after
+        // the adjustments land (replaces, never duplicates).
+        const applied = applyAdjustments(
+          { earnings: parsePayslipLines(slip.earnings), deductions: parsePayslipLines(slip.deductions) },
+          due,
+          run.period,
+        );
+        if (applied.consumed.length === 0 && applied.skipped.length === 0) continue;
+        for (const c of applied.consumed) {
+          const row = due.find((r) => r.id === c.id);
+          if (row) consumedEntries.push({ row, final: c.final });
+        }
+        for (const s of applied.skipped) skipById.set(s.id, s.reason);
+        const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
+        const { gross, net } = payslipTotals(finalEarnings, deductions);
+        await tx.payslip.update({
+          where: { id: slip.id },
+          data: {
+            earnings: JSON.stringify(finalEarnings),
+            deductions: JSON.stringify(deductions),
+            gross,
+            net,
+            version: slip.version + 1,
+          },
+        });
+        slipsTouched++;
+      }
+      for (const row of noSlipSkips) {
+        skipById.set(row.id, `no payslip for the employee in the ${run.period} run`);
+      }
+      for (const { row, final } of consumedEntries) {
+        await tx.payAdjustment.update({
+          where: { id: row.id },
+          data: {
+            status: final ? "CONSUMED" : "PENDING",
+            lastConsumedPeriod: run.period,
+            consumedRunId: run.id,
+          },
+        });
+      }
+      for (const [id, reason] of skipById) {
+        await tx.payAdjustment.update({ where: { id }, data: { status: "SKIPPED", skipReason: reason } });
+      }
+    });
+
+    const appliedCount = consumedEntries.length;
+    const skippedCount = skipById.size;
+    if (appliedCount > 0 || skippedCount > 0) {
+      await logAudit({
+        actor: auth,
+        action: "payroll.adjustments_applied",
+        entityType: "PAYROLL_RUN",
+        entityId: run.id,
+        entityLabel: run.period,
+        detail: `${auth.name} applied pending adjustments to the ${run.period} run — ${appliedCount} consumed onto ${slipsTouched} payslip(s)${skippedCount > 0 ? `, ${skippedCount} skipped with reason` : ""}.`,
+      });
+      revalidatePath("/");
+    }
+    return { applied: appliedCount, skipped: skippedCount, slipsTouched };
   });
 }

@@ -902,3 +902,25 @@ export const addPayslipSchema = z.object({
   runId: cuidish,
   userId: cuidish,
 }).strict();
+
+// P1 (PR-12/PR-B10, F2.3) — the manual adjustment writer. Shape-only
+// validation here (periods, enums, non-negative amount); the semantic
+// matrix (percent-vs-side, endPeriod order) lives in the pure kernel's
+// validateAdjustmentInput so both the action and the UI share one rule.
+export const createPayAdjustmentSchema = z.object({
+  userId: cuidish,
+  // MANUAL/INCENTIVE are the hand-made sources; the feature-owned sources
+  // (ENCASHMENT, ARREARS, …) are written by their own actions, never
+  // through this schema.
+  sourceType: z.enum(["MANUAL", "INCENTIVE"]).default("MANUAL"),
+  componentCode: z.string().trim().max(40).default(""),
+  label: z.string().trim().max(80).default(""),
+  side: z.enum(["EARNING", "DEDUCTION"]),
+  recurrence: z.enum(["ONE_SHOT", "RECURRING", "OVERWRITE"]).default("ONE_SHOT"),
+  calcMode: z.enum(["FIXED", "PERCENT_OF_GROSS", "PERCENT_OF_NET"]).default("FIXED"),
+  percent: z.number().min(0).max(100).nullish(),
+  amount: z.number().min(0).max(10_000_000).default(0),
+  period: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM)."),
+  endPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM).").nullish(),
+  note: z.string().trim().max(500).default(""),
+}).strict();

@@ -773,6 +773,33 @@ export interface PayslipT {
   ytdNet: number;
 }
 
+/** P1 (PR-12/PR-B10, F2.3) — one adapter row: a special payment (encashment,
+ * arrears delta, LWP credit, retention bonus, benefit payout, withheld
+ * release, manual incentive) waiting for the run covering its period to
+ * resolve it into payslip lines. userName resolved per row for the list. */
+export interface PayAdjustmentT {
+  id: string;
+  userId: string;
+  userName: string;
+  sourceType: string;
+  sourceId: string;
+  componentCode: string;
+  label: string;
+  side: "EARNING" | "DEDUCTION";
+  recurrence: "ONE_SHOT" | "RECURRING" | "OVERWRITE";
+  calcMode: "FIXED" | "PERCENT_OF_GROSS" | "PERCENT_OF_NET";
+  percent: number | null;
+  amount: number;
+  period: string;
+  endPeriod: string | null;
+  lastConsumedPeriod: string;
+  status: "PENDING" | "CONSUMED" | "SKIPPED";
+  skipReason: string;
+  note: string;
+  consumedRunPeriod: string;
+  createdAt: string;
+}
+
 /** R8 — recruitment funnel analytics (getHiringFunnel): pool totals, per-stage
  * load + velocity, and the offer funnel. hiring:view — not salary-sensitive. */
 export interface HiringFunnelT {

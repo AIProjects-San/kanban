@@ -14,7 +14,7 @@ import {
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
-  Scale,
+  Scale, CircleDollarSign,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -172,7 +172,11 @@ export type AuditAction =
   | "payroll.run_locked"
   | "payroll.component_created"
   | "payroll.component_updated"
-  | "payroll.component_deleted";
+  | "payroll.component_deleted"
+  // P1 (PR-12/PR-B10, F2.3) — the adjustment adapter: the manual writer
+  // and the explicit apply-to-open-run consumption.
+  | "payroll.adjustment_created"
+  | "payroll.adjustments_applied";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -323,6 +327,8 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.component_created": { icon: BookOpen, cls: "text-teal-500 bg-teal-500/10" },
   "payroll.component_updated": { icon: BookOpen, cls: "text-teal-500 bg-teal-500/10" },
   "payroll.component_deleted": { icon: BookOpen, cls: "text-rose-500 bg-rose-500/10" },
+  "payroll.adjustment_created": { icon: CircleDollarSign, cls: "text-teal-500 bg-teal-500/10" },
+  "payroll.adjustments_applied": { icon: CircleDollarSign, cls: "text-sky-500 bg-sky-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

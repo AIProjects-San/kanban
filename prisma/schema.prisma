@@ -1664,3 +1664,67 @@ model Payslip {
   @@unique([runId, userId])
   @@index([userId])
 }
+
+// P1 (PR-12/PR-B10, F2.3) — the universal adjustment adapter (the
+// benchmark's Additional Salary): every special payment flow (encashment,
+// arrears deltas, LWP credits, retention bonus, benefit payouts, withheld
+// release, manual incentives) funnels into ONE row, consumed by the run
+// covering its period inside that run's creation transaction. Rows are
+// INPUTS: slip lines snapshot at creation and manual slip edits never
+// write back here (the standing snapshot discipline).
+model PayAdjustment {
+  id         String   @id @default(cuid())
+  userId     String
+  // Provenance: MANUAL | INCENTIVE | ENCASHMENT | ARREARS | LWP_CREDIT |
+  // RETENTION_BONUS | BENEFIT_PAYOUT | WITHHOLDING_RELEASE. The literal
+  // union + labels live in the pure kernel (lib/pay-adjustment.ts); the DB
+  // keeps a plain string so new sources never need a migration.
+  sourceType String   @default("MANUAL")
+  // Pointer to the source row (e.g. a leave-encashment request); blank for
+  // MANUAL/INCENTIVE rows created by hand.
+  sourceId   String   @default("")
+  // Catalog code when the line maps to a SalaryComponent (label/kind picked
+  // up from the row); blank = the row's own label + side carry the meaning.
+  componentCode String @default("")
+  label      String   @default("")
+  // EARNING | DEDUCTION — which slip array the resolved line lands in.
+  side       String   @default("EARNING")
+  // ONE_SHOT: consumed once. RECURRING: re-emitted every period through
+  // endPeriod inclusive (lastConsumedPeriod tracks progress; the row only
+  // flips CONSUMED at its final period — intermediate runs leave it
+  // PENDING). OVERWRITE: replaces the amount of the same-key line on the
+  // slip for its single period.
+  recurrence String   @default("ONE_SHOT") // ONE_SHOT | RECURRING | OVERWRITE
+  // FIXED amount | PERCENT_OF_GROSS | PERCENT_OF_NET of the payslip the
+  // line lands on — resolved by the two-pass kernel (gross-based lines
+  // first, percent-of-net deductions sequentially afterwards; no
+  // fixed-point iteration).
+  calcMode   String   @default("FIXED")
+  percent    Float?
+  // Positive magnitude; `side` gives the direction (deductions ride the
+  // deductions array as positive amounts, like the auto LOP line).
+  amount     Float    @default(0)
+  // First period ("YYYY-MM") the row applies to.
+  period     String
+  // RECURRING only: last period inclusive (null = open-ended).
+  endPeriod  String?
+  // Idempotency watermark: the last period this row was consumed in (one
+  // run per period makes double-consumption impossible; this column makes
+  // it verifiable).
+  lastConsumedPeriod String @default("")
+  // PENDING | CONSUMED | SKIPPED. SKIPPED carries skipReason (e.g. "no
+  // payslip for the employee in this run") — refused input rows stay
+  // visible instead of vanishing.
+  status     String   @default("PENDING")
+  skipReason String   @default("")
+  note       String   @default("")
+  createdById String  @default("")
+  // The run that consumed the row (blank while PENDING; the RECURNING
+  // intermediate case records the LAST consuming run).
+  consumedRunId String @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([period, status])
+  @@index([userId, status])
+}

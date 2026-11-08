@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
-    "salaryComponent", "payrollRun", "payslip", "auditLog", "holidayCalendarEntry",
+    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "auditLog", "holidayCalendarEntry",
     "attendanceRecord", "leaveRequest", "leaveType",
   ];
   const methods = [
@@ -126,6 +126,8 @@ beforeEach(() => {
   db.employeeProfile.findMany.mockResolvedValue([]);
   db.leaveType.findMany.mockResolvedValue([]);
   db.payrollRun.findUnique.mockResolvedValue(null);
+  // P1 (F2.3) — the adjustment adapter stays empty by default.
+  db.payAdjustment.findMany.mockResolvedValue([]);
   db.payrollRun.findMany.mockResolvedValue([]);
   db.payrollRun.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
     id: "run-new", period: "2026-11", createdAt: new Date(), lockedById: "", lockedAt: null, ...data,
