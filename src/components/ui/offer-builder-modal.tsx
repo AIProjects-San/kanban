@@ -14,6 +14,7 @@ import { Check, Clock, Copy, Link2, Loader2, PenLine, Plus, Send, ShieldCheck, T
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
+import { CtcSolverField } from "./ctc-solver-field";
 import { cn } from "@/lib/utils";
 import type { CandidateT, OfferComponentT, OfferRecordT, OfferTemplateT } from "@/lib/types";
 import {
@@ -378,6 +379,15 @@ export function OfferBuilderModal({
             <div><div className="text-muted-foreground">Net / yr</div><div className="font-semibold tabular-nums text-primary">{formatMoney(totals.net)}</div></div>
             <div><div className="text-muted-foreground">CTC</div><div className="font-semibold tabular-nums text-emerald-600">{formatMoney(totals.ctc)}</div></div>
           </div>
+
+          {/* P12 (PR-B20/RJ-B14) — the CTC solver: solve the base for a
+              target annual CTC before sending the offer (fixed amounts +
+              percent rates held constant). */}
+          <CtcSolverField
+            components={components}
+            onSolved={(base, baseKey) => setComponents((prev) => prev.map((c) => (c.key === baseKey ? { ...c, amount: base } : c)))}
+            testIdPrefix="offer-ctc-solver"
+          />
 
           <Field label="Benefits (one per line)">
             <textarea

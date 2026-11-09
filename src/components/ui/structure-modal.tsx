@@ -14,6 +14,7 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { OfferComponentT, SalaryComponentT, SalaryStructureT, PayrollFrequencyT } from "@/lib/types";
 import { PAYROLL_FREQUENCY_OPTIONS } from "@/lib/payroll-windows";
+import { CtcSolverField } from "./ctc-solver-field";
 import { createStructureFromOffer, saveSalaryStructure } from "@/server-actions/payroll";
 import { getSalaryComponents } from "@/server-actions/payroll-components";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
@@ -272,6 +273,15 @@ export function StructureModal({
           <div><div className="text-muted-foreground">Annual CTC</div><div className="font-semibold tabular-nums text-emerald-600">{formatMoney(annual.ctc)}</div></div>
           <div><div className="text-muted-foreground">Monthly gross</div><div className="font-semibold tabular-nums text-primary">${monthlyGross.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
         </div>
+
+        {/* P12 (PR-B20/RJ-B14) — the CTC solver: enter the target annual
+            CTC, the pure kernel solves the basic that hits it (fixed
+            amounts + percent rates held constant), the solved amount lands
+            in the basic line above. */}
+        <CtcSolverField
+          components={components}
+          onSolved={(base, baseKey) => setComponents((prev) => prev.map((c) => (c.key === baseKey ? { ...c, amount: base } : c)))}
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Notes (audit only)">
