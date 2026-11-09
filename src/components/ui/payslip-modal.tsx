@@ -18,6 +18,7 @@ import { Field } from "./field";
 import type { PayslipT, PayslipLineT } from "@/lib/types";
 import { updatePayslip } from "@/server-actions/payroll";
 import { computeLop, payslipTotals, lopBasisGross, withRoundingLine, LOP_LINE_KEY, ROUNDING_LINE_KEY, type PayrollRoundingMode } from "@/lib/payroll-math";
+import { componentYtdAmount } from "@/lib/payslip-aggregates";
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -141,7 +142,15 @@ export function PayslipModal({
   ) => (
     <div className="space-y-1.5">
       <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">{kind === "earnings" ? "Earnings (monthly)" : "Deductions (monthly)"}</div>
-      {lines.map((l, i) => (
+      {lines.map((l, i) => {
+        // P11 (PR-B09) — the line's component YTD through this period
+        // (read-time; statistical lines never carry one).
+        const ytd = l.statistical ? 0 : componentYtdAmount(
+          { componentYtd: p.componentYtd },
+          kind === "earnings" ? "EARNING" : "DEDUCTION",
+          l.key,
+        );
+        return (
         <div key={i} className="flex items-center gap-1.5 flex-wrap" data-testid={`payslip-${kind}-${i}`}>
           <input
             className="f-input text-xs grow min-w-[130px]" placeholder="Label (e.g. Basic Salary)"
@@ -159,6 +168,15 @@ export function PayslipModal({
             onChange={(e) => setLines((prev) => prev.map((x, idx) => idx === i ? { ...x, amount: Number(e.target.value) } : x))}
             aria-label="Amount"
           />
+          {ytd > 0 && (
+            <span
+              className="text-[0.6875rem] text-muted-foreground tabular-nums shrink-0"
+              title={`This component's year-to-date total through ${p.runPeriod} (read-time; recalculated as slips are saved or finalized)`}
+              data-testid={`payslip-${kind}-ytd-${i}`}
+            >
+              YTD {money(ytd)}
+            </span>
+          )}
           <button
             type="button" className="f-btn f-btn-icon text-destructive no-print" aria-label={`Remove ${l.label || "line"}`}
             disabled={!editable}
@@ -167,7 +185,8 @@ export function PayslipModal({
             <Trash2 size={13} />
           </button>
         </div>
-      ))}
+        );
+      })}
       {editable && (
         <button type="button" className="f-btn f-btn-ghost text-xs" onClick={() => setLines((prev) => [...prev, newLine()])} data-testid={`payslip-add-${kind}`}>
           <Plus size={13} /> Add {kind === "earnings" ? "earning" : "deduction"}
@@ -258,15 +277,22 @@ export function PayslipModal({
 
         {lineEditor(deductions, setDeductions, "deductions")}
 
-        {/* Totals */}
+        {/* Totals — P11 (PR-B09): the period aggregates ride the same box
+            (YTD gross/net through this period + the month-to-date net, which
+            sums this calendar month's slips — meaningful when several runs
+            land in one month, e.g. weekly cadences). */}
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 grid grid-cols-3 gap-2 text-xs" data-testid="payslip-totals">
           <div><div className="text-muted-foreground">Gross</div><div className="font-semibold tabular-nums">{money(totals.gross)}</div></div>
           <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions)}</div></div>
           <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
+          <div><div className="text-muted-foreground">YTD gross</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{money(p.ytdGross)}</div></div>
+          <div><div className="text-muted-foreground">YTD net</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{money(p.ytdNet)}</div></div>
+          <div><div className="text-muted-foreground">Month-to-date net</div><div className="font-semibold tabular-nums" data-testid="payslip-mtd-net">{money(p.mtdNet)}</div></div>
         </div>
         <div className="text-xs text-muted-foreground" data-testid="payslip-ytd-basis">
           YTD net (through {p.runPeriod}): <strong data-testid="payslip-ytd">{money(p.ytdNet)}</strong>
           {editable ? " — updates when this slip is saved." : ""}
+          {" "}Per-line "YTD" figures are each component's year total through this period (read-time).
           {" "}HR basis: every run of the year including this OPEN one — your
           employees' own payslip view counts locked (paid) runs only, so the
           two surfaces can differ while a month is open.

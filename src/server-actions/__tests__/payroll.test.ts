@@ -403,25 +403,31 @@ describe("R7 — payroll runs", () => {
 });
 
 describe("R7 — payslips", () => {
-  it("getPayrollRun computes YTD across same-year periods up to and including this run", async () => {
+  it("getPayrollRun computes YTD + the P11 aggregates across same-year periods up to and including this run", async () => {
     // Two runs in 2026 (10 LOCKED + 11 OPEN) — the year query returns both.
     db.payrollRun.findUnique.mockResolvedValue({
       ...OPEN_RUN,
-      payslips: [payslipRow({ net: 6_700 })],
+      payslips: [payslipRow({ id: "ps-nov", net: 6_700, gross: 6_700 })],
     });
-    db.payrollRun.findMany.mockImplementation(async ({ where }: { where?: { period?: { startsWith?: string } } }) =>
-      where?.period?.startsWith === "2026"
-        ? [{ id: "run-0", period: "2026-10" }, { id: "run-1", period: "2026-11" }]
-        : [],
-    );
+    db.payrollRun.findMany.mockResolvedValue([
+      { id: "run-0", period: "2026-10", startDate: new Date("2026-10-01T00:00:00Z"), endDate: new Date("2026-10-31T00:00:00Z") },
+      { id: "run-1", period: "2026-11", startDate: new Date("2026-11-01T00:00:00Z"), endDate: new Date("2026-11-30T00:00:00Z") },
+    ]);
+    // The mock mirrors the DB: every slip of the up-to runs (any withhold
+    // status) carries the columns the P11 aggregate kernel reads.
     db.payslip.findMany.mockResolvedValue([
-      { userId: "u-yuki", net: 6_700 }, // October (locked)
-      { userId: "u-yuki", net: 6_600 }, // November (current)
+      { id: "ps-oct", userId: "u-yuki", slipNo: "PS-2026-10-001", runId: "run-0", gross: 6_700, net: 6_700, withholdStatus: "", earnings: JSON.stringify([{ key: "basic", label: "Basic Salary", amount: 6_700 }]), deductions: "[]" },
+      { id: "ps-nov", userId: "u-yuki", slipNo: "PS-2026-11-001", runId: "run-1", gross: 6_600, net: 6_600, withholdStatus: "", earnings: JSON.stringify([{ key: "basic", label: "Basic Salary", amount: 6_600 }]), deductions: "[]" },
     ]);
     const res = await getPayrollRun("run-1");
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.data.payslips[0].ytdNet).toBe(13_300);
+      // P11 — gross YTD accumulates alongside; MTD resets with the month
+      // (the November slip alone); component YTD merges the basic rows.
+      expect(res.data.payslips[0].ytdGross).toBe(13_300);
+      expect(res.data.payslips[0].mtdNet).toBe(6_600);
+      expect(res.data.payslips[0].componentYtd.find((r) => r.key === "basic")?.amount).toBe(13_300);
       expect(res.data.payslips[0].userName).toBe("Yuki Tanaka");
       expect(res.data.payslips[0].lopSource).toBe("AUTO");
       expect(res.data.run.totalNet).toBe(6_700);
@@ -1145,6 +1151,18 @@ describe("P0-1 — payslip self-service (getMyPayslips, persona-audit D-02)", ()
     expect(byPeriod.get("2025-12")).toBe(5_000);
     expect(byPeriod.get("2026-09")).toBe(6_500);
     expect(byPeriod.get("2026-10")).toBe(13_200);
+    // P11 — gross YTD alongside the net; MTD resets with each calendar
+    // month (Sep and Oct are separate months, so each is its own MTD).
+    const byGross = new Map(res.data.map((p) => [p.runPeriod, p.ytdGross] as const));
+    expect(byGross.get("2026-10")).toBe(13_200);
+    const byMtd = new Map(res.data.map((p) => [p.runPeriod, p.mtdNet] as const));
+    expect(byMtd.get("2026-09")).toBe(6_500);
+    expect(byMtd.get("2026-10")).toBe(6_700);
+    // Component YTD rows ride every slip (the payslipRow default lines are
+    // basic + transport on the earnings side).
+    const oct = res.data.find((p) => p.runPeriod === "2026-10");
+    expect(oct?.componentYtd.find((r) => r.key === "basic")?.amount).toBe(13_000);
+    expect(oct?.componentYtd.find((r) => r.key === "transport")?.amount).toBe(400);
     // Every mapped slip is a LOCKED record with the caller's own identity.
     for (const p of res.data) {
       expect(p.runStatus).toBe("LOCKED");
@@ -1481,25 +1499,26 @@ describe("P8 — createPayrollRun stamps WITHHELD slips inside an ACTIVE hold wi
   it("the YTD basis excludes withheld/released slips (money counts once, at release)", async () => {
     db.payrollRun.findUnique.mockResolvedValue({
       ...OPEN_RUN,
-      payslips: [payslipRow({ withholdStatus: "WITHHELD" })],
+      payslips: [payslipRow({ id: "ps-held", withholdStatus: "WITHHELD" })],
     });
     db.payrollRun.findMany.mockResolvedValue([
-      { id: "run-0", period: "2026-11" },
-      { id: "run-1", period: "2026-12" },
+      { id: "run-0", period: "2026-11", startDate: new Date("2026-11-01T00:00:00Z"), endDate: new Date("2026-11-30T00:00:00Z") },
+      { id: "run-1", period: "2026-12", startDate: new Date("2026-12-01T00:00:00Z"), endDate: new Date("2026-12-31T00:00:00Z") },
     ]);
-    // The mock honours the query's withholdStatus filter the DB would apply:
-    // only the normal October slip feeds the YTD sum (the held one is out).
+    // The mock mirrors the DB: the kernel sees BOTH slips (any withhold
+    // status) — the held December one carries the last paid values forward
+    // instead of accumulating.
     db.payslip.findMany.mockResolvedValue([
-      { userId: "u-yuki", net: 6_700, withholdStatus: "" },
+      { id: "ps-nov", userId: "u-yuki", slipNo: "PS-2026-11-001", runId: "run-0", gross: 6_700, net: 6_700, withholdStatus: "", earnings: "[]", deductions: "[]" },
+      { id: "ps-held", userId: "u-yuki", slipNo: "PS-2026-12-001", runId: "run-1", gross: 6_700, net: 6_700, withholdStatus: "WITHHELD", earnings: "[]", deductions: "[]" },
     ]);
     const res = await getPayrollRun("run-1");
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.data.payslips[0].withholdStatus).toBe("WITHHELD");
-      expect(res.data.payslips[0].ytdNet).toBe(6_700); // the held net never counts
+      expect(res.data.payslips[0].ytdNet).toBe(6_700); // the held net never counts — the November value carries forward
+      expect(res.data.payslips[0].mtdNet).toBe(0); // a held month pays nothing so far
     }
-    const where = db.payslip.findMany.mock.calls[0][0] as { where: { withholdStatus?: string } };
-    expect(where.where.withholdStatus).toBe("");
   });
 
   it("getMyPayslips — a held slip lists (badged) but never adds to YTD; a released one pays where it released", async () => {

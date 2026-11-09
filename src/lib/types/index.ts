@@ -808,10 +808,27 @@ export interface PayslipT {
   gross: number;
   net: number;
   ytdNet: number;
+  /** P11 (PR-B09) — read-time period aggregates: YTD gross alongside the
+   * YTD net, month-to-date net (the calendar month of the run's window
+   * end — meaningful when several slips land in one month, e.g. weekly
+   * cadences), and per-component YTD rows for the modal's per-line
+   * display. WITHHELD/RELEASED slips carry the last paid values. */
+  ytdGross: number;
+  mtdNet: number;
+  componentYtd: ComponentYtdRowT[];
   /** P8 (PR-19/PR-B13) — "" normal | WITHHELD (net held, not disbursed;
    * excluded from YTD) | RELEASED (paid via a WITHHELD_RELEASE adjustment
    * in a later period). */
   withholdStatus: "" | "WITHHELD" | "RELEASED";
+}
+
+/** P11 (PR-B09) — one per-component YTD row (side + line key + running
+ * year total). */
+export interface ComponentYtdRowT {
+  key: string;
+  label: string;
+  side: "EARNING" | "DEDUCTION";
+  amount: number;
 }
 
 /** P1 (PR-12/PR-B10, F2.3) — one adapter row: a special payment (encashment,

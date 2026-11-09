@@ -91,6 +91,11 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
               <span className="ml-1 normal-case font-normal" title="Your view counts locked (paid) runs only — the HR console's YTD also includes the currently open month.">(paid runs only)</span>
             </div>
             <div className="text-sm font-semibold tabular-nums">{money(latest.ytdNet)}</div>
+            {/* P11 (PR-B09) — the month-to-date net: this calendar month's
+                paid slips so far (several runs can land in one month). */}
+            <div className="text-xs text-muted-foreground mt-0.5" title="The net paid so far this calendar month (all of this month's finalized slips, this one included)">
+              this month: {money(latest.mtdNet)}
+            </div>
           </div>
           <button className="f-btn f-btn-secondary ml-auto" onClick={() => setOpen(latest)} data-testid="my-payslips-latest-open">
             View payslip

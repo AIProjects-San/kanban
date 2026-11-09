@@ -81,6 +81,9 @@ import {
   runWindowStart,
   type PayrollFrequency,
 } from "@/lib/payroll-windows";
+// P11 (PR-B09) — read-time payslip aggregates (YTD gross/net, MTD net,
+// per-component YTD) — ONE kernel for both the HR and self-service reads.
+import { computeRunningAggregates } from "@/lib/payslip-aggregates";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -722,10 +725,12 @@ export async function getPayrollRun(
     const runEnd = runWindowEnd(run.period, run.endDate);
     const year = runEnd ? runEnd.getUTCFullYear() : Number(run.period.slice(0, 4));
 
-    // YTD basis: this user's payslips in same-year runs up to this period.
+    // YTD basis: every payslip in same-year runs up to this period.
     // P8 — WITHHELD/RELEASED slips never count: a held net is not paid, and
     // a released one already paid through its WITHHELD_RELEASE adjustment
-    // (money counts exactly once, in the release period's slip).
+    // (money counts exactly once, in the release period's slip) — the
+    // aggregate kernel carries their last paid values forward instead of
+    // accumulating them.
     const yearRuns = await db.payrollRun.findMany({
       select: { id: true, period: true, startDate: true, endDate: true },
     });
@@ -735,14 +740,28 @@ export async function getPayrollRun(
         return end != null && runEnd != null && end.getUTCFullYear() === year && end.getTime() <= runEnd.getTime();
       })
       .map((r) => r.id);
+    const windowEndByRun = new Map(
+      yearRuns.map((r) => [r.id, runWindowEnd(r.period, r.endDate)?.getTime() ?? 0]),
+    );
+    // P11 (PR-B09) — read-time aggregates through the ONE kernel both
+    // surfaces share: YTD gross/net, MTD net and per-component YTD.
     const yearSlips = await db.payslip.findMany({
-      where: { runId: { in: runIdsUpTo }, withholdStatus: "" },
-      select: { userId: true, net: true },
+      where: { runId: { in: runIdsUpTo } },
+      select: { id: true, userId: true, slipNo: true, gross: true, net: true, withholdStatus: true, earnings: true, deductions: true, runId: true },
     });
-    const ytdByUser = new Map<string, number>();
-    for (const s of yearSlips) {
-      ytdByUser.set(s.userId, Math.round(((ytdByUser.get(s.userId) ?? 0) + s.net) * 100) / 100);
-    }
+    const aggregates = computeRunningAggregates(
+      yearSlips.map((s) => ({
+        id: s.id,
+        userId: s.userId,
+        slipNo: s.slipNo,
+        gross: s.gross,
+        net: s.net,
+        withholdStatus: s.withholdStatus,
+        earnings: s.earnings,
+        deductions: s.deductions,
+        windowEndMs: windowEndByRun.get(s.runId) ?? 0,
+      })),
+    );
 
     const [users, profiles] = await Promise.all([
       db.user.findMany({ select: { id: true, name: true } }),
@@ -773,7 +792,13 @@ export async function getPayrollRun(
         paidDays: p.paidDays ?? null,
         gross: p.gross,
         net: p.net,
-        ytdNet: ytdByUser.get(p.userId) ?? p.net,
+        // P11 — the kernel's read-time aggregates (HR basis: every run of
+        // the year up to and including this one, held/released money
+        // carried forward, never accumulated).
+        ytdNet: aggregates.get(p.id)?.ytdNet ?? p.net,
+        ytdGross: aggregates.get(p.id)?.ytdGross ?? p.gross,
+        mtdNet: aggregates.get(p.id)?.mtdNet ?? p.net,
+        componentYtd: aggregates.get(p.id)?.componentYtd ?? [],
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
 
@@ -1257,31 +1282,25 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
       }),
     ]);
 
-    // P10 — running YTD per calendar year (the year the run's window ENDS
-    // in) over the locked-only basis, ascending by window end (period
-    // strings do not sort chronologically across cadences); slipNo breaks
-    // ties, though a user has one slip per run.
-    // P8 — WITHHELD/RELEASED slips never add to YTD: a held net is not paid,
-    // and a released one pays through its adjustment in the release period
-    // (the money counts exactly once, there).
+    // P11 (PR-B09) — read-time aggregates through the ONE kernel both
+    // surfaces share (self-service basis: LOCKED runs only, held/released
+    // money carried forward, never accumulated). Ordering + year/month
+    // attribution by the run's REAL window end (P10).
     const runEndMs = (p: { run: { period: string; startDate: Date | null; endDate: Date | null } }) =>
       runWindowEnd(p.run.period, p.run.endDate)?.getTime() ?? 0;
-    const yearOf = (p: { run: { period: string; startDate: Date | null; endDate: Date | null } }) => {
-      const end = runWindowEnd(p.run.period, p.run.endDate);
-      return end ? end.getUTCFullYear() : Number(p.run.period.slice(0, 4));
-    };
-    const runningByYear = new Map<string, number>();
-    const ytdBySlip = new Map<string, number>();
-    for (const s of [...slips].sort((a, b) => runEndMs(a) - runEndMs(b) || a.slipNo.localeCompare(b.slipNo))) {
-      const year = String(yearOf(s));
-      if (s.withholdStatus === "WITHHELD" || s.withholdStatus === "RELEASED") {
-        ytdBySlip.set(s.id, runningByYear.get(year) ?? 0); // held/released: YTD carries the last paid value
-        continue;
-      }
-      const acc = Math.round(((runningByYear.get(year) ?? 0) + s.net) * 100) / 100;
-      runningByYear.set(year, acc);
-      ytdBySlip.set(s.id, acc);
-    }
+    const aggregates = computeRunningAggregates(
+      slips.map((s) => ({
+        id: s.id,
+        userId: s.userId,
+        slipNo: s.slipNo,
+        gross: s.gross,
+        net: s.net,
+        withholdStatus: s.withholdStatus,
+        earnings: s.earnings,
+        deductions: s.deductions,
+        windowEndMs: runEndMs(s),
+      })),
+    );
 
     return [...slips]
       .sort((a, b) => runEndMs(b) - runEndMs(a) || a.slipNo.localeCompare(b.slipNo))
@@ -1304,7 +1323,12 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         paidDays: p.paidDays ?? null,
         gross: p.gross,
         net: p.net,
-        ytdNet: ytdBySlip.get(p.id) ?? p.net,
+        // P11 — the kernel's aggregates (self-service basis: locked runs
+        // only).
+        ytdNet: aggregates.get(p.id)?.ytdNet ?? p.net,
+        ytdGross: aggregates.get(p.id)?.ytdGross ?? p.gross,
+        mtdNet: aggregates.get(p.id)?.mtdNet ?? p.net,
+        componentYtd: aggregates.get(p.id)?.componentYtd ?? [],
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
   });

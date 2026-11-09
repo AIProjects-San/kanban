@@ -29,7 +29,7 @@ function payslip(overrides: Partial<PayslipT> = {}): PayslipT {
       { key: "transport", label: "Transport Allowance", amount: 200 },
     ],
     deductions: [],
-    note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_700, net: 6_700, ytdNet: 13_400, withholdStatus: "",
+    note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_700, net: 6_700, ytdNet: 13_400, ytdGross: 13_400, mtdNet: 6_700, componentYtd: [{ key: "basic", label: "Basic Salary", side: "EARNING", amount: 13_000 }, { key: "transport", label: "Transport Allowance", side: "EARNING", amount: 400 }], withholdStatus: "",
     ...overrides,
   };
 }
@@ -116,6 +116,18 @@ describe("PayslipModal (OPEN run)", () => {
     const basis = screen.getByTestId("payslip-ytd-basis");
     expect(basis.textContent).toContain("HR basis");
     expect(basis.textContent).toContain("locked (paid) runs only");
+  });
+
+  it("P11 (PR-B09) — shows YTD gross, MTD net and per-line component YTD", () => {
+    render(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    // The totals box carries the three read-time aggregates.
+    expect(screen.getByTestId("payslip-ytd-gross").textContent).toBe("$13,400.00");
+    expect(screen.getByTestId("payslip-ytd-net").textContent).toBe("$13,400.00");
+    expect(screen.getByTestId("payslip-mtd-net").textContent).toBe("$6,700.00");
+    // Each earnings line shows its component YTD (basic 13,000 /
+    // transport 400 through this period).
+    expect(screen.getByTestId("payslip-earnings-ytd-0").textContent).toContain("$13,000.00");
+    expect(screen.getByTestId("payslip-earnings-ytd-1").textContent).toContain("$400.00");
   });
 
   it("F-R2 — a conflict error keeps the modal open (the toast says who saved first)", async () => {
