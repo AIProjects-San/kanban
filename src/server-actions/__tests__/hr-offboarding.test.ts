@@ -396,7 +396,13 @@ describe("generateFullAndFinal — gratuity (P7)", () => {
       { id: "s-2", fromYears: 3, toYears: 4, fraction: 0.5 },
       { id: "s-3", fromYears: 5, toYears: null, fraction: 1 },
     ]);
-    db.payslip.findMany.mockResolvedValue([{ gross: 6_200 }, { gross: 6_400 }, { gross: 6_000 }]);
+    // P10 — the gratuity last-N read includes the run (period + window end)
+    // so mixed-cadence history orders chronologically.
+    db.payslip.findMany.mockResolvedValue([
+      { gross: 6_200, run: { period: "2026-09", endDate: new Date("2026-09-30T00:00:00Z") } },
+      { gross: 6_400, run: { period: "2026-10", endDate: new Date("2026-10-31T00:00:00Z") } },
+      { gross: 6_000, run: { period: "2026-11", endDate: new Date("2026-11-30T00:00:00Z") } },
+    ]);
     db.fullAndFinalStatement.create.mockImplementation(
       async ({ data }: { data: Record<string, unknown> }) => ({ id: "fnf-g", status: "UNSETTLED", ...data }),
     );

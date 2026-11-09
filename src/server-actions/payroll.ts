@@ -37,12 +37,12 @@ import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseComponents, type OfferComponent } from "@/lib/offer-math";
-import { workingDaysInPeriod, paymentWindow, type HolidayLookup } from "@/lib/working-days";
-import { deriveLopDays, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
+import { workingDaysBetween, paymentWindowBetween, type HolidayLookup } from "@/lib/working-days";
+import { deriveLopDaysBetween, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { getHolidayLookup } from "./hr-shared";
 import {
-  monthlyEarningsFromStructure,
+  windowEarningsFromStructure,
   payslipTotals,
   scaleEarningsToPaidDays,
   lopBasisGross,
@@ -72,6 +72,15 @@ import {
   planOvertimePayout,
   sumOvertimeMinutes,
 } from "@/lib/overtime-bridge";
+// P10 (PR-B05) — the payroll-windows kernel: every cadence resolves to ONE
+// window {start, end, periodKey}; period-string comparisons became window
+// comparisons so mixed cadences stay chronological.
+import {
+  resolvePayrollWindow,
+  runWindowEnd,
+  runWindowStart,
+  type PayrollFrequency,
+} from "@/lib/payroll-windows";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -80,6 +89,7 @@ type StructureRow = {
   id: string; userId: string; components: string; notes: string;
   effectiveFrom: Date; isActive: boolean; createdAt: Date;
   maxBenefits?: number | null;
+  frequency?: string | null;
 };
 
 function serializeStructure(
@@ -101,6 +111,7 @@ function serializeStructure(
     isActive: s.isActive,
     createdAt: s.createdAt.toISOString(),
     maxBenefits: s.maxBenefits ?? 0,
+    frequency: (s.frequency || "MONTHLY") as SalaryStructureT["frequency"],
   };
 }
 
@@ -165,6 +176,8 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
       createdById: auth.userId,
       // P5 — the flexible-benefit cap rides the structure (0 = no cap).
       ...(data.maxBenefits !== undefined ? { maxBenefits: data.maxBenefits } : {}),
+      // P10 — the cadence this structure pays on (default MONTHLY).
+      frequency: data.frequency,
     };
     let row: { id: string };
     if (data.id) {
@@ -326,7 +339,7 @@ interface PayrollFacts {
 
 async function deriveLopDaysForUsers(
   userIds: string[],
-  period: string,
+  window: { start: Date; end: Date },
   holidays: HolidayLookup,
 ): Promise<Map<string, PayrollFacts>> {
   // PR-B07 (S4) — the workspace's unmarked-day policy rides every
@@ -335,10 +348,10 @@ async function deriveLopDaysForUsers(
   const unmarkedMode = config.workspace.unmarkedAttendanceMode;
   const result = new Map<string, PayrollFacts>();
   if (userIds.length === 0) return result;
-  const [y, m] = period.split("-").map(Number);
-  if (!y || !m || m < 1 || m > 12) return result;
-  const start = new Date(Date.UTC(y, m - 1, 1));
-  const end = new Date(Date.UTC(y, m, 0));
+  // P10 — the window is the RUN's (any cadence), not a parsed month.
+  const start = window.start;
+  const end = window.end;
+  if (!(start <= end)) return result;
 
   // S4 — ALL statuses are read (not just ABSENT/HALF_DAY): in ABSENT mode a
   // PRESENT/WFH/ON_LEAVE record is the difference between "marked" and
@@ -394,10 +407,10 @@ async function deriveLopDaysForUsers(
   }
   for (const [u, { marks: userMarks, spans, opts }] of byUser) {
     // S5 — the payment window from the same employment facts the LOP walk
-    // uses (one read, one truth): working days in [hireDate, LWD] ∩ period.
-    const win = paymentWindow(period, holidays, { from: opts.employmentFrom, until: opts.employmentUntil });
+    // uses (one read, one truth): working days in [hireDate, LWD] ∩ window.
+    const win = paymentWindowBetween(start, end, holidays, { from: opts.employmentFrom, until: opts.employmentUntil });
     result.set(u, {
-      lopDays: deriveLopDays(period, holidays, userMarks, spans, opts),
+      lopDays: deriveLopDaysBetween(start, end, holidays, userMarks, spans, opts),
       paidDays: win.paidDays,
       clippedFrom: win.clippedFrom,
       clippedUntil: win.clippedUntil,
@@ -406,61 +419,81 @@ async function deriveLopDaysForUsers(
   return result;
 }
 
-/** The runs list (newest period first) with per-run totals. */
+/** The runs list (newest window first — P10: sorted by the run's real
+ * window END, falling back to the parsed period key; period strings do not
+ * sort chronologically across cadences) with per-run totals. */
 export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
   return toResult(async () => {
     await requirePermission("payroll:manage");
     const runs = await db.payrollRun.findMany({
       include: { payslips: { select: { gross: true, net: true } } },
-      orderBy: { period: "desc" },
+      orderBy: { createdAt: "desc" },
     });
     const lockers = await db.user.findMany({
       where: { id: { in: runs.map((r) => r.lockedById).filter(Boolean) } },
       select: { id: true, name: true },
     });
     const lockerMap = new Map(lockers.map((u) => [u.id, u.name]));
-    return runs.map((r) => ({
-      id: r.id,
-      period: r.period,
-      status: r.status as "OPEN" | "LOCKED",
-      lockedBy: r.lockedById ? lockerMap.get(r.lockedById) ?? null : null,
-      lockedAt: r.lockedAt ? r.lockedAt.toISOString() : null,
-      payslipCount: r.payslips.length,
-      totalGross: Math.round(r.payslips.reduce((s, p) => s + p.gross, 0) * 100) / 100,
-      totalNet: Math.round(r.payslips.reduce((s, p) => s + p.net, 0) * 100) / 100,
-      workingDays: r.workingDays,
-      createdAt: r.createdAt.toISOString(),
-    }));
+    return runs
+      .map((r) => ({
+        id: r.id,
+        period: r.period,
+        frequency: r.frequency as PayrollRunT["frequency"],
+        startDate: r.startDate ? r.startDate.toISOString() : null,
+        endDate: r.endDate ? r.endDate.toISOString() : null,
+        status: r.status as "OPEN" | "LOCKED",
+        lockedBy: r.lockedById ? lockerMap.get(r.lockedById) ?? null : null,
+        lockedAt: r.lockedAt ? r.lockedAt.toISOString() : null,
+        payslipCount: r.payslips.length,
+        totalGross: Math.round(r.payslips.reduce((s, p) => s + p.gross, 0) * 100) / 100,
+        totalNet: Math.round(r.payslips.reduce((s, p) => s + p.net, 0) * 100) / 100,
+        workingDays: r.workingDays,
+        createdAt: r.createdAt.toISOString(),
+      }))
+      .sort((a, b) => (runWindowEnd(b.period, b.endDate)?.getTime() ?? 0) - (runWindowEnd(a.period, a.endDate)?.getTime() ?? 0));
   });
 }
 
-/** Create a monthly run and snapshot every ACTIVE structure into payslips
- * (monthly = annual ÷ 12). One run per period (unique). F1.4: each slip's
- * loss-of-pay days are pre-derived from attendance + unpaid leave
+/** Create a payroll run on ANY cadence (P10/PR-B05) and snapshot every
+ * ACTIVE structure of the SAME frequency into payslips (amounts = annual ÷
+ * windowsInYear — monthly = ÷ 12, byte-identical to the pre-P10 world). One
+ * run per window (unique period key). F1.4: each slip's loss-of-pay days
+ * are pre-derived from attendance + unpaid leave over the run's real window
  * (lopSource AUTO) and the LOP deduction line is materialized at creation. */
 export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number; adjustmentsApplied: number; adjustmentsSkipped: number }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
     const data = parseOrThrow(createPayrollRunSchema, input);
-    const existing = await db.payrollRun.findUnique({ where: { period: data.period }, select: { id: true } });
-    if (existing) throw new AuthorizationError(`A run for ${data.period} already exists.`);
 
-    const structures = await db.salaryStructure.findMany({ where: { isActive: true } });
+    // P10 — the kernel resolves the cadence + anchor into ONE window; the
+    // period key it returns is the unique human identifier. Invalid anchors
+    // (2026-02-30) are refused here, before any read.
+    const window = resolvePayrollWindow(data.frequency, data.anchorDate);
+    if (!window) throw new AuthorizationError("Pick a valid anchor date (YYYY-MM-DD) inside the window.");
+
+    const existing = await db.payrollRun.findUnique({ where: { period: window.periodKey }, select: { id: true } });
+    if (existing) throw new AuthorizationError(`A run for ${window.periodKey} already exists.`);
+
+    // The benchmark's frequency-matched assignment: only structures whose
+    // cadence matches the run's join it (one ACTIVE structure per employee).
+    // Legacy rows default MONTHLY, so monthly runs see exactly the same set
+    // as before.
+    const structures = await db.salaryStructure.findMany({
+      where: { isActive: true, frequency: window.frequency },
+    });
     if (structures.length === 0) {
-      throw new AuthorizationError("No active salary structures — create at least one before running payroll.");
+      throw new AuthorizationError(
+        `No active ${window.frequency.toLowerCase()} salary structures — create at least one before running ${window.frequency.toLowerCase()} payroll.`,
+      );
     }
 
-    // F1.1 — the run's holiday-aware LOP denominator, denormalized at
-    // creation and never re-derived: Mon–Fri days of the period minus
+    // F1.1 — the run's holiday-aware LOP denominator over the WINDOW,
+    // denormalized at creation and never re-derived: Mon–Fri days minus
     // holiday-calendar entries (half-days 0.5). An empty calendar yields the
     // plain Mon–Fri count — only PRE-F1.1 rows carry 0, and readers fall
-    // back to the calendar month length for those (daysInPeriod).
-    const [y, m] = data.period.split("-").map(Number);
-    const periodHolidays = await getHolidayLookup(
-      new Date(Date.UTC(y, m - 1, 1)),
-      new Date(Date.UTC(y, m, 0)),
-    );
-    const runWorkingDays = workingDaysInPeriod(data.period, periodHolidays);
+    // back to the calendar length for those (daysInPeriod on monthly keys).
+    const periodHolidays = await getHolidayLookup(window.start, window.end);
+    const runWorkingDays = workingDaysBetween(window.start, window.end, periodHolidays);
     // S7 (PR-B23) — the workspace rounding policy rides run creation
     // (snapshot: flips affect future runs, never stored slips). P9 (PR-B26)
     // — the overtime payout knob rides the same read.
@@ -470,23 +503,23 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
 
     // F1.4 — derive each payslip's loss-of-pay days from attendance marks
     // (ABSENT / HALF_DAY) + unpaid approved leave, charged only on working
-    // days of the period. Snapshot semantics: the value is written once at
-    // creation (lopSource AUTO); corrections afterwards go through a manual
-    // HR override in updatePayslip, never a silent re-derivation.
+    // days of the run's window. Snapshot semantics: the value is written
+    // once at creation (lopSource AUTO); corrections afterwards go through
+    // a manual HR override in updatePayslip, never a silent re-derivation.
     // S5 (PR-B06) — the same facts carry each employee's PAID DAYS (the
     // employment-window working-day count); earnings scale by
-    // paidDays / workingDays so mid-month joiners/leavers are paid for the
+    // paidDays / workingDays so mid-window joiners/leavers are paid for the
     // days they were employed (deliberate default-ON correctness fix;
     // pre-S5 rows read as full-period).
     const lopByUser = await deriveLopDaysForUsers(
       structures.map((s) => s.userId),
-      data.period,
+      { start: window.start, end: window.end },
       periodHolidays,
     );
     const autoLopCount = [...lopByUser.values()].filter((f) => f.lopDays > 0).length;
     const clippedCount = [...lopByUser.values()].filter((f) => f.clippedFrom || f.clippedUntil).length;
 
-    // P9 (PR-B26, AT-09 lite) — the overtime bridge: sum the period's
+    // P9 (PR-B26, AT-09 lite) — the overtime bridge: sum the window's
     // DERIVED overtime minutes per employee (the S2 facts snapshotted on
     // the attendance rows). Only queried when the payout knob is on — the
     // disabled path is byte-identical to pre-P9.
@@ -494,7 +527,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       ? sumOvertimeMinutes(
           await db.attendanceRecord.findMany({
             where: {
-              date: { gte: new Date(Date.UTC(y, m - 1, 1)), lte: new Date(Date.UTC(y, m, 0)) },
+              date: { gte: window.start, lte: window.end },
               overtimeMinutes: { not: null },
             },
             select: { userId: true, overtimeMinutes: true },
@@ -503,27 +536,32 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       : new Map<string, number>();
 
     // P1 (PR-12/PR-B10, F2.3) — the adjustment adapter consumption: every
-    // PENDING row due in this period resolves onto its employee's payslip
+    // PENDING row due in this window resolves onto its employee's payslip
     // through the pure two-pass kernel, and the row updates commit in the
     // SAME transaction as the run (a consumed row without its money, or
     // money without its row, is impossible — the S17 discipline).
+    // P10 — no period-string pre-filter: due-ness is the window-aware
+    // predicate's call (fetching all PENDING rows is bounded and lets
+    // cross-cadence targets meet their first overlapping run).
     const pendingAdjustments = await db.payAdjustment.findMany({
-      where: { status: "PENDING", period: { lte: data.period } },
+      where: { status: "PENDING" },
       orderBy: { createdAt: "asc" },
     });
     const dueByUser = new Map<string, PayAdjustmentRow[]>();
     for (const row of pendingAdjustments) {
-      if (!isDueInPeriod(row, data.period)) continue;
+      if (!isDueInPeriod(row, window.periodKey)) continue;
       const list = dueByUser.get(row.userId);
       if (list) list.push(row);
       else dueByUser.set(row.userId, [row]);
     }
     const slipUserIds = new Set(structures.map((s) => s.userId));
     // Due rows whose employee has no slip in this run: ONE_SHOT/OVERWRITE
-    // periods never come back, so they are SKIPPED with a visible reason;
-    // RECURRING rows stay PENDING (a future run may yet include them).
+    // windows may still come back (another cadence's run can meet them),
+    // but a period that never recurs again is skipped with a visible
+    // reason; RECURRING rows stay PENDING (a future run may yet include
+    // them).
     const noSlipSkips = pendingAdjustments.filter(
-      (row) => isDueInPeriod(row, data.period) && !slipUserIds.has(row.userId) && row.recurrence !== "RECURRING",
+      (row) => isDueInPeriod(row, window.periodKey) && !slipUserIds.has(row.userId) && row.recurrence !== "RECURRING",
     );
     type ConsumedEntry = { row: PayAdjustmentRow; final: boolean };
     const consumedEntries: ConsumedEntry[] = [];
@@ -536,14 +574,23 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     const activeWithholdings = await db.salaryWithholding.findMany({ where: { status: "ACTIVE" } });
     const heldUserIds = new Set(
       activeWithholdings
-        .filter((w) => isPeriodHeld({ fromPeriod: w.fromPeriod, untilPeriod: w.untilPeriod }, data.period))
+        .filter((w) => isPeriodHeld({ fromPeriod: w.fromPeriod, untilPeriod: w.untilPeriod }, window.periodKey))
         .map((w) => w.userId),
     );
+
+    // P10 — per-window amounts: annual ÷ windowsInYear of the window's
+    // start year (MONTHLY = ÷ 12, the pre-P10 numbers exactly).
+    const earningsYear = window.start.getUTCFullYear();
+    const windowEarnings = (components: OfferComponent[]) =>
+      windowEarningsFromStructure(components, window.frequency, earningsYear);
 
     const run = await db.$transaction(async (tx) => {
       const created = await tx.payrollRun.create({
         data: {
-          period: data.period,
+          period: window.periodKey,
+          frequency: window.frequency,
+          startDate: window.start,
+          endDate: window.end,
           status: "OPEN",
           createdById: auth.userId,
           workingDays: runWorkingDays,
@@ -552,18 +599,18 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
               const facts = lopByUser.get(s.userId)
                 ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false };
               const earnings = scaleEarningsToPaidDays(
-                monthlyEarningsFromStructure(parseComponents(s.components)),
+                windowEarnings(parseComponents(s.components)),
                 facts.paidDays,
                 runWorkingDays,
               );
               // P9 (PR-B26) — the overtime line prices from the structure's
-              // UNSCALED monthly gross (÷ working days ÷ 8h) and lands AFTER
-              // the LOP basis: overtime minutes were worked on attended
+              // UNSCALED per-window gross (÷ working days ÷ 8h) and lands
+              // AFTER the LOP basis: overtime minutes were worked on attended
               // days, so absence docking never touches them (the S6 spirit).
               const otPayout = planOvertimePayout({
                 enabled: overtimePayEnabled,
                 minutes: otByUser.get(s.userId) ?? null,
-                monthlyGross: lineSum(monthlyEarningsFromStructure(parseComponents(s.components))),
+                monthlyGross: lineSum(windowEarnings(parseComponents(s.components))),
                 workingDays: runWorkingDays,
               });
               const earningsWithOt: PayslipLine[] = otPayout
@@ -575,7 +622,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
               // S6 — the LOP basis excludes window-exempt lines (a flat
               // allowance is not reduced by absent days).
               const lopDeductions = lopDays > 0
-                ? withLopLine([], lopBasisGross(earnings), lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
+                ? withLopLine([], lopBasisGross(earnings), lopDays, window.periodKey, runWorkingDays > 0 ? runWorkingDays : undefined)
                 : [];
               // P1 — adjustments land on the docked base (post scaling,
               // post LOP, overtime included), the rounding line wraps the
@@ -583,7 +630,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
               const applied = applyAdjustments(
                 { earnings: earningsWithOt, deductions: lopDeductions },
                 dueByUser.get(s.userId) ?? [],
-                data.period,
+                window.periodKey,
               );
               for (const c of applied.consumed) {
                 const row = (dueByUser.get(s.userId) ?? []).find((r) => r.id === c.id);
@@ -594,7 +641,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
               const { gross, net } = payslipTotals(finalEarnings, deductions);
               return {
                 userId: s.userId,
-                slipNo: slipNumber(data.period, i + 1),
+                slipNo: slipNumber(window.periodKey, i + 1),
                 earnings: JSON.stringify(finalEarnings),
                 deductions: JSON.stringify(deductions),
                 lopDays,
@@ -619,14 +666,14 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           where: { id: row.id },
           data: {
             status: final ? "CONSUMED" : "PENDING",
-            lastConsumedPeriod: data.period,
+            lastConsumedPeriod: window.periodKey,
             consumedRunId: created.id,
           },
         });
       }
       const skipById = new Map<string, string>();
       for (const s of kernelSkips) skipById.set(s.id, s.reason);
-      for (const row of noSlipSkips) skipById.set(row.id, `no payslip for the employee in the ${data.period} run`);
+      for (const row of noSlipSkips) skipById.set(row.id, `no payslip for the employee in the ${window.periodKey} run`);
       for (const [id, reason] of skipById) {
         await tx.payAdjustment.update({ where: { id }, data: { status: "SKIPPED", skipReason: reason } });
       }
@@ -645,15 +692,16 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
+      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${run.payslips.length} payslips from the active ${window.frequency.toLowerCase()} salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
     });
     revalidatePath("/");
     return { id: run.id, payslipCount: run.payslips.length, adjustmentsApplied, adjustmentsSkipped };
   });
 }
 
-/** One run's payslips with names + YTD net (same-year periods up to and
- * including this run — OPEN periods count so the current month is live). */
+/** One run's payslips with names + YTD net (windows ending in the same
+ * calendar year, up to and including this run — OPEN periods count so the
+ * current period is live). */
 export async function getPayrollRun(
   runId: string,
 ): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT"; roundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST" }>> {
@@ -665,17 +713,28 @@ export async function getPayrollRun(
       include: { payslips: true },
     });
     if (!run) throw new AuthorizationError("Payroll run not found.");
-    const year = run.period.slice(0, 4);
+
+    // P10 — YTD by window END dates: a run belongs to the calendar year its
+    // window ENDS in, and "up to this run" compares end instants (identical
+    // to the old period-string logic for monthly rows; chronological for
+    // mixed cadences — a weekly run ending Nov 8 counts toward the November
+    // month-end YTD).
+    const runEnd = runWindowEnd(run.period, run.endDate);
+    const year = runEnd ? runEnd.getUTCFullYear() : Number(run.period.slice(0, 4));
 
     // YTD basis: this user's payslips in same-year runs up to this period.
     // P8 — WITHHELD/RELEASED slips never count: a held net is not paid, and
     // a released one already paid through its WITHHELD_RELEASE adjustment
     // (money counts exactly once, in the release period's slip).
     const yearRuns = await db.payrollRun.findMany({
-      where: { period: { startsWith: year } },
-      select: { id: true, period: true },
+      select: { id: true, period: true, startDate: true, endDate: true },
     });
-    const runIdsUpTo = yearRuns.filter((r) => r.period <= run.period).map((r) => r.id);
+    const runIdsUpTo = yearRuns
+      .filter((r) => {
+        const end = runWindowEnd(r.period, r.endDate);
+        return end != null && runEnd != null && end.getUTCFullYear() === year && end.getTime() <= runEnd.getTime();
+      })
+      .map((r) => r.id);
     const yearSlips = await db.payslip.findMany({
       where: { runId: { in: runIdsUpTo }, withholdStatus: "" },
       select: { userId: true, net: true },
@@ -722,6 +781,9 @@ export async function getPayrollRun(
       run: {
         id: run.id,
         period: run.period,
+        frequency: run.frequency as PayrollRunT["frequency"],
+        startDate: run.startDate ? run.startDate.toISOString() : null,
+        endDate: run.endDate ? run.endDate.toISOString() : null,
         status: run.status as "OPEN" | "LOCKED",
         lockedBy: null,
         lockedAt: run.lockedAt ? run.lockedAt.toISOString() : null,
@@ -895,6 +957,14 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       where: { userId: data.userId, isActive: true },
     });
     if (!structure) throw new AuthorizationError("No active salary structure for this employee — create one first.");
+    // P10 — the joiner's structure cadence must match the run's (the same
+    // frequency-matched rule run creation applies).
+    const runFrequency = (run.frequency || "MONTHLY") as PayrollFrequency;
+    if ((structure.frequency || "MONTHLY") !== runFrequency) {
+      throw new AuthorizationError(
+        `This employee's active structure is ${(structure.frequency || "MONTHLY").toLowerCase()} — it cannot join a ${runFrequency.toLowerCase()} run.`,
+      );
+    }
     // P8 — an ACTIVE hold covering the run's period stamps this joiner's
     // slip WITHHELD at birth (same rule as run creation).
     const activeHold = await db.salaryWithholding.findFirst({
@@ -905,14 +975,21 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       ? isPeriodHeld({ fromPeriod: activeHold.fromPeriod, untilPeriod: activeHold.untilPeriod }, run.period)
       : false;
     const count = await db.payslip.count({ where: { runId: run.id } });
-    const earnings = monthlyEarningsFromStructure(parseComponents(structure.components));
-    // F1.4 — same derivation as createPayrollRun, for this one joiner.
-    const [py, pm] = run.period.split("-").map(Number);
-    const periodHolidays = await getHolidayLookup(
-      new Date(Date.UTC(py, pm - 1, 1)),
-      new Date(Date.UTC(py, pm, 0)),
+    // P10 — the run's REAL window (stored dates, falling back to the parsed
+    // period key for pre-backfill rows) drives every per-slip derivation.
+    const windowStart = runWindowStart(run.period, run.startDate);
+    const windowEnd = runWindowEnd(run.period, run.endDate);
+    if (!windowStart || !windowEnd) {
+      throw new AuthorizationError("The run's period is not a parseable payroll window — recreate the run.");
+    }
+    const earnings = windowEarningsFromStructure(
+      parseComponents(structure.components),
+      runFrequency,
+      windowStart.getUTCFullYear(),
     );
-    const lopByUser = await deriveLopDaysForUsers([data.userId], run.period, periodHolidays);
+    // F1.4 — same derivation as createPayrollRun, for this one joiner.
+    const periodHolidays = await getHolidayLookup(windowStart, windowEnd);
+    const lopByUser = await deriveLopDaysForUsers([data.userId], { start: windowStart, end: windowEnd }, periodHolidays);
     const facts = lopByUser.get(data.userId)
       ?? { lopDays: 0, paidDays: run.workingDays, clippedFrom: false, clippedUntil: false };
     const lopDays = facts.lopDays;
@@ -933,13 +1010,13 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
     const workspaceConfig = await getWorkspaceConfig();
     const roundingMode = workspaceConfig.workspace.payrollRoundingMode;
     const overtimePayEnabled = workspaceConfig.workspace.overtimePayEnabled;
-    // P9 — this joiner's overtime minutes over the run's period (queried
+    // P9 — this joiner's overtime minutes over the run's window (queried
     // only when the payout knob is on).
     const otMinutes = overtimePayEnabled
       ? (await db.attendanceRecord.findMany({
           where: {
             userId: data.userId,
-            date: { gte: new Date(Date.UTC(py, pm - 1, 1)), lte: new Date(Date.UTC(py, pm, 0)) },
+            date: { gte: windowStart, lte: windowEnd },
             overtimeMinutes: { not: null },
           },
           select: { overtimeMinutes: true },
@@ -959,7 +1036,9 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
     // P1 (F2.3) — this joiner's due adjustments ride the new slip (same
     // kernel + same transaction discipline as run creation).
     const pendingAdjustments = await db.payAdjustment.findMany({
-      where: { status: "PENDING", period: { lte: run.period }, userId: data.userId },
+      // P10 — no period-string pre-filter: the window-aware predicate
+      // decides due-ness (isDueInPeriod below).
+      where: { status: "PENDING", userId: data.userId },
       orderBy: { createdAt: "asc" },
     });
     const due = pendingAdjustments.filter((row) => isDueInPeriod(row, run.period));
@@ -1170,7 +1249,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
     const [slips, profile] = await Promise.all([
       db.payslip.findMany({
         where: { userId: auth.userId, run: { status: "LOCKED" } },
-        include: { run: { select: { period: true, workingDays: true } } },
+        include: { run: { select: { period: true, workingDays: true, startDate: true, endDate: true } } },
       }),
       db.employeeProfile.findUnique({
         where: { userId: auth.userId },
@@ -1178,15 +1257,23 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
       }),
     ]);
 
-    // Running YTD per calendar year over the locked-only basis (ascending
-    // period order; slipNo breaks ties, though a user has one slip per run).
+    // P10 — running YTD per calendar year (the year the run's window ENDS
+    // in) over the locked-only basis, ascending by window end (period
+    // strings do not sort chronologically across cadences); slipNo breaks
+    // ties, though a user has one slip per run.
     // P8 — WITHHELD/RELEASED slips never add to YTD: a held net is not paid,
     // and a released one pays through its adjustment in the release period
     // (the money counts exactly once, there).
+    const runEndMs = (p: { run: { period: string; startDate: Date | null; endDate: Date | null } }) =>
+      runWindowEnd(p.run.period, p.run.endDate)?.getTime() ?? 0;
+    const yearOf = (p: { run: { period: string; startDate: Date | null; endDate: Date | null } }) => {
+      const end = runWindowEnd(p.run.period, p.run.endDate);
+      return end ? end.getUTCFullYear() : Number(p.run.period.slice(0, 4));
+    };
     const runningByYear = new Map<string, number>();
     const ytdBySlip = new Map<string, number>();
-    for (const s of [...slips].sort((a, b) => a.run.period.localeCompare(b.run.period) || a.slipNo.localeCompare(b.slipNo))) {
-      const year = s.run.period.slice(0, 4);
+    for (const s of [...slips].sort((a, b) => runEndMs(a) - runEndMs(b) || a.slipNo.localeCompare(b.slipNo))) {
+      const year = String(yearOf(s));
       if (s.withholdStatus === "WITHHELD" || s.withholdStatus === "RELEASED") {
         ytdBySlip.set(s.id, runningByYear.get(year) ?? 0); // held/released: YTD carries the last paid value
         continue;
@@ -1197,7 +1284,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
     }
 
     return [...slips]
-      .sort((a, b) => b.run.period.localeCompare(a.run.period) || a.slipNo.localeCompare(b.slipNo))
+      .sort((a, b) => runEndMs(b) - runEndMs(a) || a.slipNo.localeCompare(b.slipNo))
       .map((p) => ({
         id: p.id,
         runId: p.runId,
@@ -1374,7 +1461,9 @@ export async function applyPayAdjustmentsToRun(
     if (run.status !== "OPEN") throw new AuthorizationError("The run is locked — payslips are immutable once paid.");
 
     const pendingAdjustments = await db.payAdjustment.findMany({
-      where: { status: "PENDING", period: { lte: run.period } },
+      // P10 — no period-string pre-filter: the window-aware predicate
+      // decides due-ness (isDueInPeriod below).
+      where: { status: "PENDING" },
       orderBy: { createdAt: "asc" },
     });
     const dueRows = pendingAdjustments.filter((row) => isDueInPeriod(row, run.period));

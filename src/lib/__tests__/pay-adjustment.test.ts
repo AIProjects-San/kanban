@@ -281,3 +281,106 @@ describe("adjustmentLineKey", () => {
     expect(adjustmentLineKey({ id: "z1", componentCode: "  " })).toBe("adj:z1");
   });
 });
+
+// ---------------------------------------------------------------------------
+// P10 (PR-B05) — cross-cadence due-ness. Monthly keys keep their pre-P10
+// semantics (proven by the suite above); these pin the window rules that
+// make mixed-cadence workspaces safe.
+// ---------------------------------------------------------------------------
+describe("isDueInPeriod — cross-cadence (P10)", () => {
+  it("ONE_SHOT targeted at a month pays in the runs whose windows meet it", () => {
+    const r = row({ id: "x1", period: "2026-11" });
+    // A weekly run inside November (W45 starts Nov 2 — inside [Nov 1, Nov 30]).
+    expect(isDueInPeriod(r, "2026-W45")).toBe(true);
+    // W44 (Oct 26 – Nov 1) OVERLAPS November on Nov 1 — the benchmark's
+    // date-overlap selection includes it (the first run covering any of the
+    // target's days carries the one-shot money).
+    expect(isDueInPeriod(r, "2026-W44")).toBe(true);
+    // December weeks are past the month window (W50 = Dec 7 – Dec 13; even
+    // W49, which overlaps Nov 30 only, is due by the overlap rule).
+    expect(isDueInPeriod(r, "2026-W49")).toBe(true);
+    expect(isDueInPeriod(r, "2026-W50")).toBe(false);
+    // The bimonthly halves both meet the month.
+    expect(isDueInPeriod(r, "2026-11-A")).toBe(true);
+    expect(isDueInPeriod(r, "2026-11-B")).toBe(true);
+    // Adjacent months do not.
+    expect(isDueInPeriod(r, "2026-10-B")).toBe(false);
+    expect(isDueInPeriod(r, "2026-12-A")).toBe(false);
+  });
+
+  it("ONE_SHOT targeted at a week pays in the covering monthly run", () => {
+    const r = row({ id: "x2", period: "2026-W45" }); // Nov 2 – Nov 8
+    expect(isDueInPeriod(r, "2026-11")).toBe(true); // the month's start is inside the week? no — the WEEK is inside the month
+    expect(isDueInPeriod(r, "2026-10")).toBe(false);
+    expect(isDueInPeriod(r, "2026-12")).toBe(false);
+    expect(isDueInPeriod(r, "2026-W45")).toBe(true);
+    expect(isDueInPeriod(r, "2026-W46")).toBe(false);
+  });
+
+  it("ONE_SHOT daily keys meet exactly their covering windows", () => {
+    const r = row({ id: "x3", period: "2026-11-09" });
+    expect(isDueInPeriod(r, "2026-11-09")).toBe(true);
+    expect(isDueInPeriod(r, "2026-11")).toBe(true); // the day is inside the month
+    expect(isDueInPeriod(r, "2026-W46")).toBe(true); // Mon Nov 9 is inside week 46
+    expect(isDueInPeriod(r, "2026-11-A")).toBe(true); // day 9 is in the first half
+    expect(isDueInPeriod(r, "2026-11-B")).toBe(false);
+    expect(isDueInPeriod(r, "2026-11-10")).toBe(false);
+  });
+
+  it("RECURRING rows fire in every run whose window starts inside the span", () => {
+    const r = row({ id: "x4", recurrence: "RECURRING", period: "2026-11", endPeriod: "2026-12" });
+    // Weekly runs whose windows START within Nov 1 – Dec 1 are all due
+    // (the benchmark's own cross-frequency repetition, documented).
+    expect(isDueInPeriod(r, "2026-W45")).toBe(true); // starts Nov 2
+    expect(isDueInPeriod(r, "2026-W49")).toBe(true); // starts Nov 30
+    expect(isDueInPeriod(r, "2026-W50")).toBe(false); // starts Dec 7 — past Dec 1
+    expect(isDueInPeriod(r, "2026-W44")).toBe(false); // starts Oct 26 — before Nov 1
+    expect(isDueInPeriod(r, "2026-12")).toBe(true);
+    expect(isDueInPeriod(r, "2027-01")).toBe(false);
+  });
+
+  it("unparseable keys are never due (no fake January)", () => {
+    const r = row({ id: "x5", period: "2026-11" });
+    expect(isDueInPeriod(r, "garbage")).toBe(false);
+    expect(isDueInPeriod({ ...r, period: "junk" }, "2026-11")).toBe(false);
+    expect(isDueInPeriod({ ...r, recurrence: "RECURRING", endPeriod: "junk" }, "2026-11")).toBe(false);
+  });
+});
+
+describe("validateAdjustmentInput — P10 cadence keys", () => {
+  const ok = (period: string, endPeriod: string | null = null) =>
+    validateAdjustmentInput({
+      side: "EARNING",
+      recurrence: "RECURRING",
+      calcMode: "FIXED",
+      percent: null,
+      amount: 10,
+      period,
+      endPeriod,
+      label: "Test",
+      componentCode: "",
+    });
+
+  it("accepts every cadence key", () => {
+    expect(ok("2026-11", "2026-12")).toBeNull();
+    expect(ok("2026-11-A", "2026-12-B")).toBeNull();
+    expect(ok("2026-W45", "2026-W53")).toBeNull();
+    expect(ok("2026-F23", "2026-F27")).toBeNull();
+    expect(ok("2026-11-09", "2026-11-09")).toBeNull();
+    expect(ok("2026-Q4", null)).toBeNull();
+    expect(ok("2026", null)).toBeNull();
+  });
+
+  it("rejects malformed keys and inverted spans by window start", () => {
+    expect(ok("banana", null)).toMatch(/period must be a payroll period key/);
+    // An unparseable endPeriod is rejected by the endPeriod guard (treated
+    // as an invalid span boundary before the key-format check can run).
+    expect(ok("2026-11", "2026-99")).toBe("endPeriod cannot be before the first period");
+    // endPeriod's window starts BEFORE period's window start.
+    expect(ok("2026-W46", "2026-W45")).toBe("endPeriod cannot be before the first period");
+    // Cross-cadence inversion: W46 starts Nov 9, later than Nov 1.
+    expect(ok("2026-11", "2026-W44")).toBe("endPeriod cannot be before the first period");
+    // …while W45 (starts Nov 2) is after November's start — allowed.
+    expect(ok("2026-11", "2026-W45")).toBeNull();
+  });
+});

@@ -102,6 +102,24 @@ export function deriveLopDays(
   if (!y || !m || m < 1 || m > 12) return 0;
   const start = new Date(Date.UTC(y, m - 1, 1));
   const end = new Date(Date.UTC(y, m, 0)); // day 0 = last day of previous month
+  return deriveLopDaysBetween(start, end, holidays, marks, leaveSpans, opts);
+}
+
+/**
+ * P10 (PR-B05) — the same derivation over an arbitrary payroll window
+ * [start, end] (any cadence): charges only working days inside the window,
+ * with the identical per-day semantics. deriveLopDays(monthly) delegates
+ * here so the two can never drift.
+ */
+export function deriveLopDaysBetween(
+  start: Date,
+  end: Date,
+  holidays: HolidayLookup | undefined,
+  marks: LopAttendanceMark[],
+  leaveSpans: LopLeaveSpan[],
+  opts: DeriveLopOptions = {},
+): number {
+  if (!(start <= end)) return 0;
   const empFrom = opts.employmentFrom != null ? asUtcDay(opts.employmentFrom) : null;
   const empUntil = opts.employmentUntil != null ? asUtcDay(opts.employmentUntil) : null;
 

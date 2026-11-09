@@ -48,6 +48,7 @@ import type { ActionResult } from "@/lib/action-result";
 import { parseComponents } from "@/lib/offer-math";
 import { monthlyEarningsFromStructure, lineSum } from "@/lib/payroll-math";
 import { workingDaysInPeriod } from "@/lib/working-days";
+import { runWindowEnd, runWindowStart } from "@/lib/payroll-windows";
 import { projectLeaveBalance } from "@/lib/leave-ledger";
 import {
   computeFullAndFinal,
@@ -129,22 +130,29 @@ async function leaveAccountsFor(userId: string, year: number): Promise<FnFLeaveA
 /** OPEN runs, each paired with the employee's payslip net (null = none).
  * P8 — a RELEASED withholding slip is excluded (its net pays through the
  * release adjustment); a still-WITHHELD slip stays a payable (a hold is
- * not a waiver — the money is owed until released or settled). */
+ * not a waiver — the money is owed until released or settled).
+ * P10 — ordered by the run's REAL window start (period keys do not sort
+ * chronologically across cadences). */
 async function openRunsFor(userId: string): Promise<FnFOpenRun[]> {
   const runs = await db.payrollRun.findMany({
     where: { status: "OPEN" },
-    orderBy: { period: "asc" },
     select: {
       period: true,
+      startDate: true,
+      endDate: true,
       workingDays: true,
       payslips: { where: { userId }, select: { net: true, withholdStatus: true } },
     },
   });
-  return runs.map((r) => ({
-    period: r.period,
-    payslipNet: r.payslips.length > 0 ? r.payslips[0].net : null,
-    withheldReleased: r.payslips.length > 0 ? r.payslips[0].withholdStatus === "RELEASED" : false,
-  }));
+  return runs
+    .sort((a, b) =>
+      (runWindowStart(a.period, a.startDate)?.getTime() ?? 0) -
+      (runWindowStart(b.period, b.startDate)?.getTime() ?? 0))
+    .map((r) => ({
+      period: r.period,
+      payslipNet: r.payslips.length > 0 ? r.payslips[0].net : null,
+      withheldReleased: r.payslips.length > 0 ? r.payslips[0].withholdStatus === "RELEASED" : false,
+    }));
 }
 
 /** P7 (F3.3) — the gratuity rule facts for one exiting employee: config,
@@ -163,16 +171,23 @@ async function gratuityFactsFor(
       earningsBasis: "PAYSLIPS", hireDate: null,
     };
   }
-  const [slabs, slips, profile] = await Promise.all([
+  const [slabs, slipRows, profile] = await Promise.all([
     db.gratuitySlab.findMany({ orderBy: { fromYears: "asc" } }),
+    // P10 — last-N by the run's REAL window end: mixed cadences order
+    // chronologically only by date (a weekly "2026-W45" would sort after
+    // monthly "2026-12" as a string). Fetched wide, JS-sorted with the
+    // parsed-key fallback (null-safe, deterministic), sliced to N.
     db.payslip.findMany({
       where: { userId, run: { status: "LOCKED" } },
-      orderBy: { run: { period: "desc" } },
-      take: rule.averagingMonths,
-      select: { gross: true },
+      select: { gross: true, run: { select: { period: true, endDate: true } } },
     }),
     db.employeeProfile.findUnique({ where: { userId }, select: { hireDate: true } }),
   ]);
+  const slips = [...slipRows]
+    .sort((a, b) =>
+      (runWindowEnd(b.run.period, b.run.endDate)?.getTime() ?? 0) -
+      (runWindowEnd(a.run.period, a.run.endDate)?.getTime() ?? 0))
+    .slice(0, rule.averagingMonths);
   // Falls back to the active structure's gross when no payslip history
   // exists — the note names whichever basis priced the line.
   const samples = slips.map((s) => s.gross).filter((g) => Number.isFinite(g));

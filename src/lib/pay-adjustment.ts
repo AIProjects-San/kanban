@@ -28,6 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import { round2, lineSum, type PayslipLine } from "@/lib/payroll-math";
+import { parsePayrollPeriodKey } from "@/lib/payroll-windows";
 
 export type AdjustmentSide = "EARNING" | "DEDUCTION";
 export type AdjustmentRecurrence = "ONE_SHOT" | "RECURRING" | "OVERWRITE";
@@ -91,16 +92,44 @@ export interface AdjustmentApplication {
   skipped: AdjustmentSkip[];
 }
 
-/** Is the row due in `period`? ONE_SHOT/OVERWRITE: exact period match.
- * RECURRING: period ≤ target ≤ endPeriod (null end = open-ended). Only
- * PENDING rows are ever due (the action layer filters; this predicate is
- * the pure half of that contract). */
+/** Is the row due in `period`? Window-aware since P10 (mixed cadences):
+ * comparisons run on the parsed window START dates, never on the raw key
+ * strings (lexicographic order breaks chronology across cadences — see
+ * lib/payroll-windows.ts). For the monthly keys that predate P10 the
+ * behavior is byte-identical.
+ *
+ * • ONE_SHOT / OVERWRITE: due when the row's window and the run's window
+ *   OVERLAP in time — the benchmark's Additional Salary date-overlap
+ *   selection (a monthly-targeted one-shot pays in the first run covering
+ *   any of its days, a weekly-targeted one in the covering monthly run;
+ *   consumption is once, so the first overlapping run carries the money).
+ * • RECURRING: due when the run's window starts at/after the row's start
+ *   and, with an endPeriod, at/before the end's start — so a monthly
+ *   recurring row genuinely fires in every weekly run whose window starts
+ *   inside its span (the benchmark's own cross-frequency repetition).
+ * Only PENDING rows are ever due (the action layer filters; this predicate
+ * is the pure half of that contract). */
 export function isDueInPeriod(row: Pick<PayAdjustmentRow, "recurrence" | "period" | "endPeriod">, target: string): boolean {
-  if (target < row.period) return false;
+  const targetStart = parsePayrollPeriodKey(target)?.start ?? null;
+  const rowWindow = parsePayrollPeriodKey(row.period);
+  if (!targetStart || !rowWindow) return false;
+
   if (row.recurrence === "RECURRING") {
-    return row.endPeriod == null || target <= row.endPeriod;
+    if (targetStart.getTime() < rowWindow.start.getTime()) return false;
+    if (row.endPeriod == null) return true;
+    const endStart = parsePayrollPeriodKey(row.endPeriod)?.start ?? null;
+    return endStart != null && targetStart.getTime() <= endStart.getTime();
   }
-  return row.period === target;
+
+  // ONE_SHOT / OVERWRITE — the row's window and the run's window overlap
+  // in time (the benchmark's Additional Salary date-overlap selection:
+  // from_date <= run end AND to_date >= run start). Mutual
+  // start-containment and plain overlap are equivalent for closed windows;
+  // the overlap form says what it means.
+  const targetEnd = parsePayrollPeriodKey(target)?.end ?? null;
+  if (!targetEnd) return false;
+  return rowWindow.start.getTime() <= targetEnd.getTime() &&
+    targetStart.getTime() <= rowWindow.end.getTime();
 }
 
 /** Validate one row's shape at CREATION time (the action layer refuses
@@ -135,8 +164,15 @@ export function validateAdjustmentInput(input: {
   if (input.calcMode === "FIXED") {
     if (!Number.isFinite(input.amount) || input.amount < 0) return "fixed adjustments need a non-negative amount";
   }
-  if (input.recurrence === "RECURRING" && input.endPeriod != null && input.endPeriod < input.period) {
-    return "endPeriod cannot be before the first period";
+  if (input.recurrence === "RECURRING" && input.endPeriod != null) {
+    const start = parsePayrollPeriodKey(input.period)?.start ?? null;
+    const end = parsePayrollPeriodKey(input.endPeriod)?.start ?? null;
+    if (start == null || end == null || end.getTime() < start.getTime()) {
+      return "endPeriod cannot be before the first period";
+    }
+  }
+  if (!parsePayrollPeriodKey(input.period)) {
+    return "period must be a payroll period key (2026-11, 2026-11-A, 2026-W45, 2026-F23, 2026-11-09, 2026-Q4 or 2026)";
   }
   if (!input.label.trim() && !input.componentCode.trim()) {
     return "a label or a catalog component code is required";
@@ -256,12 +292,15 @@ export function applyAdjustments(
 /** A RECURRING row's final consumption is the run covering its endPeriod
  * (null end = open-ended, never final — every consumption is an
  * intermediate watermark). ONE_SHOT and OVERWRITE rows are final on their
- * single period. `period` is the consuming run's period (due ⇒ ≤ endPeriod
- * for RECURRING rows, so endPeriod ≤ period means they coincide). */
+ * single period. `period` is the consuming run's period key; the comparison
+ * runs on parsed window starts (P10 — cadence-safe, monthly-identical). */
 function isFinalConsumption(
   row: Pick<PayAdjustmentRow, "recurrence" | "endPeriod">,
   period: string,
 ): boolean {
   if (row.recurrence !== "RECURRING") return true;
-  return row.endPeriod != null && row.endPeriod <= period;
+  if (row.endPeriod == null) return false;
+  const endStart = parsePayrollPeriodKey(row.endPeriod)?.start ?? null;
+  const runStart = parsePayrollPeriodKey(period)?.start ?? null;
+  return endStart != null && runStart != null && endStart.getTime() <= runStart.getTime();
 }

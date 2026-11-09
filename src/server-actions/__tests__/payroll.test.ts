@@ -190,7 +190,7 @@ describe("R7 — RBAC (payroll:manage = ADMIN + HR only)", () => {
       getSalaryStructures(),
       getPayrollRuns(),
       saveSalaryStructure({ userId: "u-yuki", components: COMPONENTS }),
-      createPayrollRun({ period: "2026-11" }),
+      createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" }),
       updatePayslip({ payslipId: "ps-1", expectedVersion: 0, earnings: [], deductions: [], lopDays: 0 }),
       lockPayrollRun({ runId: "run-1" }),
       getPayrollData(),
@@ -259,17 +259,17 @@ describe("R7 — salary structures", () => {
 
 describe("R7 — payroll runs", () => {
   it("createPayrollRun validates the period format and rejects duplicates", async () => {
-    const bad = await createPayrollRun({ period: "2026-13" });
+    const bad = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-13-01" });
     expect(bad.ok).toBe(false);
     db.payrollRun.findUnique.mockResolvedValue({ id: "run-1" });
-    const dup = await createPayrollRun({ period: "2026-11" });
+    const dup = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(dup.ok).toBe(false);
     expect(db.payrollRun.create).not.toHaveBeenCalled();
   });
 
   it("createPayrollRun refuses to run with zero active structures", async () => {
     db.salaryStructure.findMany.mockResolvedValue([]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(false);
   });
 
@@ -278,7 +278,7 @@ describe("R7 — payroll runs", () => {
       STRUCTURE_ROW,
       { ...STRUCTURE_ROW, id: "ss-2", userId: "u-hana" },
     ]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.payslipCount).toBe(2);
 
@@ -315,7 +315,7 @@ describe("R7 — payroll runs", () => {
     db.holidayCalendarEntry.findMany.mockResolvedValue([
       { date: new Date("2026-10-26T00:00:00.000Z"), isHalfDay: false },
     ]);
-    const res = await createPayrollRun({ period: "2026-10" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-10-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as { data: { workingDays: number } };
     expect(createArg.data.workingDays).toBe(21);
@@ -328,7 +328,7 @@ describe("R7 — payroll runs", () => {
   it("createPayrollRun with an empty calendar stores the plain Mon–Fri count", async () => {
     db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
     db.holidayCalendarEntry.findMany.mockResolvedValue([]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as { data: { workingDays: number } };
     // No holidays seeded — working-day semantics still apply: November 2026
@@ -349,7 +349,7 @@ describe("R7 — payroll runs", () => {
       { userId: "u-yuki", startDate: new Date("2026-11-05T00:00:00.000Z"), endDate: new Date("2026-11-06T00:00:00.000Z"), leaveTypeId: "lt-unpaid" },
     ]);
     db.leaveType.findMany.mockResolvedValue([{ id: "lt-unpaid", paid: false }]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ lopDays: number; lopSource: string; deductions: string; net: number }> } };
@@ -379,7 +379,7 @@ describe("R7 — payroll runs", () => {
       { userId: "u-yuki", startDate: new Date("2026-11-02T00:00:00.000Z"), endDate: new Date("2026-11-04T00:00:00.000Z"), leaveTypeId: "lt-annual" },
     ]);
     db.leaveType.findMany.mockResolvedValue([{ id: "lt-annual", paid: true }]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ lopDays: number; deductions: string }> } };
@@ -714,7 +714,7 @@ describe("R7 — payslips", () => {
     );
     db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
     db.holidayCalendarEntry.findMany.mockResolvedValue([]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const created = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ userId: string; lopDays: number; lopSource: string }> } };
@@ -728,7 +728,7 @@ describe("R7 — payslips", () => {
     db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
     db.holidayCalendarEntry.findMany.mockResolvedValue([]);
     db.attendanceRecord.findMany.mockResolvedValue([]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const created = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ userId: string; lopDays: number }> } };
@@ -744,7 +744,7 @@ describe("R7 — payslips", () => {
       { userId: "u-yuki", jobTitle: "Data Engineer", department: "ENGINEERING", hireDate: new Date("2026-11-10T00:00:00Z"), lastWorkingDay: null },
     ]);
     db.attendanceRecord.findMany.mockResolvedValue([]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const created = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ earnings: string; paidDays: number; gross: number; net: number }> } };
@@ -769,7 +769,7 @@ describe("R7 — payslips", () => {
     db.attendanceRecord.findMany.mockResolvedValue([
       { userId: "u-yuki", date: new Date("2026-11-04T00:00:00Z"), status: "ABSENT" },
     ]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const created = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ paidDays: number; lopDays: number; deductions: string; net: number }> } };
@@ -838,7 +838,7 @@ describe("R7 — payslips", () => {
     db.attendanceRecord.findMany.mockResolvedValue([
       { userId: "u-yuki", date: new Date("2026-11-04T00:00:00Z"), status: "ABSENT" },
     ]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const created = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ earnings: string; deductions: string; gross: number; net: number }> } };
@@ -890,7 +890,7 @@ describe("R7 — payslips", () => {
     db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
     db.holidayCalendarEntry.findMany.mockResolvedValue([]);
     db.attendanceRecord.findMany.mockResolvedValue([]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const created = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ earnings: string; gross: number; net: number }> } };
@@ -908,7 +908,7 @@ describe("R7 — payslips", () => {
     db.attendanceRecord.findMany.mockResolvedValue([
       { userId: "u-yuki", date: new Date("2026-12-02T00:00:00Z"), status: "HALF_DAY" },
     ]);
-    const res2 = await createPayrollRun({ period: "2026-12" });
+    const res2 = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res2.ok).toBe(true);
     // The SECOND create call is the December run.
     const created2 = db.payrollRun.create.mock.calls[1][0] as {
@@ -930,7 +930,7 @@ describe("R7 — payslips", () => {
     }]);
     db.holidayCalendarEntry.findMany.mockResolvedValue([]);
     db.attendanceRecord.findMany.mockResolvedValue([]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     const created = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ earnings: string; gross: number; net: number }> } };
@@ -1245,7 +1245,7 @@ describe("P1 — createPayrollRun consumes the adapter transactionally", () => {
   it("a ONE_SHOT earning lands on its employee's slip and flips the row CONSUMED", async () => {
     db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
     db.payAdjustment.findMany.mockResolvedValue([adjustmentRow()]);
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.data.adjustmentsApplied).toBe(1);
@@ -1276,7 +1276,7 @@ describe("P1 — createPayrollRun consumes the adapter transactionally", () => {
       id: "adj-r", recurrence: "RECURRING", period: "2026-10", endPeriod: "2027-02", amount: 50,
     });
     db.payAdjustment.findMany.mockResolvedValue([recurring]);
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     expect(db.payAdjustment.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1287,7 +1287,7 @@ describe("P1 — createPayrollRun consumes the adapter transactionally", () => {
     // Final period: endPeriod === consumption period → CONSUMED.
     db.payAdjustment.update.mockClear();
     db.payrollRun.findUnique.mockResolvedValue(null);
-    const final = await createPayrollRun({ period: "2027-02" });
+    const final = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2027-02-01" });
     expect(final.ok).toBe(true);
     expect(db.payAdjustment.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1303,7 +1303,7 @@ describe("P1 — createPayrollRun consumes the adapter transactionally", () => {
       adjustmentRow({ id: "adj-ghost", userId: "u-elsewhere", amount: 100 }),
       adjustmentRow({ id: "adj-rec", userId: "u-elsewhere", recurrence: "RECURRING", period: "2026-10", endPeriod: null }),
     ]);
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.adjustmentsSkipped).toBe(1);
     expect(db.payAdjustment.update).toHaveBeenCalledWith(
@@ -1327,7 +1327,7 @@ describe("P1 — createPayrollRun consumes the adapter transactionally", () => {
         id: "adj-net", label: "Net levy", side: "DEDUCTION", calcMode: "PERCENT_OF_NET", percent: 10, amount: 0,
       }),
     ]);
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { workingDays: number; payslips: { create: Array<{ earnings: string; deductions: string; net: number }> } };
@@ -1342,7 +1342,7 @@ describe("P1 — createPayrollRun consumes the adapter transactionally", () => {
 
   it("an empty adapter table keeps run creation byte-identical (zero-behavior change)", async () => {
     db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
-    const res = await createPayrollRun({ period: "2026-11" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.adjustmentsApplied).toBe(0);
     expect(db.payAdjustment.update).not.toHaveBeenCalled();
@@ -1457,7 +1457,7 @@ describe("P8 — createPayrollRun stamps WITHHELD slips inside an ACTIVE hold wi
       { userId: "u-yuki", fromPeriod: "2026-11", untilPeriod: "2027-01", status: "ACTIVE" },
       { userId: "u-elsewhere", fromPeriod: "2026-01", untilPeriod: "2026-02", status: "ACTIVE" }, // window closed
     ]);
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ userId: string; withholdStatus: string }> } };
@@ -1470,7 +1470,7 @@ describe("P8 — createPayrollRun stamps WITHHELD slips inside an ACTIVE hold wi
     db.salaryWithholding.findMany.mockResolvedValue([
       { userId: "u-yuki", fromPeriod: "2026-11", untilPeriod: "2026-11", status: "ACTIVE" },
     ]);
-    const res = await createPayrollRun({ period: "2027-06" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2027-06-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ withholdStatus: string }> } };
@@ -1540,7 +1540,7 @@ describe("P9 — createPayrollRun emits the Overtime earning line when the knob 
           ? [{ userId: "u-yuki", overtimeMinutes: 90 }, { userId: "u-yuki", overtimeMinutes: 30 }]
           : [],
     );
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ userId: string; earnings: string; gross: number; net: number }> } };
@@ -1562,7 +1562,7 @@ describe("P9 — createPayrollRun emits the Overtime earning line when the knob 
     getWorkspaceConfigMock.mockResolvedValue({
       workspace: { unmarkedAttendanceMode: "IGNORED", payrollRoundingMode: "ROUND_2DP", overtimePayEnabled: false },
     });
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ earnings: string; gross: number }> } };
@@ -1586,12 +1586,152 @@ describe("P9 — createPayrollRun emits the Overtime earning line when the knob 
       async ({ where }: { where?: { overtimeMinutes?: unknown } }) =>
         where?.overtimeMinutes !== undefined ? [{ userId: "u-ghost", overtimeMinutes: 60 }] : [],
     );
-    const res = await createPayrollRun({ period: "2026-12" });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-12-01" });
     expect(res.ok).toBe(true);
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ earnings: string; gross: number }> } };
     };
     expect(JSON.parse(createArg.data.payslips.create[0].earnings).some((l: { key: string }) => l.key === "overtime")).toBe(false);
     expect(createArg.data.payslips.create[0].gross).toBe(6_700);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P10 (PR-B05) — payroll cadences: weekly/fortnightly/bimonthly/daily/
+// quarterly/annual windows via the pure windows kernel; period keys stay
+// unique; amounts = annual ÷ windowsInYear; structures are frequency-matched.
+// ---------------------------------------------------------------------------
+describe("P10 — payroll cadences (createPayrollRun)", () => {
+  beforeEach(() => {
+    db.payrollRun.findUnique.mockResolvedValue(null);
+    db.payrollRun.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "run-p10",
+      ...data,
+      payslips: (((data.payslips as { create?: unknown[] } | undefined)?.create) ?? []).map((_: unknown, i: number) => ({ id: `ps-${i}` })),
+    }));
+  });
+
+  it("creates a WEEKLY run: ISO-week key, 5-day window, amounts ÷ 53 (2026)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    // Mon 2026-11-09 sits in ISO week 46 (Nov 9 – Nov 15); 2026 has 53 weeks.
+    const res = await createPayrollRun({ frequency: "WEEKLY", anchorDate: "2026-11-09" });
+    expect(res.ok).toBe(true);
+
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: {
+        period: string; frequency: string; startDate: Date; endDate: Date; workingDays: number;
+        payslips: { create: Array<{ slipNo: string; earnings: string; gross: number }> };
+      };
+    };
+    expect(createArg.data.period).toBe("2026-W46");
+    expect(createArg.data.frequency).toBe("WEEKLY");
+    expect(createArg.data.startDate).toEqual(new Date("2026-11-09T00:00:00.000Z"));
+    expect(createArg.data.endDate).toEqual(new Date("2026-11-15T00:00:00.000Z"));
+    expect(createArg.data.workingDays).toBe(5); // Mon–Fri of the week
+    // Only WEEKLY structures join a weekly run (frequency-matched).
+    expect(db.salaryStructure.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isActive: true, frequency: "WEEKLY" } }),
+    );
+    const slips = createArg.data.payslips.create;
+    expect(slips[0].slipNo).toBe("PS-2026-W46-001");
+    // Annual ÷ 53: basic 78,000/53 = 1471.7; transport 2,400/53 = 45.28.
+    const lines = JSON.parse(slips[0].earnings);
+    expect(lines).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 1471.7 },
+      { key: "transport", label: "Transport Allowance", amount: 45.28 },
+    ]);
+    expect(slips[0].gross).toBe(1516.98);
+    // The attendance/LOP derivation reads the run's window, not a month.
+    const attWhere = db.attendanceRecord.findMany.mock.calls[0][0].where;
+    expect(attWhere.date.gte).toEqual(new Date("2026-11-09T00:00:00.000Z"));
+    expect(attWhere.date.lte).toEqual(new Date("2026-11-15T00:00:00.000Z"));
+  });
+
+  it("creates the two BIMONTHLY halves with ÷ 24 amounts", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    const a = await createPayrollRun({ frequency: "BIMONTHLY", anchorDate: "2026-11-01" });
+    expect(a.ok).toBe(true);
+    let createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { period: string; startDate: Date; endDate: Date; payslips: { create: Array<{ earnings: string; gross: number }> } };
+    };
+    expect(createArg.data.period).toBe("2026-11-A");
+    expect(createArg.data.startDate).toEqual(new Date("2026-11-01T00:00:00.000Z"));
+    expect(createArg.data.endDate).toEqual(new Date("2026-11-15T00:00:00.000Z"));
+    expect(JSON.parse(createArg.data.payslips.create[0].earnings)[0].amount).toBe(3250); // 78,000/24
+
+    db.payrollRun.findUnique.mockResolvedValue(null);
+    const b = await createPayrollRun({ frequency: "BIMONTHLY", anchorDate: "2026-11-30" });
+    expect(b.ok).toBe(true);
+    createArg = db.payrollRun.create.mock.calls[1][0] as typeof createArg;
+    expect(createArg.data.period).toBe("2026-11-B");
+    expect(createArg.data.startDate).toEqual(new Date("2026-11-16T00:00:00.000Z"));
+    expect(createArg.data.endDate).toEqual(new Date("2026-11-30T00:00:00.000Z"));
+  });
+
+  it("creates DAILY and QUARTERLY and ANNUAL windows with the right divisors", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    const day = await createPayrollRun({ frequency: "DAILY", anchorDate: "2026-11-09" });
+    expect(day.ok).toBe(true);
+    let arg = db.payrollRun.create.mock.calls[0][0] as { data: { period: string; startDate: Date; endDate: Date; payslips: { create: Array<{ earnings: string }> } } };
+    expect(arg.data.period).toBe("2026-11-09");
+    expect(arg.data.startDate).toEqual(arg.data.endDate);
+    // 78,000/365 = 213.70.
+    expect(JSON.parse(arg.data.payslips.create[0].earnings)[0].amount).toBe(213.7);
+
+    db.payrollRun.findUnique.mockResolvedValue(null);
+    const q = await createPayrollRun({ frequency: "QUARTERLY", anchorDate: "2026-11-09" });
+    expect(q.ok).toBe(true);
+    arg = db.payrollRun.create.mock.calls[1][0] as typeof arg;
+    expect(arg.data.period).toBe("2026-Q4");
+    expect(JSON.parse(arg.data.payslips.create[0].earnings)[0].amount).toBe(19_500); // ÷ 4
+
+    db.payrollRun.findUnique.mockResolvedValue(null);
+    const annual = await createPayrollRun({ frequency: "ANNUAL", anchorDate: "2026-07-04" });
+    expect(annual.ok).toBe(true);
+    arg = db.payrollRun.create.mock.calls[2][0] as typeof arg;
+    expect(arg.data.period).toBe("2026");
+    expect(JSON.parse(arg.data.payslips.create[0].earnings)[0].amount).toBe(78_000); // ÷ 1
+  });
+
+  it("refuses a run when no structure matches the cadence", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ frequency: "FORTNIGHTLY", anchorDate: "2026-11-09" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("fortnightly");
+    expect(db.payrollRun.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an impossible anchor date before any read", async () => {
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-02-30" });
+    expect(res.ok).toBe(false);
+    expect(db.payrollRun.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("P10 — mixed-cadence self-service (getMyPayslips)", () => {
+  it("orders slips by the run's REAL window end and attributes YTD by end year", async () => {
+    // A weekly slip (W45: Nov 2–8), the November month slip and the December
+    // month slip — lexicographic period order would put "2026-W45" LAST;
+    // real time puts it first.
+    db.payslip.findMany.mockResolvedValue([
+      payslipRow({ id: "ps-w45", runId: "run-w45", slipNo: "PS-2026-W45-001", net: 1_515.09, gross: 1_515.09, run: { id: "run-w45", period: "2026-W45", status: "LOCKED", startDate: new Date("2026-11-02T00:00:00Z"), endDate: new Date("2026-11-08T00:00:00Z") } }),
+      payslipRow({ id: "ps-nov", runId: "run-1", slipNo: "PS-2026-11-001", net: 6_700, gross: 6_700, run: { id: "run-1", period: "2026-11", status: "LOCKED", startDate: new Date("2026-11-01T00:00:00Z"), endDate: new Date("2026-11-30T00:00:00Z") } }),
+      payslipRow({ id: "ps-dec", runId: "run-dec", slipNo: "PS-2026-12-001", net: 6_700, gross: 6_700, run: { id: "run-dec", period: "2026-12", status: "LOCKED", startDate: new Date("2026-12-01T00:00:00Z"), endDate: new Date("2026-12-31T00:00:00Z") } }),
+    ]);
+    db.employeeProfile.findUnique.mockResolvedValue({ jobTitle: "Data Engineer" });
+    const res = await getMyPayslips();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // Newest window end first: December, November, then the Nov 8 week.
+      expect(res.data.map((p) => p.id)).toEqual(["ps-dec", "ps-nov", "ps-w45"]);
+      // YTD is chronological: the week counts (1515.09), then November adds
+      // 6,700 (8215.09), then December adds 6,700 (14915.09).
+      expect(res.data.find((p) => p.id === "ps-w45")?.ytdNet).toBe(1515.09);
+      expect(res.data.find((p) => p.id === "ps-nov")?.ytdNet).toBe(8215.09);
+      expect(res.data.find((p) => p.id === "ps-dec")?.ytdNet).toBe(14915.09);
+    }
   });
 });

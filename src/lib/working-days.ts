@@ -103,6 +103,21 @@ export function paymentWindow(
   const [y, m] = period.split("-").map(Number);
   const periodStart = new Date(Date.UTC(y || 1970, (m || 1) - 1, 1));
   const periodEnd = new Date(Date.UTC(y || 1970, m || 1, 0));
+  return paymentWindowBetween(periodStart, periodEnd, holidays, employment);
+}
+
+/**
+ * P10 (PR-B05) — the same payment window for an arbitrary payroll window
+ * [start, end] (any cadence — weekly runs, bimonthly halves, single days):
+ * working days in [max(window start, hireDate), min(window end, LWD)].
+ * paymentWindow(monthly) delegates here, so the two can never drift.
+ */
+export function paymentWindowBetween(
+  periodStart: Date,
+  periodEnd: Date,
+  holidays: HolidayLookup | undefined,
+  employment?: { from?: Date | string | null; until?: Date | string | null },
+): { paidDays: number; windowStart: Date; windowEnd: Date; clippedFrom: boolean; clippedUntil: boolean } {
   const from = employment?.from != null
     ? (employment.from instanceof Date ? employment.from : new Date(`${employment.from}T00:00:00.000Z`))
     : null;

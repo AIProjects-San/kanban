@@ -43,7 +43,7 @@ import {
 } from "@/lib/leave-policy";
 import { planLeaveAdjustment } from "@/lib/leave-ledger";
 import { checkCrossRequestConsecutive } from "@/lib/leave-policy";
-import { monthsInRange } from "@/lib/payroll-math";
+import { runWindowEnd, runWindowStart } from "@/lib/payroll-windows";
 import {
   parseDay,
   daysBetween,
@@ -465,19 +465,24 @@ export async function createLeaveRequest(input: {
 
     // LV-B10 (S10) — salary-processed guard: UNPAID leave charges loss of
     // pay, and a LOCKED run's slips are immutable — the request is refused
-    // when its range touches a month already processed (paid types and OPEN
-    // runs are fine: corrections still land).
+    // when its range touches a window already processed (paid types and OPEN
+    // runs are fine: corrections still land). P10: the check is by REAL
+    // window intersection, not month-key matching — a LOCKED weekly/bimonthly
+    // run covering part of the range blocks it just like a monthly one.
     if (!type.paid) {
-      const lockedPeriods = new Set(
-        (await db.payslip.findMany({
-          where: { userId: auth.userId, run: { status: "LOCKED" } },
-          select: { run: { select: { period: true } } },
-        })).map((p) => p.run.period),
-      );
-      const clash = monthsInRange(start, end).filter((m) => lockedPeriods.has(m));
+      const lockedRuns = await db.payslip.findMany({
+        where: { userId: auth.userId, run: { status: "LOCKED" } },
+        select: { run: { select: { period: true, startDate: true, endDate: true } } },
+      });
+      const clash: string[] = [];
+      for (const p of lockedRuns) {
+        const wStart = runWindowStart(p.run.period, p.run.startDate);
+        const wEnd = runWindowEnd(p.run.period, p.run.endDate);
+        if (wStart && wEnd && wStart <= end && wEnd >= start) clash.push(p.run.period);
+      }
       if (clash.length > 0) {
         throw new AuthorizationError(
-          `Salary for ${clash.join(", ")} has already been processed (locked payroll run) — unpaid ${type.name} can't dock pay in a processed period. Shorten the range past those months or use a paid leave type.`,
+          `Salary for ${clash.join(", ")} has already been processed (locked payroll run) — unpaid ${type.name} can't dock pay in a processed period. Shorten the range past those windows or use a paid leave type.`,
         );
       }
     }

@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { computeOffer, type OfferComponent } from "@/lib/offer-math";
+import { windowsInYear, type PayrollFrequency } from "@/lib/payroll-windows";
 
 export interface PayslipLine {
   key: string;
@@ -42,13 +43,30 @@ export function daysInPeriod(period: string): number {
  * annually (fixed or % of basic) then ÷ 12, rounded per line. Employer
  * contributions stay off the payslip (they are not employee earnings). */
 export function monthlyEarningsFromStructure(components: OfferComponent[]): PayslipLine[] {
+  // Any year — windowsInYear("MONTHLY", ·) is 12 for every year, so the
+  // delegate stays clock-free while the cadence callers pass the run's.
+  return windowEarningsFromStructure(components, "MONTHLY", 2024);
+}
+
+/** P10 (PR-B05) — the per-window earnings lines for a structure on ANY
+ * cadence: ANNUAL component amounts ÷ the cadence's windows in the window's
+ * start year (Frappe parity — amounts are periodic per the structure's
+ * frequency; MONTHLY is the historical ÷ 12, byte-identical). 53-week ISO
+ * years genuinely carry 53 weekly windows, so weekly structures pay
+ * slightly more in those years (the benchmark's own behavior). */
+export function windowEarningsFromStructure(
+  components: OfferComponent[],
+  frequency: PayrollFrequency,
+  year: number,
+): PayslipLine[] {
   const totals = computeOffer(components);
+  const divisor = windowsInYear(frequency, year);
   return components
     .filter((c) => c.kind === "EARNING" || c.kind === "STATISTICAL")
     .map((c) => ({
       key: c.key,
       label: c.label,
-      amount: round2((totals.resolved[c.key] ?? 0) / 12),
+      amount: round2((totals.resolved[c.key] ?? 0) / divisor),
       // S6 — snapshot the payment-days exemption sparsely (only false).
       ...(c.dependsOnPaymentDays === false ? { dependsOnPaymentDays: false } : {}),
       // S8 — statistical lines ride the snapshot flagged, counted nowhere.

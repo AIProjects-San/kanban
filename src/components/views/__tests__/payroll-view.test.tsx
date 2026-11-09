@@ -44,11 +44,13 @@ import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
 
 const RUNS: PayrollRunT[] = [
   {
-    id: "run-1", period: "2026-11", status: "OPEN", lockedBy: null, lockedAt: null,
+    id: "run-1", period: "2026-11", frequency: "MONTHLY", startDate: "2026-11-01T00:00:00.000Z", endDate: "2026-11-30T00:00:00.000Z",
+    status: "OPEN", lockedBy: null, lockedAt: null,
     payslipCount: 3, totalGross: 20_100, totalNet: 19_600, workingDays: 21, createdAt: "2026-11-01T00:00:00.000Z",
   },
   {
-    id: "run-0", period: "2026-10", status: "LOCKED", lockedBy: "Remy", lockedAt: "2026-11-03T00:00:00.000Z",
+    id: "run-0", period: "2026-10", frequency: "MONTHLY", startDate: "2026-10-01T00:00:00.000Z", endDate: "2026-10-31T00:00:00.000Z",
+    status: "LOCKED", lockedBy: "Remy", lockedAt: "2026-11-03T00:00:00.000Z",
     payslipCount: 3, totalGross: 19_600, totalNet: 19_600, workingDays: 21, createdAt: "2026-10-01T00:00:00.000Z",
   },
 ];
@@ -70,7 +72,7 @@ const STRUCTURES: SalaryStructureT[] = [
     department: "ENGINEERING", source: "MANUAL",
     components: [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 80_400 }],
     notes: "", effectiveFrom: "2026-07-01T00:00:00.000Z", isActive: true,
-    createdAt: "2026-07-01T00:00:00.000Z", maxBenefits: 0,
+    createdAt: "2026-07-01T00:00:00.000Z", maxBenefits: 0, frequency: "MONTHLY",
   },
 ];
 
@@ -140,14 +142,16 @@ describe("PayrollView", () => {
     expect(text).toContain("YTD");
   });
 
-  it("creating a run posts the picked period", async () => {
+  it("creating a run posts the cadence + anchor date (P10)", async () => {
     createPayrollRun.mockResolvedValue({ ok: true, data: { id: "run-2", payslipCount: 3 } });
     render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
     await screen.findByTestId("new-run-form");
-    fireEvent.change(screen.getByTestId("new-run-period"), { target: { value: "2026-12" } });
+    // The live preview resolves the window before submit (same kernel as the server).
+    fireEvent.change(screen.getByTestId("new-run-period"), { target: { value: "2026-12-08" } });
+    expect(screen.getByTestId("new-run-preview").textContent).toContain("2026-12");
     fireEvent.click(screen.getByTestId("create-run-btn"));
     await waitFor(() =>
-      expect(createPayrollRun).toHaveBeenCalledWith({ period: "2026-12" }),
+      expect(createPayrollRun).toHaveBeenCalledWith({ frequency: "MONTHLY", anchorDate: "2026-12-08" }),
     );
   });
 

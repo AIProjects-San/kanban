@@ -384,7 +384,7 @@ describe("F1.5 — catalog → structure → payslip roundtrip", () => {
       components: structureArg.data.components,
       isActive: true,
     }]);
-    const run = await createPayrollRun({ period: "2026-11" });
+    const run = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(run.ok).toBe(true);
     const runArg = db.payrollRun.create.mock.calls[0][0] as {
       data: { payslips: { create: Array<{ userId: string; earnings: string; gross: number }> } };

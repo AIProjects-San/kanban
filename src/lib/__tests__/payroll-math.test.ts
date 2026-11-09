@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   monthlyEarningsFromStructure,
+  windowEarningsFromStructure,
   payslipTotals,
   computeLop,
   withLopLine,
@@ -267,5 +268,45 @@ describe("PR-B03 (S8) — statistical (display-only) lines", () => {
     expect(scaled.find((l) => l.key === "package_note")?.amount).toBe(10_000);
     const rounded = withRoundingLine(lines, [], "ROUND_NET_NEAREST");
     expect(rounded.earnings.find((l) => l.key === "rounding")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P10 (PR-B05) — per-cadence amounts: annual ÷ windowsInYear.
+// ---------------------------------------------------------------------------
+describe("windowEarningsFromStructure (P10 / PR-B05)", () => {
+  it("MONTHLY is byte-identical to the historical ÷ 12", () => {
+    const monthly = monthlyEarningsFromStructure(STRUCTURE);
+    const viaWindow = windowEarningsFromStructure(STRUCTURE, "MONTHLY", 2026);
+    expect(viaWindow).toEqual(monthly);
+  });
+
+  it("divides by the cadence's windows in the window's start year", () => {
+    // 2025 has 52 ISO weeks; 2026 has 53.
+    const weekly2025 = windowEarningsFromStructure(STRUCTURE, "WEEKLY", 2025);
+    expect(weekly2025.find((l) => l.key === "basic")?.amount).toBe(Math.round((78_000 / 52) * 100) / 100);
+    const weekly2026 = windowEarningsFromStructure(STRUCTURE, "WEEKLY", 2026);
+    expect(weekly2026.find((l) => l.key === "basic")?.amount).toBe(Math.round((78_000 / 53) * 100) / 100);
+    // Bimonthly halves, quarters, days, years, fortnights.
+    expect(windowEarningsFromStructure(STRUCTURE, "BIMONTHLY", 2026).find((l) => l.key === "basic")?.amount)
+      .toBe(Math.round((78_000 / 24) * 100) / 100);
+    expect(windowEarningsFromStructure(STRUCTURE, "QUARTERLY", 2026).find((l) => l.key === "basic")?.amount)
+      .toBe(Math.round((78_000 / 4) * 100) / 100);
+    expect(windowEarningsFromStructure(STRUCTURE, "DAILY", 2026).find((l) => l.key === "basic")?.amount)
+      .toBe(Math.round((78_000 / 365) * 100) / 100);
+    expect(windowEarningsFromStructure(STRUCTURE, "DAILY", 2024).find((l) => l.key === "basic")?.amount)
+      .toBe(Math.round((78_000 / 366) * 100) / 100);
+    expect(windowEarningsFromStructure(STRUCTURE, "ANNUAL", 2026).find((l) => l.key === "basic")?.amount).toBe(78_000);
+    expect(windowEarningsFromStructure(STRUCTURE, "FORTNIGHTLY", 2026).find((l) => l.key === "basic")?.amount)
+      .toBe(Math.round((78_000 / 27) * 100) / 100);
+    expect(windowEarningsFromStructure(STRUCTURE, "FORTNIGHTLY", 2025).find((l) => l.key === "basic")?.amount)
+      .toBe(Math.round((78_000 / 26) * 100) / 100);
+  });
+
+  it("keeps employer contributions off the slip on every cadence", () => {
+    for (const frequency of ["MONTHLY", "WEEKLY", "DAILY", "QUARTERLY", "ANNUAL"] as const) {
+      const lines = windowEarningsFromStructure(STRUCTURE, frequency, 2026);
+      expect(lines.find((l) => l.key === "kiwisaver"), frequency).toBeUndefined();
+    }
   });
 });

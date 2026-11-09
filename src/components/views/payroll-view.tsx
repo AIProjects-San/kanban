@@ -21,8 +21,16 @@ import {
   lockPayrollRun,
   applyPayAdjustmentsToRun,
 } from "@/server-actions/payroll";
-import { currentPeriod } from "@/lib/payroll-math";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
+// P10 — the pure windows kernel drives the new-run form's live preview and
+// the client-side period label for run rows (same functions the server
+// resolves with — one authority).
+import {
+  PAYROLL_FREQUENCY_OPTIONS,
+  payrollPeriodLabel,
+  resolvePayrollWindow,
+  type PayrollFrequency,
+} from "@/lib/payroll-windows";
 import { StructureModal } from "../ui/structure-modal";
 import { PayslipModal } from "../ui/payslip-modal";
 import { ComponentCatalogModal } from "../ui/component-catalog-modal";
@@ -40,8 +48,7 @@ function money(n: number): string {
 }
 
 function monthLabel(period: string): string {
-  const [y, m] = period.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  return payrollPeriodLabel(period);
 }
 
 export function PayrollView({ currentUser }: { currentUser: { id: string; name: string; role: string } }) {
@@ -71,7 +78,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [retentionOpen, setRetentionOpen] = useState(false);
   const [gratuityOpen, setGratuityOpen] = useState(false);
   const [withholdingOpen, setWithholdingOpen] = useState(false);
-  const [newPeriod, setNewPeriod] = useState(currentPeriod());
+  const [newFrequency, setNewFrequency] = useState<PayrollFrequency>("MONTHLY");
+  const [newAnchorDate, setNewAnchorDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
   // The employee picker lists every account (not just those with structures).
@@ -120,20 +128,24 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
 
   const activeStructureCount = structures.filter((s) => s.isActive).length;
 
+  // P10 — the live preview of the window the server WOULD resolve (the same
+  // pure kernel the action runs; the server stays the authority).
+  const previewWindow = resolvePayrollWindow(newFrequency, newAnchorDate);
+
   const createRun = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPeriod) { toast.error("Pick a month."); return; }
+    if (!previewWindow) { toast.error("Pick a valid anchor date."); return; }
     setBusy(true);
-    const res = await createPayrollRun({ period: newPeriod });
+    const res = await createPayrollRun({ frequency: newFrequency, anchorDate: newAnchorDate });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    toast.success(`Run for ${newPeriod} created — ${res.data.payslipCount} payslips from the active structures${res.data.adjustmentsApplied > 0 ? `, ${res.data.adjustmentsApplied} adjustment(s) consumed` : ""}${res.data.adjustmentsSkipped > 0 ? `, ${res.data.adjustmentsSkipped} skipped` : ""}.`);
+    toast.success(`Run for ${previewWindow.periodKey} created — ${res.data.payslipCount} payslips from the active ${newFrequency.toLowerCase()} structures${res.data.adjustmentsApplied > 0 ? `, ${res.data.adjustmentsApplied} adjustment(s) consumed` : ""}${res.data.adjustmentsSkipped > 0 ? `, ${res.data.adjustmentsSkipped} skipped` : ""}.`);
     setSelectedRunId(null);
     await load();
-    // Select the fresh run (the newest one for that period).
+    // Select the fresh run (the newest one for that window).
     const runsRes = await getPayrollData();
     if (runsRes.ok) {
-      const fresh = runsRes.data.runs.find((r) => r.period === newPeriod);
+      const fresh = runsRes.data.runs.find((r) => r.period === previewWindow.periodKey);
       if (fresh) setSelectedRunId(fresh.id);
     }
   };
@@ -223,24 +235,40 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         </span>
       </div>
 
-      {/* New run */}
+      {/* New run — P10: any cadence, resolved live through the windows kernel */}
       <form onSubmit={createRun} className="rounded-lg border border-border p-4 flex flex-wrap items-end gap-3" data-testid="new-run-form">
-        <div className="grow min-w-[180px]">
-          <label htmlFor="payroll-period" className="block text-xs font-medium text-foreground mb-1.5">New monthly run</label>
+        <div className="min-w-[150px]">
+          <label htmlFor="payroll-frequency" className="block text-xs font-medium text-foreground mb-1.5">Cadence</label>
+          <select
+            id="payroll-frequency"
+            className="f-input"
+            value={newFrequency}
+            onChange={(e) => setNewFrequency(e.target.value as PayrollFrequency)}
+            data-testid="new-run-frequency"
+          >
+            {PAYROLL_FREQUENCY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label} — {o.hint}</option>
+            ))}
+          </select>
+        </div>
+        <div className="grow min-w-[170px]">
+          <label htmlFor="payroll-period" className="block text-xs font-medium text-foreground mb-1.5">Anchor date (any day in the window)</label>
           <input
             id="payroll-period"
-            type="month"
+            type="date"
             className="f-input"
-            value={newPeriod}
-            onChange={(e) => setNewPeriod(e.target.value)}
+            value={newAnchorDate}
+            onChange={(e) => setNewAnchorDate(e.target.value)}
             data-testid="new-run-period"
           />
         </div>
-        <button type="submit" className="f-btn f-btn-primary" disabled={busy} data-testid="create-run-btn">
+        <button type="submit" className="f-btn f-btn-primary" disabled={busy || !previewWindow} data-testid="create-run-btn">
           {busy ? <Loader2 size={15} className="animate-spin" /> : <CalendarPlus size={15} />} Create run
         </button>
-        <div className="text-xs text-muted-foreground basis-full sm:basis-auto">
-          Snapshots every active structure into payslips (monthly = annual ÷ 12).
+        <div className="text-xs text-muted-foreground basis-full sm:basis-auto" data-testid="new-run-preview">
+          {previewWindow
+            ? <>Window <span className="font-medium text-foreground">{previewWindow.label}</span> · key <span className="font-mono">{previewWindow.periodKey}</span> · snapshots the active {newFrequency.toLowerCase()} structures (annual ÷ windows).</>
+            : "Pick a valid anchor date."}
         </div>
       </form>
 
@@ -259,6 +287,11 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 data-testid={`run-select-${r.period}`}
               >
                 <span className="text-sm font-medium">{monthLabel(r.period)}</span>
+                {r.frequency && r.frequency !== "MONTHLY" && (
+                  <span className="ml-2 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 align-middle" data-testid={`run-freq-${r.period}`}>
+                    {r.frequency.toLowerCase()}
+                  </span>
+                )}
                 <span className="block text-xs text-muted-foreground">
                   {r.payslipCount} payslip{r.payslipCount === 1 ? "" : "s"} · gross {money(r.totalGross)} · net {money(r.totalNet)}
                   {r.lockedBy ? ` · locked by ${r.lockedBy}` : ""}
@@ -444,7 +477,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         onClose={() => setAdjustmentModalOpen(false)}
         onChanged={load}
         employees={employees}
-        defaultPeriod={payslipsRun?.period ?? newPeriod}
+        defaultPeriod={payslipsRun?.period ?? previewWindow?.periodKey ?? ""}
       />
       {arrearsRun && (
         <ArrearsModal

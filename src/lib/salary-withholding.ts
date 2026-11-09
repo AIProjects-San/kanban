@@ -29,11 +29,14 @@
 //     the release period every row lands in.
 // ---------------------------------------------------------------------------
 
+import { parsePayrollPeriodKey } from "@/lib/payroll-windows";
+
 /** "" | WITHHELD | RELEASED — the literal union the payslip column stores. */
 export type WithholdStatus = "" | "WITHHELD" | "RELEASED";
 
 /** A window as the kernel consumes it (a SalaryWithholding row, or an
- * ACTIVE-row subset: both boundaries are period strings "YYYY-MM"). */
+ * ACTIVE-row subset: boundaries are period keys — monthly "YYYY-MM" by
+ * the modal, any P10 cadence key by the run side). */
 export interface WithholdingWindow {
   fromPeriod: string;
   untilPeriod: string | null;
@@ -41,19 +44,44 @@ export interface WithholdingWindow {
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
+/** P10 — the period key's window start, or null when unparseable. The
+ * hold boundaries themselves stay monthly (the modal is a month picker);
+ * the RUN side can be any cadence, so comparisons must be window-based:
+ * a hold from 2026-11 must also stamp the weekly 2026-W45 slip, which the
+ * old string compare silently missed ('W' > '1'). */
+function keyStartMs(key: string | null): number | null {
+  if (key == null) return null;
+  return parsePayrollPeriodKey(key)?.start.getTime() ?? null;
+}
+
+/** Is `period` (any cadence key) covered by the hold window? Held when the
+ * run's window starts at/after the hold's from-window start and, with an
+ * until, at/before the until-window END — the hold covers the WHOLE until
+ * period ("until 2026-12" holds all of December, exactly what the monthly
+ * string rule meant; a weekly December run and the 2026-12-B half are
+ * therefore held too). Monthly keys behave exactly as the pre-P10 string
+ * compare. */
 export function isPeriodHeld(window: WithholdingWindow, period: string): boolean {
-  if (!PERIOD_RE.test(period)) return false;
-  if (window.fromPeriod > period) return false;
-  if (window.untilPeriod !== null && window.untilPeriod < period) return false;
+  const runStart = keyStartMs(period);
+  const fromStart = keyStartMs(window.fromPeriod);
+  if (runStart == null || fromStart == null) return false;
+  if (runStart < fromStart) return false;
+  if (window.untilPeriod !== null) {
+    const untilEnd = parsePayrollPeriodKey(window.untilPeriod)?.end.getTime() ?? null;
+    if (untilEnd == null || runStart > untilEnd) return false;
+  }
   return true;
 }
 
-/** Two windows overlap when any period can satisfy both. */
+/** Two windows overlap when any period can satisfy both (from-start vs
+ * until-END comparison; open-ended ends compare as +∞). */
 export function windowsOverlap(a: WithholdingWindow, b: WithholdingWindow): boolean {
-  const aEnd = a.untilPeriod ?? "9999-12";
-  const bEnd = b.untilPeriod ?? "9999-12";
-  const aStart = a.fromPeriod;
-  const bStart = b.fromPeriod;
+  const aStart = keyStartMs(a.fromPeriod);
+  const bStart = keyStartMs(b.fromPeriod);
+  if (aStart == null || bStart == null) return false;
+  const aEnd = a.untilPeriod == null ? Number.POSITIVE_INFINITY : parsePayrollPeriodKey(a.untilPeriod)?.end.getTime() ?? null;
+  const bEnd = b.untilPeriod == null ? Number.POSITIVE_INFINITY : parsePayrollPeriodKey(b.untilPeriod)?.end.getTime() ?? null;
+  if (aEnd == null || bEnd == null) return false;
   return aStart <= bEnd && bStart <= aEnd;
 }
 

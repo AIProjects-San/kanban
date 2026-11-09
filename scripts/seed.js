@@ -346,6 +346,9 @@ async function main() {
     { email: "marcus@fernly.app", name: "Marcus Bell", role: "MEMBER", timezone: "America/New_York", bio: "Content Strategist. Words that work.", avatarColor: "plum" },
     { email: "hana@fernly.app", name: "Hana Park", role: "MEMBER", timezone: "Asia/Seoul", bio: "Senior Designer. Design system architect.", avatarColor: "forest" },
     { email: "diego@fernly.app", name: "Diego Morales", role: "MEMBER", timezone: "America/Mexico_City", bio: "Full-stack Engineer. Ships fast.", avatarColor: "ember" },
+    // P10 — the weekly-cadence demo account (weekly structure + a LOCKED
+    // weekly run in the payroll seed below).
+    { email: "kofi@fernly.app", name: "Kofi Mensah", role: "MEMBER", timezone: "Africa/Accra", bio: "Support Engineer. Weekly paid.", avatarColor: "ocean" },
     // QA-13 — the HR role existed in the RBAC matrix but NO user held it,
     // so every hr:* permission path (including the QA-11 reviewer gap)
     // was never exercised by any e2e. Seed one real People Ops account.
@@ -424,6 +427,7 @@ async function main() {
     { name: "Ingrid Solberg", role: "Engineering Manager", department: "MANAGEMENT", email: "ingrid@fernly.app", avatarColor: "slate", online: true },
     { name: "Diego Morales", role: "Mobile Engineer", department: "ENGINEERING", email: "diego@fernly.app", avatarColor: "ocean", online: false },
     { name: "Hana Park", role: "Visual Designer", department: "DESIGN", email: "hana@fernly.app", avatarColor: "plum", online: false },
+    { name: "Kofi Mensah", role: "Support Engineer", department: "ENGINEERING", email: "kofi@fernly.app", avatarColor: "ocean", online: true },
   ];
 
   const members = [];
@@ -1637,6 +1641,7 @@ async function main() {
     ["Hana Park", "Visual Designer", "DESIGN", "2024-11-11", "Seoul, South Korea", "+82 10 5550 0011", "Illustration, brand identity, typography"],
     ["Diego Morales", "Mobile Engineer", "ENGINEERING", "2025-04-08", "Mexico City, Mexico", "+52 55 5555 0012", "React Native, offline-first, push"],
     ["Remy Laurent", "People Operations Lead", "MANAGEMENT", "2025-05-20", "Paris, France", "+33 6 55 55 01 13", "People ops, onboarding design, coaching"],
+    ["Kofi Mensah", "Support Engineer", "ENGINEERING", "2025-06-02", "Accra, Ghana", "+233 20 555 0014", "Customer support, escalations, triage"],
   ];
   let profileCount = 0;
   // EM-B01 (S13) — the employee-number series mirrors the migration's
@@ -2348,10 +2353,16 @@ async function main() {
     const thisWorkingDays = workingDaysInPeriod(thisPeriod);
 
     // Last month: LOCKED (paid). S5 — paidDays stamped (full month: every
-    // structure holder was employed the whole period).
+    // structure holder was employed the whole period). P10 — the run carries
+    // its cadence + real window (mirrors resolvePayrollWindow("MONTHLY", …)).
+    const prevPeriodStart = new Date(Date.UTC(lastMonth.getFullYear(), lastMonth.getMonth(), 1));
+    const prevPeriodEnd = new Date(Date.UTC(lastMonth.getFullYear(), lastMonth.getMonth() + 1, 0));
     await db.payrollRun.create({
       data: {
         period: prevPeriod,
+        frequency: "MONTHLY",
+        startDate: prevPeriodStart,
+        endDate: prevPeriodEnd,
         status: "LOCKED",
         lockedById: hrId,
         lockedAt: addDays(TODAY, -3),
@@ -2476,9 +2487,14 @@ async function main() {
     };
     let autoLopCount = 0;
     let clippedCount = 0;
+    const thisPeriodStart = monthStart;
+    const thisPeriodEnd = monthEnd;
     await db.payrollRun.create({
       data: {
         period: thisPeriod,
+        frequency: "MONTHLY",
+        startDate: thisPeriodStart,
+        endDate: thisPeriodEnd,
         status: "OPEN",
         createdById: hrId,
         workingDays: thisWorkingDays,
@@ -2527,6 +2543,92 @@ async function main() {
       },
     });
     console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line${clippedCount > 0 ? `, ${clippedCount} scaled to employment windows (S5)` : ""}) + F1.5 component catalog (7 definitions, 1 retired)`);
+
+    // ------------------------------------------------------------------
+    // P10 (PR-B05) — the cadence demo: Kofi holds a WEEKLY structure, so the
+    // monthly runs above never include him (frequency-matched) and his pay
+    // rides a LOCKED run for the PREVIOUS ISO week — the mixed-cadence
+    // workspace: weekly amounts = annual ÷ ISO weeks of the window's year
+    // (mirrors windowEarningsFromStructure / resolvePayrollWindow).
+    // ------------------------------------------------------------------
+    {
+      const DAY = 86_400_000;
+      const mondayOf = (d) => {
+        const dow = d.getUTCDay();
+        return new Date(d.getTime() - ((dow + 6) % 7) * DAY);
+      };
+      const isoWeekOne = (year) => mondayOf(new Date(Date.UTC(year, 0, 4)));
+      const isoWeeksInYear = (year) => Math.round((isoWeekOne(year + 1) - isoWeekOne(year)) / (7 * DAY));
+      const isoYearAndWeek = (monday) => {
+        const y = monday.getUTCFullYear();
+        if (monday >= isoWeekOne(y + 1)) return { isoYear: y + 1, week: 1 };
+        if (monday < isoWeekOne(y)) return { isoYear: y - 1, week: isoWeeksInYear(y - 1) };
+        return { isoYear: y, week: Math.round((monday - isoWeekOne(y)) / (7 * DAY)) + 1 };
+      };
+      // The Monday of last week (UTC), whatever today is.
+      const weekStart = mondayOf(new Date(Date.UTC(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate()) - 7 * DAY));
+      const weekEnd = new Date(weekStart.getTime() + 6 * DAY);
+      const { isoYear, week } = isoYearAndWeek(weekStart);
+      const weekKey = `${isoYear}-W${String(week).padStart(2, "0")}`;
+      const kofi = await db.user.findUnique({ where: { email: "kofi@fernly.app" }, select: { id: true } });
+      if (kofi) {
+        const KOFI_COMPONENTS = [
+          { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 62_400 },
+          { key: "transport", label: "Transport Allowance", kind: "EARNING", mode: "FIXED", amount: 2_600 },
+        ];
+        await db.salaryStructure.create({
+          data: {
+            userId: kofi.id,
+            components: JSON.stringify(KOFI_COMPONENTS),
+            notes: "Support band — WEEKLY cadence (P10 demo).",
+            frequency: "WEEKLY",
+            effectiveFrom: addDays(TODAY, -90),
+            isActive: true,
+            createdById: hrId,
+          },
+        });
+        // Weekly working days (Mon–Fri minus the holiday calendar).
+        let weekWorkingDays = 0;
+        for (let c = new Date(weekStart); c <= weekEnd; c = new Date(c.getTime() + DAY)) {
+          const dow = c.getUTCDay();
+          if (dow !== 0 && dow !== 6) {
+            const hol = holidayKeyMap.get(c.toISOString().slice(0, 10));
+            if (!hol) weekWorkingDays += 1;
+            else if (hol.isHalfDay) weekWorkingDays += 0.5;
+          }
+        }
+        const divisor = isoWeeksInYear(isoYear);
+        const weeklyLines = KOFI_COMPONENTS
+          .filter((c) => c.kind === "EARNING")
+          .map((c) => ({ key: c.key, label: c.label, amount: round2(c.amount / divisor) }));
+        const weeklyGross = round2(weeklyLines.reduce((s, l) => s + l.amount, 0));
+        await db.payrollRun.create({
+          data: {
+            period: weekKey,
+            frequency: "WEEKLY",
+            startDate: weekStart,
+            endDate: weekEnd,
+            status: "LOCKED",
+            lockedById: hrId,
+            lockedAt: addDays(TODAY, -1),
+            createdById: hrId,
+            workingDays: weekWorkingDays,
+            payslips: {
+              create: {
+                userId: kofi.id,
+                slipNo: `PS-${weekKey}-001`,
+                earnings: JSON.stringify(weeklyLines),
+                deductions: "[]",
+                paidDays: weekWorkingDays,
+                gross: weeklyGross,
+                net: weeklyGross,
+              },
+            },
+          },
+        });
+        console.log(`  ✓ P10 (PR-B05) cadences: Kofi's WEEKLY structure + the ${weekKey} run LOCKED (window ${weekStart.toISOString().slice(0, 10)} → ${weekEnd.toISOString().slice(0, 10)}, ${weekWorkingDays} working day(s), amounts annual ÷ ${divisor}) — monthly runs exclude him by frequency`);
+      }
+    }
 
     // ------------------------------------------------------------------
     // P1 (F2.3) — the PayAdjustment adapter seed: one CONSUMED row whose

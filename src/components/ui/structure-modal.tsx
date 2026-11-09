@@ -12,7 +12,8 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
-import type { OfferComponentT, SalaryComponentT, SalaryStructureT } from "@/lib/types";
+import type { OfferComponentT, SalaryComponentT, SalaryStructureT, PayrollFrequencyT } from "@/lib/types";
+import { PAYROLL_FREQUENCY_OPTIONS } from "@/lib/payroll-windows";
 import { createStructureFromOffer, saveSalaryStructure } from "@/server-actions/payroll";
 import { getSalaryComponents } from "@/server-actions/payroll-components";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
@@ -45,6 +46,8 @@ export function StructureModal({
   // P5 (F3.2) — the flexible-benefit cap (annual; 0 = no cap).
   const [maxBenefits, setMaxBenefits] = useState("0");
   const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
+  // P10 (PR-B05) — the cadence this structure pays on (monthly default).
+  const [frequency, setFrequency] = useState<PayrollFrequencyT>("MONTHLY");
   const [busy, setBusy] = useState(false);
   // F1.5 — the component catalog feeding the picker (loaded on open; a
   // failed load degrades to the blank-line path, never blocks the editor).
@@ -52,7 +55,7 @@ export function StructureModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setMaxBenefits(String(edit?.maxBenefits ?? 0)); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setCatalog([]); }
+    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setMaxBenefits(String(edit?.maxBenefits ?? 0)); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setFrequency(edit?.frequency ?? "MONTHLY"); setCatalog([]); }
   }, [open, edit]);
 
   // F1.5 — catalog for the picker, loaded when the modal opens. The setState
@@ -112,6 +115,7 @@ export function StructureModal({
       effectiveFrom,
       isActive: true,
       maxBenefits: Number(maxBenefits) || 0,
+      frequency,
     });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
@@ -163,6 +167,18 @@ export function StructureModal({
               onChange={(e) => setEffectiveFrom(e.target.value)}
               data-testid="structure-effective"
             />
+          </Field>
+          <Field label="Pay cadence (P10)">
+            <select
+              className="f-input"
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value as PayrollFrequencyT)}
+              data-testid="structure-frequency"
+            >
+              {PAYROLL_FREQUENCY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
           </Field>
         </div>
 

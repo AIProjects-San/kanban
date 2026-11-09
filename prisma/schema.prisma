@@ -1636,7 +1636,8 @@ model OfferRecord {
 model SalaryStructure {
   id            String   @id @default(cuid())
   userId        String
-  // JSON: OfferComponent[] — ANNUAL amounts (monthly = ÷12 at payslip time).
+  // JSON: OfferComponent[] — ANNUAL amounts (monthly = ÷12 at payslip time;
+  // other cadences ÷ windowsInYear — P10 / PR-B05).
   components    String   @default("[]")
   notes         String   @default("")
   // P5 (PR-15/PR-B04, F3.2) — the flexible-benefit cap: the maximum ANNUAL
@@ -1644,6 +1645,12 @@ model SalaryStructure {
   // 0 = no cap (the pre-P5 world had no benefits at all, so the default is
   // zero-behavior).
   maxBenefits   Float    @default(0)
+  // P10 (PR-B05, PR-03's payroll_frequency) — the cadence this structure
+  // pays on. Runs only snapshot structures whose frequency matches the
+  // run's (the benchmark's frequency-matched assignment); amounts are
+  // periodic per this cadence. MONTHLY keeps the historical behavior for
+  // every pre-P10 row.
+  frequency     String   @default("MONTHLY")
   effectiveFrom DateTime @default(now())
   isActive      Boolean  @default(true)
   createdById   String   @default("")
@@ -1654,9 +1661,10 @@ model SalaryStructure {
   @@index([isActive])
 }
 
-// R7 — one payroll period per month ("2026-11", unique — one run per
-// month). OPEN: payslips editable; LOCKED: the period was paid and every
-// line is immutable (audit-grade finality for YTD).
+// R7 — one payroll period per window (P10: any cadence; the unique
+// `period` key names it — monthly "2026-11" was the pre-P10 shape and stays
+// byte-identical). OPEN: payslips editable; LOCKED: the period was paid and
+// every line is immutable (audit-grade finality for YTD).
 model PayrollRun {
   id          String   @id @default(cuid())
   period      String   @unique
@@ -1664,6 +1672,17 @@ model PayrollRun {
   lockedById  String   @default("")
   lockedAt    DateTime?
   createdById String   @default("")
+  // P10 (PR-B05) — the cadence this run pays on (MONTHLY | BIMONTHLY |
+  // WEEKLY | FORTNIGHTLY | DAILY | QUARTERLY | ANNUAL, lib/payroll-windows.ts)
+  // and the run's real window [startDate, endDate] (UTC, inclusive). Dates
+  // carry all temporal logic — ordering, YTD attribution, gratuity windows,
+  // the leave salary-processed guard — because period strings do not sort
+  // chronologically across cadences. Nullable: the migration backfills
+  // every existing monthly row; readers fall back to parsing `period`
+  // (runWindowStart/runWindowEnd) for rows that predate the backfill.
+  frequency   String   @default("MONTHLY")
+  startDate   DateTime?
+  endDate     DateTime?
   // F1.1 — working days in the period (Mon–Fri minus holiday-calendar
   // entries, half-days = 0.5), denormalized at creation from the holiday
   // calendar and never re-derived: payslip LOP math divides by THIS number.

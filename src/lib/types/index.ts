@@ -1,5 +1,10 @@
 // Shared Fernly types — mirror Prisma models but client-safe
 
+import type { PayrollFrequency } from "@/lib/payroll-windows";
+
+/** P10 — the payroll cadence union (lib/payroll-windows.ts owns it). */
+export type PayrollFrequencyT = PayrollFrequency;
+
 export type ProjectStatus = "RUNNING" | "ENDED" | "PENDING" | "PAUSED";
 export type Priority = "HIGH" | "MEDIUM" | "LOW";
 export type TaskStatus = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE";
@@ -725,6 +730,9 @@ export interface SalaryStructureT {
   /** P5 (PR-15/PR-B04, F3.2) — the flexible-benefit cap (annual; 0 = no
    * cap). Pre-P5 rows read as 0. */
   maxBenefits: number;
+  /** P10 (PR-B05) — the cadence this structure pays on (PR-03's
+   * payroll_frequency). Pre-P10 rows read as MONTHLY. */
+  frequency: PayrollFrequencyT;
 }
 
 /** F1.5 — one catalog row of the salary component vocabulary
@@ -754,6 +762,12 @@ export interface SalaryComponentT {
 export interface PayrollRunT {
   id: string;
   period: string;
+  /** P10 — the cadence key + the run's real window (ISO dates; null only
+   * for rows that predate the P10 backfill, where the client falls back to
+   * parsing `period`). */
+  frequency: "MONTHLY" | "BIMONTHLY" | "WEEKLY" | "FORTNIGHTLY" | "DAILY" | "QUARTERLY" | "ANNUAL";
+  startDate: string | null;
+  endDate: string | null;
   status: "OPEN" | "LOCKED";
   lockedBy: string | null;
   lockedAt: string | null;

@@ -9,6 +9,8 @@
 
 import { z } from "zod";
 
+import { parsePayrollPeriodKey, PAYROLL_FREQUENCY_VALUES } from "@/lib/payroll-windows";
+
 const cuidish = z.string().min(1).max(64);
 const isoDate = z.string().min(4).max(40);
 const title = z.string().trim().min(1, "Title is required.").max(200);
@@ -822,6 +824,15 @@ export const approveOfferSchema = z.object({
 
 export const PAYROLL_PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
+/** P10 (PR-B05) — any cadence's period key (2026-11, 2026-11-A, 2026-W45,
+ * 2026-F23, 2026-11-09, 2026-Q4, 2026) — the adjustment adapter's target
+ * periods accept all of them (lib/payroll-windows.ts is the single
+ * authority on what parses). */
+export const payrollPeriodKey = z
+  .string()
+  .trim()
+  .refine((k) => parsePayrollPeriodKey(k) != null, "Pick a payroll period key (2026-11, 2026-W45, …).");
+
 export const payslipLineSchema = z.object({
   key: z.string().trim().min(1).max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
   label: z.string().trim().min(1, "A label is required.").max(120),
@@ -844,6 +855,10 @@ export const saveSalaryStructureSchema = z.object({
   // P5 (PR-15/PR-B04, F3.2) — the flexible-benefit cap (annual; 0 = no cap).
   // Optional in the wire shape: omitted = keep the stored value.
   maxBenefits: z.number().min(0).max(10_000_000).optional(),
+  // P10 (PR-B05, PR-03 payroll_frequency) — the cadence this structure pays
+  // on (default MONTHLY keeps every pre-P10 call byte-identical; only
+  // structures matching a run's cadence join it).
+  frequency: z.enum(PAYROLL_FREQUENCY_VALUES).default("MONTHLY"),
 }).strict();
 
 // F1.5 — the salary component catalog (docs/Fernly_HR_Payroll_Enhancement_Plan.md
@@ -871,7 +886,11 @@ export const deleteSalaryComponentSchema = z.object({
 }).strict();
 
 export const createPayrollRunSchema = z.object({
-  period: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM)."),
+  // P10 (PR-B05) — the cadence + an anchor date inside the target window;
+  // the server resolves both through the payroll-windows kernel (the ONE
+  // authority — the modal's preview imports the same pure functions).
+  frequency: z.enum(PAYROLL_FREQUENCY_VALUES),
+  anchorDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick an anchor date (YYYY-MM-DD) inside the window."),
 }).strict();
 
 export const updatePayslipSchema = z.object({
@@ -929,8 +948,8 @@ export const createPayAdjustmentSchema = z.object({
   calcMode: z.enum(["FIXED", "PERCENT_OF_GROSS", "PERCENT_OF_NET"]).default("FIXED"),
   percent: z.number().min(0).max(100).nullish(),
   amount: z.number().min(0).max(10_000_000).default(0),
-  period: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM)."),
-  endPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a month (YYYY-MM).").nullish(),
+  period: payrollPeriodKey,
+  endPeriod: payrollPeriodKey.nullish(),
   note: z.string().trim().max(500).default(""),
 }).strict();
 

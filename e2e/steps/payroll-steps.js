@@ -133,6 +133,10 @@ When("I create a payroll run for next month", async function () {
     until.elementLocated(By.css('[data-testid="new-run-period"]')),
     10_000,
   );
+  // P10 — the form is cadence + anchor DATE (the MONTHLY select defaults
+  // untouched), so the anchor is the first day of the target month and the
+  // resolved period key is still "YYYY-MM".
+  const anchorDate = `${this.payrollPeriod}-01`;
   // CI-stabilization: assigning `.value` directly defeats React's value
   // tracker on controlled inputs — onChange never fires, the period stays
   // at its default, and the create duplicates the existing month. Use the
@@ -145,7 +149,7 @@ When("I create a payroll run for next month", async function () {
      el.dispatchEvent(new Event('input', { bubbles: true }));
      el.dispatchEvent(new Event('change', { bubbles: true }));`,
     input,
-    this.payrollPeriod,
+    anchorDate,
   );
   await driver.findElement(By.css('[data-testid="create-run-btn"]')).click();
   // The run row appears whether the create succeeded or already existed
