@@ -14,7 +14,7 @@ import {
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
-  Scale, CircleDollarSign, Undo2, HeartPulse, Award,
+  Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -166,6 +166,8 @@ export type AuditAction =
   // Recruitment R7 — payroll (ADMIN + HR only)
   | "payroll.structure_saved"
   | "payroll.structure_from_offer"
+  // P14 (PR-33) — the bulk structure assignment.
+  | "payroll.structures_bulk_assigned"
   | "payroll.run_created"
   | "payroll.payslip_updated"
   | "payroll.payslip_added"
@@ -340,6 +342,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.candidate_joined": { icon: UserPlus, cls: "text-emerald-500 bg-emerald-500/10" },
   "payroll.structure_saved": { icon: Landmark, cls: "text-purple-500 bg-purple-500/10" },
   "payroll.structure_from_offer": { icon: Landmark, cls: "text-indigo-500 bg-indigo-500/10" },
+  "payroll.structures_bulk_assigned": { icon: Users, cls: "text-sky-500 bg-sky-500/10" },
   "payroll.run_created": { icon: CalendarPlus, cls: "text-sky-500 bg-sky-500/10" },
   "payroll.payslip_updated": { icon: FilePenLine, cls: "text-amber-500 bg-amber-500/10" },
   "payroll.payslip_added": { icon: FilePlus2, cls: "text-indigo-500 bg-indigo-500/10" },

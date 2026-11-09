@@ -27,6 +27,7 @@ import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT } from "@/
 import {
   saveSalaryStructureSchema,
   createPayrollRunSchema,
+  bulkAssignStructureSchema,
   updatePayslipSchema,
   lockPayrollRunSchema,
   addPayslipSchema,
@@ -311,6 +312,98 @@ export async function createStructureFromOffer(input: { userId: string }): Promi
 }
 
 // ---------------------------------------------------------------------------
+// P14 (PR-33 / PR-04) — bulk tools: the bulk structure assignment + the
+// run's employee filter.
+// ---------------------------------------------------------------------------
+
+/** P14 (PR-33) — assign ONE component set to many employees at once. Each
+ * employee's ACTIVE structure is replaced in their OWN transaction
+ * (retire + create — the F-R1 discipline, so a crash can never leave an
+ * employee with zero ACTIVE structures), with per-employee isolation: one
+ * bad record never blocks the rest, the summary is loud and the counts
+ * honest (the P13 pattern). Employees without an existing structure simply
+ * get their first one (nothing to retire). */
+export async function bulkAssignStructure(input: unknown): Promise<ActionResult<{ replaced: number; createdFresh: number; failures: Array<{ userId: string; reason: string }> }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("payroll:manage");
+    const data = parseOrThrow(bulkAssignStructureSchema, input);
+
+    // The employees must exist (a typo'd id is a per-employee failure, not
+    // a silent skip).
+    const users = await db.user.findMany({
+      where: { id: { in: data.userIds } },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(users.map((u) => [u.id, u.name]));
+    const existingActive = await db.salaryStructure.findMany({
+      where: { userId: { in: data.userIds }, isActive: true },
+      select: { userId: true },
+    });
+    const hadActive = new Set(existingActive.map((s) => s.userId));
+
+    const componentsJson = JSON.stringify(data.components);
+    const effectiveFrom = data.effectiveFrom ? new Date(`${data.effectiveFrom}T00:00:00Z`) : new Date();
+    const failures: Array<{ userId: string; reason: string }> = [];
+    let replaced = 0;
+    let createdFresh = 0;
+
+    for (const userId of data.userIds) {
+      if (!nameById.has(userId)) {
+        failures.push({ userId, reason: "employee not found" });
+        continue;
+      }
+      try {
+        await db.$transaction(async (tx) => {
+          if (hadActive.has(userId)) {
+            await tx.salaryStructure.updateMany({
+              where: { userId, isActive: true },
+              data: { isActive: false },
+            });
+          }
+          await tx.salaryStructure.create({
+            data: {
+              userId,
+              components: componentsJson,
+              notes: data.notes,
+              frequency: data.frequency,
+              effectiveFrom,
+              isActive: true,
+              createdById: auth.userId,
+            },
+          });
+        });
+        if (hadActive.has(userId)) replaced += 1;
+        else createdFresh += 1;
+      } catch (e) {
+        failures.push({
+          userId,
+          reason: e instanceof Error ? e.message : "unknown error",
+        });
+      }
+    }
+
+    const done = replaced + createdFresh;
+    if (done === 0) {
+      // Nothing landed at all — refuse loudly rather than pretending.
+      throw new AuthorizationError(
+        `Bulk assignment created no structures — ${failures.length} failure(s): ${failures.map((f) => `${nameById.get(f.userId) ?? f.userId} (${f.reason})`).join("; ")}.`,
+      );
+    }
+
+    await logAudit({
+      actor: auth,
+      action: "payroll.structures_bulk_assigned",
+      entityType: "SALARY_STRUCTURE",
+      entityId: data.userIds[0],
+      entityLabel: `${done} employee(s)`,
+      detail: `${auth.name} bulk-assigned a ${data.frequency.toLowerCase()} structure (${data.components.length} components) to ${done} employee(s) — ${replaced} replaced an active structure, ${createdFresh} first structure${failures.length > 0 ? `; ${failures.length} FAILED: ${failures.map((f) => `${nameById.get(f.userId) ?? f.userId} (${f.reason})`).join("; ")}` : ""}.`,
+    });
+    revalidatePath("/");
+    return { replaced, createdFresh, failures };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Runs + payslips
 // ---------------------------------------------------------------------------
 
@@ -493,13 +586,21 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // The benchmark's frequency-matched assignment: only structures whose
     // cadence matches the run's join it (one ACTIVE structure per employee).
     // Legacy rows default MONTHLY, so monthly runs see exactly the same set
-    // as before.
+    // as before. P14 (PR-04) — the optional employee filter restricts the
+    // snapshot to the selected employees (the payroll-entry filter lite);
+    // omitted/empty = every active structure of the cadence.
     const structures = await db.salaryStructure.findMany({
-      where: { isActive: true, frequency: window.frequency },
+      where: {
+        isActive: true,
+        frequency: window.frequency,
+        ...(data.userIds && data.userIds.length > 0 ? { userId: { in: data.userIds } } : {}),
+      },
     });
     if (structures.length === 0) {
       throw new AuthorizationError(
-        `No active ${window.frequency.toLowerCase()} salary structures — create at least one before running ${window.frequency.toLowerCase()} payroll.`,
+        data.userIds && data.userIds.length > 0
+          ? `No active ${window.frequency.toLowerCase()} salary structures for the selected employees — create or bulk-assign at least one before running ${window.frequency.toLowerCase()} payroll.`
+          : `No active ${window.frequency.toLowerCase()} salary structures — create at least one before running ${window.frequency.toLowerCase()} payroll.`,
       );
     }
 
@@ -770,7 +871,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${payslipCount} payslips from the active ${window.frequency.toLowerCase()} salary structures${overflow.length > 0 ? ` (${firstChunk.length} in the creation batch + ${overflow.length - failures.length} chunked beyond 30)` : ""}${failures.length > 0 ? ` — ${failures.length} payslip(s) FAILED with reasons: ${failures.map((f) => `${f.slipNo} (${f.reason})`).join("; ")}` : ""}${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
+      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${payslipCount} payslips from the active ${window.frequency.toLowerCase()} salary structures${data.userIds && data.userIds.length > 0 ? ` (filtered to ${data.userIds.length} selected employee(s))` : ""}${overflow.length > 0 ? ` (${firstChunk.length} in the creation batch + ${overflow.length - failures.length} chunked beyond 30)` : ""}${failures.length > 0 ? ` — ${failures.length} payslip(s) FAILED with reasons: ${failures.map((f) => `${f.slipNo} (${f.reason})`).join("; ")}` : ""}${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
     });
     revalidatePath("/");
     return { id: run.id, payslipCount, adjustmentsApplied, adjustmentsSkipped, failures };

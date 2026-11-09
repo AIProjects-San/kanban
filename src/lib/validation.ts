@@ -891,6 +891,21 @@ export const createPayrollRunSchema = z.object({
   // authority — the modal's preview imports the same pure functions).
   frequency: z.enum(PAYROLL_FREQUENCY_VALUES),
   anchorDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick an anchor date (YYYY-MM-DD) inside the window."),
+  // P14 (PR-04, the payroll-entry employee filter lite) — restrict the run
+  // to the selected employees' structures (still frequency-matched);
+  // omitted/empty = every active structure of the cadence (the default).
+  userIds: z.array(cuidish).max(200).optional(),
+}).strict();
+
+// P14 (PR-33, the bulk salary structure assignment) — one component set
+// assigned to many employees at once (each employee's ACTIVE structure is
+// replaced transactionally — retire + create, the F-R1 discipline).
+export const bulkAssignStructureSchema = z.object({
+  userIds: z.array(cuidish).min(1, "Pick at least one employee.").max(200, "Bulk assignment is capped at 200 employees per batch."),
+  components: z.array(offerComponentSchema).min(1, "A structure needs at least one component.").max(30),
+  notes: z.string().trim().max(2_000).default(""),
+  frequency: z.enum(PAYROLL_FREQUENCY_VALUES).default("MONTHLY"),
+  effectiveFrom: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use the YYYY-MM-DD date format.").optional(),
 }).strict();
 
 export const updatePayslipSchema = z.object({

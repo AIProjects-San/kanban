@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { Award, BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Pause, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
+import { Award, BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Pause, Plus, RotateCcw, Scale, Undo2, Users, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -41,6 +41,7 @@ import { BenefitsModal } from "../ui/benefits-modal";
 import { RetentionBonusModal } from "../ui/retention-bonus-modal";
 import { GratuityRuleModal } from "../ui/gratuity-rule-modal";
 import { WithholdingModal } from "../ui/withholding-modal";
+import { BulkStructureModal } from "../ui/bulk-structure-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -80,6 +81,11 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [withholdingOpen, setWithholdingOpen] = useState(false);
   const [newFrequency, setNewFrequency] = useState<PayrollFrequency>("MONTHLY");
   const [newAnchorDate, setNewAnchorDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // P14 (PR-04) — the run's optional employee filter (empty = every active
+  // structure of the cadence).
+  const [runFilterUserIds, setRunFilterUserIds] = useState<Set<string>>(new Set());
+  // P14 (PR-33) — the bulk structure assignment modal.
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
   // The employee picker lists every account (not just those with structures).
@@ -136,10 +142,14 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     e.preventDefault();
     if (!previewWindow) { toast.error("Pick a valid anchor date."); return; }
     setBusy(true);
-    const res = await createPayrollRun({ frequency: newFrequency, anchorDate: newAnchorDate });
+    const res = await createPayrollRun({
+      frequency: newFrequency,
+      anchorDate: newAnchorDate,
+      ...(runFilterUserIds.size > 0 ? { userIds: [...runFilterUserIds] } : {}),
+    });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    toast.success(`Run for ${previewWindow.periodKey} created — ${res.data.payslipCount} payslips from the active ${newFrequency.toLowerCase()} structures${res.data.adjustmentsApplied > 0 ? `, ${res.data.adjustmentsApplied} adjustment(s) consumed` : ""}${res.data.adjustmentsSkipped > 0 ? `, ${res.data.adjustmentsSkipped} skipped` : ""}.`);
+    toast.success(`Run for ${previewWindow.periodKey} created — ${res.data.payslipCount} payslips from the active ${newFrequency.toLowerCase()} structures${runFilterUserIds.size > 0 ? ` (filtered to ${runFilterUserIds.size} employee(s))` : ""}${res.data.adjustmentsApplied > 0 ? `, ${res.data.adjustmentsApplied} adjustment(s) consumed` : ""}${res.data.adjustmentsSkipped > 0 ? `, ${res.data.adjustmentsSkipped} skipped` : ""}.`);
     // P13 (PR-B14/PR-09) — the loud failure summary: payslips beyond the
     // first 30 are isolated per slip, so a failure never aborts the run —
     // it is listed here instead (fix the cause, then add the payslip).
@@ -244,7 +254,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         </span>
       </div>
 
-      {/* New run — P10: any cadence, resolved live through the windows kernel */}
+      {/* New run — P10: any cadence, resolved live through the windows kernel.
+          P14 (PR-04): an optional employee filter scopes the snapshot. */}
       <form onSubmit={createRun} className="rounded-lg border border-border p-4 flex flex-wrap items-end gap-3" data-testid="new-run-form">
         <div className="min-w-[150px]">
           <label htmlFor="payroll-frequency" className="block text-xs font-medium text-foreground mb-1.5">Cadence</label>
@@ -274,11 +285,40 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         <button type="submit" className="f-btn f-btn-primary" disabled={busy || !previewWindow} data-testid="create-run-btn">
           {busy ? <Loader2 size={15} className="animate-spin" /> : <CalendarPlus size={15} />} Create run
         </button>
+        {/* P14 (PR-33) — the bulk structure assignment tool. */}
+        <button type="button" className="f-btn f-btn-secondary" onClick={() => setBulkOpen(true)} data-testid="bulk-assign-btn">
+          <Users size={15} /> Bulk assign
+        </button>
         <div className="text-xs text-muted-foreground basis-full sm:basis-auto" data-testid="new-run-preview">
           {previewWindow
-            ? <>Window <span className="font-medium text-foreground">{previewWindow.label}</span> · key <span className="font-mono">{previewWindow.periodKey}</span> · snapshots the active {newFrequency.toLowerCase()} structures (annual ÷ windows).</>
+            ? <>Window <span className="font-medium text-foreground">{previewWindow.label}</span> · key <span className="font-mono">{previewWindow.periodKey}</span> · snapshots the active {newFrequency.toLowerCase()} structures (annual ÷ windows){runFilterUserIds.size > 0 ? ` · ${runFilterUserIds.size} employee(s) selected` : ""}.</>
             : "Pick a valid anchor date."}
         </div>
+        {/* P14 (PR-04) — the optional employee filter (open = pick employees;
+            unchecked-all = every active structure of the cadence). */}
+        <details className="basis-full" data-testid="run-employee-filter">
+          <summary className="text-xs text-muted-foreground cursor-pointer select-none">
+            Filter employees ({runFilterUserIds.size > 0 ? `${runFilterUserIds.size} selected` : "all"})
+          </summary>
+          <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-border divide-y divide-border">
+            {employees.map((e) => (
+              <label key={e.userId} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-muted/40">
+                <input
+                  type="checkbox"
+                  checked={runFilterUserIds.has(e.userId)}
+                  onChange={() => setRunFilterUserIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(e.userId)) next.delete(e.userId);
+                    else next.add(e.userId);
+                    return next;
+                  })}
+                  data-testid={`run-filter-${e.userId}`}
+                />
+                <span className="truncate">{e.name}</span>
+              </label>
+            ))}
+          </div>
+        </details>
       </form>
 
       {/* Runs */}
@@ -534,6 +574,14 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         onChanged={load}
         edit={editStructure}
         employees={employees}
+      />
+      {/* P14 (PR-33) — the bulk structure assignment. */}
+      <BulkStructureModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        onChanged={load}
+        employees={employees}
+        structures={structures.filter((s) => s.isActive)}
       />
       <PayslipModal
         payslip={openPayslip}

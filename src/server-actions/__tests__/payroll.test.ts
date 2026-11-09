@@ -63,6 +63,7 @@ import {
   saveSalaryStructure,
   createStructureFromOffer,
   createPayrollRun,
+  bulkAssignStructure,
   getPayrollRun,
   getPayrollRuns,
   updatePayslip,
@@ -1870,5 +1871,139 @@ describe("P13 — chunked batch >30 with per-slip isolation", () => {
     const skipCalls = updateCalls.filter((c) => (c[0] as { data?: { status?: string } }).data?.status === "SKIPPED");
     expect(skipCalls.find((c) => c[0].where.id === "adj-31")).toBeUndefined();
     if (res.ok) expect(res.data.adjustmentsApplied).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P14 (PR-33 / PR-04) — the bulk tools: bulk structure assignment with
+// per-employee isolation + the run's optional employee filter.
+// ---------------------------------------------------------------------------
+describe("P14 — bulkAssignStructure (PR-33)", () => {
+  beforeEach(() => {
+    db.user.findMany.mockResolvedValue([
+      { id: "u-yuki", name: "Yuki Tanaka" },
+      { id: "u-hana", name: "Hana Park" },
+      { id: "u-new", name: "New Person" },
+    ]);
+    db.salaryStructure.findMany.mockResolvedValue([
+      { userId: "u-yuki" }, // Yuki has an active structure → replace
+    ]);
+    db.salaryStructure.updateMany.mockResolvedValue({ count: 1 });
+    db.salaryStructure.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-bulk", ...data }));
+  });
+
+  it("requires payroll:manage", async () => {
+    requirePermissionMock.mockImplementation(denyFor("payroll:manage"));
+    const res = await bulkAssignStructure({ userIds: ["u-yuki"], components: COMPONENTS });
+    expect(res.ok).toBe(false);
+  });
+
+  it("replaces existing actives and creates fresh ones — per-employee transactions, honest counts", async () => {
+    const res = await bulkAssignStructure({
+      userIds: ["u-yuki", "u-hana", "u-new"],
+      components: COMPONENTS,
+      frequency: "WEEKLY",
+      effectiveFrom: "2026-11-01",
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.replaced).toBe(1); // Yuki had an active structure
+      expect(res.data.createdFresh).toBe(2); // Hana + New Person
+      expect(res.data.failures).toEqual([]);
+    }
+    // Three creates, one per employee.
+    expect(db.salaryStructure.create).toHaveBeenCalledTimes(3);
+    // Only Yuki's active structure was retired.
+    expect(db.salaryStructure.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.salaryStructure.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: "u-yuki", isActive: true } }),
+    );
+    // The created rows carry the cadence + effective date.
+    const first = db.salaryStructure.create.mock.calls[0][0].data as { userId: string; frequency: string; effectiveFrom: Date; components: string };
+    expect(first).toMatchObject({ userId: "u-yuki", frequency: "WEEKLY" });
+    expect(first.effectiveFrom).toEqual(new Date("2026-11-01T00:00:00.000Z"));
+    expect(JSON.parse(first.components)).toHaveLength(3);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.structures_bulk_assigned",
+      detail: expect.stringContaining("3 employee(s) — 1 replaced an active structure, 2 first structure"),
+    }));
+  });
+
+  it("an unknown employee id is a per-employee failure, not a silent skip; total failure refuses loudly", async () => {
+    const res = await bulkAssignStructure({ userIds: ["u-ghost"], components: COMPONENTS });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("created no structures");
+    expect(db.salaryStructure.create).not.toHaveBeenCalled();
+
+    // Mixed: one good + one ghost → the good one lands, the ghost is named.
+    const mixed = await bulkAssignStructure({ userIds: ["u-yuki", "u-ghost"], components: COMPONENTS });
+    expect(mixed.ok).toBe(true);
+    if (mixed.ok) {
+      expect(mixed.data.replaced + mixed.data.createdFresh).toBe(1);
+      expect(mixed.data.failures).toEqual([{ userId: "u-ghost", reason: "employee not found" }]);
+    }
+  });
+
+  it("a per-employee write failure is isolated (the rest succeed)", async () => {
+    db.salaryStructure.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      if ((data as { userId: string }).userId === "u-hana") throw new Error("disk on fire");
+      return { id: "ss-bulk", ...data };
+    });
+    const res = await bulkAssignStructure({ userIds: ["u-yuki", "u-hana", "u-new"], components: COMPONENTS });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.failures).toEqual([{ userId: "u-hana", reason: "disk on fire" }]);
+      expect(res.data.replaced + res.data.createdFresh).toBe(2);
+    }
+  });
+
+  it("validates the input shape", async () => {
+    expect((await bulkAssignStructure({ userIds: [], components: COMPONENTS })).ok).toBe(false);
+    expect((await bulkAssignStructure({ userIds: ["u-yuki"], components: [] })).ok).toBe(false);
+    expect((await bulkAssignStructure({ userIds: ["u-yuki"], components: COMPONENTS, frequency: "WEEKLY", anchorDate: "2026-11-01" })).ok).toBe(false); // strict: unknown key
+  });
+});
+
+describe("P14 — createPayrollRun employee filter (PR-04)", () => {
+  beforeEach(() => {
+    db.payrollRun.findUnique.mockResolvedValue(null);
+    db.payrollRun.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "run-p14",
+      ...data,
+      payslips: (((data.payslips as { create?: unknown[] } | undefined)?.create) ?? []).map((_: unknown, i: number) => ({ id: `ps-${i}` })),
+    }));
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+  });
+
+  it("userIds restricts the snapshot to the selected employees (frequency still applies)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]); // the mock ignores where; assert it instead
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01", userIds: ["u-yuki", "u-hana"] });
+    expect(res.ok).toBe(true);
+    expect(db.salaryStructure.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isActive: true, frequency: "MONTHLY", userId: { in: ["u-yuki", "u-hana"] } },
+      }),
+    );
+    // The audit names the filter.
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.stringContaining("(filtered to 2 selected employee(s))"),
+    }));
+  });
+
+  it("omitted userIds = every active structure of the cadence (no userId clause)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    expect(db.salaryStructure.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isActive: true, frequency: "MONTHLY" } }),
+    );
+  });
+
+  it("a filtered run with no matching structures names the filter in the error", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ frequency: "WEEKLY", anchorDate: "2026-11-09", userIds: ["u-yuki"] });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("for the selected employees");
+    expect(db.payrollRun.create).not.toHaveBeenCalled();
   });
 });
