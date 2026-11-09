@@ -1754,3 +1754,121 @@ describe("P10 — mixed-cadence self-service (getMyPayslips)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// P13 (PR-B14 / PR-09) — chunked batch processing with per-slip error
+// isolation: the first 30 ride the run-creation transaction (byte-identical
+// to the pre-P13 world); every slip beyond the 30th writes in its OWN
+// transaction, isolated per slip — one failure never aborts the payroll,
+// the summary is loud, the counts honest.
+// ---------------------------------------------------------------------------
+describe("P13 — chunked batch >30 with per-slip isolation", () => {
+  const STRUCTURES_32 = Array.from({ length: 32 }, (_, i) => ({
+    ...STRUCTURE_ROW,
+    id: `ss-${i + 1}`,
+    userId: `u-${i + 1}`,
+  }));
+
+  beforeEach(() => {
+    db.payrollRun.findUnique.mockResolvedValue(null);
+    db.payrollRun.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "run-p13",
+      ...data,
+      payslips: (((data.payslips as { create?: unknown[] } | undefined)?.create) ?? []).map((_: unknown, i: number) => ({ id: `ps-${i}` })),
+    }));
+    db.payslip.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ps-overflow", ...data }));
+  });
+
+  it("≤30 structures ride the single nested create — no overflow writes", async () => {
+    db.salaryStructure.findMany.mockResolvedValue(STRUCTURES_32.slice(0, 30));
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as { data: { payslips: { create: unknown[] } } };
+    expect(createArg.data.payslips.create).toHaveLength(30);
+    // The overflow path never ran: no standalone payslip creates.
+    expect(db.payslip.create).not.toHaveBeenCalled();
+    if (res.ok) {
+      expect(res.data.payslipCount).toBe(30);
+      expect(res.data.failures).toEqual([]);
+    }
+  });
+
+  it(">30: the first 30 nest with the run; the overflow writes per slip in its own transaction", async () => {
+    db.salaryStructure.findMany.mockResolvedValue(STRUCTURES_32);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as { data: { payslips: { create: Array<{ slipNo: string }> } } };
+    expect(createArg.data.payslips.create).toHaveLength(30);
+    // Two overflow slips, each with runId + its own slipNo (031, 032).
+    expect(db.payslip.create).toHaveBeenCalledTimes(2);
+    const overflow1 = db.payslip.create.mock.calls[0][0].data as { runId: string; slipNo: string };
+    const overflow2 = db.payslip.create.mock.calls[1][0].data as { runId: string; slipNo: string };
+    expect(overflow1).toMatchObject({ runId: "run-p13", slipNo: "PS-2026-11-031" });
+    expect(overflow2).toMatchObject({ runId: "run-p13", slipNo: "PS-2026-11-032" });
+    if (res.ok) {
+      expect(res.data.payslipCount).toBe(32);
+      expect(res.data.failures).toEqual([]);
+    }
+    // The audit names the chunking.
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.stringContaining("30 in the creation batch + 2 chunked beyond 30"),
+    }));
+  });
+
+  it("a failing overflow slip is isolated: recorded with a reason, counts stay honest, the rest succeed", async () => {
+    db.salaryStructure.findMany.mockResolvedValue(STRUCTURES_32);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    // The FIRST overflow slip (u-31) hits a duplicate-key violation; the
+    // second (u-32) succeeds.
+    let call = 0;
+    db.payslip.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      call += 1;
+      if (call === 1) {
+        const e = new Error("Unique constraint failed on the fields: (`slipNo`)") as Error & { code: string };
+        e.code = "P2002";
+        throw e;
+      }
+      return { id: "ps-overflow", ...data };
+    });
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // Honest counts: 30 nested + 1 overflow success; the failed one named.
+      expect(res.data.payslipCount).toBe(31);
+      expect(res.data.failures).toEqual([
+        { userId: "u-31", slipNo: "PS-2026-11-031", reason: "a payslip already exists for this employee in the run (duplicate)" },
+      ]);
+    }
+    // The audit carries the loud failure summary.
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.stringContaining("1 payslip(s) FAILED with reasons: PS-2026-11-031 (a payslip already exists"),
+    }));
+  });
+
+  it("a failed overflow slip's adjustments are never consumed (PENDING for the addPayslip retry)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue(STRUCTURES_32);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    // One ONE_SHOT adjustment due for u-31 (the slip that will fail).
+    db.payAdjustment.findMany.mockResolvedValue([
+      {
+        id: "adj-31", userId: "u-31", sourceType: "MANUAL", sourceId: "", componentCode: "",
+        label: "Relocation", side: "EARNING", recurrence: "ONE_SHOT", calcMode: "FIXED",
+        percent: null, amount: 500, period: "2026-11", endPeriod: null,
+        lastConsumedPeriod: "", status: "PENDING", skipReason: "", note: "",
+      },
+    ]);
+    db.payslip.create.mockRejectedValue(new Error("boom"));
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.payslipCount).toBe(30);
+    // u-31's row was never consumed and never skipped — it stays PENDING so
+    // the joiner path (addPayslip) can pick it up after the fix.
+    const updateCalls = db.payAdjustment.update.mock.calls as Array<[{ where: { id: string } }]>;
+    expect(updateCalls.find((c) => c[0].where.id === "adj-31")).toBeUndefined();
+    const skipCalls = updateCalls.filter((c) => (c[0] as { data?: { status?: string } }).data?.status === "SKIPPED");
+    expect(skipCalls.find((c) => c[0].where.id === "adj-31")).toBeUndefined();
+    if (res.ok) expect(res.data.adjustmentsApplied).toBe(0);
+  });
+});

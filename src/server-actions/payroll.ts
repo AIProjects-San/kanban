@@ -462,8 +462,21 @@ export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
  * windowsInYear — monthly = ÷ 12, byte-identical to the pre-P10 world). One
  * run per window (unique period key). F1.4: each slip's loss-of-pay days
  * are pre-derived from attendance + unpaid leave over the run's real window
- * (lopSource AUTO) and the LOP deduction line is materialized at creation. */
-export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number; adjustmentsApplied: number; adjustmentsSkipped: number }>> {
+ * (lopSource AUTO) and the LOP deduction line is materialized at creation.
+ *
+ * P13 (PR-B14/PR-09) — chunked batch processing with per-slip error
+ * isolation: the FIRST 30 slips ride the run-creation transaction exactly
+ * as before (≤30-employee workspaces are byte-identical: one transaction,
+ * run + slips + adjustment consumption all-or-nothing); every slip BEYOND
+ * the 30th is written in its OWN small transaction (the slip + its
+ * adjustment consumption, S17 preserved per slip) with a per-slip try/catch
+ * — one bad record can never abort the whole payroll. Failures are
+ * collected, reported in the result + audit + toast (loud, never silent)
+ * and the counts stay honest; a failed slip's adjustments stay PENDING so
+ * the joiner path (addPayslip) can create the slip once the cause is fixed
+ * (slip numbers are unique per structure order, so the retry takes the next
+ * free number). No queue infra — the locked chunked-lite decision. */
+export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number; adjustmentsApplied: number; adjustmentsSkipped: number; failures: Array<{ userId: string; slipNo: string; reason: string }> }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
     const data = parseOrThrow(createPayrollRunSchema, input);
@@ -567,7 +580,6 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       (row) => isDueInPeriod(row, window.periodKey) && !slipUserIds.has(row.userId) && row.recurrence !== "RECURRING",
     );
     type ConsumedEntry = { row: PayAdjustmentRow; final: boolean };
-    const consumedEntries: ConsumedEntry[] = [];
     const kernelSkips: Array<{ id: string; reason: string }> = [];
 
     // P8 (PR-19/PR-B13, F3.3) — ACTIVE hold windows stamp their slips
@@ -587,6 +599,86 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     const windowEarnings = (components: OfferComponent[]) =>
       windowEarningsFromStructure(components, window.frequency, earningsYear);
 
+    // P13 — compute EVERY slip's data purely first (the map never throws:
+    // the kernels are guarded), keeping each slip's adjustment consumption
+    // attached so the chunked writes below can commit them per slip (S17).
+    type SlipPlan = {
+      data: {
+        userId: string; slipNo: string; earnings: string; deductions: string;
+        lopDays: number; lopSource: string; paidDays: number; gross: number; net: number; withholdStatus: string;
+      };
+      consumed: ConsumedEntry[];
+    };
+    const slipPlans: SlipPlan[] = structures.map((s, i) => {
+      const facts = lopByUser.get(s.userId)
+        ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false };
+      const earnings = scaleEarningsToPaidDays(
+        windowEarnings(parseComponents(s.components)),
+        facts.paidDays,
+        runWorkingDays,
+      );
+      // P9 (PR-B26) — the overtime line prices from the structure's
+      // UNSCALED per-window gross (÷ working days ÷ 8h) and lands AFTER
+      // the LOP basis: overtime minutes were worked on attended
+      // days, so absence docking never touches them (the S6 spirit).
+      const otPayout = planOvertimePayout({
+        enabled: overtimePayEnabled,
+        minutes: otByUser.get(s.userId) ?? null,
+        monthlyGross: lineSum(windowEarnings(parseComponents(s.components))),
+        workingDays: runWorkingDays,
+      });
+      const earningsWithOt: PayslipLine[] = otPayout
+        ? [...earnings, { key: OVERTIME_LINE_KEY, label: overtimeLineLabel(otPayout), amount: otPayout.amount }]
+        : earnings;
+      const lopDays = facts.lopDays;
+      // The auto LOP line is materialized at creation (net totals are
+      // honest immediately — no per-slip save needed to see the dock).
+      // S6 — the LOP basis excludes window-exempt lines (a flat
+      // allowance is not reduced by absent days).
+      const lopDeductions = lopDays > 0
+        ? withLopLine([], lopBasisGross(earnings), lopDays, window.periodKey, runWorkingDays > 0 ? runWorkingDays : undefined)
+        : [];
+      // P1 — adjustments land on the docked base (post scaling,
+      // post LOP, overtime included), the rounding line wraps the
+      // final net.
+      const applied = applyAdjustments(
+        { earnings: earningsWithOt, deductions: lopDeductions },
+        dueByUser.get(s.userId) ?? [],
+        window.periodKey,
+      );
+      const consumed: ConsumedEntry[] = [];
+      for (const c of applied.consumed) {
+        const row = (dueByUser.get(s.userId) ?? []).find((r) => r.id === c.id);
+        if (row) consumed.push({ row, final: c.final });
+      }
+      kernelSkips.push(...applied.skipped);
+      const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
+      const { gross, net } = payslipTotals(finalEarnings, deductions);
+      return {
+        data: {
+          userId: s.userId,
+          slipNo: slipNumber(window.periodKey, i + 1),
+          earnings: JSON.stringify(finalEarnings),
+          deductions: JSON.stringify(deductions),
+          lopDays,
+          lopSource: "AUTO",
+          paidDays: facts.paidDays,
+          gross,
+          net,
+          withholdStatus: heldUserIds.has(s.userId) ? "WITHHELD" : "",
+        },
+        consumed,
+      };
+    });
+
+    // P13 — the first CHUNK rides the run-creation transaction (the
+    // ≤30-employee path is byte-identical to the pre-P13 world: one
+    // transaction, run + slips + consumption all-or-nothing).
+    const CHUNK = 30;
+    const firstChunk = slipPlans.slice(0, CHUNK);
+    const overflow = slipPlans.slice(CHUNK);
+    const consumedEntries: ConsumedEntry[] = firstChunk.flatMap((p) => p.consumed);
+
     const run = await db.$transaction(async (tx) => {
       const created = await tx.payrollRun.create({
         data: {
@@ -598,63 +690,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           createdById: auth.userId,
           workingDays: runWorkingDays,
           payslips: {
-            create: structures.map((s, i) => {
-              const facts = lopByUser.get(s.userId)
-                ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false };
-              const earnings = scaleEarningsToPaidDays(
-                windowEarnings(parseComponents(s.components)),
-                facts.paidDays,
-                runWorkingDays,
-              );
-              // P9 (PR-B26) — the overtime line prices from the structure's
-              // UNSCALED per-window gross (÷ working days ÷ 8h) and lands
-              // AFTER the LOP basis: overtime minutes were worked on attended
-              // days, so absence docking never touches them (the S6 spirit).
-              const otPayout = planOvertimePayout({
-                enabled: overtimePayEnabled,
-                minutes: otByUser.get(s.userId) ?? null,
-                monthlyGross: lineSum(windowEarnings(parseComponents(s.components))),
-                workingDays: runWorkingDays,
-              });
-              const earningsWithOt: PayslipLine[] = otPayout
-                ? [...earnings, { key: OVERTIME_LINE_KEY, label: overtimeLineLabel(otPayout), amount: otPayout.amount }]
-                : earnings;
-              const lopDays = facts.lopDays;
-              // The auto LOP line is materialized at creation (net totals are
-              // honest immediately — no per-slip save needed to see the dock).
-              // S6 — the LOP basis excludes window-exempt lines (a flat
-              // allowance is not reduced by absent days).
-              const lopDeductions = lopDays > 0
-                ? withLopLine([], lopBasisGross(earnings), lopDays, window.periodKey, runWorkingDays > 0 ? runWorkingDays : undefined)
-                : [];
-              // P1 — adjustments land on the docked base (post scaling,
-              // post LOP, overtime included), the rounding line wraps the
-              // final net.
-              const applied = applyAdjustments(
-                { earnings: earningsWithOt, deductions: lopDeductions },
-                dueByUser.get(s.userId) ?? [],
-                window.periodKey,
-              );
-              for (const c of applied.consumed) {
-                const row = (dueByUser.get(s.userId) ?? []).find((r) => r.id === c.id);
-                if (row) consumedEntries.push({ row, final: c.final });
-              }
-              kernelSkips.push(...applied.skipped);
-              const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
-              const { gross, net } = payslipTotals(finalEarnings, deductions);
-              return {
-                userId: s.userId,
-                slipNo: slipNumber(window.periodKey, i + 1),
-                earnings: JSON.stringify(finalEarnings),
-                deductions: JSON.stringify(deductions),
-                lopDays,
-                lopSource: "AUTO",
-                paidDays: facts.paidDays,
-                gross,
-                net,
-                withholdStatus: heldUserIds.has(s.userId) ? "WITHHELD" : "",
-              };
-            }),
+            create: firstChunk.map((p) => p.data),
           },
         },
         include: { payslips: { select: { id: true } } },
@@ -683,11 +719,50 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       return created;
     });
 
-    const adjustmentsApplied = consumedEntries.length;
+    // P13 — the overflow (>30th employee onward): each slip in its OWN
+    // transaction (slip + its adjustment consumption — S17 per slip),
+    // isolated per slip: a failure is recorded and NEVER aborts the rest.
+    // The failed slip's adjustments stay untouched (PENDING), so addPayslip
+    // can create the slip once the cause is fixed.
+    const failures: Array<{ userId: string; slipNo: string; reason: string }> = [];
+    let overflowApplied = 0;
+    for (const plan of overflow) {
+      try {
+        await db.$transaction(async (tx) => {
+          await tx.payslip.create({ data: { ...plan.data, runId: run.id } });
+          for (const { row, final } of plan.consumed) {
+            await tx.payAdjustment.update({
+              where: { id: row.id },
+              data: {
+                status: final ? "CONSUMED" : "PENDING",
+                lastConsumedPeriod: window.periodKey,
+                consumedRunId: run.id,
+              },
+            });
+          }
+        });
+        overflowApplied += plan.consumed.length;
+      } catch (e) {
+        failures.push({
+          userId: plan.data.userId,
+          slipNo: plan.data.slipNo,
+          reason: isUniqueConstraintError(e)
+            ? "a payslip already exists for this employee in the run (duplicate)"
+            : e instanceof Error ? e.message : "unknown error",
+        });
+      }
+    }
+
+    // P13 — honest counts: the first chunk's consumptions + the overflow's
+    // successfully committed ones; failures never count as applied.
+    const adjustmentsApplied = consumedEntries.length + overflowApplied;
     const adjustmentsSkipped = new Set([...kernelSkips.map((s) => s.id), ...noSlipSkips.map((r) => r.id)]).size;
     const otSlipCount = overtimePayEnabled
       ? [...otByUser.keys()].filter((u) => slipUserIds.has(u)).length
       : 0;
+    // Honest payslip count: the first chunk (nested with the run) + the
+    // overflow's successes (failures excluded).
+    const payslipCount = firstChunk.length + (overflow.length - failures.length);
 
     await logAudit({
       actor: auth,
@@ -695,10 +770,10 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${run.payslips.length} payslips from the active ${window.frequency.toLowerCase()} salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
+      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${payslipCount} payslips from the active ${window.frequency.toLowerCase()} salary structures${overflow.length > 0 ? ` (${firstChunk.length} in the creation batch + ${overflow.length - failures.length} chunked beyond 30)` : ""}${failures.length > 0 ? ` — ${failures.length} payslip(s) FAILED with reasons: ${failures.map((f) => `${f.slipNo} (${f.reason})`).join("; ")}` : ""}${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
     });
     revalidatePath("/");
-    return { id: run.id, payslipCount: run.payslips.length, adjustmentsApplied, adjustmentsSkipped };
+    return { id: run.id, payslipCount, adjustmentsApplied, adjustmentsSkipped, failures };
   });
 }
 
