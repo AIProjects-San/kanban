@@ -154,6 +154,7 @@ describe("upsertAttendanceRecord", () => {
         lateMinutes: null,
         earlyMinutes: null,
         workingHours: null,
+        overtimeMinutes: null,
         note: "From home",
         source: "MANUAL",
       },
@@ -190,10 +191,11 @@ describe("upsertAttendanceRecord", () => {
         inTime: "09:00",
         outTime: "13:00",
         // S2 — 09:00–13:00 against the 09:00–17:30 reference: on time,
-        // 4h30m early, 4 hours worked.
+        // 4h30m early, 4 hours worked, no overtime.
         lateMinutes: 0,
         earlyMinutes: 270,
         workingHours: 4,
+        overtimeMinutes: 0,
         note: "",
         source: "MANUAL",
       },

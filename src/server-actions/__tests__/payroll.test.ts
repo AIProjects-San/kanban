@@ -1521,3 +1521,77 @@ describe("P8 — createPayrollRun stamps WITHHELD slips inside an ACTIVE hold wi
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// P9 (PR-B26, AT-09 lite) — the overtime → payslip bridge at run creation.
+// ---------------------------------------------------------------------------
+
+describe("P9 — createPayrollRun emits the Overtime earning line when the knob is on", () => {
+  it("120 derived minutes price at gross ÷ working days ÷ 8h onto the slip", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { unmarkedAttendanceMode: "IGNORED", payrollRoundingMode: "ROUND_2DP", overtimePayEnabled: true },
+    });
+    // The overtime query (where.overtimeMinutes) vs the LOP marks query
+    // (where.status) — the mock honours the distinction the DB would.
+    db.attendanceRecord.findMany.mockImplementation(
+      async ({ where }: { where?: { overtimeMinutes?: unknown; status?: { in?: string[] } } }) =>
+        where?.overtimeMinutes !== undefined
+          ? [{ userId: "u-yuki", overtimeMinutes: 90 }, { userId: "u-yuki", overtimeMinutes: 30 }]
+          : [],
+    );
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ userId: string; earnings: string; gross: number; net: number }> } };
+    };
+    const slip = createArg.data.payslips.create[0];
+    const lines = JSON.parse(slip.earnings) as Array<{ key: string; label: string; amount: number }>;
+    const ot = lines.find((l) => l.key === "overtime");
+    // STRUCTURE_ROW's monthly gross is 6,700 (78,000 + 2,400 annual ÷ 12);
+    // December 2026 has 23 Mon–Fri days → rate 6,700/23/8 = 36.41; 2h → 72.82.
+    expect(ot).toMatchObject({ amount: 72.82 });
+    expect(ot?.label).toContain("2h");
+    expect(ot?.label).toContain("$36.41/h");
+    expect(slip.gross).toBe(6_700 + 72.82);
+    expect(slip.net).toBe(6_700 + 72.82);
+  });
+
+  it("the knob off → byte-identical pre-P9 run creation (no overtime query)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { unmarkedAttendanceMode: "IGNORED", payrollRoundingMode: "ROUND_2DP", overtimePayEnabled: false },
+    });
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; gross: number }> } };
+    };
+    const slip = createArg.data.payslips.create[0];
+    expect(JSON.parse(slip.earnings).some((l: { key: string }) => l.key === "overtime")).toBe(false);
+    expect(slip.gross).toBe(6_700);
+    // The disabled path never queries the overtime facts (only the LOP marks).
+    const otQueries = db.attendanceRecord.findMany.mock.calls.filter(
+      (c: Array<{ where?: { overtimeMinutes?: unknown } }>) => c[0]?.where?.overtimeMinutes !== undefined,
+    );
+    expect(otQueries).toHaveLength(0);
+  });
+
+  it("minutes without a computable rate produce NO line (never a fake zero)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { unmarkedAttendanceMode: "IGNORED", payrollRoundingMode: "ROUND_2DP", overtimePayEnabled: true },
+    });
+    db.attendanceRecord.findMany.mockImplementation(
+      async ({ where }: { where?: { overtimeMinutes?: unknown } }) =>
+        where?.overtimeMinutes !== undefined ? [{ userId: "u-ghost", overtimeMinutes: 60 }] : [],
+    );
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; gross: number }> } };
+    };
+    expect(JSON.parse(createArg.data.payslips.create[0].earnings).some((l: { key: string }) => l.key === "overtime")).toBe(false);
+    expect(createArg.data.payslips.create[0].gross).toBe(6_700);
+  });
+});

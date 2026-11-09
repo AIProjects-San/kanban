@@ -49,6 +49,7 @@ import {
   withRoundingLine,
   withLopLine,
   daysInPeriod,
+  lineSum,
   parsePayslipLines,
   round2,
   type PayslipLine,
@@ -64,6 +65,13 @@ import {
 import { accrualAmount } from "@/lib/benefits";
 // P8 (PR-19/PR-B13, F3.3) — the salary-withholding hold-window predicate.
 import { isPeriodHeld } from "@/lib/salary-withholding";
+// P9 (PR-B26, AT-09 lite) — the overtime → payslip bridge kernel.
+import {
+  OVERTIME_LINE_KEY,
+  overtimeLineLabel,
+  planOvertimePayout,
+  sumOvertimeMinutes,
+} from "@/lib/overtime-bridge";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -454,8 +462,11 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     );
     const runWorkingDays = workingDaysInPeriod(data.period, periodHolidays);
     // S7 (PR-B23) — the workspace rounding policy rides run creation
-    // (snapshot: flips affect future runs, never stored slips).
-    const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
+    // (snapshot: flips affect future runs, never stored slips). P9 (PR-B26)
+    // — the overtime payout knob rides the same read.
+    const workspaceConfig = await getWorkspaceConfig();
+    const roundingMode = workspaceConfig.workspace.payrollRoundingMode;
+    const overtimePayEnabled = workspaceConfig.workspace.overtimePayEnabled;
 
     // F1.4 — derive each payslip's loss-of-pay days from attendance marks
     // (ABSENT / HALF_DAY) + unpaid approved leave, charged only on working
@@ -474,6 +485,22 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     );
     const autoLopCount = [...lopByUser.values()].filter((f) => f.lopDays > 0).length;
     const clippedCount = [...lopByUser.values()].filter((f) => f.clippedFrom || f.clippedUntil).length;
+
+    // P9 (PR-B26, AT-09 lite) — the overtime bridge: sum the period's
+    // DERIVED overtime minutes per employee (the S2 facts snapshotted on
+    // the attendance rows). Only queried when the payout knob is on — the
+    // disabled path is byte-identical to pre-P9.
+    const otByUser = overtimePayEnabled
+      ? sumOvertimeMinutes(
+          await db.attendanceRecord.findMany({
+            where: {
+              date: { gte: new Date(Date.UTC(y, m - 1, 1)), lte: new Date(Date.UTC(y, m, 0)) },
+              overtimeMinutes: { not: null },
+            },
+            select: { userId: true, overtimeMinutes: true },
+          }),
+        )
+      : new Map<string, number>();
 
     // P1 (PR-12/PR-B10, F2.3) — the adjustment adapter consumption: every
     // PENDING row due in this period resolves onto its employee's payslip
@@ -529,6 +556,19 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
                 facts.paidDays,
                 runWorkingDays,
               );
+              // P9 (PR-B26) — the overtime line prices from the structure's
+              // UNSCALED monthly gross (÷ working days ÷ 8h) and lands AFTER
+              // the LOP basis: overtime minutes were worked on attended
+              // days, so absence docking never touches them (the S6 spirit).
+              const otPayout = planOvertimePayout({
+                enabled: overtimePayEnabled,
+                minutes: otByUser.get(s.userId) ?? null,
+                monthlyGross: lineSum(monthlyEarningsFromStructure(parseComponents(s.components))),
+                workingDays: runWorkingDays,
+              });
+              const earningsWithOt: PayslipLine[] = otPayout
+                ? [...earnings, { key: OVERTIME_LINE_KEY, label: overtimeLineLabel(otPayout), amount: otPayout.amount }]
+                : earnings;
               const lopDays = facts.lopDays;
               // The auto LOP line is materialized at creation (net totals are
               // honest immediately — no per-slip save needed to see the dock).
@@ -538,9 +578,10 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
                 ? withLopLine([], lopBasisGross(earnings), lopDays, data.period, runWorkingDays > 0 ? runWorkingDays : undefined)
                 : [];
               // P1 — adjustments land on the docked base (post scaling,
-              // post LOP), the rounding line wraps the final net.
+              // post LOP, overtime included), the rounding line wraps the
+              // final net.
               const applied = applyAdjustments(
-                { earnings, deductions: lopDeductions },
+                { earnings: earningsWithOt, deductions: lopDeductions },
                 dueByUser.get(s.userId) ?? [],
                 data.period,
               );
@@ -594,6 +635,9 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
 
     const adjustmentsApplied = consumedEntries.length;
     const adjustmentsSkipped = new Set([...kernelSkips.map((s) => s.id), ...noSlipSkips.map((r) => r.id)]).size;
+    const otSlipCount = overtimePayEnabled
+      ? [...otByUser.keys()].filter((u) => slipUserIds.has(u)).length
+      : 0;
 
     await logAudit({
       actor: auth,
@@ -601,7 +645,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
+      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
     });
     revalidatePath("/");
     return { id: run.id, payslipCount: run.payslips.length, adjustmentsApplied, adjustmentsSkipped };
@@ -884,8 +928,34 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
     const lopDeductions = lopDays > 0
       ? withLopLine([], lopBasisGross(scaledEarnings), lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
       : [];
-    // S7 — the rounding line lands last (auto-managed).
-    const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
+    // S7 — the rounding line lands last (auto-managed). P9 — the overtime
+    // knob rides the same config read.
+    const workspaceConfig = await getWorkspaceConfig();
+    const roundingMode = workspaceConfig.workspace.payrollRoundingMode;
+    const overtimePayEnabled = workspaceConfig.workspace.overtimePayEnabled;
+    // P9 — this joiner's overtime minutes over the run's period (queried
+    // only when the payout knob is on).
+    const otMinutes = overtimePayEnabled
+      ? (await db.attendanceRecord.findMany({
+          where: {
+            userId: data.userId,
+            date: { gte: new Date(Date.UTC(py, pm - 1, 1)), lte: new Date(Date.UTC(py, pm, 0)) },
+            overtimeMinutes: { not: null },
+          },
+          select: { overtimeMinutes: true },
+        })).reduce((s, r) => s + (r.overtimeMinutes ?? 0), 0)
+      : 0;
+    // P9 (PR-B26) — the joiner's overtime line, same rule as run creation
+    // (UNSCALED gross basis, lands after the LOP basis).
+    const otPayout = planOvertimePayout({
+      enabled: overtimePayEnabled,
+      minutes: otMinutes > 0 ? otMinutes : null,
+      monthlyGross: lineSum(earnings),
+      workingDays: run.workingDays,
+    });
+    const earningsWithOt: PayslipLine[] = otPayout
+      ? [...scaledEarnings, { key: OVERTIME_LINE_KEY, label: overtimeLineLabel(otPayout), amount: otPayout.amount }]
+      : scaledEarnings;
     // P1 (F2.3) — this joiner's due adjustments ride the new slip (same
     // kernel + same transaction discipline as run creation).
     const pendingAdjustments = await db.payAdjustment.findMany({
@@ -893,7 +963,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       orderBy: { createdAt: "asc" },
     });
     const due = pendingAdjustments.filter((row) => isDueInPeriod(row, run.period));
-    const applied = applyAdjustments({ earnings: scaledEarnings, deductions: lopDeductions }, due, run.period);
+    const applied = applyAdjustments({ earnings: earningsWithOt, deductions: lopDeductions }, due, run.period);
     const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
     const { gross, net } = payslipTotals(finalEarnings, deductions);
     const createData = {
@@ -946,7 +1016,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       entityType: "PAYSLIP",
       entityId: slip.id,
       entityLabel: slip.slipNo,
-      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run${applied.consumed.length > 0 ? ` (${applied.consumed.length} adjustment(s) consumed)` : ""}${withheld ? " — WITHHELD under an active salary hold (net not disbursed until released)" : ""}.`,
+      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run${applied.consumed.length > 0 ? ` (${applied.consumed.length} adjustment(s) consumed)` : ""}${otPayout ? ` — includes ${otPayout.amount > 0 ? `overtime of $${otPayout.amount.toLocaleString("en-NZ")}` : "overtime"}` : ""}${withheld ? " — WITHHELD under an active salary hold (net not disbursed until released)" : ""}.`,
     });
     revalidatePath("/");
     return { id: slip.id };

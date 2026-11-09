@@ -31,34 +31,43 @@ describe("parseHmToMinutes", () => {
 describe("deriveAttendanceTiming — the fact matrix", () => {
   const day = { dayStart: "09:00", dayEnd: "17:30" };
 
-  it("on-time full day: zero flags, 8.5 hours", () => {
+  it("on-time full day: zero flags, 8.5 hours, no overtime", () => {
     expect(deriveAttendanceTiming({ inTime: "09:00", outTime: "17:30", ...day }))
-      .toEqual({ lateMinutes: 0, earlyMinutes: 0, workingHours: 8.5 });
+      .toEqual({ lateMinutes: 0, earlyMinutes: 0, workingHours: 8.5, overtimeMinutes: 0 });
   });
 
   it("late + early the same day (the classic squeeze)", () => {
     expect(deriveAttendanceTiming({ inTime: "09:25", outTime: "17:10", ...day }))
-      .toEqual({ lateMinutes: 25, earlyMinutes: 20, workingHours: 7.75 });
+      .toEqual({ lateMinutes: 25, earlyMinutes: 20, workingHours: 7.75, overtimeMinutes: 0 });
   });
 
   it("in only: late flag, others null (unknown, not zero)", () => {
     expect(deriveAttendanceTiming({ inTime: "10:00", outTime: null, ...day }))
-      .toEqual({ lateMinutes: 60, earlyMinutes: null, workingHours: null });
+      .toEqual({ lateMinutes: 60, earlyMinutes: null, workingHours: null, overtimeMinutes: null });
   });
 
-  it("out only: early flag + hours null", () => {
+  it("out only: early flag + hours null; overtime derivable from out alone", () => {
     expect(deriveAttendanceTiming({ inTime: null, outTime: "15:00", ...day }))
-      .toEqual({ lateMinutes: null, earlyMinutes: 150, workingHours: null });
+      .toEqual({ lateMinutes: null, earlyMinutes: 150, workingHours: null, overtimeMinutes: 0 });
+    expect(deriveAttendanceTiming({ inTime: null, outTime: "19:00", ...day }))
+      .toEqual({ lateMinutes: null, earlyMinutes: 0, workingHours: null, overtimeMinutes: 90 });
   });
 
   it("no times: everything null", () => {
     expect(deriveAttendanceTiming({ inTime: null, outTime: null, ...day }))
-      .toEqual({ lateMinutes: null, earlyMinutes: null, workingHours: null });
+      .toEqual({ lateMinutes: null, earlyMinutes: null, workingHours: null, overtimeMinutes: null });
   });
 
   it("early arrival never produces a negative late flag (clamped at 0)", () => {
     expect(deriveAttendanceTiming({ inTime: "08:30", outTime: "18:00", ...day }))
-      .toEqual({ lateMinutes: 0, earlyMinutes: 0, workingHours: 9.5 });
+      .toEqual({ lateMinutes: 0, earlyMinutes: 0, workingHours: 9.5, overtimeMinutes: 30 });
+  });
+
+  it("P9 — overtime accumulates past the day end, clamped at 0 before it", () => {
+    expect(deriveAttendanceTiming({ inTime: "09:00", outTime: "19:30", ...day }).overtimeMinutes)
+      .toBe(120);
+    expect(deriveAttendanceTiming({ inTime: "10:00", outTime: "17:00", ...day }).overtimeMinutes)
+      .toBe(0);
   });
 
   it("fractional hours round to 2 decimals", () => {
@@ -74,9 +83,9 @@ describe("deriveAttendanceTiming — the fact matrix", () => {
 
   it("a malformed reference day disables the dependent fact instead of throwing", () => {
     expect(deriveAttendanceTiming({ inTime: "10:00", outTime: "16:00", dayStart: "nine", dayEnd: "17:30" }))
-      .toEqual({ lateMinutes: null, earlyMinutes: 90, workingHours: 6 });
+      .toEqual({ lateMinutes: null, earlyMinutes: 90, workingHours: 6, overtimeMinutes: 0 });
     expect(deriveAttendanceTiming({ inTime: "10:00", outTime: "16:00", dayStart: "09:00", dayEnd: "" }))
-      .toEqual({ lateMinutes: 60, earlyMinutes: null, workingHours: 6 });
+      .toEqual({ lateMinutes: 60, earlyMinutes: null, workingHours: 6, overtimeMinutes: null });
   });
 });
 
@@ -88,13 +97,15 @@ describe("rendering helpers", () => {
   });
 
   it("describeAttendanceTiming lists only facts that actually happened", () => {
-    expect(describeAttendanceTiming({ lateMinutes: 0, earlyMinutes: 0, workingHours: 8.5 }))
+    expect(describeAttendanceTiming({ lateMinutes: 0, earlyMinutes: 0, workingHours: 8.5, overtimeMinutes: 0 }))
       .toBe("8h 30m worked");
-    expect(describeAttendanceTiming({ lateMinutes: 25, earlyMinutes: null, workingHours: null }))
+    expect(describeAttendanceTiming({ lateMinutes: 25, earlyMinutes: null, workingHours: null, overtimeMinutes: null }))
       .toBe("Late 25m");
-    expect(describeAttendanceTiming({ lateMinutes: 25, earlyMinutes: 10, workingHours: 7.75 }))
+    expect(describeAttendanceTiming({ lateMinutes: 25, earlyMinutes: 10, workingHours: 7.75, overtimeMinutes: 0 }))
       .toBe("Late 25m · Early 10m · 7h 45m worked");
-    expect(describeAttendanceTiming({ lateMinutes: null, earlyMinutes: null, workingHours: null }))
+    expect(describeAttendanceTiming({ lateMinutes: null, earlyMinutes: null, workingHours: null, overtimeMinutes: null }))
       .toBe("");
+    expect(describeAttendanceTiming({ lateMinutes: 0, earlyMinutes: 0, workingHours: 10.5, overtimeMinutes: 120 }))
+      .toBe("10h 30m worked · OT 2h");
   });
 });

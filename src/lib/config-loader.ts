@@ -116,6 +116,10 @@ export interface WorkspaceSettingsT {
    * rounding line) or ROUND_NET_NEAREST (auto "Rounding" line to a whole
    * dollar). Consumed by lib/payroll-math.ts withRoundingLine. */
   payrollRoundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST";
+  /** P9 (PR-B26) — pay attendance overtime into payroll. Default OFF; when
+   * on, run creation emits an "Overtime" earning line per employee from the
+   * derived overtimeMinutes (lib/overtime-bridge.ts prices it). */
+  overtimePayEnabled: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -286,6 +290,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           attendanceDayEnd: workspace.attendanceDayEnd,
           unmarkedAttendanceMode: (workspace.unmarkedAttendanceMode === "ABSENT" ? "ABSENT" : "IGNORED"),
           payrollRoundingMode: (workspace.payrollRoundingMode === "ROUND_NET_NEAREST" ? "ROUND_NET_NEAREST" : "ROUND_2DP"),
+          overtimePayEnabled: workspace.overtimePayEnabled === true,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -307,6 +312,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           attendanceDayEnd: "17:30",
           unmarkedAttendanceMode: "IGNORED",
           payrollRoundingMode: "ROUND_2DP",
+          overtimePayEnabled: false,
         },
 
     taskStatuses: taskStatuses.length

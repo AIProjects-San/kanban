@@ -68,6 +68,7 @@ function serializeAttendance(
     lateMinutes: number | null;
     earlyMinutes: number | null;
     workingHours: number | null;
+    overtimeMinutes: number | null;
     note: string;
     source: string;
   },
@@ -86,6 +87,8 @@ function serializeAttendance(
     lateMinutes: r.lateMinutes ?? null,
     earlyMinutes: r.earlyMinutes ?? null,
     workingHours: r.workingHours ?? null,
+    // P9 (PR-B26) — the derived overtime fact (the payroll bridge's input).
+    overtimeMinutes: r.overtimeMinutes ?? null,
     note: r.note,
     source: r.source as AttendanceSource,
   };
@@ -197,6 +200,7 @@ export async function upsertAttendanceRecord(input: {
       lateMinutes: timing.lateMinutes,
       earlyMinutes: timing.earlyMinutes,
       workingHours: timing.workingHours,
+      overtimeMinutes: timing.overtimeMinutes,
       note: data.note,
       // An explicit HR save is MANUAL by definition — including when it
       // overwrites a DERIVED row (source is part of the edit, never a

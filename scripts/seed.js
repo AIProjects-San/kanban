@@ -143,6 +143,9 @@ async function main() {
       // story is self-documenting.
       attendanceDayStart: "09:00",
       attendanceDayEnd: "17:30",
+      // P9 (PR-B26) — overtime pays into payroll: the demo's next-month
+      // run creation emits Yuki's Overtime line from her derived minutes.
+      overtimePayEnabled: true,
     },
   });
 
@@ -1517,6 +1520,7 @@ async function main() {
         inMin !== null && outMin !== null && outMin > inMin
           ? Math.round(((outMin - inMin) / 60) * 100) / 100
           : null,
+      overtimeMinutes: outMin !== null && dayEnd !== null ? Math.max(0, outMin - dayEnd) : null,
     };
   };
   const manualAttendance = [
@@ -1524,6 +1528,9 @@ async function main() {
     ["Theo Vance", -1, "PRESENT", "09:00", "17:30", ""],
     ["Soren Lindqvist", -2, "ABSENT", null, null, "No show — follow-up sent"],
     ["Amara Diallo", -2, "HALF_DAY", "09:00", "13:00", "Morning only — school pickup"],
+    // P9 (PR-B26) — the overtime showcase: 09:00–19:30 against the 17:30
+    // day end derives 120 overtime minutes ("OT 2h" on the grid row).
+    ["Yuki Tanaka", -3, "PRESENT", "09:00", "19:30", "Release crunch — overtime pay showcase"],
   ];
   for (const [userName, offset, status, inTime, outTime, note] of manualAttendance) {
     const userId = userByName.get(userName);
@@ -1555,6 +1562,25 @@ async function main() {
         attendanceRows.push({
           userId: hanaId, date: d, status: "ABSENT", inTime: null, outTime: null,
           note: "No show — auto-LOP showcase", source: "MANUAL",
+        });
+      }
+    }
+  }
+  // P9 (PR-B26) — the next-month overtime record: creating next month's
+  // payroll run (the demo + e2e flow) prices Yuki's 90 derived minutes
+  // into an "Overtime" earning line (gross ÷ working days ÷ 8h).
+  {
+    const yukiId = userByName.get("Yuki Tanaka");
+    if (yukiId) {
+      let d = new Date(Date.UTC(TODAY.getFullYear(), TODAY.getMonth() + 1, 1));
+      while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() + 1);
+      const key = `${yukiId}|${dayKeyOf(d)}`;
+      if (!takenAttendance.has(key)) {
+        takenAttendance.add(key);
+        attendanceRows.push({
+          userId: yukiId, date: d, status: "PRESENT", inTime: "09:00", outTime: "19:00",
+          ...deriveTiming("09:00", "19:00"),
+          note: "Overtime bridge showcase — feeds next month's run", source: "MANUAL",
         });
       }
     }

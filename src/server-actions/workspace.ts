@@ -58,6 +58,9 @@ export async function updateWorkspaceSettings(input: Partial<{
   /** PR-B23 (S7) — the payslip rounding policy (Settings → General;
    * lib/payroll-math.ts withRoundingLine consumes it). */
   payrollRoundingMode?: "ROUND_2DP" | "ROUND_NET_NEAREST";
+  /** P9 (PR-B26) — pay attendance overtime into payroll (Settings →
+   * General; lib/overtime-bridge.ts prices the slip line). */
+  overtimePayEnabled?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

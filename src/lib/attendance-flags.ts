@@ -14,6 +14,10 @@
 //   earlyMinutes = max(0, dayEnd − out)    — only when outTime is present
 //   workingHours = (out − in) / 60          — only when BOTH are present
 //                                                 and out > in (else null)
+//   overtimeMinutes = max(0, out − dayEnd) — only when outTime is present
+//                                                 (P9: the payroll bridge's
+//                                                 input; minutes beyond the
+//                                                 workspace day)
 //   any absent input → that fact is null (not zero — "unknown", not "on
 //   time"); a malformed reference time (bad config) disables the dependent
 //   fact rather than throwing mid-mark (fail-soft for reads, the config
@@ -41,6 +45,9 @@ export interface AttendanceTimingFacts {
   earlyMinutes: number | null;
   /** Hours between in and out, 2 decimals (null = incomplete pair). */
   workingHours: number | null;
+  /** P9 (PR-B26) — minutes past the day end (null = no out time / no
+   * valid reference); the payroll bridge sums these per period. */
+  overtimeMinutes: number | null;
 }
 
 /** The one rule behind the late/early flags + working hours. */
@@ -63,8 +70,10 @@ export function deriveAttendanceTiming(input: {
     inMin !== null && outMin !== null && outMin > inMin
       ? Math.round(((outMin - inMin) / 60) * 100) / 100
       : null;
+  const overtimeMinutes =
+    outMin !== null && dayEnd !== null ? Math.max(0, outMin - dayEnd) : null;
 
-  return { lateMinutes, earlyMinutes, workingHours };
+  return { lateMinutes, earlyMinutes, workingHours, overtimeMinutes };
 }
 
 /** Compact human rendering for tooltips/badges: 95 → "1h 35m". */
@@ -83,5 +92,6 @@ export function describeAttendanceTiming(f: AttendanceTimingFacts): string {
   if (f.lateMinutes !== null && f.lateMinutes > 0) parts.push(`Late ${formatMinutes(f.lateMinutes)}`);
   if (f.earlyMinutes !== null && f.earlyMinutes > 0) parts.push(`Early ${formatMinutes(f.earlyMinutes)}`);
   if (f.workingHours !== null) parts.push(`${formatMinutes(Math.round(f.workingHours * 60))} worked`);
+  if (f.overtimeMinutes !== null && f.overtimeMinutes > 0) parts.push(`OT ${formatMinutes(f.overtimeMinutes)}`);
   return parts.join(" · ");
 }

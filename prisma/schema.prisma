@@ -542,6 +542,12 @@ model Workspace {
   // carries an auto "Rounding" line bringing net to the nearest whole
   // dollar (the benchmark's rounded-total row as visible money).
   payrollRoundingMode  String   @default("ROUND_2DP") // ROUND_2DP | ROUND_NET_NEAREST
+  // P9 (PR-B26) — pay attendance overtime into payroll: when on, run
+  // creation sums each employee's derived overtimeMinutes over the period
+  // and emits an "Overtime" earning line priced from the structure's
+  // monthly gross (÷ working days ÷ 8h — the gross-basis rate). Default
+  // OFF: overtime pay is a policy choice, never a surprise line.
+  overtimePayEnabled  Boolean  @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -1046,6 +1052,11 @@ model AttendanceRecord {
   lateMinutes  Int?
   earlyMinutes Int?
   workingHours Float?
+  // P9 (PR-B26/AT-09 lite) — minutes worked beyond the workspace day end,
+  // same S2 discipline. The payroll bridge (lib/overtime-bridge.ts) sums
+  // these per period into an Overtime earning line when the workspace
+  // overtime payout knob is on; shift-based multipliers arrive with F3.5.
+  overtimeMinutes Int?
   note      String   @default("")
   source    String   @default("MANUAL")
   createdAt DateTime @default(now())

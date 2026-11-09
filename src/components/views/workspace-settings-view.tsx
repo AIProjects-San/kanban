@@ -316,6 +316,29 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
             </select>
           </Field>
         </FormRow>
+        <FormRow>
+          {/* P9 (PR-B26) — pay attendance overtime into payroll. The rule is
+              pure (lib/overtime-bridge.ts: derived minutes × gross ÷ working
+              days ÷ 8h); this row owns the instance. Applies to runs created
+              while it is on — existing payslips keep their snapshot lines. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="overtime-pay-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.overtimePayEnabled ?? false}
+              onChange={(e) => setForm({ ...form, overtimePayEnabled: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Pay attendance overtime into payroll</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                New runs add an "Overtime" earning line per employee — the period&apos;s derived overtime minutes
+                (beyond the day end above), priced from the structure&apos;s monthly gross ÷ working days ÷ 8h.
+                Applies to runs created while on; existing payslips keep their snapshots.
+              </span>
+            </span>
+          </label>
+          <div />
+        </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">
             {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Save size={14} /> Save settings</>}

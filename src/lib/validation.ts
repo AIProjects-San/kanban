@@ -202,6 +202,8 @@ export const workspaceSettingsSchema = z.object({
   unmarkedAttendanceMode: z.enum(["IGNORED", "ABSENT"]).optional(),
   // PR-B23 (S7) — the payslip rounding policy (default ROUND_2DP).
   payrollRoundingMode: z.enum(["ROUND_2DP", "ROUND_NET_NEAREST"]).optional(),
+  // P9 (PR-B26) — pay attendance overtime into payroll (default OFF).
+  overtimePayEnabled: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**

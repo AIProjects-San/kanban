@@ -67,6 +67,9 @@ export interface AttendanceT {
   lateMinutes: number | null;
   earlyMinutes: number | null;
   workingHours: number | null;
+  /** P9 (PR-B26) — minutes past the workspace day end (same S2 write-time
+   * derivation); the payroll bridge's input. null = not computable. */
+  overtimeMinutes: number | null;
   note: string;
   source: AttendanceSource;
 }
