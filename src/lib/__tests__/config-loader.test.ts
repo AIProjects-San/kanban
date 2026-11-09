@@ -487,3 +487,27 @@ describe("getWorkspaceConfig — P17 (PR-B27 / PR-B25) knobs", () => {
     expect(config.workspace.showLeaveBalancesOnSlip).toBe(false);
   });
 });
+
+describe("getWorkspaceConfig — P18 (PR-B16) payslip email knob", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bumpConfigCache();
+  });
+
+  it("rides through when stored; non-true and absent rows read OFF", async () => {
+    findMany.mockResolvedValue([]);
+    findFirst.mockResolvedValue({ emailPayslipsOnLock: true });
+    let config = await getWorkspaceConfig();
+    expect(config.workspace.emailPayslipsOnLock).toBe(true);
+
+    bumpConfigCache();
+    findFirst.mockResolvedValue({ emailPayslipsOnLock: "yes" });
+    config = await getWorkspaceConfig();
+    expect(config.workspace.emailPayslipsOnLock).toBe(false);
+
+    bumpConfigCache();
+    findFirst.mockResolvedValue(null);
+    config = await getWorkspaceConfig();
+    expect(config.workspace.emailPayslipsOnLock).toBe(false);
+  });
+});

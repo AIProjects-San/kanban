@@ -35,7 +35,7 @@ import {
   createPayAdjustmentSchema,
   parseOrThrow,
 } from "@/lib/validation";
-import { logAudit } from "./shared";
+import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseComponents, type OfferComponent } from "@/lib/offer-math";
@@ -43,6 +43,7 @@ import { workingDaysBetween, paymentWindowBetween, type HolidayLookup } from "@/
 import { deriveLopBreakdownBetween, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { getHolidayLookup } from "./hr-shared";
+import { payslipEmailSubject, payslipEmailText, payslipEmailHtml } from "@/lib/payslip-email";
 import {
   windowEarningsFromStructure,
   payslipTotals,
@@ -1580,6 +1581,36 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
     // of an employee with a slip in this run accrues at lock (annual ÷ 12,
     // paid-days-scaled — the same window discipline as earnings).
     const benefitElections = await db.benefitElection.findMany({ where: { status: "ACTIVE" } });
+    // P18 (PR-B16) — the payslip email knob (default OFF = the pre-P18
+    // silence). When on, one PAYSLIP outbox row per slip rides the lock
+    // transaction (no email without its lock), delivered best-effort
+    // after it. HTML summary only — the mailer has no attachment support,
+    // so the PDF itself stays the download-only decision §9.2.
+    const emailPayslips = (await getWorkspaceConfig()).workspace.emailPayslipsOnLock === true;
+    // Payslip carries no User relation (bare userId) — emails join in
+    // memory, same as the P17 balance reads.
+    const emailSlips = emailPayslips
+      ? await (async () => {
+          const rows = await db.payslip.findMany({
+            where: { runId: run.id },
+            select: {
+              slipNo: true, userId: true, gross: true, net: true, lopDays: true,
+              withholdStatus: true, deductions: true,
+            },
+          });
+          const users = await db.user.findMany({
+            where: { id: { in: [...new Set(rows.map((r) => r.userId))] } },
+            select: { id: true, name: true, email: true },
+          });
+          const userById = new Map(users.map((u) => [u.id, u]));
+          return rows
+            .map((r) => {
+              const u = userById.get(r.userId);
+              return u == null ? null : { ...r, user: { name: u.name, email: u.email } };
+            })
+            .filter((r): r is NonNullable<typeof r> => r !== null);
+        })()
+      : [];
     const electionByUser = new Map<string, typeof benefitElections>();
     for (const e of benefitElections) {
       const list = electionByUser.get(e.userId);
@@ -1598,6 +1629,8 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
     // comfortably under 5s at seeded volumes but deserves headroom at the
     // documented ≤200-employee scale on a remote Postgres (Supabase RTT).
     const accrualCount = { rows: 0 };
+    // P18 — the queued email row ids (delivery happens after the tx).
+    const emailRowIds: string[] = [];
     await db.$transaction(
       async (tx) => {
         await tx.payrollRun.update({
@@ -1640,9 +1673,47 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
             accrualCount.rows += 1;
           }
         }
+        // P18 (PR-B16) — queue the payslip emails on the same transaction:
+        // no email without its lock. Subjects carry no amounts (privacy);
+        // the body is the plain-text audit copy the Outbox re-reads.
+        for (const slip of emailSlips) {
+          const row = await queueOutboxMail(tx, {
+            kind: "PAYSLIP",
+            toAddress: slip.user.email,
+            subject: payslipEmailSubject(run.period),
+            text: payslipEmailText(slip, run.period),
+            sentById: auth.userId,
+          });
+          emailRowIds.push(row.id);
+        }
       },
       { timeout: 30_000 },
     );
+    // P18 — deliver outside the transaction (provider I/O never holds the
+    // lock and never throws into the business write — the S17 discipline;
+    // one row at a time so a big run can't stampede the provider).
+    const emailCounts = { sent: 0, skipped: 0, failed: 0 };
+    if (emailRowIds.length > 0) {
+      // Re-read only THIS lock's rows by id (a stale QUEUED row from a
+      // crashed earlier delivery is never accidentally re-sent here).
+      const queued = await db.mailOutbox.findMany({
+        where: { id: { in: emailRowIds } },
+        select: { id: true, toAddress: true, subject: true, body: true },
+      });
+      const rowById = new Map(queued.map((r) => [r.id, r]));
+      for (const id of emailRowIds) {
+        const row = rowById.get(id);
+        if (!row) { emailCounts.failed += 1; continue; }
+        const result = await deliverOutboxMail(row.id, {
+          toAddress: row.toAddress,
+          subject: row.subject,
+          html: payslipEmailHtml(row.body),
+          text: row.body,
+        }).catch(() => undefined);
+        if (!result) emailCounts.failed += 1;
+        else emailCounts[result.status === "SENT" ? "sent" : result.status === "SKIPPED" ? "skipped" : "failed"] += 1;
+      }
+    }
     if (accrualCount.rows > 0) {
       await logAudit({
         actor: auth,
@@ -1660,7 +1731,7 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} locked the ${run.period} payroll run (paid) — ${run.payslips.length} payslips, net $${total.toLocaleString("en-NZ")}${encashmentIds.length > 0 ? `, ${encashmentIds.length} leave encashment(s) marked paid` : ""}.`,
+      detail: `${auth.name} locked the ${run.period} payroll run (paid) — ${run.payslips.length} payslips, net $${total.toLocaleString("en-NZ")}${encashmentIds.length > 0 ? `, ${encashmentIds.length} leave encashment(s) marked paid` : ""}${emailSlips.length > 0 ? `, ${emailSlips.length} payslip email(s) queued (${emailCounts.sent} sent, ${emailCounts.skipped} skipped, ${emailCounts.failed} failed)` : ""}.`,
     });
     revalidatePath("/");
     return { ok: true };

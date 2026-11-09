@@ -214,6 +214,9 @@ export const workspaceSettingsSchema = z.object({
   lopBasisMode: z.enum(["HYBRID", "LEAVE", "ATTENDANCE"]).optional(),
   // P17 (PR-B25) — show live leave balances on the payslip (default OFF).
   showLeaveBalancesOnSlip: z.boolean().optional(),
+  // P18 (PR-B16) — email each payslip when its run locks (default OFF =
+  // the pre-P18 silence; one PAYSLIP outbox row per slip on lock).
+  emailPayslipsOnLock: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**

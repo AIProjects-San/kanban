@@ -569,6 +569,12 @@ model Workspace {
   // balances ride getPayrollRun/getMyPayslips payloads and the payslip
   // modal renders the box; nothing is snapshotted onto the slip.
   showLeaveBalancesOnSlip Boolean @default(false)
+  // P18 (PR-B16) — email each payslip when its run locks: one PAYSLIP
+  // outbox row per slip queued in the lock transaction, delivered
+  // best-effort after it (the S17 discipline). HTML summary only — the
+  // mailer has no attachment support, so the PDF itself stays the
+  // download-only decision §9.2. Default OFF = the pre-P18 silence.
+  emailPayslipsOnLock  Boolean @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

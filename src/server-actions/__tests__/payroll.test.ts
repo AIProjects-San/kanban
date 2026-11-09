@@ -13,6 +13,7 @@ const db = vi.hoisted(() => {
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
     "salaryComponent", "payrollRun", "payslip", "payAdjustment", "leaveEncashment", "benefitElection", "benefitAccrual", "auditLog", "holidayCalendarEntry", "salaryWithholding",
     "attendanceRecord", "leaveRequest", "leaveType", "fullAndFinalStatement",
+    "mailOutbox", "leaveBalance",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -45,8 +46,28 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
+// P18 (PR-B16) — the outbox pair mirrors the real semantics: queue writes
+// through the GIVEN client (tx in the mock === db), deliver resolves
+// best-effort and never throws. Tests flip deliverStatus per case.
+const deliverOutboxMailMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
+  queueOutboxMail: async (
+    tx: { mailOutbox: { create: (a: unknown) => Promise<Record<string, unknown>> } },
+    input: { kind: string; candidateId?: string | null; toAddress: string; subject: string; text: string; sentById: string },
+  ) =>
+    tx.mailOutbox.create({
+      data: {
+        kind: input.kind,
+        candidateId: input.candidateId ?? null,
+        toAddress: input.toAddress,
+        subject: input.subject,
+        body: input.text,
+        status: "QUEUED",
+        sentById: input.sentById,
+      },
+    }),
+  deliverOutboxMail: (...a: unknown[]) => deliverOutboxMailMock(...a),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -2283,5 +2304,155 @@ describe("P16 (PR-11 + PR-04) — fiscal basis, openings, effective windows", ()
       expect(res.data[0].ytdNet).toBe(44_400);
       expect(res.data[0].fiscalYearStartMonth).toBe(4);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P18 (PR-B16) — payslip email on lock: one PAYSLIP outbox row per slip
+// queued in the lock transaction (no email without its lock), delivered
+// best-effort after it; subjects carry no amounts, bodies are the audit
+// copy; the PDF itself stays download-only (decision §9.2).
+// ---------------------------------------------------------------------------
+
+describe("P18 (PR-B16) — payslip email on lock", () => {
+  const EMAIL_RUN = () => ({
+    ...OPEN_RUN,
+    payslips: [{ net: 6_700 }, { net: 3_300 }],
+  });
+  const EMAIL_SLIPS = () => ([
+    { slipNo: "PS-2026-11-001", userId: "u-yuki", gross: 6_700, net: 6_592, lopDays: 0, withholdStatus: "", deductions: JSON.stringify([{ key: "tax", label: "Tax", amount: 108 }]), paidDays: 21 },
+    { slipNo: "PS-2026-11-002", userId: "u-ingrid", gross: 3_400, net: 3_300, lopDays: 1, withholdStatus: "WITHHELD", deductions: JSON.stringify([{ key: "tax", label: "Tax", amount: 100 }]), paidDays: 21 },
+  ]);
+
+  beforeEach(() => {
+    deliverOutboxMailMock.mockResolvedValue({ status: "SENT", providerMessageId: "mid-1", error: "" });
+    let n = 0;
+    db.mailOutbox.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `mo-${++n}`, ...data }));
+    db.mailOutbox.findMany.mockImplementation(async ({ where }: { where: { id?: { in: string[] } } }) =>
+      (where?.id?.in ?? []).map((id) => ({ id, toAddress: `to-${id}`, subject: "Your 2026-11 payslip is ready", body: "body" })),
+    );
+  });
+
+  it("knob OFF (the default) — no PAYSLIP outbox rows, the pre-P18 silence", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(EMAIL_RUN());
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
+    const res = await lockPayrollRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    expect(db.mailOutbox.create).not.toHaveBeenCalled();
+    expect(deliverOutboxMailMock).not.toHaveBeenCalled();
+    // The audit stays byte-identical (no email clause).
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.run_locked",
+      detail: expect.not.stringContaining("email"),
+    }));
+  });
+
+  it("knob ON — one PAYSLIP row per slip queued in the lock transaction, delivered after it", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(EMAIL_RUN());
+    db.payslip.findMany.mockResolvedValue(EMAIL_SLIPS());
+    db.user.findMany.mockResolvedValue([
+      { id: "u-yuki", name: "Yuki Tanaka", email: "yuki@x.co" },
+      { id: "u-ingrid", name: "Ingrid Solberg", email: "ingrid@x.co" },
+    ]);
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED", emailPayslipsOnLock: true } });
+    const res = await lockPayrollRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    // Queued one row per payslip, inside the transaction (tx === db here).
+    expect(db.mailOutbox.create).toHaveBeenCalledTimes(2);
+    expect(db.mailOutbox.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ kind: "PAYSLIP", toAddress: "yuki@x.co", sentById: "u-hr", status: "QUEUED" }),
+    }));
+    expect(db.mailOutbox.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ kind: "PAYSLIP", toAddress: "ingrid@x.co" }),
+    }));
+    // Delivered once per row, by id, with the HTML built off the body.
+    expect(deliverOutboxMailMock).toHaveBeenCalledTimes(2);
+    expect(deliverOutboxMailMock).toHaveBeenCalledWith(
+      "mo-1",
+      expect.objectContaining({ toAddress: "to-mo-1", subject: expect.any(String), html: expect.stringContaining("body") }),
+    );
+    // The audit names the counts.
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.run_locked",
+      detail: expect.stringContaining("2 payslip email(s) queued (2 sent, 0 skipped, 0 failed)"),
+    }));
+  });
+
+  it("the queued body carries the money; the subject never does (subjects leak in previews)", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(EMAIL_RUN());
+    db.payslip.findMany.mockResolvedValue(EMAIL_SLIPS());
+    db.user.findMany.mockResolvedValue([{ id: "u-yuki", name: "Yuki Tanaka", email: "yuki@x.co" }, { id: "u-ingrid", name: "Ingrid Solberg", email: "ingrid@x.co" }]);
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailPayslipsOnLock: true } });
+    await lockPayrollRun({ runId: "run-1" });
+    const subjects = db.mailOutbox.create.mock.calls.map((c) => (c[0] as { data: { subject: string } }).data.subject);
+    for (const subject of subjects) expect(subject).not.toMatch(/\\$|\\d{3}/);
+    expect(subjects[0]).toBe("Your 2026-11 payslip is ready");
+    const bodies = db.mailOutbox.create.mock.calls.map((c) => (c[0] as { data: { body: string } }).data.body);
+    expect(bodies[0]).toContain("Net pay: $6,592.00");
+    expect(bodies[0]).toContain("Total deductions: $108.00");
+    expect(bodies[0]).toContain("My payslips");
+    // LOP + withheld notes ride the second slip's body.
+    expect(bodies[1]).toContain("Loss of pay: 1 day");
+    expect(bodies[1]).toContain("withheld");
+  });
+
+  it("a delivery failure never fails the lock — counted failed in the audit", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(EMAIL_RUN());
+    db.payslip.findMany.mockResolvedValue(EMAIL_SLIPS().slice(0, 1));
+    db.user.findMany.mockResolvedValue([{ id: "u-yuki", name: "Yuki Tanaka", email: "yuki@x.co" }]);
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailPayslipsOnLock: true } });
+    deliverOutboxMailMock.mockRejectedValue(new Error("provider exploded"));
+    const res = await lockPayrollRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.run_locked",
+      detail: expect.stringContaining("1 payslip email(s) queued (0 sent, 0 skipped, 1 failed)"),
+    }));
+  });
+
+  it("a slip whose user is gone is skipped — no crash, no email for a ghost", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(EMAIL_RUN());
+    db.payslip.findMany.mockResolvedValue(EMAIL_SLIPS().slice(0, 1));
+    db.user.findMany.mockResolvedValue([]); // the user was deleted
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailPayslipsOnLock: true } });
+    const res = await lockPayrollRun({ runId: "run-1" });
+    expect(res.ok).toBe(true);
+    expect(db.mailOutbox.create).not.toHaveBeenCalled();
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.run_locked",
+      detail: expect.not.stringContaining("email"),
+    }));
+  });
+});
+
+describe("P18 — the payslip email builders (pure)", () => {
+  it("payslipEmailSubject names the period only", async () => {
+    const { payslipEmailSubject } = await import("@/lib/payslip-email");
+    expect(payslipEmailSubject("2026-11")).toBe("Your 2026-11 payslip is ready");
+  });
+
+  it("payslipEmailText summarizes the money with LOP and withheld notes", async () => {
+    const { payslipEmailText } = await import("@/lib/payslip-email");
+    const text = payslipEmailText({
+      slipNo: "PS-2026-11-004", gross: 3_400, net: 3_300, lopDays: 1.5, withholdStatus: "WITHHELD",
+      deductions: JSON.stringify([{ key: "tax", label: "Tax", amount: 100 }]),
+      user: { name: "Ingrid Solberg" },
+    }, "2026-11");
+    expect(text).toContain("Hi Ingrid Solberg,");
+    expect(text).toContain("Your payslip PS-2026-11-004 for 2026-11 is ready.");
+    expect(text).toContain("Gross earnings: $3,400.00");
+    expect(text).toContain("Total deductions: $100.00");
+    expect(text).toContain("Net pay: $3,300.00");
+    expect(text).toContain("Loss of pay: 1.5 days applied.");
+    expect(text).toContain("withheld");
+    expect(text).toContain("Payroll → My payslips");
+  });
+
+  it("payslipEmailHtml mirrors the text, bolds the net line, escapes HTML", async () => {
+    const { payslipEmailHtml } = await import("@/lib/payslip-email");
+    const html = payslipEmailHtml("Hi <b>Ingrid</b>,\nNet pay: $3,300.00\n— Fernly Payroll");
+    expect(html).toContain("&lt;b&gt;Ingrid&lt;/b&gt;");
+    expect(html).toContain("<strong>Net pay: $3,300.00</strong>");
+    expect(html).toContain("<br />");
   });
 });

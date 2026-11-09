@@ -405,6 +405,31 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
             </span>
           </label>
         </FormRow>
+        <FormRow>
+          {/* P18 (PR-B16) — email each payslip when its run locks (the
+              benchmark's email_salary_slip_to_employee, narrowed: an HTML
+              summary — the PDF itself stays the download-only decision
+              §9.2). One PAYSLIP outbox row per slip rides the lock
+              transaction; delivery is best-effort and failures show in the
+              audited Outbox. Applies to runs locked while it is on. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="payslip-email-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.emailPayslipsOnLock ?? false}
+              onChange={(e) => setForm({ ...form, emailPayslipsOnLock: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Email payslips when a run locks</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Locking a run queues one email per payslip — a summary of gross, deductions and net, with a link
+                to download the printable PDF under My payslips. Delivery is best-effort and audited in the Outbox;
+                the PDF itself is never attached. Applies to runs locked while on.
+              </span>
+            </span>
+          </label>
+          <div />
+        </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">
             {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Save size={14} /> Save settings</>}

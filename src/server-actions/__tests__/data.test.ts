@@ -1263,3 +1263,23 @@ describe("P17 (PR-B27 / PR-B25) — loss-of-pay basis + leave balances knobs", (
     expect(db.workspace.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe("P18 (PR-B16) — payslip email on lock knob", () => {
+  it("persists the toggle through the workspace upsert", async () => {
+    signIn(ADMIN);
+    db.workspace.upsert.mockResolvedValue({});
+    expectOk(await updateWorkspaceSettings({ emailPayslipsOnLock: true }));
+    expect(db.workspace.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "default" },
+        update: expect.objectContaining({ emailPayslipsOnLock: true }),
+      }),
+    );
+  });
+
+  it("rejects non-boolean values at the write-time gate", async () => {
+    signIn(ADMIN);
+    expectErr(await updateWorkspaceSettings({ emailPayslipsOnLock: "yes" as unknown as boolean }), /emailPayslipsOnLock|boolean/i);
+    expect(db.workspace.upsert).not.toHaveBeenCalled();
+  });
+});

@@ -72,6 +72,10 @@ export async function updateWorkspaceSettings(input: Partial<{
   /** P17 (PR-B25) — show live leave balances on the payslip surfaces
    * (read-time; default OFF). */
   showLeaveBalancesOnSlip?: boolean;
+  /** P18 (PR-B16) — email each payslip when its run locks (default OFF =
+   * the pre-P18 silence; Settings → General; lockPayrollRun queues the
+   * PAYSLIP outbox rows). */
+  emailPayslipsOnLock?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

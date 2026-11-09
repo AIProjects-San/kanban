@@ -132,6 +132,10 @@ export interface WorkspaceSettingsT {
   /** P17 (PR-B25) — show live leave balances on the payslip surfaces
    * (read-time; default OFF). */
   showLeaveBalancesOnSlip: boolean;
+  /** P18 (PR-B16) — email each payslip when its run locks (one PAYSLIP
+   * outbox row per slip, HTML summary — the PDF stays the download-only
+   * decision §9.2). Default OFF = the pre-P18 silence. */
+  emailPayslipsOnLock: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -306,6 +310,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           fiscalYearStartMonth: Math.min(Math.max(Math.round(workspace.fiscalYearStartMonth) || 1, 1), 12),
           lopBasisMode: (workspace.lopBasisMode === "LEAVE" || workspace.lopBasisMode === "ATTENDANCE" ? workspace.lopBasisMode : "HYBRID"),
           showLeaveBalancesOnSlip: workspace.showLeaveBalancesOnSlip === true,
+          emailPayslipsOnLock: workspace.emailPayslipsOnLock === true,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -331,6 +336,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           fiscalYearStartMonth: 1,
           lopBasisMode: "HYBRID",
           showLeaveBalancesOnSlip: false,
+          emailPayslipsOnLock: false,
         },
 
     taskStatuses: taskStatuses.length
