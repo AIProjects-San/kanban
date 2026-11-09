@@ -52,6 +52,7 @@ const FNF_KIND_LABELS: Record<string, string> = {
   SALARY: "Salary",
   ENCASHMENT: "Encashment",
   ADVANCE_LEAVE: "Recovery",
+  GRATUITY: "Gratuity",
 };
 
 function FnFBlock({ fnf }: { fnf: OffboardingCaseT["fnf"] }) {

@@ -189,6 +189,8 @@ export type AuditAction =
   | "payroll.benefits_accrued"
   // P6 (PR-20/PR-23, PR-T01) — retention bonus.
   | "payroll.retention_bonus_created"
+  // P7 (PR-20/PR-21, F3.3) — gratuity rule.
+  | "payroll.gratuity_rule_saved"
   | "leave.encashment_requested"
   | "leave.encashment_approved"
   | "leave.encashment_rejected";
@@ -351,6 +353,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.benefit_claimed": { icon: HeartPulse, cls: "text-sky-500 bg-sky-500/10" },
   "payroll.benefits_accrued": { icon: HeartPulse, cls: "text-emerald-500 bg-emerald-500/10" },
   "payroll.retention_bonus_created": { icon: Award, cls: "text-amber-500 bg-amber-500/10" },
+  "payroll.gratuity_rule_saved": { icon: Scale, cls: "text-violet-500 bg-violet-500/10" },
   "leave.encashment_requested": { icon: CircleDollarSign, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_approved": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_rejected": { icon: CircleDollarSign, cls: "text-rose-500 bg-rose-500/10" },

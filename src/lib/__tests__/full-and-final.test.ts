@@ -25,6 +25,10 @@ const BASE: FnFInput = {
   rateWorkingDays: 21,
   openRuns: [],
   leaveAccounts: [],
+  gratuity: {
+    enabled: false, averagingMonths: 3, slabs: [],
+    earningsSamples: [], earningsBasis: "PAYSLIPS", hireDate: null,
+  },
 };
 
 function account(partial: Partial<FnFLeaveAccount>): FnFLeaveAccount {

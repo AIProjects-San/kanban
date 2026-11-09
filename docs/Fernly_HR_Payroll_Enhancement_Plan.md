@@ -206,7 +206,7 @@ Status legend — **Parity**: functionally equivalent for Fernly's context · **
 | P13 | Salary withholding | Withheld status + release via JE hooks | none | **Missing** |
 | P14 | Benefits & accrual ledger | flexi benefits, election, append-only accrual ledger | none | **Missing** |
 | P15 | Income tax engine & exemptions | slab engine, projection, declarations vs proofs | none — pre-statutory by design | **Out of scope** (ADR-014) |
-| P16 | Gratuity | rule slabs, experience methods, payout adapter | none | **Missing** |
+| P16 | Gratuity | rule slabs, experience methods, payout adapter | P7: `GratuityRule` + `GratuitySlab` (years→fraction, averaging window, payslip-average earnings basis) → the GRATUITY line on the live FnF with the non-statutory disclaimer; the rule-editor modal prices samples live | **Parity (workspace scope)** (was Missing) |
 | P17 | Loan deduction integration | lending-app-gated salary_slip_loan_utils | none | **Missing** |
 | P18 | Accounting posting (GL/JV) | accrual + bank JEs, cost centers | none — no accounting module | **Out of scope** |
 | P19 | Bank remittance / payment-mode export | bank_remittance, ECS reports | none | **Missing** |
@@ -450,7 +450,7 @@ The 2026-11-09 user directive: "Work on Payroll to implement all features one by
 | P4 | PR-14, PR-B12 | **DONE** LWP correction reversal — reverse N LOP days of a LOCKED slip → credit PayAdjustment (LWP_CREDIT) in the next OPEN run | audit + provenance; per-day price from the stored LOP line, cap enforced from sourceDays data |
 | P5 | PR-15–18, PR-B04 (F3.2) | **DONE** Flexible benefits lite — annual election capped by structure `maxBenefits`, append-only accrual rows per locked run, claims against accrued balance (BENEFIT_PAYOUT adjustments) | mini-ledger + pure kernel; accrual = ÷12 paid-days-scaled at lock, claims are HR-filed single-step (F2.8 generalizes the member-claim flow) |
 | P6 | PR-22/23, PR-T01 | **DONE** Retention bonus + one-off incentive → PayAdjustment; notification rides the MailOutbox (INTERVIEW_INVITE pattern) | PR-22 = MANUAL/INCENTIVE source on the adapter; PR-23 = the installments writer (last absorbs rounding) + in-app & email notification |
-| P7 | PR-20, PR-21 (F3.3) | Gratuity slab engine — years→fraction config × final average earnings, computed into FnF with the non-statutory disclaimer | rides the F2.1 machinery; PR-20 is the Gratuity doctype this item covers |
+| P7 | PR-20, PR-21 (F3.3) | **DONE** Gratuity slab engine — GratuityRule (enabled + averaging window) + GratuitySlab years→fraction rows; the pure kernel (service-length math, slab walk, final average earnings from last-N LOCKED payslip grosses with structure fallback) prices the GRATUITY line into the live FnF with the non-statutory disclaimer; rule editor modal in Payroll | rides the F2.1 machinery; PR-20 = the FnF GRATUITY line + UNSETTLED→SETTLED payout lifecycle; PR-21 = the rule + slabs as data |
 | P8 | PR-19, PR-B13 | Salary withholding — hold window per employee; runs inside the window create WITHHELD slips; release emits the held net as PayAdjustment | lite state machine |
 | P9 | PR-B26 | Overtime → payslip bridge — derived `overtimeMinutes` on attendance (beyond the workspace day end), payout setting with rate basis from gross | unblocked from AT-09 via the S2 derivation pattern |
 | P10 | PR-B05, PR-03 | All payroll cadences — weekly/fortnightly/biweekly/monthly/quarterly/annual windows via a pure payroll-windows kernel; period keys stay unique | monthly stays the default |
@@ -468,7 +468,7 @@ The 2026-11-09 user directive: "Work on Payroll to implement all features one by
 | P22 | PR-C01–04, PR-N01–06 | Payroll analytics — 4 SVG charts + 6 number cards, role-scoped | humane subset |
 | P23 | F2.3 extension | Catalog percent modes — PERCENT_OF_GROSS (annual resolution in computeOffer) + PERCENT_OF_NET (run-time two-pass; refused at offer build time) | one kernel serves adapter + catalog |
 
-**Explicitly out of this sweep** (declined, documented — the 2026-11-09 "respect declines" answer): statutory/tax + GL accounts (ADR-014), loan repayment rows (PR-07), timesheet payroll (§7.0), the formula/condition AST engine (PR-02/PR-03 formula fields), password-protected PDF email (the mailer has no attachments). PR-B26's shift-based OT multipliers stay declined with shifts (F3.5) — P9's lite bridge rides derived attendance facts instead.
+**Explicitly out of this sweep** (declined, documented — the 2026-11-09 "respect declines" answer): statutory/tax + GL accounts (ADR-014), loan repayment rows (PR-07), timesheet payroll (§7.0), the formula/condition AST engine (PR-02/PR-03 formula fields), password-protected PDF email (the mailer has no attachments). PR-B26's shift-based OT multipliers stay declined with shifts (F3.5) — P9's lite bridge rides derived attendance facts instead. **Superseded later on 2026-11-09: the user set the matrix end-state at 309 Parity / 0 Partial / 0 Missing / 0 declined — after the P8–P23 items land, the declined set above returns as explicit follow-up epics (statutory-lite tax engine, GL posting, loan rows, timesheet payroll, formula AST, PDF attachments, shifts), each keeping ADR-014's honesty rules (config-driven, non-filing, disclaimers rendered).**
 
 ### 7.3 Phase 3 — Parity breadth (10 epics)
 

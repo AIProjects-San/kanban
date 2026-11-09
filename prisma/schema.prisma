@@ -1837,3 +1837,34 @@ model BenefitAccrual {
   @@index([userId, year, componentCode])
   @@index([sourceId])
 }
+
+// P7 (PR-20/PR-21, F3.3) — the gratuity rule. One row per workspace (the
+// singleton read is findFirst): enabled off by default, the earnings basis
+// is the average monthly gross of the last `averagingMonths` LOCKED-run
+// payslips (falls back to the active structure's gross when no payslip
+// exists yet). The years→fraction slabs live in GratuitySlab; the payout
+// line is computed into the live full-and-final statement (lib/gratuity.ts
+// kernel) with an explicit non-statutory disclaimer — this is the
+// contractual rule the workspace configured, never a statutory regime.
+model GratuityRule {
+  id             String   @id @default(cuid())
+  enabled        Boolean  @default(false)
+  averagingMonths Int     @default(3)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// One years→fraction band: service years y ∈ [fromYears, toYears ?? ∞]
+// pay `fraction` months of average earnings each completed year. Years
+// covered by no slab pay 0 (the honest skip, visible in the statement's
+// gratuity note) — an uncovered year is a real rule choice, not an error.
+model GratuitySlab {
+  id       String  @id @default(cuid())
+  fromYears Int
+  toYears  Int?
+  fraction Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fromYears])
+}

@@ -1006,3 +1006,18 @@ export const createRetentionBonusSchema = z.object({
   firstPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick a first payout month (YYYY-MM)."),
   note: z.string().trim().max(500).default(""),
 }).strict();
+
+// P7 (PR-20/PR-21, F3.3) — the gratuity rule editor. Shape-level checks
+// only; overlap/coverage logic lives in the pure kernel
+// (validateGratuityRuleInput) so the rule math stays tested in one place.
+const gratuitySlabSchema = z.object({
+  fromYears: z.number().int().min(0).max(80),
+  toYears: z.number().int().min(1).max(120).nullable(),
+  fraction: z.number().min(0).max(12),
+}).strict();
+
+export const saveGratuityRuleSchema = z.object({
+  enabled: z.boolean(),
+  averagingMonths: z.number().int().min(1).max(12),
+  slabs: z.array(gratuitySlabSchema).max(40),
+}).strict();

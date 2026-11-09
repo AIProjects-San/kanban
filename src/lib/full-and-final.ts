@@ -30,8 +30,9 @@
 //     employer, docked … if the exit FnF encashes a negative balance").
 //
 // Deliberately absent (the line space extends when they land): pending
-// bonuses (F2.3's PayAdjustment), outstanding advances/loans (F2.8),
-// gratuity slabs (F3.3), asset obligations (EM-B13 — out of scope).
+// bonuses (F2.3's PayAdjustment), outstanding advances/loans (F2.8), asset
+// obligations (EM-B13 — out of scope). P7 landed the gratuity slabs
+// (F3.3): see the gratuity block below and lib/gratuity.ts.
 //
 // Balances are read for the asOf YEAR only (the ledger projection folds
 // carry-over into the current year's CARRY rows via the F2.4 rollover —
@@ -49,6 +50,13 @@
 // ---------------------------------------------------------------------------
 
 import { round2 } from "@/lib/payroll-math";
+import {
+  computeGratuity,
+  finalAverageEarnings,
+  gratuityNote,
+  serviceLengthBetween,
+  type GratuitySlabInput,
+} from "@/lib/gratuity";
 import type { FnFComputedT, FnFLineT, ExitInterviewStatus } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -119,6 +127,21 @@ export interface FnFInput {
   rateWorkingDays: number;
   openRuns: FnFOpenRun[];
   leaveAccounts: FnFLeaveAccount[];
+  /** P7 (F3.3) — the gratuity rule as resolved by the action: config,
+   * the earnings samples already sliced to the averaging window, and
+   * the employee's hire date. Disabled rules arrive as enabled:false
+   * and produce nothing. */
+  gratuity: {
+    enabled: boolean;
+    averagingMonths: number;
+    slabs: GratuitySlabInput[];
+    /** Last-N monthly grosses (LOCKED payslips, structure fallback). */
+    earningsSamples: number[];
+    /** Where the samples came from (the note names the basis). */
+    earningsBasis: "PAYSLIPS" | "STRUCTURE";
+    /** yyyy-mm-dd — EmployeeProfile.hireDate; null = unknown. */
+    hireDate: string | null;
+  };
 }
 
 /** Per-day leave value: monthly gross ÷ working days, rounded once. 0 when
@@ -144,6 +167,7 @@ export function computeFullAndFinal(input: FnFInput): FnFComputedT {
       payableTotal: 0,
       receivableTotal: 0,
       netPayable: 0,
+      gratuity: null,
       rateBasis: {
         period: input.ratePeriod,
         workingDays: input.rateWorkingDays,
@@ -214,6 +238,59 @@ export function computeFullAndFinal(input: FnFInput): FnFComputedT {
     }
   }
 
+  // --- P7 (F3.3): gratuity — slab walk over completed service years. ---
+  let gratuity: FnFComputedT["gratuity"] = null;
+  if (input.gratuity.enabled) {
+    if (!input.gratuity.hireDate) {
+      notes.push(
+        "No hire date recorded — gratuity cannot be computed (fix the profile before settling).",
+      );
+    } else {
+      const service = serviceLengthBetween(input.gratuity.hireDate, input.lastWorkingDay);
+      const averageMonthlyEarnings = finalAverageEarnings(input.gratuity.earningsSamples);
+      if (averageMonthlyEarnings === null) {
+        notes.push(
+          "Gratuity rule is on but no earnings basis exists (no payslips, no active structure) — the line values at $0.00 until one does.",
+        );
+      } else if (service.completedYears === 0) {
+        notes.push(
+          `Gratuity: ${service.totalMonths} completed month${service.totalMonths === 1 ? "" : "s"} of service — under one completed year, the rule pays nothing.`,
+        );
+      } else {
+        const computation = computeGratuity({
+          service,
+          averageMonthlyEarnings,
+          slabs: input.gratuity.slabs,
+        });
+        gratuity = {
+          completedYears: service.completedYears,
+          extraMonths: service.extraMonths,
+          averageMonthlyEarnings,
+          averagingMonths: input.gratuity.averagingMonths,
+          breakdown: computation.breakdown,
+        };
+        if (computation.amount > 0) {
+          lines.push({
+            kind: "GRATUITY",
+            label: `Gratuity — ${service.completedYears} yr ${service.extraMonths} mo of service (slab rule)`,
+            days: null,
+            rate: null,
+            amount: computation.amount,
+          });
+        }
+        notes.push(
+          gratuityNote({
+            service,
+            averagingMonths: input.gratuity.averagingMonths,
+            averageMonthlyEarnings,
+            earningsBasis: input.gratuity.earningsBasis,
+            computation,
+          }),
+        );
+      }
+    }
+  }
+
   const payableTotal = round2(
     lines.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0),
   );
@@ -228,6 +305,7 @@ export function computeFullAndFinal(input: FnFInput): FnFComputedT {
     payableTotal,
     receivableTotal,
     netPayable: round2(payableTotal - receivableTotal),
+    gratuity,
     rateBasis: {
       period: input.ratePeriod,
       workingDays: input.rateWorkingDays,

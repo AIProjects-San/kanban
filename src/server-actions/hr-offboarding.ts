@@ -57,6 +57,7 @@ import {
   canScheduleExitInterview,
   canCompleteExitInterview,
   canCancelExitInterview,
+  type FnFInput,
   type FnFLeaveAccount,
   type FnFOpenRun,
 } from "@/lib/full-and-final";
@@ -138,6 +139,47 @@ async function openRunsFor(userId: string): Promise<FnFOpenRun[]> {
   }));
 }
 
+/** P7 (F3.3) — the gratuity rule facts for one exiting employee: config,
+ * earnings samples sliced to the averaging window (last-N LOCKED payslip
+ * grosses, structure gross as the no-history fallback), and the hire date.
+ * Reads happen only when the rule is ON — the disabled path costs one
+ * findFirst and nothing else. */
+async function gratuityFactsFor(
+  userId: string,
+  monthlyGross: number | null,
+): Promise<FnFInput["gratuity"] & { hireDate: string | null }> {
+  const rule = await db.gratuityRule.findFirst();
+  if (!rule?.enabled) {
+    return {
+      enabled: false, averagingMonths: 3, slabs: [], earningsSamples: [],
+      earningsBasis: "PAYSLIPS", hireDate: null,
+    };
+  }
+  const [slabs, slips, profile] = await Promise.all([
+    db.gratuitySlab.findMany({ orderBy: { fromYears: "asc" } }),
+    db.payslip.findMany({
+      where: { userId, run: { status: "LOCKED" } },
+      orderBy: { run: { period: "desc" } },
+      take: rule.averagingMonths,
+      select: { gross: true },
+    }),
+    db.employeeProfile.findUnique({ where: { userId }, select: { hireDate: true } }),
+  ]);
+  // Falls back to the active structure's gross when no payslip history
+  // exists — the note names whichever basis priced the line.
+  const samples = slips.map((s) => s.gross).filter((g) => Number.isFinite(g));
+  const earningsBasis: "PAYSLIPS" | "STRUCTURE" =
+    samples.length > 0 ? "PAYSLIPS" : monthlyGross !== null ? "STRUCTURE" : "PAYSLIPS";
+  return {
+    enabled: true,
+    averagingMonths: rule.averagingMonths,
+    slabs: slabs.map((s) => ({ fromYears: s.fromYears, toYears: s.toYears, fraction: s.fraction })),
+    earningsSamples: samples.length > 0 ? samples : monthlyGross !== null ? [monthlyGross] : [],
+    earningsBasis,
+    hireDate: isoDateOrNull(profile?.hireDate ?? null),
+  };
+}
+
 /** Holiday-aware working days of the rate-basis period: the run's
  * denormalized count when a run exists (the same denominator its payslips
  * divide LOP by), else the F1.1 calendar computation. */
@@ -170,7 +212,10 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
   ]);
   const lastWorkingDay = isoDateOrNull(profile?.lastWorkingDay ?? null);
   const ratePeriod = lastWorkingDay ? lastWorkingDay.slice(0, 7) : "";
-  const rateWorkingDays = ratePeriod ? await rateWorkingDaysFor(ratePeriod) : 0;
+  const [rateWorkingDays, gratuity] = await Promise.all([
+    ratePeriod ? rateWorkingDaysFor(ratePeriod) : Promise.resolve(0),
+    gratuityFactsFor(userId, monthlyGross),
+  ]);
   return computeFullAndFinal({
     asOf: dayKey(now),
     lastWorkingDay,
@@ -179,6 +224,7 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
     rateWorkingDays,
     openRuns,
     leaveAccounts: accounts,
+    gratuity,
   });
 }
 
@@ -193,6 +239,7 @@ function storedComputed(row: {
     payableTotal: row.payableTotal,
     receivableTotal: row.receivableTotal,
     netPayable: row.netPayable,
+    gratuity: null, // the frozen line + totals are the record; the live detail dies with the read
     rateBasis: { period: "", workingDays: 0, monthlyGross: null, dailyRate: 0 },
   };
 }

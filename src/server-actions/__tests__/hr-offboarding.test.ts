@@ -16,6 +16,7 @@ const db = vi.hoisted(() => {
     "onboardingChecklist", "onboardingTask", "leaveType", "leaveBalance",
     "leaveLedgerEntry", "leaveRequest", "salaryStructure", "payrollRun",
     "payslip", "holidayCalendarEntry", "auditLog", "notification",
+    "gratuityRule", "gratuitySlab",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -158,6 +159,10 @@ function seededFnFWorld() {
     { leaveTypeId: "lt-unpaid", entryType: "GRANT", _sum: { delta: 3 } },
   ]);
   db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+  // P7 — the gratuity rule defaults OFF (the world before HR configures it).
+  db.gratuityRule.findFirst.mockResolvedValue(null);
+  db.gratuitySlab.findMany.mockResolvedValue([]);
+  db.payslip.findMany.mockResolvedValue([]);
 }
 
 beforeEach(() => {
@@ -373,6 +378,96 @@ describe("generateFullAndFinal", () => {
     const refuse = await generateFullAndFinal({ userId: "u-soren" });
     expect(refuse.ok).toBe(false);
     if (!refuse.ok) expect(refuse.error).toContain("already settled");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P7 (PR-20/PR-21, F3.3) — the gratuity line on the live statement
+// ---------------------------------------------------------------------------
+
+describe("generateFullAndFinal — gratuity (P7)", () => {
+  /** Soren: hired 2024-02-05, LWD 2026-11-07 → 33 months → 2 completed
+   * years + 9 months. Slabs 1–2 pay 0.25/yr; the last 3 LOCKED grosses
+   * [6200, 6400, 6000] average to 6200 → gratuity = 2 × 0.25 × 6200. */
+  function gratuityWorld() {
+    db.gratuityRule.findFirst.mockResolvedValue({ id: "gr-1", enabled: true, averagingMonths: 3 });
+    db.gratuitySlab.findMany.mockResolvedValue([
+      { id: "s-1", fromYears: 1, toYears: 2, fraction: 0.25 },
+      { id: "s-2", fromYears: 3, toYears: 4, fraction: 0.5 },
+      { id: "s-3", fromYears: 5, toYears: null, fraction: 1 },
+    ]);
+    db.payslip.findMany.mockResolvedValue([{ gross: 6_200 }, { gross: 6_400 }, { gross: 6_000 }]);
+    db.fullAndFinalStatement.create.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => ({ id: "fnf-g", status: "UNSETTLED", ...data }),
+    );
+  }
+
+  it("adds the GRATUITY line priced by the slab walk over the payslip average", async () => {
+    gratuityWorld();
+    const res = await generateFullAndFinal({ userId: "u-soren" });
+    expect(res.ok).toBe(true);
+    const createArg = db.fullAndFinalStatement.create.mock.calls[0][0] as {
+      data: { lines: string; payableTotal: number; netPayable: number };
+    };
+    const lines = JSON.parse(createArg.data.lines) as Array<{ kind: string; amount: number }>;
+    const gratuity = lines.find((l) => l.kind === "GRATUITY");
+    expect(gratuity?.amount).toBe(3_100); // 2 × 0.25 × 6200
+    // Payables: salary 4,980.75 + encashment 990.48 + gratuity 3,100 = 9,071.23.
+    expect(createArg.data.payableTotal).toBe(9_071.23);
+    expect(createArg.data.netPayable).toBe(8_575.99); // − 495.24 advance recovery
+  });
+
+  it("falls back to the active structure's gross when no payslip history exists", async () => {
+    gratuityWorld();
+    db.payslip.findMany.mockResolvedValue([]);
+    const res = await generateFullAndFinal({ userId: "u-soren" });
+    expect(res.ok).toBe(true);
+    const createArg = db.fullAndFinalStatement.create.mock.calls[0][0] as { data: { lines: string } };
+    const lines = JSON.parse(createArg.data.lines) as Array<{ kind: string; amount: number }>;
+    // The fixture structure stores ANNUAL components (60,000 + 2,400 =
+    // 62,400/yr → 5,200/month, the same basis the leave rate uses) →
+    // gratuity = 2 × 0.25 × 5,200 = 2,600.
+    expect(lines.find((l) => l.kind === "GRATUITY")?.amount).toBe(2_600);
+  });
+
+  it("an enabled rule with no hire date yields a NOTE, never a silent zero", async () => {
+    gratuityWorld();
+    db.employeeProfile.findUnique.mockImplementation(
+      async ({ where }: { where: { userId: string } }) =>
+        where.userId === "u-soren"
+          ? { ...EXITED_PROFILE, hireDate: null }
+          : null,
+    );
+    const res = await generateFullAndFinal({ userId: "u-soren" });
+    expect(res.ok).toBe(true);
+    const createArg = db.fullAndFinalStatement.create.mock.calls[0][0] as { data: { lines: string } };
+    const lines = JSON.parse(createArg.data.lines) as Array<{ kind: string }>;
+    expect(lines.some((l) => l.kind === "GRATUITY")).toBe(false);
+  });
+
+  it("under one completed year the rule pays nothing and the note says why", async () => {
+    gratuityWorld();
+    db.employeeProfile.findUnique.mockImplementation(
+      async ({ where }: { where: { userId: string } }) =>
+        where.userId === "u-soren"
+          ? { ...EXITED_PROFILE, hireDate: new Date("2026-01-05T00:00:00.000Z") } // 10 months
+          : null,
+    );
+    const res = await generateFullAndFinal({ userId: "u-soren" });
+    expect(res.ok).toBe(true);
+    const createArg = db.fullAndFinalStatement.create.mock.calls[0][0] as { data: { lines: string } };
+    const lines = JSON.parse(createArg.data.lines) as Array<{ kind: string }>;
+    expect(lines.some((l) => l.kind === "GRATUITY")).toBe(false);
+  });
+
+  it("the disabled rule (or no rule at all) produces no gratuity line — the pre-P7 world", async () => {
+    const res = await generateFullAndFinal({ userId: "u-soren" });
+    expect(res.ok).toBe(true);
+    const createArg = db.fullAndFinalStatement.create.mock.calls[0][0] as { data: { lines: string; payableTotal: number } };
+    const lines = JSON.parse(createArg.data.lines) as Array<{ kind: string }>;
+    expect(lines.some((l) => l.kind === "GRATUITY")).toBe(false);
+    expect(createArg.data.payableTotal).toBe(5_971.23); // unchanged pre-P7 totals
+    expect(db.payslip.findMany).not.toHaveBeenCalled(); // the disabled path skips sampling
   });
 });
 

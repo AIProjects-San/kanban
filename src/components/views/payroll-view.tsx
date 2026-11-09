@@ -31,6 +31,7 @@ import { ArrearsModal } from "../ui/arrears-modal";
 import { LwpCorrectionModal } from "../ui/lwp-correction-modal";
 import { BenefitsModal } from "../ui/benefits-modal";
 import { RetentionBonusModal } from "../ui/retention-bonus-modal";
+import { GratuityRuleModal } from "../ui/gratuity-rule-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -67,6 +68,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [benefitsOpen, setBenefitsOpen] = useState(false);
   // P6 (PR-20/PR-23) — the retention-bonus writer.
   const [retentionOpen, setRetentionOpen] = useState(false);
+  const [gratuityOpen, setGratuityOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -185,6 +187,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => setRetentionOpen(true)} data-testid="retention-btn">
             <Award size={15} /> Retention bonus
+          </button>
+          <button className="f-btn f-btn-ghost" onClick={() => setGratuityOpen(true)} data-testid="gratuity-btn">
+            <Scale size={15} /> Gratuity rule
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => { setEditStructure(null); setStructureModalOpen(true); }} data-testid="new-structure-btn">
             <Plus size={15} /> Salary structure
@@ -451,6 +456,11 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         onClose={() => setRetentionOpen(false)}
         onChanged={load}
         employees={employees}
+      />
+      <GratuityRuleModal
+        open={gratuityOpen}
+        onClose={() => setGratuityOpen(false)}
+        onChanged={load}
       />
       <StructureModal
         open={structureModalOpen}

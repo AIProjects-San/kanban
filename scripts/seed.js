@@ -2710,6 +2710,24 @@ async function main() {
       });
       console.log(`  ✓ P6 (PR-20/PR-23) retention bonus: Diego's $1,500 in 3 installments (${nextPeriod} onward) + the SENT notification email`);
     }
+
+    // ------------------------------------------------------------------
+    // P7 (PR-20/PR-21, F3.3) — gratuity rule seed: enabled, 3-month
+    // payslip averaging, slabs 1–2 yr × 0.25 / 3–4 × 0.5 / 5+ × 1.0 months
+    // of average earnings per completed year. Soren's FnF picks it up in
+    // the F2.1 snapshot below (the GRATUITY line mirrors the kernel).
+    // ------------------------------------------------------------------
+    await db.gratuityRule.deleteMany();
+    await db.gratuitySlab.deleteMany();
+    await db.gratuityRule.create({ data: { enabled: true, averagingMonths: 3 } });
+    await db.gratuitySlab.createMany({
+      data: [
+        { fromYears: 1, toYears: 2, fraction: 0.25 },
+        { fromYears: 3, toYears: 4, fraction: 0.5 },
+        { fromYears: 5, toYears: null, fraction: 1 },
+      ],
+    });
+    console.log("  ✓ P7 (PR-20/PR-21) gratuity rule: enabled — slabs 1–2 yr ×0.25, 3–4 ×0.5, 5+ ×1.0 months of average earnings per completed year (3-month payslip average)");
   }
 
   // -------------------------------------------------------------------------
@@ -2781,12 +2799,42 @@ async function main() {
       const rateDays = workingDaysInPeriod(ratePeriod);
       const dailyRate = rateDays > 0 ? Math.round((5200 / rateDays) * 100) / 100 : 0;
       const salaryNet = sorenSlip ? Math.round(sorenSlip.net * 100) / 100 : 0;
+      // P7 — the GRATUITY line mirrors the kernel: completed years from the
+      // seeded hire date (2025-02-03) to the LWD, × the seeded slabs, × the
+      // average of the last LOCKED payslip grosses (structure gross 5,200
+      // as the no-history fallback).
+      const sorenHire = new Date("2025-02-03T00:00:00.000Z");
+      let svcMonths = (sorenLwd.getUTCFullYear() - sorenHire.getUTCFullYear()) * 12 + (sorenLwd.getUTCMonth() - sorenHire.getUTCMonth());
+      if (sorenLwd.getUTCDate() < sorenHire.getUTCDate()) svcMonths -= 1;
+      if (svcMonths < 0) svcMonths = 0;
+      const completedYears = Math.floor(svcMonths / 12);
+      const extraMonths = svcMonths % 12;
+      const sorenLockedSlip = await db.payslip.findFirst({
+        where: { userId: f21SorenId, run: { status: "LOCKED" } },
+        orderBy: { createdAt: "desc" },
+        select: { gross: true },
+      });
+      const gratuityAvg = sorenLockedSlip ? Math.round(sorenLockedSlip.gross * 100) / 100 : 5200;
+      const gratuitySlabs = [
+        { fromYears: 1, toYears: 2, fraction: 0.25 },
+        { fromYears: 3, toYears: 4, fraction: 0.5 },
+        { fromYears: 5, toYears: null, fraction: 1 },
+      ];
+      let gratuityRaw = 0;
+      for (let y = 1; y <= completedYears; y++) {
+        const slab = gratuitySlabs.find((s) => y >= s.fromYears && (s.toYears === null || y <= s.toYears));
+        if (slab) gratuityRaw += gratuityAvg * slab.fraction;
+      }
+      const gratuityAmount = Math.round(gratuityRaw * 100) / 100;
       const fnfLines = [
         { kind: "SALARY", label: `Unprocessed salary — ${openRun?.period ?? ratePeriod} run (net)`, days: null, rate: null, amount: salaryNet },
         { kind: "ENCASHMENT", label: "Annual — 4 day(s) unused", days: 4, rate: dailyRate, amount: Math.round(4 * dailyRate * 100) / 100 },
         { kind: "ADVANCE_LEAVE", label: "Advance Annual — 2 day(s) taken in advance", days: 2, rate: dailyRate, amount: -(Math.round(2 * dailyRate * 100) / 100) },
+        ...(gratuityAmount > 0
+          ? [{ kind: "GRATUITY", label: `Gratuity — ${completedYears} yr ${extraMonths} mo of service (slab rule)`, days: null, rate: null, amount: gratuityAmount }]
+          : []),
       ];
-      const payableTotal = Math.round((salaryNet + fnfLines[1].amount) * 100) / 100;
+      const payableTotal = Math.round((salaryNet + fnfLines[1].amount + gratuityAmount) * 100) / 100;
       const receivableTotal = Math.round(-fnfLines[2].amount * 100) / 100;
       await db.fullAndFinalStatement.create({
         data: {
@@ -2801,7 +2849,7 @@ async function main() {
           generatedById: f21HrId,
         },
       });
-      console.log(`    ✓ F2.1 offboarding: Soren EXITED (LWD ${sorenLwd.toISOString().slice(0, 10)}) — separation checklist 3/5, exit interview COMPLETED, FnF UNSETTLED (payable $${payableTotal.toFixed(2)} − receivable $${receivableTotal.toFixed(2)})`);
+      console.log(`    ✓ F2.1 offboarding: Soren EXITED (LWD ${sorenLwd.toISOString().slice(0, 10)}) — separation checklist 3/5, exit interview COMPLETED, FnF UNSETTLED (payable $${payableTotal.toFixed(2)} − receivable $${receivableTotal.toFixed(2)}${gratuityAmount > 0 ? `, incl. gratuity $${gratuityAmount.toFixed(2)} (${completedYears} yr × slab rule)` : ""})`);
     }
   }
 

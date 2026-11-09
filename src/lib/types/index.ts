@@ -237,7 +237,7 @@ export interface ExitInterviewT {
 }
 
 /** One money line on a full-and-final statement. */
-export type FnFLineKind = "SALARY" | "ENCASHMENT" | "ADVANCE_LEAVE";
+export type FnFLineKind = "SALARY" | "ENCASHMENT" | "ADVANCE_LEAVE" | "GRATUITY";
 
 export interface FnFLineT {
   kind: FnFLineKind;
@@ -261,6 +261,18 @@ export interface FnFComputedT {
   receivableTotal: number;
   /** payables − receivables; may be negative (the employee owes back). */
   netPayable: number;
+  /** P7 (F3.3) — how the gratuity line was computed (null = rule off,
+   * uncomputable, or under one completed year). Frozen statements store
+   * only the line + totals; this detail is live-view context. */
+  gratuity: {
+    completedYears: number;
+    extraMonths: number;
+    /** The rounded average monthly gross the slabs multiplied. */
+    averageMonthlyEarnings: number;
+    averagingMonths: number;
+    /** Which service years paid at which fraction (its own work shown). */
+    breakdown: Array<{ year: number; fraction: number; amount: number }>;
+  } | null;
   /** How a day of leave was valued. */
   rateBasis: {
     /** The rate-basis period (the last-working-day month, "YYYY-MM"). */
@@ -909,4 +921,23 @@ export interface OnboardingTemplateTaskT {
   assignSelf: boolean;
   isActive: boolean;
   sortOrder: number;
+}
+
+// ---------------------------------------------------------------------------
+// P7 (PR-20/PR-21, F3.3) — the gratuity rule (config) and its slabs.
+// ---------------------------------------------------------------------------
+
+/** One years→fraction band of the gratuity rule. */
+export interface GratuitySlabT {
+  id: string;
+  fromYears: number;
+  toYears: number | null;
+  fraction: number;
+}
+
+/** The workspace's gratuity rule (singleton row + slab rows). */
+export interface GratuityRuleT {
+  enabled: boolean;
+  averagingMonths: number;
+  slabs: GratuitySlabT[];
 }
