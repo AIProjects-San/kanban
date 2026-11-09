@@ -153,9 +153,11 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     // P13 (PR-B14/PR-09) — the loud failure summary: payslips beyond the
     // first 30 are isolated per slip, so a failure never aborts the run —
     // it is listed here instead (fix the cause, then add the payslip).
-    if (res.data.failures.length > 0) {
+    // Defensive read: an older action result shape carries no failures.
+    const failures = res.data.failures ?? [];
+    if (failures.length > 0) {
       toast.error(
-        `${res.data.failures.length} payslip(s) failed: ${res.data.failures.map((f) => `${f.slipNo} — ${f.reason}`).join("; ")}. Fix the cause, then add the payslip(s) to the OPEN run.`,
+        `${failures.length} payslip(s) failed: ${failures.map((f) => `${f.slipNo} — ${f.reason}`).join("; ")}. Fix the cause, then add the payslip(s) to the OPEN run.`,
         { duration: 10_000 },
       );
     }

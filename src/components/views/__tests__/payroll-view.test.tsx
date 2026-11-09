@@ -143,7 +143,7 @@ describe("PayrollView", () => {
   });
 
   it("creating a run posts the cadence + anchor date (P10)", async () => {
-    createPayrollRun.mockResolvedValue({ ok: true, data: { id: "run-2", payslipCount: 3 } });
+    createPayrollRun.mockResolvedValue({ ok: true, data: { id: "run-2", payslipCount: 3, adjustmentsApplied: 0, adjustmentsSkipped: 0, failures: [] } });
     render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
     await screen.findByTestId("new-run-form");
     // The live preview resolves the window before submit (same kernel as the server).
