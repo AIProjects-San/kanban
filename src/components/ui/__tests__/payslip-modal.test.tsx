@@ -253,3 +253,63 @@ describe("PayslipModal — P16 (PR-11) fiscal-year YTD chip", () => {
     expect(screen.getByTestId("payslip-ytd-basis").textContent).not.toContain("fiscal year");
   });
 });
+
+// ---------------------------------------------------------------------------
+// P17 — PR-B25 (leave balances on the slip, read-time) + PR-B27 (the basis
+// note on the AUTO provenance box).
+// ---------------------------------------------------------------------------
+
+describe("PayslipModal — P17 (PR-B25 / PR-B27)", () => {
+  it("PR-B25 — renders the live leave-balances box when the payload carries balances", () => {
+    render(
+      <PayslipModal
+        payslip={payslip({
+          leaveBalances: [
+            { typeName: "Annual Leave", availableDays: 12.5 },
+            { typeName: "Sick Leave", availableDays: 3 },
+          ],
+        })}
+        onClose={onClose}
+        onChanged={onChanged}
+      />,
+    );
+    const box = screen.getByTestId("payslip-leave-balances");
+    expect(box.textContent).toContain("Annual Leave");
+    expect(box.textContent).toContain("12.5");
+    expect(box.textContent).toContain("Sick Leave");
+    expect(box.textContent).toContain("3");
+    // The honesty line: read-time, not part of the frozen record.
+    expect(box.textContent).toContain("not part of the frozen payslip record");
+  });
+
+  it("PR-B25 — no balances field (toggle off / older payload) → no box at all", () => {
+    render(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.queryByTestId("payslip-leave-balances")).toBeNull();
+  });
+
+  it("PR-B27 — the AUTO note names a non-HYBRID basis; HYBRID (default) stays silent", () => {
+    const { rerender } = render(
+      <PayslipModal
+        payslip={payslip()}
+        lopBasisMode="LEAVE"
+        onClose={onClose}
+        onChanged={onChanged}
+      />,
+    );
+    expect(screen.getByTestId("payslip-lop-source").textContent).toContain("Proration basis: LEAVE only");
+
+    rerender(
+      <PayslipModal
+        payslip={payslip()}
+        lopBasisMode="ATTENDANCE"
+        onClose={onClose}
+        onChanged={onChanged}
+      />,
+    );
+    expect(screen.getByTestId("payslip-lop-source").textContent).toContain("ATTENDANCE only — leave never charges loss-of-pay");
+
+    // Default HYBRID = the pre-P17 note byte-for-byte.
+    rerender(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.getByTestId("payslip-lop-source").textContent).not.toContain("Proration basis");
+  });
+});

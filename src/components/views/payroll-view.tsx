@@ -61,6 +61,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [payslipsRun, setPayslipsRun] = useState<PayrollRunT | null>(null);
   const [unmarkedMode, setUnmarkedMode] = useState<"IGNORED" | "ABSENT">("IGNORED");
   const [roundingMode, setRoundingMode] = useState<"ROUND_2DP" | "ROUND_NET_NEAREST">("ROUND_2DP");
+  // P17 (PR-B27) — the current proration basis, for the modal's AUTO note.
+  const [lopBasisMode, setLopBasisMode] = useState<"HYBRID" | "LEAVE" | "ATTENDANCE">("HYBRID");
   const [openPayslip, setOpenPayslip] = useState<PayslipT | null>(null);
   const [structureModalOpen, setStructureModalOpen] = useState(false);
   const [editStructure, setEditStructure] = useState<SalaryStructureT | null>(null);
@@ -119,9 +121,11 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       setPayslipsRun(res.data.run);
       // PR-B07 (S4) — the current workspace policy explains the AUTO note
       // in the payslip modal (the derivation itself is a creation-time
-      // snapshot; the note states the policy, not a re-derivation).
+      // snapshot; the note states the policy, not a re-derivation). P17
+      // (PR-B27) — the proration basis rides the same payload.
       setUnmarkedMode(res.data.unmarkedMode);
       setRoundingMode(res.data.roundingMode);
+      setLopBasisMode(res.data.lopBasisMode);
     } else {
       toast.error(res.error);
       setPayslips([]);
@@ -588,6 +592,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       <PayslipModal
         payslip={openPayslip}
         unmarkedMode={unmarkedMode}
+        lopBasisMode={lopBasisMode}
         roundingMode={roundingMode}
         onClose={() => { setOpenPayslip(null); if (selectedRunId) void loadPayslips(selectedRunId); void load(); }}
         onChanged={() => { if (selectedRunId) void loadPayslips(selectedRunId); void load(); }}

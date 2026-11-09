@@ -457,3 +457,33 @@ describe("cross-instance config invalidation (PR-31)", () => {
     }
   });
 });
+
+describe("getWorkspaceConfig — P17 (PR-B27 / PR-B25) knobs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bumpConfigCache();
+  });
+
+  it("passes a stored basis + toggle through; garbage clamps, absent row falls back", async () => {
+    findMany.mockResolvedValue([]);
+    // Stored valid values ride through untouched.
+    findFirst.mockResolvedValue({ lopBasisMode: "LEAVE", showLeaveBalancesOnSlip: true });
+    let config = await getWorkspaceConfig();
+    expect(config.workspace.lopBasisMode).toBe("LEAVE");
+    expect(config.workspace.showLeaveBalancesOnSlip).toBe(true);
+
+    // A bad row can't invent a fourth mode; a non-true toggle reads OFF.
+    bumpConfigCache();
+    findFirst.mockResolvedValue({ lopBasisMode: "WEIRD", showLeaveBalancesOnSlip: "yes" });
+    config = await getWorkspaceConfig();
+    expect(config.workspace.lopBasisMode).toBe("HYBRID");
+    expect(config.workspace.showLeaveBalancesOnSlip).toBe(false);
+
+    // No Workspace row at all → the pre-P17 defaults.
+    bumpConfigCache();
+    findFirst.mockResolvedValue(null);
+    config = await getWorkspaceConfig();
+    expect(config.workspace.lopBasisMode).toBe("HYBRID");
+    expect(config.workspace.showLeaveBalancesOnSlip).toBe(false);
+  });
+});

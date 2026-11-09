@@ -1242,3 +1242,24 @@ describe("P16 (PR-11) — fiscal-year start month setting", () => {
     expect(db.workspace.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe("P17 (PR-B27 / PR-B25) — loss-of-pay basis + leave balances knobs", () => {
+  it("persists a valid basis mode and balances toggle through the workspace upsert", async () => {
+    signIn(ADMIN);
+    db.workspace.upsert.mockResolvedValue({});
+    expectOk(await updateWorkspaceSettings({ lopBasisMode: "ATTENDANCE", showLeaveBalancesOnSlip: true }));
+    expect(db.workspace.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "default" },
+        update: expect.objectContaining({ lopBasisMode: "ATTENDANCE", showLeaveBalancesOnSlip: true }),
+      }),
+    );
+  });
+
+  it("rejects a fourth basis mode (enum gate) and non-boolean toggles at write time", async () => {
+    signIn(ADMIN);
+    expectErr(await updateWorkspaceSettings({ lopBasisMode: "GARBAGE" as unknown as "HYBRID" }), /lopBasisMode|invalid/i);
+    expectErr(await updateWorkspaceSettings({ showLeaveBalancesOnSlip: "yes" as unknown as boolean }), /showLeaveBalancesOnSlip|boolean/i);
+    expect(db.workspace.upsert).not.toHaveBeenCalled();
+  });
+});

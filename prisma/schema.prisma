@@ -556,6 +556,19 @@ model Workspace {
   // aggregates kernel resets YTD at the fiscal boundary instead of January
   // 1. MTD stays the calendar month regardless.
   fiscalYearStartMonth Int     @default(1)
+  // P17 (PR-B27) — the proration basis switch (the benchmark's
+  // payroll_based_on): HYBRID (default — leave-wins: an approved span
+  // charges its salary-fraction complement, otherwise the attendance mark
+  // decides), LEAVE (spans only — attendance marks never charge), or
+  // ATTENDANCE (marks only — leave never charges). Pure knob consumed by
+  // lib/lop-derivation.ts at run/slip creation; default HYBRID = the
+  // pre-P17 semantics byte-for-byte.
+  lopBasisMode        String   @default("HYBRID") // HYBRID | LEAVE | ATTENDANCE
+  // P17 (PR-B25) — show each employee's live leave balances on the payslip
+  // (the benchmark's show_leave_balances_in_salary_slip). Read-time: the
+  // balances ride getPayrollRun/getMyPayslips payloads and the payslip
+  // modal renders the box; nothing is snapshotted onto the slip.
+  showLeaveBalancesOnSlip Boolean @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

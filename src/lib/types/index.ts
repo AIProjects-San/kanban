@@ -847,6 +847,11 @@ export interface PayslipT {
    * (1 = calendar year; the modal renders "YTD (FY 2026/27)" otherwise).
    * Optional: omitted by older callers / the live preview. */
   fiscalYearStartMonth?: number;
+  /** P17 (PR-B25) — the employee's live leave balances at read time (the
+   * benchmark's show_leave_balances_in_salary_slip): one row per type with
+   * available days. Present only when the workspace toggle is on; never
+   * snapshotted onto the slip. */
+  leaveBalances?: { typeName: string; availableDays: number }[];
   /** P8 (PR-19/PR-B13) — "" normal | WITHHELD (net held, not disbursed;
    * excluded from YTD) | RELEASED (paid via a WITHHELD_RELEASE adjustment
    * in a later period). */

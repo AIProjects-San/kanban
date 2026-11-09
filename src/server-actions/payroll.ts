@@ -563,8 +563,11 @@ async function deriveLopDaysForUsers(
 ): Promise<Map<string, PayrollFacts>> {
   // PR-B07 (S4) — the workspace's unmarked-day policy rides every
   // derivation (IGNORED default = pre-S4 semantics byte-for-byte).
+  // P17 (PR-B27) — the proration basis rides it too (HYBRID default = the
+  // pre-P17 leave-wins walk byte-for-byte).
   const config = await getWorkspaceConfig();
   const unmarkedMode = config.workspace.unmarkedAttendanceMode;
+  const basisMode = config.workspace.lopBasisMode;
   const result = new Map<string, PayrollFacts>();
   if (userIds.length === 0) return result;
   // P10 — the window is the RUN's (any cadence), not a parsed month.
@@ -609,8 +612,8 @@ async function deriveLopDaysForUsers(
     : [];
   const typeById = new Map(types.map((t) => [t.id, t]));
 
-  const byUser = new Map<string, { marks: LopAttendanceMark[]; spans: LopLeaveSpan[]; opts: { unmarkedMode: "IGNORED" | "ABSENT"; employmentFrom: Date | null; employmentUntil: Date | null } }>();
-  for (const u of userIds) byUser.set(u, { marks: [], spans: [], opts: { unmarkedMode, employmentFrom: null, employmentUntil: null } });
+  const byUser = new Map<string, { marks: LopAttendanceMark[]; spans: LopLeaveSpan[]; opts: { unmarkedMode: "IGNORED" | "ABSENT"; basisMode: "HYBRID" | "LEAVE" | "ATTENDANCE"; employmentFrom: Date | null; employmentUntil: Date | null } }>();
+  for (const u of userIds) byUser.set(u, { marks: [], spans: [], opts: { unmarkedMode, basisMode, employmentFrom: null, employmentUntil: null } });
   for (const mk of marks) byUser.get(mk.userId)?.marks.push({ date: mk.date, status: mk.status });
   for (const lr of leaveRows) {
     const t = typeById.get(lr.leaveTypeId);
@@ -1063,7 +1066,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
  * live). */
 export async function getPayrollRun(
   runId: string,
-): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT"; roundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST"; fiscalYearStartMonth: number }>> {
+): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT"; roundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST"; fiscalYearStartMonth: number; lopBasisMode: "HYBRID" | "LEAVE" | "ATTENDANCE" }>> {
   return toResult(async () => {
     await requirePermission("payroll:manage");
     const id = String(runId ?? "").trim();
@@ -1134,6 +1137,43 @@ export async function getPayrollRun(
       { fiscalYearStartMonth, openings },
     );
 
+    // P17 (PR-B25) — live leave balances on the slip when the workspace
+    // toggle is on (read-time: the CURRENT year's rows, latest-first within
+    // the year, never snapshotted). LeaveBalance carries no relation to
+    // LeaveType (bare leaveTypeId) — names join in memory; a type deleted
+    // after the balance row reads as "(deleted type)".
+    const showLeaveBalances = (
+      await getWorkspaceConfig()
+    ).workspace.showLeaveBalancesOnSlip;
+    const balancesByUser = new Map<string, { typeName: string; availableDays: number }[]>();
+    if (showLeaveBalances && run.payslips.length > 0) {
+      const runUserIds = [...new Set(run.payslips.map((p) => p.userId))];
+      const [rows, types] = await Promise.all([
+        db.leaveBalance.findMany({
+          where: { userId: { in: runUserIds }, year: { gte: runEnd ? runEnd.getUTCFullYear() : 0 } },
+          select: { userId: true, year: true, entitled: true, carriedOver: true, used: true, leaveTypeId: true },
+          orderBy: { year: "desc" },
+        }),
+        db.leaveType.findMany({ select: { id: true, name: true } }),
+      ]);
+      const nameById = new Map(types.map((t) => [t.id, t.name]));
+      const seenByUser = new Map<string, Set<string>>();
+      for (const r of rows) {
+        // Latest year per user×type wins (orderBy year desc; first row per
+        // (userId, leaveTypeId) is the freshest — dedupe by type id, not
+        // name, so renamed/duplicate names can't hide a type).
+        const seen = seenByUser.get(r.userId) ?? new Set<string>();
+        seenByUser.set(r.userId, seen);
+        if (seen.has(r.leaveTypeId)) continue;
+        seen.add(r.leaveTypeId);
+        if (!balancesByUser.has(r.userId)) balancesByUser.set(r.userId, []);
+        balancesByUser.get(r.userId)!.push({
+          typeName: nameById.get(r.leaveTypeId) ?? "(deleted type)",
+          availableDays: Math.round((r.entitled + r.carriedOver - r.used) * 100) / 100,
+        });
+      }
+    }
+
     const [users, profiles] = await Promise.all([
       db.user.findMany({ select: { id: true, name: true } }),
       db.employeeProfile.findMany({ select: { userId: true, jobTitle: true } }),
@@ -1173,6 +1213,8 @@ export async function getPayrollRun(
         componentYtd: aggregates.get(p.id)?.componentYtd ?? [],
         // P16 — the fiscal basis behind these numbers (the modal's chip).
         fiscalYearStartMonth,
+        // P17 — live balances when the toggle is on.
+        ...(showLeaveBalances ? { leaveBalances: balancesByUser.get(p.userId) ?? [] } : {}),
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
 
@@ -1198,6 +1240,9 @@ export async function getPayrollRun(
       // creation-time snapshot).
       unmarkedMode: (await getWorkspaceConfig()).workspace.unmarkedAttendanceMode,
       roundingMode: (await getWorkspaceConfig()).workspace.payrollRoundingMode,
+      // P17 (PR-B27) — the CURRENT proration basis for the modal's AUTO
+      // note (same honesty-note pattern as unmarkedMode).
+      lopBasisMode: (await getWorkspaceConfig()).workspace.lopBasisMode,
       // P16 — the YTD basis the aggregates were computed under (the modal's
       // "YTD (FY 2026/27)" chip renders ≠ calendar year).
       fiscalYearStartMonth,
@@ -1690,6 +1735,37 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
       { fiscalYearStartMonth, openings },
     );
 
+    // P17 (PR-B25) — the employee's own live leave balances when the toggle
+    // is on (read-time, current-year rows, latest year per type; names join
+    // in memory — LeaveBalance has no LeaveType relation, just the id).
+    const showLeaveBalances = (
+      await getWorkspaceConfig()
+    ).workspace.showLeaveBalancesOnSlip;
+    const myBalances: { typeName: string; availableDays: number }[] = [];
+    if (showLeaveBalances) {
+      const latest = slips.reduce((m, s) => Math.max(m, runEndMs(s)), 0);
+      const year = latest > 0 ? new Date(latest).getUTCFullYear() : new Date().getUTCFullYear();
+      const [rows, types] = await Promise.all([
+        db.leaveBalance.findMany({
+          where: { userId: auth.userId, year: { gte: year } },
+          select: { year: true, entitled: true, carriedOver: true, used: true, leaveTypeId: true },
+          orderBy: { year: "desc" },
+        }),
+        db.leaveType.findMany({ select: { id: true, name: true } }),
+      ]);
+      const nameById = new Map(types.map((t) => [t.id, t.name]));
+      const seen = new Set<string>();
+      for (const r of rows) {
+        // Dedupe by type id (not name): the freshest year per type wins.
+        if (seen.has(r.leaveTypeId)) continue;
+        seen.add(r.leaveTypeId);
+        myBalances.push({
+          typeName: nameById.get(r.leaveTypeId) ?? "(deleted type)",
+          availableDays: Math.round((r.entitled + r.carriedOver - r.used) * 100) / 100,
+        });
+      }
+    }
+
     return [...slips]
       .sort((a, b) => runEndMs(b) - runEndMs(a) || a.slipNo.localeCompare(b.slipNo))
       .map((p) => ({
@@ -1720,6 +1796,8 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         componentYtd: aggregates.get(p.id)?.componentYtd ?? [],
         // P16 — the fiscal basis behind these numbers (the modal's chip).
         fiscalYearStartMonth,
+        // P17 — the employee's own live balances when the toggle is on.
+        ...(showLeaveBalances ? { leaveBalances: myBalances } : {}),
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
   });

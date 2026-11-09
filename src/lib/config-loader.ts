@@ -124,6 +124,14 @@ export interface WorkspaceSettingsT {
    * year (the default, pre-P16 semantics); e.g. 4 = April–March. The
    * payslip-aggregates kernel resets YTD at the fiscal boundary. */
   fiscalYearStartMonth: number;
+  /** P17 (PR-B27) — who decides the daily LOP charge (the benchmark's
+   * payroll_based_on): HYBRID (default — leave-wins), LEAVE (spans only),
+   * or ATTENDANCE (marks only). Consumed by lib/lop-derivation.ts at
+   * run/slip creation. */
+  lopBasisMode: "HYBRID" | "LEAVE" | "ATTENDANCE";
+  /** P17 (PR-B25) — show live leave balances on the payslip surfaces
+   * (read-time; default OFF). */
+  showLeaveBalancesOnSlip: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -296,6 +304,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           payrollRoundingMode: (workspace.payrollRoundingMode === "ROUND_NET_NEAREST" ? "ROUND_NET_NEAREST" : "ROUND_2DP"),
           overtimePayEnabled: workspace.overtimePayEnabled === true,
           fiscalYearStartMonth: Math.min(Math.max(Math.round(workspace.fiscalYearStartMonth) || 1, 1), 12),
+          lopBasisMode: (workspace.lopBasisMode === "LEAVE" || workspace.lopBasisMode === "ATTENDANCE" ? workspace.lopBasisMode : "HYBRID"),
+          showLeaveBalancesOnSlip: workspace.showLeaveBalancesOnSlip === true,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -319,6 +329,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           payrollRoundingMode: "ROUND_2DP",
           overtimePayEnabled: false,
           fiscalYearStartMonth: 1,
+          lopBasisMode: "HYBRID",
+          showLeaveBalancesOnSlip: false,
         },
 
     taskStatuses: taskStatuses.length

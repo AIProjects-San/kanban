@@ -209,6 +209,11 @@ export const workspaceSettingsSchema = z.object({
   // P16 (PR-11) — the month the fiscal year starts (1–12; 1 = calendar
   // year = the pre-P16 YTD basis byte-for-byte).
   fiscalYearStartMonth: z.number().int().finite().min(1).max(12).optional(),
+  // P17 (PR-B27) — the proration basis switch (default HYBRID = leave-wins
+  // = the pre-P17 semantics).
+  lopBasisMode: z.enum(["HYBRID", "LEAVE", "ATTENDANCE"]).optional(),
+  // P17 (PR-B25) — show live leave balances on the payslip (default OFF).
+  showLeaveBalancesOnSlip: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**

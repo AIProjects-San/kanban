@@ -65,6 +65,13 @@ export async function updateWorkspaceSettings(input: Partial<{
    * year; Settings → General; lib/payslip-aggregates.ts resets YTD at the
    * fiscal boundary). */
   fiscalYearStartMonth?: number;
+  /** P17 (PR-B27) — who decides the daily LOP charge: HYBRID (default,
+   * leave-wins) / LEAVE / ATTENDANCE (Settings → General;
+   * lib/lop-derivation.ts consumes it at run/slip creation). */
+  lopBasisMode?: "HYBRID" | "LEAVE" | "ATTENDANCE";
+  /** P17 (PR-B25) — show live leave balances on the payslip surfaces
+   * (read-time; default OFF). */
+  showLeaveBalancesOnSlip?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

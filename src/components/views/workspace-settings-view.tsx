@@ -344,6 +344,24 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               ))}
             </select>
           </Field>
+          {/* P17 (PR-B27) — who decides the daily loss-of-pay charge (the
+              benchmark's payroll_based_on). The rule is pure
+              (lib/lop-derivation.ts basisMode); this row owns the
+              instance. Applies to runs created while it is set — existing
+              payslips keep their snapshot lopDays; the payslip modal's
+              AUTO note names the basis. */}
+          <Field label="Loss-of-pay basis">
+            <select
+              className="f-input"
+              value={form.lopBasisMode ?? "HYBRID"}
+              onChange={(e) => setForm({ ...form, lopBasisMode: e.target.value as "HYBRID" | "LEAVE" | "ATTENDANCE" })}
+              data-testid="lop-basis-select"
+            >
+              <option value="HYBRID">Hybrid — leave first, then attendance</option>
+              <option value="LEAVE">Leave only — attendance marks never charge</option>
+              <option value="ATTENDANCE">Attendance only — leave never charges</option>
+            </select>
+          </Field>
         </FormRow>
         <FormRow>
           {/* P9 (PR-B26) — pay attendance overtime into payroll. The rule is
@@ -366,7 +384,26 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               </span>
             </span>
           </label>
-          <div />
+          {/* P17 (PR-B25) — show each employee's live leave balances on the
+              payslip (the benchmark's show_leave_balances_in_salary_slip).
+              Read-time on both payslip surfaces (run + my payslips); never
+              snapshotted onto the slip, so turning it on/off changes only
+              what is displayed, nothing stored moves. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="leave-balances-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.showLeaveBalancesOnSlip ?? false}
+              onChange={(e) => setForm({ ...form, showLeaveBalancesOnSlip: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Show leave balances on payslips</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Payslips display each employee&apos;s live leave balances (per type, available days) — read at
+                open time, never part of the frozen payslip record. Existing slips show/hide immediately.
+              </span>
+            </span>
+          </label>
         </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">

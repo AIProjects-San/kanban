@@ -96,11 +96,20 @@ export interface LopBreakdown {
   leave: LopBreakdownRow[];
 }
 
-/** PR-B07 (S4) — the workspace knob + the employment window. All optional;
- * omitted = the pre-S4 semantics byte-for-byte. */
+/** PR-B07 (S4) + P17 (PR-B27) — the workspace knobs + the employment
+ * window. All optional; omitted = the pre-S4/pre-P17 semantics
+ * byte-for-byte. */
 export interface DeriveLopOptions {
   /** Treat unmarked working days as ABSENT (default IGNORED). */
   unmarkedMode?: "IGNORED" | "ABSENT";
+  /** P17 (PR-B27) — who decides the charge per day (the benchmark's
+   * payroll_based_on): HYBRID (default — leave-wins: a covering span
+   * charges its salary-fraction complement, otherwise the attendance mark
+   * decides), LEAVE (spans only — attendance marks never charge; a day
+   * with no span charges 0), or ATTENDANCE (marks only — leave never
+   * charges; spans still record taken days at charged 0 for the
+   * breakdown). Unmarked-mode charges apply only in HYBRID/ATTENDANCE. */
+  basisMode?: "HYBRID" | "LEAVE" | "ATTENDANCE";
   /** First employment day (EmployeeProfile.hireDate); null/absent = unbounded. */
   employmentFrom?: Date | string | null;
   /** Last employment day (EmployeeProfile.lastWorkingDay); null/absent = unbounded. */
@@ -197,6 +206,9 @@ export function deriveLopBreakdownBetween(
   }
   const empFrom = opts.employmentFrom != null ? asUtcDay(opts.employmentFrom) : null;
   const empUntil = opts.employmentUntil != null ? asUtcDay(opts.employmentUntil) : null;
+  // P17 (PR-B27) — the basis mode. Unknown values clamp to HYBRID (the
+  // pre-P17 semantics) so a bad row can never invent a fourth mode.
+  const basis = opts.basisMode === "LEAVE" || opts.basisMode === "ATTENDANCE" ? opts.basisMode : "HYBRID";
 
   const markByDay = new Map<string, string>();
   for (const mark of marks) {
@@ -224,7 +236,7 @@ export function deriveLopBreakdownBetween(
       (empUntil === null || cursor <= empUntil);
     if (wf > 0 && inWindow) {
       const span = spans.find((s) => cursor >= s.start && cursor <= s.end);
-      if (span) {
+      if (span && basis !== "ATTENDANCE") {
         // Approved leave wins over attendance marks (see header). P15
         // (PR-06): the charge is the complement of the salary fraction,
         // scaled by the day's working fraction.
@@ -236,7 +248,16 @@ export function deriveLopBreakdownBetween(
           row.charged += charged;
           leaveByKey.set(span.key, row);
         }
-      } else {
+      } else if (span && basis === "ATTENDANCE") {
+        // P17 (PR-B27) ATTENDANCE mode: leave never charges — the span
+        // still records its taken days (charged 0) so the frozen breakdown
+        // shows what was actually taken.
+        if (span.key !== "") {
+          const row = leaveByKey.get(span.key) ?? { taken: 0, charged: 0 };
+          row.taken += wf;
+          leaveByKey.set(span.key, row);
+        }
+      } else if (basis !== "LEAVE") {
         const status = markByDay.get(dayKey(cursor));
         if (status === "ABSENT") { total += wf; absentDays += wf; }
         else if (status === "HALF_DAY") { total += wf / 2; halfDays += wf / 2; }
@@ -247,6 +268,8 @@ export function deriveLopBreakdownBetween(
           unmarkedDays += wf;
         }
       }
+      // P17 LEAVE mode: no covering span → 0 — attendance marks (incl.
+      // ABSENT) never charge; the day is payroll-invisible in this mode.
     }
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }

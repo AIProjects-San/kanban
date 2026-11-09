@@ -40,6 +40,7 @@ function keyFromLabel(label: string, fallbackIdx: number): string {
 export function PayslipModal({
   payslip,
   unmarkedMode = "IGNORED",
+  lopBasisMode = "HYBRID",
   roundingMode = "ROUND_2DP",
   onClose,
   onChanged,
@@ -50,6 +51,9 @@ export function PayslipModal({
    * provenance note (the derivation is a creation-time snapshot; the note
    * states the policy that produced it). */
   unmarkedMode?: "IGNORED" | "ABSENT";
+  /** P17 (PR-B27) — the workspace's proration basis, for the same note
+   * (HYBRID = leave-wins default; LEAVE / ATTENDANCE name themselves). */
+  lopBasisMode?: "HYBRID" | "LEAVE" | "ATTENDANCE";
   /** PR-B23 (S7) — the workspace's rounding policy; drives the live
    * preview's auto rounding line exactly as the server will store it. */
   roundingMode?: PayrollRoundingMode;
@@ -262,6 +266,7 @@ export function PayslipModal({
                 ? "Auto-derived at run creation from attendance (absent / half-day) and unpaid or partially-paid leave — saving a different value records a manual override."
                 : "Manually set by HR — overrides the run-creation derivation."}
               {unmarkedMode === "ABSENT" ? " Workspace policy: unmarked working days count as absent (runs created while the policy is on)." : ""}
+              {lopBasisMode !== "HYBRID" ? ` Proration basis: ${lopBasisMode === "LEAVE" ? "LEAVE only — attendance marks never charge loss-of-pay" : "ATTENDANCE only — leave never charges loss-of-pay"} (runs created while the basis is set).` : ""}
             </div>
           </div>
         ) : p.lopDays > 0 ? (
@@ -347,6 +352,27 @@ export function PayslipModal({
           employees' own payslip view counts locked (paid) runs only, so the
           two surfaces can differ while a month is open.
         </div>
+
+        {/* P17 (PR-B25) — live leave balances (present only when the
+            workspace toggle is on; read-time, never snapshotted). */}
+        {p.leaveBalances && p.leaveBalances.length > 0 && (
+          <div className="rounded-md border border-border px-3 py-2" data-testid="payslip-leave-balances">
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+              Leave balances (live)
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-0.5 text-xs">
+              {p.leaveBalances.map((b) => (
+                <div key={b.typeName} className="flex justify-between gap-2">
+                  <span className="text-muted-foreground truncate">{b.typeName}</span>
+                  <span className="font-semibold tabular-nums">{b.availableDays} d</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-[0.6875rem] text-muted-foreground mt-1">
+              Read at open time — not part of the frozen payslip record.
+            </div>
+          </div>
+        )}
 
         <Field label="Note (shown on the printed slip)">
           <input

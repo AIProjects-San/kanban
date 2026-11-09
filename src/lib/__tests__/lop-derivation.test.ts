@@ -392,3 +392,121 @@ describe("lop-derivation — P15 (PR-06): the breakdown walk", () => {
     expect(r.leave[0]).toEqual({ key: "lt-half", takenDays: 21, chargedDays: 10.5 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// P17 (PR-B27) — the proration basis switch (Workspace.lopBasisMode):
+// HYBRID (default, leave-wins = the pre-P17 walk) | LEAVE (spans only) |
+// ATTENDANCE (marks only; leave never charges, taken days still recorded).
+// ---------------------------------------------------------------------------
+
+describe("lop-derivation — P17 (PR-B27): the basis mode switch", () => {
+  const bd = (
+    spansIn: LopLeaveSpan[],
+    marksIn: LopAttendanceMark[] = [],
+    opts: { unmarkedMode?: "IGNORED" | "ABSENT"; basisMode?: "HYBRID" | "LEAVE" | "ATTENDANCE" } = {},
+  ) => deriveLopBreakdownBetween(d("2026-11-01"), d("2026-11-30"), undefined, marksIn, spansIn, opts);
+
+  it("LEAVE: attendance marks (incl. ABSENT) never charge without a covering span", () => {
+    const r = bd([], marks(
+      ["2026-11-02", "ABSENT"],
+      ["2026-11-03", "ABSENT"],
+      ["2026-11-04", "HALF_DAY"],
+    ), { basisMode: "LEAVE" });
+    expect(r.total).toBe(0);
+    expect(r.absentDays).toBe(0);
+    expect(r.halfDays).toBe(0);
+  });
+
+  it("LEAVE: spans still charge their fraction complement (PPL unchanged)", () => {
+    // Mon 9 → Wed 11 at 50% pay → 1.5; unpaid span Fri 13 (1 day) → 1.
+    const r = bd(pplSpans(
+      ["2026-11-09", "2026-11-11", true, 0.5, "lt-half"],
+      ["2026-11-13", "2026-11-13", false, 0, "lt-unpaid"],
+    ), [], { basisMode: "LEAVE" });
+    expect(r.total).toBe(2.5);
+    expect(r.leave).toEqual([
+      { key: "lt-half", takenDays: 3, chargedDays: 1.5 },
+      { key: "lt-unpaid", takenDays: 1, chargedDays: 1 },
+    ]);
+  });
+
+  it("LEAVE: unmarked-as-absent does NOT apply (unmarked-mode needs HYBRID/ATTENDANCE)", () => {
+    const r = bd([], [], { basisMode: "LEAVE", unmarkedMode: "ABSENT" });
+    expect(r.total).toBe(0);
+    expect(r.unmarkedDays).toBe(0);
+  });
+
+  it("ATTENDANCE: leave never charges — an unpaid span records taken at charged 0", () => {
+    const r = bd(pplSpans(
+      ["2026-11-09", "2026-11-11", false, 0, "lt-unpaid"],
+    ), [], { basisMode: "ATTENDANCE" });
+    expect(r.total).toBe(0);
+    expect(r.leave).toEqual([{ key: "lt-unpaid", takenDays: 3, chargedDays: 0 }]);
+  });
+
+  it("ATTENDANCE: partially-paid spans charge 0 too (the mode, not the fraction)", () => {
+    const r = bd(pplSpans(
+      ["2026-11-09", "2026-11-10", true, 0.5, "lt-half"],
+    ), [], { basisMode: "ATTENDANCE" });
+    expect(r.total).toBe(0);
+    expect(r.leave).toEqual([{ key: "lt-half", takenDays: 2, chargedDays: 0 }]);
+  });
+
+  it("ATTENDANCE: marks decide when there is no span (ABSENT/HALF_DAY charge)", () => {
+    const r = bd([], marks(
+      ["2026-11-02", "ABSENT"],
+      ["2026-11-03", "HALF_DAY"],
+    ), { basisMode: "ATTENDANCE" });
+    expect(r.total).toBe(1.5);
+    expect(r.absentDays).toBe(1);
+    expect(r.halfDays).toBe(0.5);
+  });
+
+  it("ATTENDANCE: unmarked-as-absent still applies (the S4 knob rides both mark-feeding modes)", () => {
+    // 21 weekdays, one with an ABSENT mark → 20 unmarked charge.
+    const r = bd([], marks(["2026-11-02", "ABSENT"]), { basisMode: "ATTENDANCE", unmarkedMode: "ABSENT" });
+    expect(r.total).toBe(21);
+    expect(r.unmarkedDays).toBe(20);
+    expect(r.absentDays).toBe(1);
+  });
+
+  it("ATTENDANCE: a covering span shields the day from its mark (leave never charges)", () => {
+    // Mon 9 ABSENT + an unpaid leave span over Mon 9 → the span records
+    // taken 1 charged 0; the ABSENT mark never fires.
+    const r = bd(
+      pplSpans(["2026-11-09", "2026-11-09", false, 0, "lt-unpaid"]),
+      marks(["2026-11-09", "ABSENT"]),
+      { basisMode: "ATTENDANCE" },
+    );
+    expect(r.total).toBe(0);
+    expect(r.absentDays).toBe(0);
+    expect(r.leave).toEqual([{ key: "lt-unpaid", takenDays: 1, chargedDays: 0 }]);
+  });
+
+  it("HYBRID (explicit) is byte-identical to the omitted default (leave-wins)", () => {
+    const spansIn = pplSpans(
+      ["2026-11-02", "2026-11-03", true, 0.5, "lt-half"],
+      ["2026-11-06", "2026-11-06", false, 0, "lt-unpaid"],
+    );
+    const marksIn = marks(["2026-11-09", "ABSENT"], ["2026-11-10", "HALF_DAY"]);
+    const omitted = bd(spansIn, marksIn);
+    const explicit = bd(spansIn, marksIn, { basisMode: "HYBRID" });
+    expect(explicit).toEqual(omitted);
+    // And the totals match the documented HYBRID arithmetic: 1 (half-pay
+    // over 2 days) + 1 (unpaid Fri 6) + 1 (ABSENT) + 0.5 (half-day) = 3.5.
+    expect(explicit.total).toBe(3.5);
+  });
+
+  it("an unknown basis value clamps to HYBRID (a bad row can't invent a fourth mode)", () => {
+    // Cast through unknown — the loader clamps earlier, the kernel stays
+    // defensive anyway.
+    const r = bd(
+      pplSpans(["2026-11-09", "2026-11-09", false, 0, "lt-unpaid"]),
+      marks(["2026-11-09", "ABSENT"]),
+      { basisMode: "GARBAGE" as unknown as "HYBRID" },
+    );
+    // HYBRID leave-wins: the unpaid span charges 1, the mark under it never fires.
+    expect(r.total).toBe(1);
+    expect(r.leave).toEqual([{ key: "lt-unpaid", takenDays: 1, chargedDays: 1 }]);
+  });
+});
