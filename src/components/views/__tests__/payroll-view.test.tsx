@@ -11,12 +11,14 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const {
   getPayrollData, getPayrollRun, createPayrollRun, lockPayrollRun, getDirectory,
+  exportPayrollRunCsv,
 } = vi.hoisted(() => ({
   getPayrollData: vi.fn(),
   getPayrollRun: vi.fn(),
   createPayrollRun: vi.fn(),
   lockPayrollRun: vi.fn(),
   getDirectory: vi.fn(),
+  exportPayrollRunCsv: vi.fn(),
 }));
 
 vi.mock("@/server-actions/payroll", () => ({
@@ -24,6 +26,7 @@ vi.mock("@/server-actions/payroll", () => ({
   getPayrollRun,
   createPayrollRun,
   lockPayrollRun,
+  exportPayrollRunCsv,
 }));
 
 vi.mock("@/server-actions/hr-directory", () => ({ getDirectory }));
@@ -174,5 +177,43 @@ describe("PayrollView", () => {
     await screen.findByTestId("new-run-form");
     fireEvent.click(screen.getByTestId("create-run-btn"));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("A run for 2026-12 already exists."));
+  });
+});
+
+describe("P20 (PR-R01/PR-R02) — the per-run CSV export buttons", () => {
+  it("LOCKED rows offer Register CSV + Bank CSV; OPEN rows offer neither; a click flows to the action", async () => {
+    const { toast } = await import("sonner");
+    exportPayrollRunCsv.mockResolvedValue({
+      ok: true,
+      data: { filename: "salary-register-2026-10.csv", csv: "# Salary register…\r\n", mime: "text/csv; charset=utf-8" },
+    });
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    await screen.findByTestId("run-row-2026-10");
+
+    // LOCKED row carries both buttons; the OPEN row carries neither.
+    expect(screen.getByTestId("export-register-btn-2026-10")).toBeTruthy();
+    expect(screen.getByTestId("export-bank-btn-2026-10")).toBeTruthy();
+    expect(screen.queryByTestId("export-register-btn-2026-11")).toBeNull();
+    expect(screen.queryByTestId("export-bank-btn-2026-11")).toBeNull();
+
+    // The click flows to the action with the run + kind (the Blob download
+    // itself is browser machinery — the analytics pattern, not asserted).
+    fireEvent.click(screen.getByTestId("export-register-btn-2026-10"));
+    await waitFor(() => {
+      expect(exportPayrollRunCsv).toHaveBeenCalledWith({ runId: "run-0", kind: "REGISTER" });
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("salary-register-2026-10.csv"));
+    });
+  });
+
+  it("an export failure surfaces as a toast, never a crash", async () => {
+    const { toast } = await import("sonner");
+    exportPayrollRunCsv.mockResolvedValue({ ok: false, error: "Only paid (locked) runs export." });
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    await screen.findByTestId("run-row-2026-10");
+    fireEvent.click(screen.getByTestId("export-bank-btn-2026-10"));
+    await waitFor(() => {
+      expect(exportPayrollRunCsv).toHaveBeenCalledWith({ runId: "run-0", kind: "BANK_REMITTANCE" });
+      expect(toast.error).toHaveBeenCalledWith("Only paid (locked) runs export.");
+    });
   });
 });

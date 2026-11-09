@@ -14,7 +14,7 @@ import {
   ClipboardCheck,
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
-  Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users,
+  Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -172,6 +172,8 @@ export type AuditAction =
   | "payroll.payslip_updated"
   | "payroll.payslip_added"
   | "payroll.run_locked"
+  // P20 (PR-R01/PR-R02) — the per-run CSV exports (register / bank file).
+  | "payroll.run_exported"
   | "payroll.component_created"
   | "payroll.component_updated"
   | "payroll.component_deleted"
@@ -347,6 +349,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.payslip_updated": { icon: FilePenLine, cls: "text-amber-500 bg-amber-500/10" },
   "payroll.payslip_added": { icon: FilePlus2, cls: "text-indigo-500 bg-indigo-500/10" },
   "payroll.run_locked": { icon: Lock, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.run_exported": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
   "payroll.component_created": { icon: BookOpen, cls: "text-teal-500 bg-teal-500/10" },
   "payroll.component_updated": { icon: BookOpen, cls: "text-teal-500 bg-teal-500/10" },
   "payroll.component_deleted": { icon: BookOpen, cls: "text-rose-500 bg-rose-500/10" },

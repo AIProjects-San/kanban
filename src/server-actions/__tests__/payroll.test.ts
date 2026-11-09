@@ -91,6 +91,7 @@ import {
   updatePayslip,
   addPayslip,
   lockPayrollRun,
+  exportPayrollRunCsv,
   getPayrollData,
   getMyPayslips,
   createPayAdjustment,
@@ -2454,5 +2455,89 @@ describe("P18 — the payslip email builders (pure)", () => {
     expect(html).toContain("&lt;b&gt;Ingrid&lt;/b&gt;");
     expect(html).toContain("<strong>Net pay: $3,300.00</strong>");
     expect(html).toContain("<br />");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P20 (PR-R01/PR-R02) — the per-run CSV exports: LOCKED-only gate, the
+// register's rows, the bank file's withheld-money rule, the audit.
+// ---------------------------------------------------------------------------
+
+describe("P20 (PR-R01/PR-R02) — exportPayrollRunCsv", () => {
+  it("refuses OPEN runs (paid money only) and unknown kinds", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...OPEN_RUN, status: "OPEN" });
+    const res = await exportPayrollRunCsv({ runId: "run-1", kind: "REGISTER" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("Only paid (locked) runs export");
+
+    const badKind = await exportPayrollRunCsv({ runId: "run-1", kind: "GARBAGE" as unknown as "REGISTER" });
+    expect(badKind.ok).toBe(false);
+    expect(db.mailOutbox.create).not.toHaveBeenCalled();
+  });
+
+  it("REGISTER — one row per slip with identity joins, CRLF output, audited", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...LOCKED_RUN, id: "run-1", period: "2026-11", status: "LOCKED" });
+    db.payslip.findMany.mockResolvedValue([
+      { slipNo: "PS-2026-11-001", userId: "u-yuki", gross: 6_700, net: 6_592, lopDays: 0, withholdStatus: "", deductions: JSON.stringify([{ key: "tax", label: "Tax", amount: 108 }]) },
+      { slipNo: "PS-2026-11-002", userId: "u-ingrid", gross: 3_400, net: 3_300, lopDays: 1, withholdStatus: "WITHHELD", deductions: "[]" },
+    ]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-yuki", name: "Yuki Tanaka" },
+      { id: "u-ingrid", name: "Ingrid Solberg" },
+    ]);
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-yuki", employeeNumber: "EMP-0003", jobTitle: "Data Engineer" },
+      { userId: "u-ingrid", employeeNumber: null, jobTitle: "Research Analyst" },
+    ]);
+    const res = await exportPayrollRunCsv({ runId: "run-1", kind: "REGISTER" });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.filename).toBe("salary-register-2026-11.csv");
+      expect(res.data.mime).toContain("text/csv");
+      const lines = res.data.csv.split("\r\n");
+      expect(lines[0]).toContain("Salary register");
+      expect(lines[2]).toContain("Slip no");
+      expect(lines[3]).toBe("PS-2026-11-001,EMP-0003,Yuki Tanaka,Data Engineer,6700.00,108.00,6592.00,0,");
+      expect(lines[4]).toBe('PS-2026-11-002,,Ingrid Solberg,Research Analyst,3400.00,0.00,3300.00,1,WITHHELD');
+      expect(lines[5]).toBe("TOTAL,,2 payslip(s),,10100.00,108.00,9892.00,,");
+    }
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.run_exported",
+      detail: expect.stringContaining("salary register"),
+    }));
+  });
+
+  it("BANK_REMITTANCE — withheld nets stay out; the filename names the shape", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...LOCKED_RUN, id: "run-1", period: "2026-11", status: "LOCKED" });
+    db.payslip.findMany.mockResolvedValue([
+      { slipNo: "PS-2026-11-001", userId: "u-yuki", gross: 6_700, net: 6_592, lopDays: 0, withholdStatus: "", deductions: "[]" },
+      { slipNo: "PS-2026-11-002", userId: "u-ingrid", gross: 3_400, net: 3_300, lopDays: 1, withholdStatus: "WITHHELD", deductions: "[]" },
+    ]);
+    db.user.findMany.mockResolvedValue([{ id: "u-yuki", name: "Yuki Tanaka" }, { id: "u-ingrid", name: "Ingrid Solberg" }]);
+    db.employeeProfile.findMany.mockResolvedValue([{ userId: "u-yuki", employeeNumber: "EMP-0003", jobTitle: "" }, { userId: "u-ingrid", employeeNumber: null, jobTitle: "" }]);
+    const res = await exportPayrollRunCsv({ runId: "run-1", kind: "BANK_REMITTANCE" });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.filename).toBe("bank-remittance-2026-11.csv");
+      expect(res.data.csv).not.toContain("3300.00"); // the withheld net never pays
+      expect(res.data.csv).toContain("6592.00");
+      expect(res.data.csv).toContain("Bank account");
+    }
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.run_exported",
+      detail: expect.stringContaining("bank remittance"),
+    }));
+  });
+
+  it("a deleted user degrades honestly — the row names the ghost", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({ ...LOCKED_RUN, id: "run-1", period: "2026-11", status: "LOCKED" });
+    db.payslip.findMany.mockResolvedValue([
+      { slipNo: "PS-2026-11-001", userId: "u-gone", gross: 1, net: 1, lopDays: 0, withholdStatus: "", deductions: "[]" },
+    ]);
+    db.user.findMany.mockResolvedValue([]); // the user was deleted
+    db.employeeProfile.findMany.mockResolvedValue([]);
+    const res = await exportPayrollRunCsv({ runId: "run-1", kind: "REGISTER" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.csv).toContain("(deleted user)");
   });
 });

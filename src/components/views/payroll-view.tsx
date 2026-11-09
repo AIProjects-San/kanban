@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { Award, BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Pause, Plus, RotateCcw, Scale, Undo2, Users, Wallet } from "lucide-react";
+import { Award, BookOpen, CalendarPlus, CircleDollarSign, Download, HeartPulse, Landmark, Loader2, Lock, Pause, Plus, RotateCcw, Scale, Undo2, Users, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -20,6 +20,7 @@ import {
   getPayrollRun,
   lockPayrollRun,
   applyPayAdjustmentsToRun,
+  exportPayrollRunCsv,
 } from "@/server-actions/payroll";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 // P10 — the pure windows kernel drives the new-run form's live preview and
@@ -184,6 +185,24 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     toast.success("Run locked — the period is paid and immutable.");
     await load();
     if (selectedRunId === runId) await loadPayslips(runId);
+  };
+
+  // P20 (PR-R01/PR-R02) — the per-run CSV exports (LOCKED only server-side;
+  // the buttons live on LOCKED rows). The action returns the built file;
+  // the download itself is the analytics pattern (Blob + anchor click).
+  const exportCsv = async (runId: string, period: string, kind: "REGISTER" | "BANK_REMITTANCE") => {
+    setBusy(true);
+    const res = await exportPayrollRunCsv({ runId, kind });
+    setBusy(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    const blob = new Blob([res.data.csv], { type: res.data.mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.data.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${kind === "REGISTER" ? "Salary register" : "Bank remittance"} for ${period} exported (${res.data.filename}).`);
   };
 
   // P1 — the explicit application: adjustments queued AFTER the run was
@@ -359,15 +378,38 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 {r.status}
               </span>
               {r.status === "LOCKED" && (
-                <button
-                  className="f-btn f-btn-ghost text-xs no-print"
-                  onClick={() => setArrearsRun(r)}
-                  type="button"
-                  data-testid={`arrears-btn-${r.period}`}
-                  title="Re-simulate this paid period under the current structures"
-                >
-                  <RotateCcw size={13} /> Arrears
-                </button>
+                <>
+                  <button
+                    className="f-btn f-btn-ghost text-xs no-print"
+                    onClick={() => setArrearsRun(r)}
+                    type="button"
+                    data-testid={`arrears-btn-${r.period}`}
+                    title="Re-simulate this paid period under the current structures"
+                  >
+                    <RotateCcw size={13} /> Arrears
+                  </button>
+                  {/* P20 (PR-R01/PR-R02) — the per-run CSV exports. */}
+                  <button
+                    className="f-btn f-btn-ghost text-xs no-print"
+                    onClick={() => void exportCsv(r.id, r.period, "REGISTER")}
+                    disabled={busy}
+                    type="button"
+                    data-testid={`export-register-btn-${r.period}`}
+                    title="One row per paid slip: gross, deductions, net, LOP, withheld state"
+                  >
+                    <Download size={13} /> Register CSV
+                  </button>
+                  <button
+                    className="f-btn f-btn-ghost text-xs no-print"
+                    onClick={() => void exportCsv(r.id, r.period, "BANK_REMITTANCE")}
+                    disabled={busy}
+                    type="button"
+                    data-testid={`export-bank-btn-${r.period}`}
+                    title="One payment row per disbursed net (withheld nets stay out); the bank-account column is blank"
+                  >
+                    <Download size={13} /> Bank CSV
+                  </button>
+                </>
               )}
               {r.status === "OPEN" && (
                 lockConfirmId === r.id ? (

@@ -971,6 +971,13 @@ export const lockPayrollRunSchema = z.object({
   runId: cuidish,
 }).strict();
 
+// P20 (PR-R01/PR-R02) — the per-run CSV exports. LOCKED runs only (paid
+// money only); the kind picks the register vs the bank remittance shape.
+export const exportPayrollCsvSchema = z.object({
+  runId: cuidish,
+  kind: z.enum(["REGISTER", "BANK_REMITTANCE"]),
+}).strict();
+
 // LV-10 (S9) — the HR leave adjustment writer. Deltas are signed days
 // (quarter-day steps like every leave fraction); the reason is REQUIRED —
 // an adjustment without a recorded why is exactly the silent drift the

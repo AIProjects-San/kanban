@@ -31,6 +31,7 @@ import {
   bulkAssignStructureSchema,
   updatePayslipSchema,
   lockPayrollRunSchema,
+  exportPayrollCsvSchema,
   addPayslipSchema,
   createPayAdjustmentSchema,
   parseOrThrow,
@@ -44,6 +45,7 @@ import { deriveLopBreakdownBetween, type LopAttendanceMark, type LopLeaveSpan } 
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { getHolidayLookup } from "./hr-shared";
 import { payslipEmailSubject, payslipEmailText, payslipEmailHtml } from "@/lib/payslip-email";
+import { salaryRegisterCsv, bankRemittanceCsv } from "@/lib/payroll-csv";
 import {
   windowEarningsFromStructure,
   payslipTotals,
@@ -1735,6 +1737,76 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
     });
     revalidatePath("/");
     return { ok: true };
+  });
+}
+
+/** P20 (PR-R01/PR-R02) — the per-run CSV exports (payroll:manage). LOCKED
+ * runs only: paid money is the only money worth exporting — an OPEN run's
+ * numbers are drafts HR may still edit. The register lists every slip
+ * (gross/deductions/net + LOP + withhold state); the bank remittance lists
+ * the DISBURSED payments (WITHHELD nets never reach the bank file) with
+ * the account column blank — Fernly stores no bank details, the employer's
+ * bank maps accounts from its records. Both carry the non-statutory
+ * disclaimer; the build is pure (lib/payroll-csv.ts, golden-file tested).
+ * Audited: payroll.run_exported. */
+export async function exportPayrollRunCsv(input: unknown): Promise<ActionResult<{ filename: string; csv: string; mime: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("payroll:manage");
+    const data = parseOrThrow(exportPayrollCsvSchema, input);
+    const run = await db.payrollRun.findUnique({
+      where: { id: data.runId },
+      select: { id: true, period: true, status: true },
+    });
+    if (!run) throw new AuthorizationError("Payroll run not found.");
+    if (run.status !== "LOCKED") {
+      throw new AuthorizationError("Only paid (locked) runs export — an open run's numbers are still drafts.");
+    }
+    // The slips + the identity joins in memory (Payslip/User carry no
+    // relations — the P17/P18 pattern).
+    const slips = await db.payslip.findMany({
+      where: { runId: run.id },
+      select: {
+        slipNo: true, userId: true, gross: true, net: true, lopDays: true,
+        withholdStatus: true, deductions: true,
+      },
+      orderBy: { slipNo: "asc" },
+    });
+    const [users, profiles] = await Promise.all([
+      db.user.findMany({ where: { id: { in: [...new Set(slips.map((s) => s.userId))] } }, select: { id: true, name: true } }),
+      db.employeeProfile.findMany({ where: { userId: { in: [...new Set(slips.map((s) => s.userId))] } }, select: { userId: true, employeeNumber: true, jobTitle: true } }),
+    ]);
+    const nameById = new Map(users.map((u) => [u.id, u.name]));
+    const profileByUser = new Map(profiles.map((p) => [p.userId, p]));
+    const rows = slips.map((s) => {
+      const profile = profileByUser.get(s.userId);
+      return {
+        slipNo: s.slipNo,
+        employeeNumber: profile?.employeeNumber ?? null,
+        employeeName: nameById.get(s.userId) ?? "(deleted user)",
+        jobTitle: profile?.jobTitle ?? "",
+        gross: s.gross,
+        deductions: Math.round(parsePayslipLines(s.deductions).reduce((sum, l) => sum + l.amount, 0) * 100) / 100,
+        net: s.net,
+        lopDays: s.lopDays,
+        withholdStatus: s.withholdStatus,
+      };
+    });
+    const generatedAt = new Date();
+    const csv = data.kind === "REGISTER"
+      ? salaryRegisterCsv({ period: run.period, generatedAt, rows })
+      : bankRemittanceCsv({ period: run.period, generatedAt, rows });
+    const filename = data.kind === "REGISTER"
+      ? `salary-register-${run.period}.csv`
+      : `bank-remittance-${run.period}.csv`;
+    await logAudit({
+      actor: auth,
+      action: "payroll.run_exported",
+      entityType: "PAYROLL_RUN",
+      entityId: run.id,
+      entityLabel: run.period,
+      detail: `${auth.name} exported the ${data.kind === "REGISTER" ? "salary register" : "bank remittance"} CSV for the ${run.period} run (${rows.length} payslip row(s)).`,
+    });
+    return { filename, csv, mime: "text/csv; charset=utf-8" };
   });
 }
 
