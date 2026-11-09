@@ -453,6 +453,12 @@
 
 /* R7 — payroll payslip print view: only the .print-area (the open payslip
    modal) reaches the paper; everything else on the page is hidden. */
+/* P19 (PR-P01–03) — the payslip print variants exist ONLY on paper: the
+   .print-only footer never renders on screen, and the .print-detailed /
+   .print-classic sections are hidden per the chosen variant. Screen output
+   is byte-identical in all three modes. */
+.print-only { display: none; }
+
 @media print {
   body * { visibility: hidden; }
   .print-area, .print-area * { visibility: visible; }
@@ -467,4 +473,17 @@
     background: var(--background);
   }
   .no-print { display: none !important; }
+  .print-only { display: block; }
+  /* COMPACT — the essentials: lines, core totals row. Everything else
+     (LOP note, note field, YTD/MTD aggregates, breakdowns, balances,
+     statistical rows, per-line YTD chips, meta footer) stays off the
+     paper; the type tightens a notch for a one-glance slip. */
+  [data-print-format="COMPACT"] .print-classic { display: none !important; }
+  [data-print-format="COMPACT"] .print-detailed { display: none !important; }
+  [data-print-format="COMPACT"] .print-area { font-size: 11px; }
+  /* CLASSIC — the standard printed payslip: lines + core totals + the LOP
+     honesty note + the note field. Aggregates and breakdowns stay screen-
+     only (the benchmark's classic format is the clean paper slip). */
+  [data-print-format="CLASSIC"] .print-detailed { display: none !important; }
+  /* DETAILED — everything the modal shows plus the meta footer. */
 }

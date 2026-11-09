@@ -313,3 +313,80 @@ describe("PayslipModal — P17 (PR-B25 / PR-B27)", () => {
     expect(screen.getByTestId("payslip-lop-source").textContent).not.toContain("Proration basis");
   });
 });
+
+// ---------------------------------------------------------------------------
+// P19 (PR-P01–03) — the print-format variants (classic / compact /
+// detailed) on the LOCKED print surface. Screen output never changes; the
+// variants are @media-print visibility keyed off the form's
+// data-print-format, plus the DETAILED-only meta footer.
+// ---------------------------------------------------------------------------
+
+describe("PayslipModal — P19 (PR-P01–03) print formats", () => {
+  const locked = () => payslip({
+    runStatus: "LOCKED",
+    lopDays: 2,
+    deductions: [{ key: "lop", label: "Loss of pay (2 days)", amount: 446.67 }],
+    net: 6_253.33,
+  });
+
+  beforeEach(() => {
+    window.localStorage.removeItem("fernly-payslip-print-format");
+  });
+
+  it("the picker renders on LOCKED runs only, defaulting to CLASSIC", () => {
+    const { rerender } = render(<PayslipModal payslip={locked()} onClose={onClose} onChanged={onChanged} />);
+    const picker = screen.getByTestId("payslip-print-format");
+    expect(picker).toBeTruthy();
+    expect(screen.getByTestId("payslip-modal").getAttribute("data-print-format")).toBe("CLASSIC");
+    // Only the active variant is aria-pressed.
+    expect(screen.getByTestId("payslip-print-format-CLASSIC").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("payslip-print-format-DETAILED").getAttribute("aria-pressed")).toBe("false");
+
+    // OPEN runs never show the picker (printing is a LOCKED affordance).
+    rerender(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.queryByTestId("payslip-print-format")).toBeNull();
+  });
+
+  it("choosing a variant switches data-print-format and persists the choice", () => {
+    render(<PayslipModal payslip={locked()} onClose={onClose} onChanged={onChanged} />);
+    fireEvent.click(screen.getByTestId("payslip-print-format-COMPACT"));
+    expect(screen.getByTestId("payslip-modal").getAttribute("data-print-format")).toBe("COMPACT");
+    expect(window.localStorage.getItem("fernly-payslip-print-format")).toBe("COMPACT");
+
+    fireEvent.click(screen.getByTestId("payslip-print-format-DETAILED"));
+    expect(screen.getByTestId("payslip-modal").getAttribute("data-print-format")).toBe("DETAILED");
+    expect(window.localStorage.getItem("fernly-payslip-print-format")).toBe("DETAILED");
+  });
+
+  it("the DETAILED-only meta footer renders in DETAILED (slip identity + withhold state), never in CLASSIC", () => {
+    const withheld = payslip({ ...locked(), withholdStatus: "WITHHELD" });
+    const { rerender } = render(<PayslipModal payslip={withheld} onClose={onClose} onChanged={onChanged} />);
+    // CLASSIC default: no meta footer.
+    expect(screen.queryByTestId("payslip-print-meta")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("payslip-print-format-DETAILED"));
+    const meta = screen.getByTestId("payslip-print-meta");
+    expect(meta.textContent).toContain("PS-2026-11-001");
+    expect(meta.textContent).toContain("2026-11");
+    expect(meta.textContent).toContain("WITHHELD");
+    expect(meta.textContent).toContain("printed");
+
+    // Compact: back to nothing.
+    fireEvent.click(screen.getByTestId("payslip-print-format-COMPACT"));
+    expect(screen.queryByTestId("payslip-print-meta")).toBeNull();
+    rerender(<PayslipModal payslip={locked()} onClose={onClose} onChanged={onChanged} />);
+  });
+
+  it("a stored choice preselects the variant on the next open", () => {
+    window.localStorage.setItem("fernly-payslip-print-format", "DETAILED");
+    render(<PayslipModal payslip={locked()} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.getByTestId("payslip-modal").getAttribute("data-print-format")).toBe("DETAILED");
+    expect(screen.getByTestId("payslip-print-format-DETAILED").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a garbage stored value falls back to CLASSIC (no fourth variant)", () => {
+    window.localStorage.setItem("fernly-payslip-print-format", "GARBAGE");
+    render(<PayslipModal payslip={locked()} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.getByTestId("payslip-modal").getAttribute("data-print-format")).toBe("CLASSIC");
+  });
+});

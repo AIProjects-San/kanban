@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Lock, Plus, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Modal } from "./modal";
 import { Field } from "./field";
 import type { PayslipT, PayslipLineT } from "@/lib/types";
@@ -68,6 +69,24 @@ export function PayslipModal({
   const [lopDaysInput, setLopDaysInput] = useState("0");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // P19 (PR-P01–03) — the print format of the LOCKED record's paper:
+  // CLASSIC (default — lines, core totals, LOP note, note field), COMPACT
+  // (minimal — lines + core totals only), DETAILED (everything the modal
+  // shows + a printed meta footer). Screen output never changes; the
+  // variants live in @media print keyed off data-print-format. The choice
+  // persists in localStorage (the HR's last format preselects).
+  const [printFormat, setPrintFormat] = useState<"CLASSIC" | "COMPACT" | "DETAILED">(() => {
+    try {
+      const stored = window.localStorage.getItem("fernly-payslip-print-format");
+      return stored === "COMPACT" || stored === "DETAILED" ? stored : "CLASSIC";
+    } catch {
+      return "CLASSIC";
+    }
+  });
+  const choosePrintFormat = (f: "CLASSIC" | "COMPACT" | "DETAILED") => {
+    setPrintFormat(f);
+    try { window.localStorage.setItem("fernly-payslip-print-format", f); } catch { /* private mode etc. */ }
+  };
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -189,7 +208,7 @@ export function PayslipModal({
           />
           {ytd > 0 && (
             <span
-              className="text-[0.6875rem] text-muted-foreground tabular-nums shrink-0"
+              className="text-[0.6875rem] text-muted-foreground tabular-nums shrink-0 print-detailed"
               title={`This component's year-to-date total through ${p.runPeriod} (read-time; recalculated as slips are saved or finalized)`}
               data-testid={`payslip-${kind}-ytd-${i}`}
             >
@@ -222,14 +241,14 @@ export function PayslipModal({
       description={`${p.userName}${p.jobTitle ? ` · ${p.jobTitle}` : ""} · ${p.runPeriod} · ${p.runStatus}`}
       size="lg"
     >
-      <form onSubmit={submit} className="space-y-3 print-area" data-testid="payslip-modal">
+      <form onSubmit={submit} className="space-y-3 print-area" data-testid="payslip-modal" data-print-format={printFormat}>
         {lineEditor(earnings, setEarnings, "earnings")}
 
         {/* PR-B03 (S8) — statistical lines: display-only info rows from the
             structure snapshot; never editable, never money. */}
         {(payslip.earnings.filter((l) => l.statistical)).length > 0 && (
           <div
-            className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 space-y-1"
+            className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 space-y-1 print-detailed"
             data-testid="payslip-statistical"
           >
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -272,7 +291,7 @@ export function PayslipModal({
         ) : p.lopDays > 0 ? (
           // F1.4 — read-only honesty note on the paid record: where the
           // docked days came from.
-          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700" data-testid="payslip-lop-source">
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 print-classic" data-testid="payslip-lop-source">
             Loss of pay: {p.lopDays} day{p.lopDays === 1 ? "" : "s"} · {p.lopSource === "AUTO" ? "auto-derived from attendance and unpaid or partially-paid leave" : "manually set by HR"}
           </div>
         ) : null}
@@ -284,7 +303,7 @@ export function PayslipModal({
             cleared it, and the note above says so. */}
         {p.lopDetail && p.lopSource === "AUTO" && (
           <div
-            className="rounded-md border border-border bg-muted/30 px-3 py-2 text-[0.6875rem] text-muted-foreground space-y-1"
+            className="rounded-md border border-border bg-muted/30 px-3 py-2 text-[0.6875rem] text-muted-foreground space-y-1 print-detailed"
             data-testid="payslip-lop-detail"
           >
             <div className="uppercase tracking-wide">Loss-of-pay breakdown (frozen at run creation)</div>
@@ -323,7 +342,7 @@ export function PayslipModal({
           </div>
         )}
         {!editable && p.paidDays != null && p.runWorkingDays > 0 && p.paidDays < p.runWorkingDays && (
-          <div className="text-xs text-muted-foreground" data-testid="payslip-paid-days">
+          <div className="text-xs text-muted-foreground print-detailed" data-testid="payslip-paid-days">
             Paid days: {p.paidDays} of {p.runWorkingDays} working days (employment window) — lines scaled pro-rata.
           </div>
         )}
@@ -339,11 +358,11 @@ export function PayslipModal({
           <div><div className="text-muted-foreground">Gross</div><div className="font-semibold tabular-nums">{money(totals.gross)}</div></div>
           <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions)}</div></div>
           <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
-          <div><div className="text-muted-foreground">YTD gross{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{money(p.ytdGross)}</div></div>
-          <div><div className="text-muted-foreground">YTD net{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{money(p.ytdNet)}</div></div>
-          <div><div className="text-muted-foreground">Month-to-date net</div><div className="font-semibold tabular-nums" data-testid="payslip-mtd-net">{money(p.mtdNet)}</div></div>
+          <div className="print-detailed"><div className="text-muted-foreground">YTD gross{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{money(p.ytdGross)}</div></div>
+          <div className="print-detailed"><div className="text-muted-foreground">YTD net{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{money(p.ytdNet)}</div></div>
+          <div className="print-detailed"><div className="text-muted-foreground">Month-to-date net</div><div className="font-semibold tabular-nums" data-testid="payslip-mtd-net">{money(p.mtdNet)}</div></div>
         </div>
-        <div className="text-xs text-muted-foreground" data-testid="payslip-ytd-basis">
+        <div className="text-xs text-muted-foreground print-detailed" data-testid="payslip-ytd-basis">
           YTD net (through {p.runPeriod}): <strong data-testid="payslip-ytd">{money(p.ytdNet)}</strong>
           {editable ? " — updates when this slip is saved." : ""}
           {ytdBasisChip ? ` YTD basis: fiscal year ${ytdBasisChip} (resets at the fiscal boundary, not January 1).` : ""}
@@ -356,7 +375,7 @@ export function PayslipModal({
         {/* P17 (PR-B25) — live leave balances (present only when the
             workspace toggle is on; read-time, never snapshotted). */}
         {p.leaveBalances && p.leaveBalances.length > 0 && (
-          <div className="rounded-md border border-border px-3 py-2" data-testid="payslip-leave-balances">
+          <div className="rounded-md border border-border px-3 py-2 print-detailed" data-testid="payslip-leave-balances">
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
               Leave balances (live)
             </div>
@@ -374,16 +393,31 @@ export function PayslipModal({
           </div>
         )}
 
-        <Field label="Note (shown on the printed slip)">
-          <input
-            className="f-input text-xs"
-            value={note}
-            disabled={!editable}
-            onChange={(e) => setNote(e.target.value)}
-            maxLength={500}
-            data-testid="payslip-note"
-          />
-        </Field>
+        <div className={editable ? "" : "print-classic"}>
+          <Field label="Note (shown on the printed slip)">
+            <input
+              className="f-input text-xs"
+              value={note}
+              disabled={!editable}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={500}
+              data-testid="payslip-note"
+            />
+          </Field>
+        </div>
+
+        {/* P19 (PR-P01–03) — the DETAILED paper's meta footer (print-only;
+            never on screen). Slip identity, run window, withhold state and
+            the printing timestamp — the audit-grade variant. */}
+        {p.runStatus !== "OPEN" && printFormat === "DETAILED" && (
+          <div className="print-only text-[0.6875rem] text-muted-foreground" data-testid="payslip-print-meta">
+            Slip {p.slipNo} · period {p.runPeriod}
+            {p.runWorkingDays > 0 ? ` · ${p.runWorkingDays} working days` : ""}
+            {p.paidDays != null && p.runWorkingDays > 0 && p.paidDays !== p.runWorkingDays ? ` · ${p.paidDays} paid (employment window)` : ""}
+            {p.withholdStatus ? ` · net ${p.withholdStatus === "WITHHELD" ? "WITHHELD (held pending release)" : "released via a later payout"}` : ""}
+            {" "}· printed {new Date().toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })} · generated by Fernly Payroll
+          </div>
+        )}
 
         {p.runStatus === "OPEN" ? (
           <div className="flex justify-end gap-2 no-print">
@@ -397,9 +431,32 @@ export function PayslipModal({
             <div className="text-xs text-muted-foreground flex items-center gap-1.5">
               <Lock size={12} /> The run is locked — this slip is the paid, immutable record.
             </div>
-            <button type="button" className="f-btn f-btn-secondary no-print" onClick={() => window.print()} data-testid="payslip-print">
-              <Printer size={14} /> Print / save PDF
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* P19 (PR-P01–03) — the paper variant (screen output never
+                  changes; the choice persists in localStorage). */}
+              <div className="flex items-center gap-1 text-xs" role="group" aria-label="Print format" data-testid="payslip-print-format">
+                {(["CLASSIC", "COMPACT", "DETAILED"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => choosePrintFormat(f)}
+                    className={cn(
+                      "px-2 py-1 rounded-md text-[0.6875rem] font-medium border transition-colors",
+                      printFormat === f
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border text-muted-foreground hover:text-foreground",
+                    )}
+                    aria-pressed={printFormat === f}
+                    data-testid={`payslip-print-format-${f}`}
+                  >
+                    {f === "CLASSIC" ? "Classic" : f === "COMPACT" ? "Compact" : "Detailed"}
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="f-btn f-btn-secondary no-print" onClick={() => window.print()} data-testid="payslip-print">
+                <Printer size={14} /> Print / save PDF
+              </button>
+            </div>
           </div>
         )}
       </form>
