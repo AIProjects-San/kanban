@@ -1021,3 +1021,17 @@ export const saveGratuityRuleSchema = z.object({
   averagingMonths: z.number().int().min(1).max(12),
   slabs: z.array(gratuitySlabSchema).max(40),
 }).strict();
+
+// P8 (PR-19/PR-B13, F3.3) — salary withholding: hold window + release.
+export const createSalaryWithholdingSchema = z.object({
+  userId: cuidish,
+  fromPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick the first held month (YYYY-MM)."),
+  untilPeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick the last held month (YYYY-MM).").nullable(),
+  reason: z.string().trim().max(500).default(""),
+}).strict();
+
+export const releaseWithholdingSchema = z.object({
+  withholdingId: cuidish,
+  releasePeriod: z.string().trim().regex(PAYROLL_PERIOD_RE, "Pick the release payout month (YYYY-MM)."),
+  note: z.string().trim().max(500).default(""),
+}).strict();

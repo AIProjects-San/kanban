@@ -62,6 +62,8 @@ import {
 } from "@/lib/pay-adjustment";
 // P5 (PR-18, F3.2) — the benefits accrual pricing (lock hook).
 import { accrualAmount } from "@/lib/benefits";
+// P8 (PR-19/PR-B13, F3.3) — the salary-withholding hold-window predicate.
+import { isPeriodHeld } from "@/lib/salary-withholding";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -500,6 +502,17 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     const consumedEntries: ConsumedEntry[] = [];
     const kernelSkips: Array<{ id: string; reason: string }> = [];
 
+    // P8 (PR-19/PR-B13, F3.3) — ACTIVE hold windows stamp their slips
+    // WITHHELD at birth: the slip is computed and frozen normally, but its
+    // net is not disbursed (YTD/self-service exclude it) until the hold is
+    // released — the release pays through the adapter, never the slip.
+    const activeWithholdings = await db.salaryWithholding.findMany({ where: { status: "ACTIVE" } });
+    const heldUserIds = new Set(
+      activeWithholdings
+        .filter((w) => isPeriodHeld({ fromPeriod: w.fromPeriod, untilPeriod: w.untilPeriod }, data.period))
+        .map((w) => w.userId),
+    );
+
     const run = await db.$transaction(async (tx) => {
       const created = await tx.payrollRun.create({
         data: {
@@ -548,6 +561,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
                 paidDays: facts.paidDays,
                 gross,
                 net,
+                withholdStatus: heldUserIds.has(s.userId) ? "WITHHELD" : "",
               };
             }),
           },
@@ -587,7 +601,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
+      detail: `${auth.name} created the ${run.period} payroll run with ${run.payslips.length} payslips from the active salary structures${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
     });
     revalidatePath("/");
     return { id: run.id, payslipCount: run.payslips.length, adjustmentsApplied, adjustmentsSkipped };
@@ -610,13 +624,16 @@ export async function getPayrollRun(
     const year = run.period.slice(0, 4);
 
     // YTD basis: this user's payslips in same-year runs up to this period.
+    // P8 — WITHHELD/RELEASED slips never count: a held net is not paid, and
+    // a released one already paid through its WITHHELD_RELEASE adjustment
+    // (money counts exactly once, in the release period's slip).
     const yearRuns = await db.payrollRun.findMany({
       where: { period: { startsWith: year } },
       select: { id: true, period: true },
     });
     const runIdsUpTo = yearRuns.filter((r) => r.period <= run.period).map((r) => r.id);
     const yearSlips = await db.payslip.findMany({
-      where: { runId: { in: runIdsUpTo } },
+      where: { runId: { in: runIdsUpTo }, withholdStatus: "" },
       select: { userId: true, net: true },
     });
     const ytdByUser = new Map<string, number>();
@@ -654,6 +671,7 @@ export async function getPayrollRun(
         gross: p.gross,
         net: p.net,
         ytdNet: ytdByUser.get(p.userId) ?? p.net,
+        withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
 
     return {
@@ -833,6 +851,15 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       where: { userId: data.userId, isActive: true },
     });
     if (!structure) throw new AuthorizationError("No active salary structure for this employee — create one first.");
+    // P8 — an ACTIVE hold covering the run's period stamps this joiner's
+    // slip WITHHELD at birth (same rule as run creation).
+    const activeHold = await db.salaryWithholding.findFirst({
+      where: { userId: data.userId, status: "ACTIVE" },
+      orderBy: { fromPeriod: "desc" },
+    });
+    const withheld = activeHold
+      ? isPeriodHeld({ fromPeriod: activeHold.fromPeriod, untilPeriod: activeHold.untilPeriod }, run.period)
+      : false;
     const count = await db.payslip.count({ where: { runId: run.id } });
     const earnings = monthlyEarningsFromStructure(parseComponents(structure.components));
     // F1.4 — same derivation as createPayrollRun, for this one joiner.
@@ -879,6 +906,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       paidDays: facts.paidDays,
       gross,
       net,
+      withholdStatus: withheld ? "WITHHELD" : "",
     };
     const createSlipWithAdjustments = async (seq: number) =>
       db.$transaction(async (tx) => {
@@ -918,7 +946,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       entityType: "PAYSLIP",
       entityId: slip.id,
       entityLabel: slip.slipNo,
-      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run${applied.consumed.length > 0 ? ` (${applied.consumed.length} adjustment(s) consumed)` : ""}.`,
+      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run${applied.consumed.length > 0 ? ` (${applied.consumed.length} adjustment(s) consumed)` : ""}${withheld ? " — WITHHELD under an active salary hold (net not disbursed until released)" : ""}.`,
     });
     revalidatePath("/");
     return { id: slip.id };
@@ -1068,10 +1096,17 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
 
     // Running YTD per calendar year over the locked-only basis (ascending
     // period order; slipNo breaks ties, though a user has one slip per run).
+    // P8 — WITHHELD/RELEASED slips never add to YTD: a held net is not paid,
+    // and a released one pays through its adjustment in the release period
+    // (the money counts exactly once, there).
     const runningByYear = new Map<string, number>();
     const ytdBySlip = new Map<string, number>();
     for (const s of [...slips].sort((a, b) => a.run.period.localeCompare(b.run.period) || a.slipNo.localeCompare(b.slipNo))) {
       const year = s.run.period.slice(0, 4);
+      if (s.withholdStatus === "WITHHELD" || s.withholdStatus === "RELEASED") {
+        ytdBySlip.set(s.id, runningByYear.get(year) ?? 0); // held/released: YTD carries the last paid value
+        continue;
+      }
       const acc = Math.round(((runningByYear.get(year) ?? 0) + s.net) * 100) / 100;
       runningByYear.set(year, acc);
       ytdBySlip.set(s.id, acc);
@@ -1099,6 +1134,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         gross: p.gross,
         net: p.net,
         ytdNet: ytdBySlip.get(p.id) ?? p.net,
+        withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
   });
 }

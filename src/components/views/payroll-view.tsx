@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { Award, BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
+import { Award, BookOpen, CalendarPlus, CircleDollarSign, HeartPulse, Landmark, Loader2, Lock, Pause, Plus, RotateCcw, Scale, Undo2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -32,6 +32,7 @@ import { LwpCorrectionModal } from "../ui/lwp-correction-modal";
 import { BenefitsModal } from "../ui/benefits-modal";
 import { RetentionBonusModal } from "../ui/retention-bonus-modal";
 import { GratuityRuleModal } from "../ui/gratuity-rule-modal";
+import { WithholdingModal } from "../ui/withholding-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
 
 function money(n: number): string {
@@ -69,6 +70,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   // P6 (PR-20/PR-23) — the retention-bonus writer.
   const [retentionOpen, setRetentionOpen] = useState(false);
   const [gratuityOpen, setGratuityOpen] = useState(false);
+  const [withholdingOpen, setWithholdingOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState(currentPeriod());
   const [busy, setBusy] = useState(false);
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
@@ -190,6 +192,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => setGratuityOpen(true)} data-testid="gratuity-btn">
             <Scale size={15} /> Gratuity rule
+          </button>
+          <button className="f-btn f-btn-ghost" onClick={() => setWithholdingOpen(true)} data-testid="withholding-btn">
+            <Pause size={15} /> Withholding
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => { setEditStructure(null); setStructureModalOpen(true); }} data-testid="new-structure-btn">
             <Plus size={15} /> Salary structure
@@ -340,10 +345,23 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 >
                   <span className="text-xs font-mono text-muted-foreground shrink-0">{p.slipNo}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{p.userName}</span>
+                    <span className="block truncate font-medium">
+                      {p.userName}
+                      {p.withholdStatus === "WITHHELD" && (
+                        <span className="ml-1.5 inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-600" data-testid={`held-badge-${p.slipNo}`}>
+                          <Pause size={10} /> HELD
+                        </span>
+                      )}
+                      {p.withholdStatus === "RELEASED" && (
+                        <span className="ml-1.5 inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600" data-testid={`released-badge-${p.slipNo}`}>
+                          RELEASED
+                        </span>
+                      )}
+                    </span>
                     <span className="block truncate text-xs text-muted-foreground">
                       gross {money(p.gross)} · deductions {money(p.gross - p.net)}
                       {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}
+                      {p.withholdStatus === "WITHHELD" ? " · net held until release" : ""}
                     </span>
                   </span>
                   <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {money(p.ytdNet)}</span>
@@ -461,6 +479,12 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         open={gratuityOpen}
         onClose={() => setGratuityOpen(false)}
         onChanged={load}
+      />
+      <WithholdingModal
+        open={withholdingOpen}
+        onClose={() => setWithholdingOpen(false)}
+        onChanged={load}
+        employees={employees}
       />
       <StructureModal
         open={structureModalOpen}

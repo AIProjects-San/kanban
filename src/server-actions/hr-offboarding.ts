@@ -126,16 +126,24 @@ async function leaveAccountsFor(userId: string, year: number): Promise<FnFLeaveA
   });
 }
 
-/** OPEN runs, each paired with the employee's payslip net (null = none). */
+/** OPEN runs, each paired with the employee's payslip net (null = none).
+ * P8 — a RELEASED withholding slip is excluded (its net pays through the
+ * release adjustment); a still-WITHHELD slip stays a payable (a hold is
+ * not a waiver — the money is owed until released or settled). */
 async function openRunsFor(userId: string): Promise<FnFOpenRun[]> {
   const runs = await db.payrollRun.findMany({
     where: { status: "OPEN" },
     orderBy: { period: "asc" },
-    select: { period: true, workingDays: true, payslips: { where: { userId }, select: { net: true } } },
+    select: {
+      period: true,
+      workingDays: true,
+      payslips: { where: { userId }, select: { net: true, withholdStatus: true } },
+    },
   });
   return runs.map((r) => ({
     period: r.period,
     payslipNet: r.payslips.length > 0 ? r.payslips[0].net : null,
+    withheldReleased: r.payslips.length > 0 ? r.payslips[0].withholdStatus === "RELEASED" : false,
   }));
 }
 

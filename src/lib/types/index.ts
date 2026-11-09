@@ -791,6 +791,10 @@ export interface PayslipT {
   gross: number;
   net: number;
   ytdNet: number;
+  /** P8 (PR-19/PR-B13) — "" normal | WITHHELD (net held, not disbursed;
+   * excluded from YTD) | RELEASED (paid via a WITHHELD_RELEASE adjustment
+   * in a later period). */
+  withholdStatus: "" | "WITHHELD" | "RELEASED";
 }
 
 /** P1 (PR-12/PR-B10, F2.3) — one adapter row: a special payment (encashment,
@@ -940,4 +944,25 @@ export interface GratuityRuleT {
   enabled: boolean;
   averagingMonths: number;
   slabs: GratuitySlabT[];
+}
+
+// ---------------------------------------------------------------------------
+// P8 (PR-19/PR-B13, F3.3) — salary withholding (the lite state machine).
+// ---------------------------------------------------------------------------
+
+/** One hold window + its terminal release (listSalaryWithholdings rows). */
+export interface SalaryWithholdingT {
+  id: string;
+  userId: string;
+  userName: string;
+  fromPeriod: string;
+  untilPeriod: string | null;
+  reason: string;
+  status: "ACTIVE" | "RELEASED";
+  /** Where the held net was/will be paid (RELEASED rows). */
+  releasePeriod: string | null;
+  releasedAt: string | null;
+  /** Live hold balance: WITHHELD slips not yet released. */
+  heldSlipCount: number;
+  heldTotal: number;
 }

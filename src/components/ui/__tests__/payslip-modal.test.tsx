@@ -29,7 +29,7 @@ function payslip(overrides: Partial<PayslipT> = {}): PayslipT {
       { key: "transport", label: "Transport Allowance", amount: 200 },
     ],
     deductions: [],
-    note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_700, net: 6_700, ytdNet: 13_400,
+    note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_700, net: 6_700, ytdNet: 13_400, withholdStatus: "",
     ...overrides,
   };
 }

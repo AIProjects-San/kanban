@@ -2728,6 +2728,29 @@ async function main() {
       ],
     });
     console.log("  ✓ P7 (PR-20/PR-21) gratuity rule: enabled — slabs 1–2 yr ×0.25, 3–4 ×0.5, 5+ ×1.0 months of average earnings per completed year (3-month payslip average)");
+
+    // ------------------------------------------------------------------
+    // P8 (PR-19/PR-B13, F3.3) — salary withholding seed: Ingrid's salary is
+    // held from this month (open-ended, pending dispute resolution) — her
+    // OPEN-run slip is stamped WITHHELD (computed but not paid; YTD and
+    // self-service exclude it), and releasing in the Withholding modal
+    // pays the held net through the adapter on the chosen month's run.
+    // ------------------------------------------------------------------
+    await db.salaryWithholding.deleteMany();
+    if (mgrIngrid) {
+      await db.salaryWithholding.create({
+        data: {
+          userId: mgrIngrid, fromPeriod: thisPeriod, untilPeriod: null,
+          reason: "Pending dispute resolution — salary held until released",
+          status: "ACTIVE", createdById: hrId,
+        },
+      });
+      const stamped = await db.payslip.updateMany({
+        where: { userId: mgrIngrid, run: { period: thisPeriod, status: "OPEN" } },
+        data: { withholdStatus: "WITHHELD" },
+      });
+      console.log(`  ✓ P8 (PR-19/PR-B13) salary withholding: Ingrid held from ${thisPeriod} (open-ended) — ${stamped.count} OPEN-run slip(s) stamped WITHHELD; release pays the held net via the adapter`);
+    }
   }
 
   // -------------------------------------------------------------------------

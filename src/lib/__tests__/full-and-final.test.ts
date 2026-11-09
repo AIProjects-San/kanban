@@ -237,3 +237,24 @@ describe("parseFnFLines", () => {
     expect(parseFnFLines("[]")).toEqual([]);
   });
 });
+
+describe("computeFullAndFinal — P8 withholding interaction", () => {
+  it("a WITHHELD slip's net is still a payable (a hold is not a waiver)", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openRuns: [run({ payslipNet: 4_980.75, withheldReleased: false })],
+    });
+    expect(out.lines.find((l) => l.kind === "SALARY")?.amount).toBe(4_980.75);
+    expect(out.notes.join(" ")).not.toContain("released");
+  });
+
+  it("a RELEASED slip pays via its adjustment — a note, never a payable", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openRuns: [run({ payslipNet: 4_980.75, withheldReleased: true })],
+    });
+    expect(out.lines.find((l) => l.kind === "SALARY")).toBeUndefined();
+    expect(out.payableTotal).toBe(0);
+    expect(out.notes.some((n) => n.includes("already released") && n.includes("release adjustment"))).toBe(true);
+  });
+});

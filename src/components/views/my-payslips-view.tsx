@@ -44,9 +44,12 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
   useEffect(() => { void load(); }, [load]);
 
   const latest = slips[0] ?? null;
+  // P8 — held/released nets never count towards "net paid this year" (a
+  // held net is not paid; a released one pays through its adjustment, in
+  // the release period's slip).
   const ytdThisYear = latest
     ? slips
-        .filter((s) => s.runPeriod.slice(0, 4) === latest.runPeriod.slice(0, 4))
+        .filter((s) => s.runPeriod.slice(0, 4) === latest.runPeriod.slice(0, 4) && s.withholdStatus === "")
         .reduce((sum, s) => sum + s.net, 0)
     : 0;
 
@@ -115,7 +118,19 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
             >
               <span className="text-xs font-mono text-muted-foreground shrink-0">{p.slipNo}</span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{monthLabel(p.runPeriod)}</span>
+                <span className="block truncate font-medium">
+                  {monthLabel(p.runPeriod)}
+                  {p.withholdStatus === "WITHHELD" && (
+                    <span className="ml-1.5 inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-600" title="This month's net is held by HR — it pays when the hold is released">
+                      HELD
+                    </span>
+                  )}
+                  {p.withholdStatus === "RELEASED" && (
+                    <span className="ml-1.5 inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600" title="This held net was released — it paid as an adjustment line in a later month">
+                      RELEASED
+                    </span>
+                  )}
+                </span>
                 <span className="block truncate text-xs text-muted-foreground">
                   gross {money(p.gross)} · deductions {money(Math.round((p.gross - p.net) * 100) / 100)}
                   {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}

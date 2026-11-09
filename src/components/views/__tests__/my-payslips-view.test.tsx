@@ -31,14 +31,14 @@ const SLIPS: PayslipT[] = [
     slipNo: "PS-2026-10-002",
     earnings: [{ key: "basic", label: "Basic Salary", amount: 6_500 }],
     deductions: [{ key: "lop", label: "Loss of pay (1 day)", amount: 200 }],
-    note: "", lopDays: 1, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_500, net: 6_300, ytdNet: 13_200,
+    note: "", lopDays: 1, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_500, net: 6_300, ytdNet: 13_200, withholdStatus: "",
   },
   {
     id: "ps-26-09", runId: "run-9", runPeriod: "2026-09", runStatus: "LOCKED", runWorkingDays: 0,
     userId: "u-yuki", userName: "Yuki Tanaka", jobTitle: "Data Engineer",
     slipNo: "PS-2026-09-002",
     earnings: [{ key: "basic", label: "Basic Salary", amount: 6_500 }],
-    deductions: [], note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_500, net: 6_500, ytdNet: 6_500,
+    deductions: [], note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_500, net: 6_500, ytdNet: 6_500, withholdStatus: "",
   },
 ];
 

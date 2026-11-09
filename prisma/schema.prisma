@@ -1712,6 +1712,12 @@ model Payslip {
   paidDays   Float?
   gross      Float     @default(0)
   net        Float     @default(0)
+  // P8 (PR-19/PR-B13) — "" = normal (paid with its run) | WITHHELD = the
+  // net is held (an ACTIVE SalaryWithholding covered the period; YTD and
+  // self-service exclude it) | RELEASED = the held net was paid out via a
+  // WITHHELD_RELEASE adjustment in a later period (excluded here — the
+  // money counts once, there).
+  withholdStatus String @default("")
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
@@ -1836,6 +1842,34 @@ model BenefitAccrual {
 
   @@index([userId, year, componentCode])
   @@index([sourceId])
+}
+
+// P8 (PR-19/PR-B13, F3.3) — salary withholding: hold an employee's
+// salary over a window. ACTIVE window ⇒ runs whose period falls inside
+// stamp their payslip withholdStatus="WITHHELD" (the slip is computed and
+// frozen normally, but its net is NOT disbursed — YTD and self-service
+// exclude it). Releasing emits one WITHHELD_RELEASE PayAdjustment per held
+// slip (the held net, paid in the chosen release period) and flips the
+// slips to "RELEASED" — the money pays exactly once, through the adapter.
+model SalaryWithholding {
+  id         String   @id @default(cuid())
+  userId     String
+  // First period ("YYYY-MM") the hold covers.
+  fromPeriod String
+  // Last covered period; null = open-ended until released.
+  untilPeriod String?
+  reason     String   @default("")
+  // ACTIVE | RELEASED (releasing is terminal — a new hold is a new row).
+  status     String   @default("ACTIVE")
+  createdById String   @default("")
+  // Release bookkeeping (RELEASED rows).
+  releasedById String  @default("")
+  releasedAt  DateTime?
+  releasePeriod String @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId, status])
 }
 
 // P7 (PR-20/PR-21, F3.3) — the gratuity rule. One row per workspace (the

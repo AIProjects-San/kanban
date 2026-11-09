@@ -14,7 +14,7 @@ const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
     "salaryComponent", "payrollRun", "payslip", "payAdjustment", "auditLog", "holidayCalendarEntry",
-    "attendanceRecord", "leaveRequest", "leaveType",
+    "attendanceRecord", "leaveRequest", "leaveType", "salaryWithholding",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -99,6 +99,9 @@ beforeEach(() => {
   getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
   vi.clearAllMocks();
   requirePermissionMock.mockResolvedValue(HR_AUTH);
+  // P8 — no hold windows by default (slips stay unstamped).
+  db.salaryWithholding.findMany.mockResolvedValue([]);
+  db.salaryWithholding.findFirst.mockResolvedValue(null);
   getSessionOrThrowMock.mockResolvedValue({ ...HR_AUTH, userId: "u-yuki", role: "MEMBER" as const, name: "Yuki Tanaka" });
   db.user.findUnique.mockResolvedValue({ id: "u-yuki", name: "Yuki Tanaka" });
   db.candidate.findFirst.mockResolvedValue({ id: "cand-1", fullName: "Priyanka Menon" });

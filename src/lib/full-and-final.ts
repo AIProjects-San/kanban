@@ -110,6 +110,11 @@ export interface FnFOpenRun {
   period: string;
   /** The employee's payslip net in the run; null = no payslip yet. */
   payslipNet: number | null;
+  /** P8 (PR-19/PR-B13) — true when a payslip exists but its net was
+   * already released (WITHHELD → RELEASED): the money pays through the
+   * WITHHOLDING_RELEASE adjustment, so it is not a payable here. A still-
+   * WITHHELD slip (false) IS owed — the hold is not a waiver. */
+  withheldReleased?: boolean;
 }
 
 export interface FnFInput {
@@ -179,6 +184,12 @@ export function computeFullAndFinal(input: FnFInput): FnFComputedT {
 
   // --- Payable: unprocessed salary (OPEN runs only — LOCKED means paid). ---
   for (const run of input.openRuns) {
+    if (run.withheldReleased) {
+      notes.push(
+        `Withheld salary for the open ${run.period} run was already released — it pays through the release adjustment, not this statement.`,
+      );
+      continue;
+    }
     if (run.payslipNet === null) {
       notes.push(
         `No payslip for this employee in the open ${run.period} run — add one before settling if salary is owed for that period.`,

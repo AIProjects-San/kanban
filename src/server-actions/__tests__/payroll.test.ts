@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeProfile", "candidate", "offerRecord", "salaryStructure",
-    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "leaveEncashment", "benefitElection", "benefitAccrual", "auditLog", "holidayCalendarEntry",
+    "salaryComponent", "payrollRun", "payslip", "payAdjustment", "leaveEncashment", "benefitElection", "benefitAccrual", "auditLog", "holidayCalendarEntry", "salaryWithholding",
     "attendanceRecord", "leaveRequest", "leaveType", "fullAndFinalStatement",
   ];
   const methods = [
@@ -176,6 +176,9 @@ beforeEach(() => {
   db.benefitElection.findMany.mockResolvedValue([]);
   db.benefitAccrual.create.mockResolvedValue({});
   db.benefitAccrual.groupBy.mockResolvedValue([]);
+  // P8 (F3.3) — no hold windows by default (slips stay unstamped).
+  db.salaryWithholding.findMany.mockResolvedValue([]);
+  db.salaryWithholding.findFirst.mockResolvedValue(null);
   // S4 — default policy: IGNORED (pre-S4 semantics byte-for-byte).
   getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED" } });
 });
@@ -1438,6 +1441,83 @@ describe("P1 — listPayAdjustments", () => {
         id: "adj-9", userName: "Yuki Tanaka", status: "CONSUMED", consumedRunPeriod: "2026-12",
         side: "EARNING", recurrence: "ONE_SHOT", calcMode: "FIXED",
       });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P8 (PR-19/PR-B13, F3.3) — ACTIVE hold windows stamp slips WITHHELD at
+// creation; YTD excludes withheld/released nets.
+// ---------------------------------------------------------------------------
+
+describe("P8 — createPayrollRun stamps WITHHELD slips inside an ACTIVE hold window", () => {
+  it("a slip whose employee is held in the period is born WITHHELD; others stay normal", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.salaryWithholding.findMany.mockResolvedValue([
+      { userId: "u-yuki", fromPeriod: "2026-11", untilPeriod: "2027-01", status: "ACTIVE" },
+      { userId: "u-elsewhere", fromPeriod: "2026-01", untilPeriod: "2026-02", status: "ACTIVE" }, // window closed
+    ]);
+    const res = await createPayrollRun({ period: "2026-12" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ userId: string; withholdStatus: string }> } };
+    };
+    expect(createArg.data.payslips.create[0].withholdStatus).toBe("WITHHELD");
+  });
+
+  it("a period outside every window stays unstamped", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.salaryWithholding.findMany.mockResolvedValue([
+      { userId: "u-yuki", fromPeriod: "2026-11", untilPeriod: "2026-11", status: "ACTIVE" },
+    ]);
+    const res = await createPayrollRun({ period: "2027-06" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ withholdStatus: string }> } };
+    };
+    expect(createArg.data.payslips.create[0].withholdStatus).toBe("");
+  });
+
+  it("the YTD basis excludes withheld/released slips (money counts once, at release)", async () => {
+    db.payrollRun.findUnique.mockResolvedValue({
+      ...OPEN_RUN,
+      payslips: [payslipRow({ withholdStatus: "WITHHELD" })],
+    });
+    db.payrollRun.findMany.mockResolvedValue([
+      { id: "run-0", period: "2026-11" },
+      { id: "run-1", period: "2026-12" },
+    ]);
+    // The mock honours the query's withholdStatus filter the DB would apply:
+    // only the normal October slip feeds the YTD sum (the held one is out).
+    db.payslip.findMany.mockResolvedValue([
+      { userId: "u-yuki", net: 6_700, withholdStatus: "" },
+    ]);
+    const res = await getPayrollRun("run-1");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.payslips[0].withholdStatus).toBe("WITHHELD");
+      expect(res.data.payslips[0].ytdNet).toBe(6_700); // the held net never counts
+    }
+    const where = db.payslip.findMany.mock.calls[0][0] as { where: { withholdStatus?: string } };
+    expect(where.where.withholdStatus).toBe("");
+  });
+
+  it("getMyPayslips — a held slip lists (badged) but never adds to YTD; a released one pays where it released", async () => {
+    db.payslip.findMany.mockResolvedValue([
+      payslipRow({ id: "ps-oct", runId: "run-0", slipNo: "PS-2026-10-002", net: 6_700, gross: 6_700, run: LOCKED_RUN }),
+      payslipRow({ id: "ps-nov", runId: "run-1", slipNo: "PS-2026-11-001", net: 6_700, gross: 6_700, withholdStatus: "WITHHELD", run: { ...LOCKED_RUN, period: "2026-11" } }),
+      payslipRow({ id: "ps-dec", runId: "run-2", slipNo: "PS-2026-12-001", net: 6_700, gross: 6_700, withholdStatus: "RELEASED", run: { ...LOCKED_RUN, period: "2026-12" } }),
+    ]);
+    db.employeeProfile.findUnique.mockResolvedValue({ jobTitle: "Data Engineer" });
+    const res = await getMyPayslips();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      const byPeriod = new Map(res.data.map((p) => [p.runPeriod, p.ytdNet] as const));
+      expect(byPeriod.get("2026-10")).toBe(6_700);
+      expect(byPeriod.get("2026-11")).toBe(6_700); // held: carries the last paid value
+      expect(byPeriod.get("2026-12")).toBe(6_700); // released: its money pays at release, not here
+      expect(res.data.find((p) => p.runPeriod === "2026-11")?.withholdStatus).toBe("WITHHELD");
+      expect(res.data.find((p) => p.runPeriod === "2026-12")?.withholdStatus).toBe("RELEASED");
     }
   });
 });
