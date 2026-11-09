@@ -782,6 +782,13 @@ model LeaveType {
   code         String   @unique
   requiresDoc  Boolean  @default(false)
   paid         Boolean  @default(true)
+  // P15 (PR-06) — fraction of daily salary paid per leave day, the
+  // benchmark's partially-paid leave (fraction_of_daily_salary_per_leave).
+  // Only meaningful on paid types; 1 (default) = fully paid = the pre-P15
+  // semantics byte-for-byte; 0.5 = half paid (payroll docks (1 − fraction)
+  // days per working day taken). Unpaid types charge the full working
+  // fraction regardless (paid = false is fraction 0 by definition).
+  salaryFraction Float  @default(1)
   color        String   @default("#8b5cf6")
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
@@ -1727,6 +1734,14 @@ model Payslip {
   // override, not a silent re-derivation). MANUAL: an HR override saved
   // through updatePayslip (audited).
   lopSource  String    @default("AUTO")
+  // P15 (PR-06) — the per-slip leave-charge breakdown frozen at creation
+  // (the benchmark's Salary Slip Leave child, Fernly-shaped): which leave
+  // spans covered the window ({code, name, takenDays, chargedDays,
+  // fraction, paid}) plus the attendance-side docks (absentDays /
+  // halfDays / unmarkedDays). Null = nothing was docked or the slip predates
+  // P15 / a MANUAL LOP override replaced the derivation (the override is
+  // opaque by design — the note says "manually set by HR").
+  lopDetail  Json?
   // F-R2 (S1) — optimistic-lock version. updatePayslip carries the version
   // the editor loaded; a mismatch (someone else saved while this editor was
   // open) refuses the save instead of silently overwriting. Incremented on

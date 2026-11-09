@@ -244,7 +244,7 @@ export function PayslipModal({
             )}
             <div className="w-full text-[0.6875rem] text-muted-foreground" data-testid="payslip-lop-source">
               {p.lopSource === "AUTO"
-                ? "Auto-derived at run creation from attendance (absent / half-day) and unpaid leave — saving a different value records a manual override."
+                ? "Auto-derived at run creation from attendance (absent / half-day) and unpaid or partially-paid leave — saving a different value records a manual override."
                 : "Manually set by HR — overrides the run-creation derivation."}
               {unmarkedMode === "ABSENT" ? " Workspace policy: unmarked working days count as absent (runs created while the policy is on)." : ""}
             </div>
@@ -253,9 +253,42 @@ export function PayslipModal({
           // F1.4 — read-only honesty note on the paid record: where the
           // docked days came from.
           <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700" data-testid="payslip-lop-source">
-            Loss of pay: {p.lopDays} day{p.lopDays === 1 ? "" : "s"} · {p.lopSource === "AUTO" ? "auto-derived from attendance and unpaid leave" : "manually set by HR"}
+            Loss of pay: {p.lopDays} day{p.lopDays === 1 ? "" : "s"} · {p.lopSource === "AUTO" ? "auto-derived from attendance and unpaid or partially-paid leave" : "manually set by HR"}
           </div>
         ) : null}
+
+        {/* P15 (PR-06) — the frozen charge breakdown (the Salary Slip Leave
+            child, Fernly-shaped): which leave covered the window (days
+            taken × the type's salary fraction → days charged) plus the
+            attendance-side docks. AUTO slips only — a manual override
+            cleared it, and the note above says so. */}
+        {p.lopDetail && p.lopSource === "AUTO" && (
+          <div
+            className="rounded-md border border-border bg-muted/30 px-3 py-2 text-[0.6875rem] text-muted-foreground space-y-1"
+            data-testid="payslip-lop-detail"
+          >
+            <div className="uppercase tracking-wide">Loss-of-pay breakdown (frozen at run creation)</div>
+            {p.lopDetail.leave.length > 0 && (
+              <ul className="space-y-0.5">
+                {p.lopDetail.leave.map((row) => (
+                  <li key={row.leaveTypeId}>
+                    {row.name}: {row.takenDays} day{row.takenDays === 1 ? "" : "s"} taken
+                    {row.fraction < 1 ? ` at ${Math.round(row.fraction * 100)}% salary` : ""} →{" "}
+                    <span className={row.chargedDays > 0 ? "text-amber-700 dark:text-amber-400" : ""}>
+                      {row.chargedDays} day{row.chargedDays === 1 ? "" : "s"} charged
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {(p.lopDetail.absentDays > 0 || p.lopDetail.halfDays > 0 || p.lopDetail.unmarkedDays > 0) && (
+              <div>
+                Attendance docks: {p.lopDetail.absentDays} absent + {p.lopDetail.halfDays} half-day
+                {p.lopDetail.unmarkedDays > 0 ? ` + ${p.lopDetail.unmarkedDays} unmarked (policy)` : ""} (working-day fractions)
+              </div>
+            )}
+          </div>
+        )}
 
         {/* PR-B06 (S5) — the employment-window day breakdown. Full-month
             slips (paidDays == workingDays, or pre-S5 null) render nothing. */}

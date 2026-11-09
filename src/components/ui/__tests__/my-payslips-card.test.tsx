@@ -20,7 +20,7 @@ const LATEST: PayslipT = {
   userId: "u-yuki", userName: "Yuki Tanaka", jobTitle: "Data Engineer",
   slipNo: "PS-2026-10-002",
   earnings: [{ key: "basic", label: "Basic Salary", amount: 6_500 }],
-  deductions: [], note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_500, net: 6_300, ytdNet: 6_300, ytdGross: 6_500, mtdNet: 6_300, componentYtd: [], withholdStatus: "",
+  deductions: [], note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, lopDetail: null, version: 0, gross: 6_500, net: 6_300, ytdNet: 6_300, ytdGross: 6_500, mtdNet: 6_300, componentYtd: [], withholdStatus: "",
 };
 
 beforeEach(() => {

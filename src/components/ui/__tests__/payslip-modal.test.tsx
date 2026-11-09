@@ -29,7 +29,7 @@ function payslip(overrides: Partial<PayslipT> = {}): PayslipT {
       { key: "transport", label: "Transport Allowance", amount: 200 },
     ],
     deductions: [],
-    note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, version: 0, gross: 6_700, net: 6_700, ytdNet: 13_400, ytdGross: 13_400, mtdNet: 6_700, componentYtd: [{ key: "basic", label: "Basic Salary", side: "EARNING", amount: 13_000 }, { key: "transport", label: "Transport Allowance", side: "EARNING", amount: 400 }], withholdStatus: "",
+    note: "", lopDays: 0, lopSource: "AUTO", paidDays: null, lopDetail: null, version: 0, gross: 6_700, net: 6_700, ytdNet: 13_400, ytdGross: 13_400, mtdNet: 6_700, componentYtd: [{ key: "basic", label: "Basic Salary", side: "EARNING", amount: 13_000 }, { key: "transport", label: "Transport Allowance", side: "EARNING", amount: 400 }], withholdStatus: "",
     ...overrides,
   };
 }
@@ -188,6 +188,46 @@ describe("PayslipModal (LOCKED run)", () => {
     const note = screen.getByTestId("payslip-lop-source");
     expect(note.textContent).toContain("Loss of pay: 1 day");
     expect(note.textContent).toContain("auto-derived");
+  });
+
+  it("P15 (PR-06) — the frozen LOP breakdown lists leave rows with fractions and attendance docks", () => {
+    const locked = payslip({
+      runStatus: "LOCKED",
+      lopDays: 2,
+      lopSource: "AUTO",
+      deductions: [{ key: "lop", label: "Loss of pay (2 days)", amount: 638.1 }],
+      net: 6_061.9,
+      lopDetail: {
+        absentDays: 1,
+        halfDays: 0,
+        unmarkedDays: 0,
+        leave: [
+          { leaveTypeId: "lt-half", code: "HALF_PAY", name: "Half-pay Study Leave", takenDays: 2, chargedDays: 1, fraction: 0.5, paid: true },
+          { leaveTypeId: "lt-annual", code: "ANNUAL", name: "Annual Leave", takenDays: 1, chargedDays: 0, fraction: 1, paid: true },
+        ],
+      },
+    });
+    render(<PayslipModal payslip={locked} onClose={onClose} onChanged={onChanged} />);
+    const detail = screen.getByTestId("payslip-lop-detail");
+    expect(detail.textContent).toContain("Half-pay Study Leave: 2 days taken at 50% salary → 1 day charged");
+    // A fully-paid row rides along at zero charge (the child lists the
+    // applications, not only the docking ones).
+    expect(detail.textContent).toContain("Annual Leave: 1 day taken → 0 days charged");
+    expect(detail.textContent).toContain("Attendance docks: 1 absent + 0 half-day");
+  });
+
+  it("P15 (PR-06) — a MANUAL override shows no breakdown (it was cleared) and the note says so", () => {
+    const locked = payslip({
+      runStatus: "LOCKED",
+      lopDays: 1,
+      lopSource: "MANUAL",
+      deductions: [{ key: "lop", label: "Loss of pay (1 day)", amount: 319.05 }],
+      net: 6_380.95,
+      lopDetail: null,
+    });
+    render(<PayslipModal payslip={locked} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.queryByTestId("payslip-lop-detail")).toBeNull();
+    expect(screen.getByTestId("payslip-lop-source").textContent).toContain("manually set by HR");
   });
 
   it("F1.4 — a locked slip with zero LOP days shows no provenance box", () => {

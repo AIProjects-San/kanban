@@ -1237,6 +1237,98 @@ describe("createLeaveType / updateLeaveType", () => {
   });
 
   // -----------------------------------------------------------------------
+  // P15 (PR-06) — the partially-paid leave fraction knob.
+  // -----------------------------------------------------------------------
+
+  it("P15: creates a half-pay type — salaryFraction lands on the row and the audit", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.leaveType.create.mockResolvedValue({ id: "lt-half", name: "Half-pay Study Leave", code: "HALF_PAY" });
+    const res = await createLeaveType({
+      name: "Half-pay Study Leave",
+      code: "HALF_PAY",
+      color: "#14b8a6",
+      paid: true,
+      salaryFraction: 0.5,
+      policy: { annualDays: 4, maxCarryOver: 0, minNoticeDays: 1, maxConsecutiveDays: 10 },
+    });
+    expect(res.ok).toBe(true);
+    expect(db.leaveType.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          salaryFraction: 0.5,
+          paid: true,
+          policy: { create: expect.objectContaining({ annualDays: 4 }) },
+        }),
+      }),
+    );
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "leave.type_created",
+      detail: expect.stringContaining("paid at 50% salary"),
+    }));
+  });
+
+  it("P15: a legacy-shaped create (no salaryFraction) writes the default 1 — zero behavior change", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.leaveType.create.mockResolvedValue({ id: "lt-x", name: "X", code: "X" });
+    const res = await createLeaveType({
+      name: "X", code: "X",
+      policy: { annualDays: 1, maxCarryOver: 0, minNoticeDays: 0, maxConsecutiveDays: 1 },
+    });
+    expect(res.ok).toBe(true);
+    expect(db.leaveType.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ salaryFraction: 1 }) }),
+    );
+    // Fully paid — no fraction mention in the audit.
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.not.stringContaining("% salary"),
+    }));
+  });
+
+  it("P15: the fraction validates 0–1 in 1% steps (out-of-range and dust refused)", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    for (const bad of [1.5, -0.1, 0.333]) {
+      const res = await createLeaveType({
+        name: "Bad", code: "BAD", paid: true, salaryFraction: bad,
+        policy: { annualDays: 1, maxCarryOver: 0, minNoticeDays: 0, maxConsecutiveDays: 1 },
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toMatch(/salary fraction/i);
+    }
+    expect(db.leaveType.create).not.toHaveBeenCalled();
+  });
+
+  it("P15: updateLeaveType edits the fraction", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.leaveType.findUnique.mockResolvedValue({ id: "lt-annual", name: "Annual Leave" });
+    const res = await updateLeaveType("lt-annual", {
+      salaryFraction: 0.75,
+      policy: { annualDays: 20, maxCarryOver: 5, minNoticeDays: 1, maxConsecutiveDays: 15 },
+    });
+    expect(res.ok).toBe(true);
+    expect(db.leaveType.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "lt-annual" },
+        data: expect.objectContaining({ salaryFraction: 0.75 }),
+      }),
+    );
+  });
+
+  it("P15: the queue DTO carries the fraction (missing rows read as 1)", async () => {
+    requirePermissionMock.mockResolvedValue(ADMIN_AUTH);
+    db.leaveRequest.findMany.mockResolvedValue([]);
+    db.leaveType.findMany.mockResolvedValue([
+      { ...ANNUAL_TYPE, salaryFraction: 0.5 },
+      { ...ANNUAL_TYPE, id: "lt-nofrac", salaryFraction: null },
+    ]);
+    const res = await getLeaveQueue();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.types[0].salaryFraction).toBe(0.5);
+      expect(res.data.types[1].salaryFraction).toBe(1);
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // QA-18 — LeaveType.name and .code are @unique. Creating a duplicate
   // threw Prisma P2002, which toResult converted into the generic INTERNAL
   // "Something went wrong. Please try again." — the admin had no idea the
@@ -1687,6 +1779,21 @@ describe("LV-B10 (S10) — salary-processed guard on unpaid leave", () => {
       });
       expect(res2.ok).toBe(false);
       if (!res2.ok) expect(res2.error).toContain("already been processed");
+    }
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("P15: PARTIALLY-PAID leave is blocked like unpaid (it docks pay too), naming the fraction", async () => {
+    db.leaveType.findUnique.mockResolvedValue({ ...ANNUAL_TYPE, salaryFraction: 0.5, name: "Half-pay Study Leave" });
+    const currentPeriod = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+    db.payslip.findMany.mockResolvedValue([{ run: { period: currentPeriod, startDate: null, endDate: null } }]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "study days",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("already been processed");
+      expect(res.error).toContain("partially-paid Half-pay Study Leave (50% salary)");
     }
     expect(db.leaveRequest.create).not.toHaveBeenCalled();
   });

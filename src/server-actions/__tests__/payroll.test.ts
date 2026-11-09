@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Prisma } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
 // Recruitment R7 — payroll action tests (docs/RECRUITMENT_MODULE_PLAN.md §5):
@@ -387,6 +388,123 @@ describe("R7 — payroll runs", () => {
     };
     expect(createArg.data.payslips.create[0].lopDays).toBe(0);
     expect(createArg.data.payslips.create[0].deductions).toBe("[]");
+  });
+
+  it("P15 (PR-06) — partially-paid leave charges (1 − fraction) days and freezes the lopDetail breakdown", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    // Half-pay study leave Mon 2 → Tue 3 (2 working days at 50% salary →
+    // 1 day docked) + an ABSENT day Thu 5 (1) = 2 days.
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { userId: "u-yuki", date: new Date("2026-11-05T00:00:00.000Z"), status: "ABSENT" },
+    ]);
+    db.leaveRequest.findMany.mockResolvedValue([
+      { userId: "u-yuki", startDate: new Date("2026-11-02T00:00:00.000Z"), endDate: new Date("2026-11-03T00:00:00.000Z"), leaveTypeId: "lt-half" },
+    ]);
+    db.leaveType.findMany.mockResolvedValue([
+      { id: "lt-half", paid: true, salaryFraction: 0.5, code: "HALF_PAY", name: "Half-pay Study Leave" },
+    ]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ lopDays: number; lopSource: string; lopDetail: unknown }> } };
+    };
+    const slip = createArg.data.payslips.create[0];
+    expect(slip.lopDays).toBe(2);
+    expect(slip.lopSource).toBe("AUTO");
+    // The frozen breakdown names the type, its fraction, and the
+    // attendance-side dock (the Salary Slip Leave child, Fernly-shaped).
+    expect(slip.lopDetail).toEqual({
+      absentDays: 1,
+      halfDays: 0,
+      unmarkedDays: 0,
+      leave: [{
+        leaveTypeId: "lt-half",
+        code: "HALF_PAY",
+        name: "Half-pay Study Leave",
+        takenDays: 2,
+        chargedDays: 1,
+        fraction: 0.5,
+        paid: true,
+      }],
+    });
+    // The LOP line materializes from the fractional total: 6,700 × 2 / 21
+    // = 638.10 (the half-pay days dock at 0.5 each, so the money is honest
+    // to the fraction).
+    const deductions = JSON.parse(
+      (createArg.data.payslips.create[0] as unknown as { deductions: string }).deductions,
+    ) as Array<{ key: string; amount: number }>;
+    expect(deductions.find((l) => l.key === "lop")?.amount).toBe(638.1);
+  });
+
+  it("P15 (PR-06) — a fully-paid type (fraction 1, the default) writes no lopDetail", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    db.leaveRequest.findMany.mockResolvedValue([
+      { userId: "u-yuki", startDate: new Date("2026-11-02T00:00:00.000Z"), endDate: new Date("2026-11-03T00:00:00.000Z"), leaveTypeId: "lt-annual" },
+    ]);
+    db.leaveType.findMany.mockResolvedValue([
+      { id: "lt-annual", paid: true, salaryFraction: 1, code: "ANNUAL", name: "Annual Leave" },
+    ]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ lopDays: number; lopDetail: unknown }> } };
+    };
+    // Zero charge → nothing was docked → no detail (an all-zero breakdown
+    // is noise, not honesty).
+    expect(createArg.data.payslips.create[0].lopDays).toBe(0);
+    expect(createArg.data.payslips.create[0].lopDetail).toBeUndefined();
+  });
+
+  it("P15 (PR-06) — a MANUAL lopDays override clears the frozen breakdown", async () => {
+    db.payslip.findUnique.mockResolvedValue(payslipRow({
+      lopDays: 1.5,
+      lopSource: "AUTO",
+      lopDetail: {
+        absentDays: 1, halfDays: 0, unmarkedDays: 0,
+        leave: [{ leaveTypeId: "lt-half", code: "HALF_PAY", name: "Half-pay Study Leave", takenDays: 2, chargedDays: 1, fraction: 0.5, paid: true }],
+      },
+    }));
+    const res = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 2,
+      note: "",
+    });
+    expect(res.ok).toBe(true);
+    const updateArg = db.payslip.update.mock.calls[0][0] as {
+      data: { lopDays: number; lopSource: string; lopDetail: unknown };
+    };
+    expect(updateArg.data.lopDays).toBe(2);
+    expect(updateArg.data.lopSource).toBe("MANUAL");
+    // The override replaces the derivation — the stale breakdown must not
+    // survive it (the modal honestly says "manually set by HR").
+    expect(updateArg.data.lopDetail).toBe(Prisma.DbNull);
+  });
+
+  it("P15 (PR-06) — saving the SAME lopDays keeps the frozen breakdown", async () => {
+    const detail = {
+      absentDays: 1, halfDays: 0, unmarkedDays: 0,
+      leave: [{ leaveTypeId: "lt-half", code: "HALF_PAY", name: "Half-pay Study Leave", takenDays: 2, chargedDays: 1, fraction: 0.5, paid: true }],
+    };
+    db.payslip.findUnique.mockResolvedValue(payslipRow({ lopDays: 1.5, lopSource: "AUTO", lopDetail: detail }));
+    const res = await updatePayslip({
+      payslipId: "ps-1", expectedVersion: 0,
+      earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
+      deductions: [],
+      lopDays: 1.5,
+      note: "",
+    });
+    expect(res.ok).toBe(true);
+    const updateArg = db.payslip.update.mock.calls[0][0] as {
+      data: { lopDetail: unknown };
+    };
+    // An unchanged save is not an override — the detail survives untouched
+    // (undefined = Prisma "leave the column alone").
+    expect(updateArg.data.lopDetail).toBeUndefined();
   });
 
   it("getPayrollRuns aggregates totals and names the locker", async () => {

@@ -109,6 +109,10 @@ export interface LeaveTypeT {
   code: string;
   requiresDoc: boolean;
   paid: boolean;
+  /** P15 (PR-06) — fraction of daily salary paid per leave day (paid types
+   * only; 1 = fully paid). Optional in the wire type (older snapshots
+   * default to 1 via `?? 1`); the server DTO always fills it. */
+  salaryFraction?: number;
   color: string;
   active: boolean;
   policy: {
@@ -799,6 +803,10 @@ export interface PayslipT {
   note: string;
   lopDays: number;
   lopSource: "AUTO" | "MANUAL";
+  /** P15 (PR-06) — the creation-time charge breakdown (the Salary Slip
+   * Leave child, Fernly-shaped). null = nothing was docked, the slip
+   * predates P15, or a MANUAL LOP override replaced the derivation. */
+  lopDetail: LopDetailT | null;
   /** F-R2 (S1) — optimistic-lock version; carried back as expectedVersion
    * when the modal saves, refused on mismatch. */
   version: number;
@@ -820,6 +828,31 @@ export interface PayslipT {
    * excluded from YTD) | RELEASED (paid via a WITHHELD_RELEASE adjustment
    * in a later period). */
   withholdStatus: "" | "WITHHELD" | "RELEASED";
+}
+
+/** P15 (PR-06) — one leave row of the payslip's frozen LOP breakdown:
+ * the working days the span covered inside the run's window (takenDays),
+ * the days it docked (chargedDays = Σ (1 − fraction) × working fraction),
+ * the type's salary fraction paid per day (1 = fully paid; 0 for unpaid
+ * types), and the paid flag for display. */
+export interface LopDetailLeaveRowT {
+  leaveTypeId: string;
+  code: string;
+  name: string;
+  takenDays: number;
+  chargedDays: number;
+  fraction: number;
+  paid: boolean;
+}
+
+/** P15 (PR-06) — the per-slip LOP charge breakdown frozen at creation
+ * (Payslip.lopDetail): which leave spans covered the window plus the
+ * attendance-side docks. Every number is a working-day fraction. */
+export interface LopDetailT {
+  absentDays: number;
+  halfDays: number;
+  unmarkedDays: number;
+  leave: LopDetailLeaveRowT[];
 }
 
 /** P11 (PR-B09) — one per-component YTD row (side + line key + running

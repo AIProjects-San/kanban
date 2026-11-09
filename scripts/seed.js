@@ -39,7 +39,7 @@ if (SEED_DEMO_AT_BOOT !== "1") {
 
 // Only now is it safe to load Prisma — it will source .env, but the guard
 // above already snapshotted the real boot env so it can't be bypassed.
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient, Prisma } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 
 const db = new PrismaClient();
@@ -1297,6 +1297,19 @@ async function main() {
     },
     include: { policy: true },
   });
+  // P15 (PR-06) — the partially-paid leave demo type: paid at 50%
+  // salary, so every taken working day docks half a day of pay through
+  // the LOP derivation ((1 − fraction) × working fraction). Ingrid's
+  // seeded request (below) rides it in the current payroll month.
+  const halfPayType = await db.leaveType.create({
+    data: {
+      name: "Half-pay Study Leave", code: "HALF_PAY", color: "#14b8a6", paid: true, requiresDoc: false,
+      salaryFraction: 0.5,
+      policy: { create: { annualDays: 4, maxCarryOver: 0, minNoticeDays: 1, maxConsecutiveDays: 10 } },
+    },
+    include: { policy: true },
+  });
+
 
   const balanceFor = async (userId, type, entitled, used) => {
     await db.leaveBalance.create({
@@ -1313,6 +1326,7 @@ async function main() {
     await balanceFor(u.id, sickType, 10, 0);
     await balanceFor(u.id, unpaidType, 0, 0);
     await balanceFor(u.id, advanceType, advanceEntitled, 0);
+    await balanceFor(u.id, halfPayType, 4, 0);
   }
   const rafaelId = userByName.get("Rafael Costa");
   if (rafaelId) {
@@ -1353,6 +1367,7 @@ async function main() {
     });
   }
 
+
   const leaveRequests = [];
   const mkRequest = async (userName, type, startOffset, endOffset, status, decidedBy, note, days) => {
     const userId = userByName.get(userName);
@@ -1373,6 +1388,42 @@ async function main() {
     });
     leaveRequests.push(r);
   };
+
+  // P15 (PR-06) — Ingrid's approved half-pay study leave sits INSIDE the
+  // current payroll month (the first two past working non-holiday days),
+  // so the OPEN run's derivation docks (1 − 0.5) × 2 = 1 day AUTO and the
+  // slip's lopDetail names the type. Strictly-past days also keep every
+  // next-month e2e run free of it. Early-month reseeds (fewer than two
+  // such days) degrade gracefully: no request, no charge.
+  {
+    const ingridId = userByName.get("Ingrid Solberg");
+    if (ingridId) {
+      const now = new Date();
+      const today0 = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const picks = [];
+      const cursor = new Date(monthStart);
+      while (cursor < today0 && picks.length < 2) {
+        const dow = cursor.getUTCDay();
+        const hol = holidayKeyMap.get(cursor.toISOString().slice(0, 10));
+        if (dow !== 0 && dow !== 6 && !hol) picks.push(new Date(cursor));
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+      if (picks.length === 2) {
+        const off = (d) => Math.round((d.getTime() - today0.getTime()) / 86_400_000);
+        await mkRequest(
+          "Ingrid Solberg", halfPayType, off(picks[0]), off(picks[1]),
+          "APPROVED", "Mira Hale",
+          { reason: "Certification course (2 days)", decision: "Approved — half-pay per policy." },
+          2,
+        );
+        await db.leaveBalance.update({
+          where: { userId_leaveTypeId_year: { userId: ingridId, leaveTypeId: halfPayType.id, year: YEAR } },
+          data: { used: 2 },
+        });
+      }
+    }
+  }
 
   // Theo (reports to admin Mira) — PENDING, next week, 2 working days.
   await mkRequest("Theo Vance", annualType, 7, 8, "PENDING", null, { reason: "Family visit" }, 2);
@@ -2408,25 +2459,33 @@ async function main() {
     ]);
     const spanTypeIds = [...new Set(leaveSpans.map((r) => r.leaveTypeId))];
     const spanTypes = spanTypeIds.length > 0
-      ? await db.leaveType.findMany({ where: { id: { in: spanTypeIds } }, select: { id: true, paid: true } })
+      ? await db.leaveType.findMany({ where: { id: { in: spanTypeIds } }, select: { id: true, paid: true, salaryFraction: true, code: true, name: true } })
       : [];
-    const paidByType = new Map(spanTypes.map((t) => [t.id, t.paid]));
-    // Mirror of lib/lop-derivation.ts deriveLopDays — per working day:
-    // approved leave wins (paid → 0, unpaid → the working fraction), else
-    // ABSENT → fraction, HALF_DAY → half of it; weekends/full holidays
-    // never charge; half-day holidays count 0.5. Rounded to 2 decimals.
-    const deriveLopDays = (userId, period) => {
+    const typeById = new Map(spanTypes.map((t) => [t.id, t]));
+    // Mirror of lib/lop-derivation.ts deriveLopBreakdownBetween — per
+    // working day: approved leave wins and charges (1 − salaryFraction) ×
+    // the working fraction (P15/PR-06: paid default 1 → 0, unpaid → the
+    // full fraction, partially-paid the complement), else ABSENT → the
+    // fraction, HALF_DAY → half of it; weekends/full holidays never charge;
+    // half-day holidays count 0.5. ONE walk returns the total AND the
+    // per-source breakdown (the slip's lopDetail). Rounded to 2 decimals.
+    const deriveLopBreakdown = (userId, period) => {
       const [y, m] = period.split("-").map(Number);
       const start = new Date(Date.UTC(y, m - 1, 1));
       const end = new Date(Date.UTC(y, m, 0));
       const markByDay = new Map(attMarks.filter((a) => a.userId === userId).map((a) => [a.date.toISOString().slice(0, 10), a.status]));
       const spans = leaveSpans
         .filter((r) => r.userId === userId)
-        .map((r) => ({
-          start: r.startDate, end: r.endDate,
-          paid: paidByType.get(r.leaveTypeId) ?? true,
-        }));
+        .map((r) => {
+          const t = typeById.get(r.leaveTypeId);
+          const paid = t?.paid ?? true;
+          const fraction = paid ? (t?.salaryFraction ?? 1) : 0;
+          return { start: r.startDate, end: r.endDate, paid, fraction, key: r.leaveTypeId };
+        });
       let total = 0;
+      let absentDays = 0;
+      let halfDays = 0;
+      const leaveByKey = new Map();
       const cursor = new Date(start);
       while (cursor <= end) {
         const dow = cursor.getUTCDay();
@@ -2437,17 +2496,41 @@ async function main() {
           if (wf > 0) {
             const span = spans.find((s) => cursor >= s.start && cursor <= s.end);
             if (span) {
-              if (!span.paid) total += wf;
+              const charged = (1 - span.fraction) * wf;
+              total += charged;
+              const row = leaveByKey.get(span.key) ?? { taken: 0, charged: 0 };
+              row.taken += wf;
+              row.charged += charged;
+              leaveByKey.set(span.key, row);
             } else if (markByDay.get(key) === "ABSENT") {
               total += wf;
+              absentDays += wf;
             } else if (markByDay.get(key) === "HALF_DAY") {
               total += wf / 2;
+              halfDays += wf / 2;
             }
           }
         }
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
-      return Math.round(total * 100) / 100;
+      const round2 = (n) => Math.round(n * 100) / 100;
+      return {
+        total: round2(total),
+        absentDays: round2(absentDays),
+        halfDays: round2(halfDays),
+        leave: [...leaveByKey.entries()].map(([key, { taken, charged }]) => {
+          const t = typeById.get(key);
+          return {
+            leaveTypeId: key,
+            code: t?.code ?? "—",
+            name: t?.name ?? "(deleted leave type)",
+            takenDays: round2(taken),
+            chargedDays: round2(charged),
+            fraction: t ? (t.paid ? t.salaryFraction : 0) : 1,
+            paid: t?.paid ?? true,
+          };
+        }),
+      };
     };
     // S5 (PR-B06) — mirror of lib/working-days.ts paymentWindow + the
     // run-creation scaling: each structure holder's paid days = working days
@@ -2504,15 +2587,24 @@ async function main() {
             const paidDays = paymentDaysFor(s.user.id, thisPeriod);
             if (paidDays < thisWorkingDays) clippedCount += 1;
             let earnings = scaleLines(monthlyLines(s.components), paidDays, thisWorkingDays);
-            // F1.4 derivation first …
-            let lopDays = deriveLopDays(s.user.id, thisPeriod);
+            // F1.4 derivation first … P15 (PR-06): ONE walk gives the
+            // charge total AND the frozen breakdown (lopDetail).
+            const derived = deriveLopBreakdown(s.user.id, thisPeriod);
+            let lopDays = derived.total;
             let lopSource = "AUTO";
+            // Production rule: lopDetail rides AUTO slips with a charge;
+            // a MANUAL override clears it (updatePayslip does the same).
+            let lopDetail = derived.total > 0
+              ? { absentDays: derived.absentDays, halfDays: derived.halfDays, unmarkedDays: 0, leave: derived.leave }
+              : null;
             if (lopDays > 0) autoLopCount += 1;
             // … then Yuki's showcase override (manual edit-in-action example,
-            // pinned by the hr-holidays e2e).
+            // pinned by the hr-holidays e2e) — the override clears the
+            // derivation's detail, exactly like updatePayslip would.
             if (s.user.name === "Yuki Tanaka") {
               lopDays = 1;
               lopSource = "MANUAL";
+              lopDetail = null;
             }
             if (s.user.name === "Hana Park") {
               earnings.push({ key: "bonus", label: "Q4 performance bonus", amount: 500 });
@@ -2534,6 +2626,9 @@ async function main() {
               deductions: JSON.stringify(deductions),
               lopDays,
               lopSource,
+              // Prisma's nullable-JSON sentinel: JS null is ambiguous,
+              // DbNull is the explicit database NULL.
+              lopDetail: lopDetail === null ? Prisma.DbNull : lopDetail,
               paidDays,
               gross,
               net,
@@ -2542,7 +2637,7 @@ async function main() {
         },
       },
     });
-    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line${clippedCount > 0 ? `, ${clippedCount} scaled to employment windows (S5)` : ""}) + F1.5 component catalog (7 definitions, 1 retired)`);
+    console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line, Ingrid's half-pay study leave (P15: 2 taken → 1 charged)${clippedCount > 0 ? `, ${clippedCount} scaled to employment windows (S5)` : ""}) + F1.5 component catalog (7 definitions, 1 retired)`);
 
     // ------------------------------------------------------------------
     // P10 (PR-B05) — the cadence demo: Kofi holds a WEEKLY structure, so the

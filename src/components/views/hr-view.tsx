@@ -610,7 +610,11 @@ function TypeCard({ type, onChanged }: { type: LeaveTypeT; onChanged: () => Prom
             <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">docs</span>
           )}
           <span className={cn("text-[0.625rem] px-1.5 py-0.5 rounded", type.paid ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400")}>
-            {type.paid ? "paid" : "unpaid"}
+            {/* P15 (PR-06) — a paid type below full salary shows its
+                fraction (the benchmark's partially-paid leave). */}
+            {type.paid
+              ? (type.salaryFraction ?? 1) < 1 ? `${Math.round((type.salaryFraction ?? 1) * 100)}% pay` : "paid"
+              : "unpaid"}
           </span>
           {(type.policy?.allocationStrategy ?? "MANUAL") !== "MANUAL" && (
             <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400">
@@ -763,6 +767,10 @@ function EditTypeModal({
 }: { type: LeaveTypeT; open: boolean; onClose: () => void; onChanged: () => Promise<void> }) {
   const [name, setName] = useState(type.name);
   const [color, setColor] = useState(type.color);
+  // P15 (PR-06) — the partially-paid fraction rides the edit form too
+  // (only rendered for paid types — an unpaid type is fraction 0 by
+  // definition and the knob would read as a lie).
+  const [fractionStr, setFractionStr] = useState(String(type.salaryFraction ?? 1));
   const [policy, setPolicy] = useState<PolicyFormState>(policyFormFrom(type.policy));
   const [busy, setBusy] = useState(false);
 
@@ -773,7 +781,11 @@ function EditTypeModal({
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
-          const res = await updateLeaveType(type.id, { name, color, policy });
+          const res = await updateLeaveType(type.id, {
+            name, color,
+            ...(type.paid ? { salaryFraction: fractionStr === "" ? 1 : Number(fractionStr) } : {}),
+            policy,
+          });
           setBusy(false);
           if (res.ok) {
             toast.success("Leave type updated");
@@ -792,6 +804,22 @@ function EditTypeModal({
             <input id="lt-color" type="color" className="f-input h-9 p-1" value={color} onChange={(e) => setColor(e.target.value)} />
           </Field>
         </FormRow>
+        {/* P15 (PR-06) — the fraction knob on the edit form (paid types). */}
+        {type.paid && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+            <Field label="Salary fraction (0–1)">
+              <input
+                id="lt-fraction" type="number" min={0} max={1} step={0.05}
+                className="f-input" value={fractionStr}
+                onChange={(e) => setFractionStr(e.target.value)}
+                data-testid="lt-fraction"
+              />
+            </Field>
+            <p className="text-xs text-muted-foreground pb-2">
+              1 = fully paid · 0.5 = half paid — payroll docks (1 − fraction) days per working day taken.
+            </p>
+          </div>
+        )}
         <PolicyFields policy={policy} setPolicy={setPolicy} />
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>
@@ -810,6 +838,9 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
   const [color, setColor] = useState("#8b5cf6");
   const [requiresDoc, setRequiresDoc] = useState(false);
   const [paid, setPaid] = useState(true);
+  // P15 (PR-06) — partially-paid leave: fraction of daily salary paid per
+  // leave day (paid types only; 1 = fully paid = the pre-P15 default).
+  const [fractionStr, setFractionStr] = useState("1");
   const [policy, setPolicy] = useState<PolicyFormState>(defaultPolicyForm());
   const [busy, setBusy] = useState(false);
 
@@ -820,7 +851,11 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
-          const res = await createLeaveType({ name, code: code.toUpperCase(), color, requiresDoc, paid, policy });
+          const res = await createLeaveType({
+            name, code: code.toUpperCase(), color, requiresDoc, paid,
+            salaryFraction: fractionStr === "" ? 1 : Number(fractionStr),
+            policy,
+          });
           setBusy(false);
           if (res.ok) {
             toast.success(`Leave type "${name}" created`);
@@ -853,6 +888,22 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
             </label>
           </div>
         </FormRow>
+        {/* P15 (PR-06) — partially-paid leave knob (paid types only). */}
+        {paid && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+            <Field label="Salary fraction (0–1)">
+              <input
+                id="nlt-fraction" type="number" min={0} max={1} step={0.05}
+                className="f-input" value={fractionStr}
+                onChange={(e) => setFractionStr(e.target.value)} placeholder="1"
+                data-testid="nlt-fraction"
+              />
+            </Field>
+            <p className="text-xs text-muted-foreground pb-2">
+              1 = fully paid · 0.5 = half paid — payroll docks (1 − fraction) days per working day taken.
+            </p>
+          </div>
+        )}
         <PolicyFields policy={policy} setPolicy={setPolicy} />
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>

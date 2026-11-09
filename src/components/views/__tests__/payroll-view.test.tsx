@@ -62,7 +62,7 @@ const PAYSLIPS: PayslipT[] = [
     slipNo: "PS-2026-11-001",
     earnings: [{ key: "basic", label: "Basic Salary", amount: 6_700 }],
     deductions: [{ key: "lop", label: "Loss of pay (1 day)", amount: 223.33 }],
-    note: "", lopDays: 1, lopSource: "MANUAL", paidDays: null, version: 0, gross: 6_700, net: 6_476.67, ytdNet: 13_176.67, ytdGross: 13_400, mtdNet: 6_476.67, componentYtd: [], withholdStatus: "",
+    note: "", lopDays: 1, lopSource: "MANUAL", paidDays: null, lopDetail: null, version: 0, gross: 6_700, net: 6_476.67, ytdNet: 13_176.67, ytdGross: 13_400, mtdNet: 6_476.67, componentYtd: [], withholdStatus: "",
   },
 ];
 

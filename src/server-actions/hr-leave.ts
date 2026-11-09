@@ -166,6 +166,7 @@ export async function getMyLeaveData(): Promise<
         code: t.code,
         requiresDoc: t.requiresDoc,
         paid: t.paid,
+        salaryFraction: t.salaryFraction ?? 1,
         color: t.color,
         active: t.active,
         policy: t.policy ? policyDto(t.policy) : null,
@@ -249,6 +250,7 @@ export async function getLeaveQueue(): Promise<
         code: t.code,
         requiresDoc: t.requiresDoc,
         paid: t.paid,
+        salaryFraction: t.salaryFraction ?? 1,
         color: t.color,
         active: t.active,
         policy: t.policy ? policyDto(t.policy) : null,
@@ -463,13 +465,15 @@ export async function createLeaveRequest(input: {
       }
     }
 
-    // LV-B10 (S10) — salary-processed guard: UNPAID leave charges loss of
-    // pay, and a LOCKED run's slips are immutable — the request is refused
-    // when its range touches a window already processed (paid types and OPEN
-    // runs are fine: corrections still land). P10: the check is by REAL
-    // window intersection, not month-key matching — a LOCKED weekly/bimonthly
+    // LV-B10 (S10) — salary-processed guard: UNPAID and partially-paid
+    // (P15/PR-06) leave charge loss of pay, and a LOCKED run's slips are
+    // immutable — the request is refused when its range touches a window
+    // already processed (fully-paid types and OPEN runs are fine:
+    // corrections still land). P10: the check is by REAL window
+    // intersection, not month-key matching — a LOCKED weekly/bimonthly
     // run covering part of the range blocks it just like a monthly one.
-    if (!type.paid) {
+    const typeFraction = type.paid ? (type.salaryFraction ?? 1) : 0;
+    if (typeFraction < 1) {
       const lockedRuns = await db.payslip.findMany({
         where: { userId: auth.userId, run: { status: "LOCKED" } },
         select: { run: { select: { period: true, startDate: true, endDate: true } } },
@@ -481,8 +485,11 @@ export async function createLeaveRequest(input: {
         if (wStart && wEnd && wStart <= end && wEnd >= start) clash.push(p.run.period);
       }
       if (clash.length > 0) {
+        const kind = type.paid
+          ? `partially-paid ${type.name} (${Math.round(typeFraction * 100)}% salary)`
+          : `unpaid ${type.name}`;
         throw new AuthorizationError(
-          `Salary for ${clash.join(", ")} has already been processed (locked payroll run) — unpaid ${type.name} can't dock pay in a processed period. Shorten the range past those windows or use a paid leave type.`,
+          `Salary for ${clash.join(", ")} has already been processed (locked payroll run) — ${kind} can't dock pay in a processed period. Shorten the range past those windows or use a fully-paid leave type.`,
         );
       }
     }
@@ -825,6 +832,8 @@ export async function createLeaveType(input: {
   color?: string;
   requiresDoc?: boolean;
   paid?: boolean;
+  // P15 (PR-06) — partially-paid leave fraction (paid types; default 1).
+  salaryFraction?: number;
   policy: {
     annualDays: number;
     maxCarryOver: number;
@@ -864,6 +873,7 @@ export async function createLeaveType(input: {
           color: data.color,
           requiresDoc: data.requiresDoc,
           paid: data.paid,
+          salaryFraction: data.salaryFraction,
           active: true,
           policy: { create: data.policy },
         },
@@ -888,7 +898,7 @@ export async function createLeaveType(input: {
       entityType: "LEAVE_TYPE",
       entityId: created.id,
       entityLabel: created.name,
-      detail: `${auth.name} created leave type "${created.name}" (${created.code}) — ${data.policy.annualDays} days/year.`,
+      detail: `${auth.name} created leave type "${created.name}" (${created.code}) — ${data.policy.annualDays} days/year${data.paid && data.salaryFraction < 1 ? `, paid at ${Math.round(data.salaryFraction * 100)}% salary` : ""}.`,
     });
     revalidatePath("/");
     return { id: created.id };
@@ -900,6 +910,8 @@ export async function updateLeaveType(id: string, input: {
   color?: string;
   requiresDoc?: boolean;
   paid?: boolean;
+  // P15 (PR-06) — partially-paid leave fraction (paid types).
+  salaryFraction?: number;
   active?: boolean;
   policy?: {
     annualDays: number;
@@ -947,6 +959,7 @@ export async function updateLeaveType(id: string, input: {
           ...(data.color !== undefined ? { color: data.color } : {}),
           ...(data.requiresDoc !== undefined ? { requiresDoc: data.requiresDoc } : {}),
           ...(data.paid !== undefined ? { paid: data.paid } : {}),
+          ...(data.salaryFraction !== undefined ? { salaryFraction: data.salaryFraction } : {}),
           ...(data.active !== undefined ? { active: data.active } : {}),
         },
       });

@@ -342,6 +342,13 @@ export const leaveTypeSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Color must be a #rrggbb hex value.").default("#8b5cf6"),
   requiresDoc: z.boolean().default(false),
   paid: z.boolean().default(true),
+  // P15 (PR-06) — partially-paid leave: the fraction of daily salary paid
+  // per leave day (paid types only). Default 1 = fully paid = the pre-P15
+  // semantics byte-for-byte; 1% steps keep the LOP charge clean (the dock
+  // is (1 − fraction) working days per day taken).
+  salaryFraction: z.number().min(0, "Salary fraction can't be negative.").max(1, "Salary fraction can't exceed 1 (fully paid).")
+    .refine((n) => Math.round(n * 100) === n * 100, "Salary fraction moves in 1% steps (0–1).")
+    .default(1),
   active: z.boolean().default(true),
   // F2.4 — the allocation strategy block (docs/Fernly_Policy_Engine_Design.md
   // §4.1). Every default reproduces the pre-F2.4 behavior exactly, so a

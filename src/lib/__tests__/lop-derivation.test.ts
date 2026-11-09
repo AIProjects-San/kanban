@@ -234,3 +234,161 @@ describe("lop-derivation — PR-B07 (S4): unmarked-day mode + employment window"
     expect(deriveLopDays(PERIOD, hol, [], [], { unmarkedMode: "ABSENT" })).toBe(20.5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P15 (PR-06) — partially-paid leave fraction + the breakdown walk
+// (deriveLopBreakdownBetween: ONE walk computes the total the slips store
+// AND the per-source detail they freeze). Same reference month (21
+// weekdays); the charge for a covered working day is (1 − fraction) × the
+// working fraction.
+// ---------------------------------------------------------------------------
+
+import {
+  deriveLopBreakdownBetween,
+} from "@/lib/lop-derivation";
+
+function pplSpans(...items: Array<[string, string, boolean, number?, string?]>): LopLeaveSpan[] {
+  return items.map(([startDate, endDate, paid, salaryFraction, key]) => ({
+    startDate, endDate, paid,
+    ...(salaryFraction !== undefined ? { salaryFraction } : {}),
+    ...(key !== undefined ? { key } : {}),
+  }));
+}
+
+describe("lop-derivation — P15 (PR-06): partially-paid leave", () => {
+  it("half-pay leave charges half a day per working day taken", () => {
+    // Mon 9 → Wed 11 (3 working days) at 50% salary → 1.5 days docked.
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-09", "2026-11-11", true, 0.5, "lt-half"],
+    ))).toBe(1.5);
+  });
+
+  it("fraction 1 (the default) is byte-identical to fully-paid: 0 charge", () => {
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-09", "2026-11-11", true, 1, "lt-full"],
+    ))).toBe(0);
+  });
+
+  it("an omitted salaryFraction (pre-P15 callers) reads as fully paid", () => {
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-09", "2026-11-11", true],
+    ))).toBe(0);
+  });
+
+  it("fraction 0 on a paid type charges like unpaid", () => {
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-09", "2026-11-11", true, 0, "lt-zero"],
+    ))).toBe(3);
+  });
+
+  it("out-of-range fractions clamp to [0, 1] (never a bonus, never negative)", () => {
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-09", "2026-11-10", true, 1.5, "lt-over"],
+    ))).toBe(0);
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-09", "2026-11-10", true, -0.25, "lt-under"],
+    ))).toBe(2);
+  });
+
+  it("salaryFraction is ignored on unpaid spans (they charge the full day)", () => {
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-09", "2026-11-10", false, 0.5, "lt-unpaid"],
+    ))).toBe(2);
+  });
+
+  it("a PPL day on a half-day holiday charges (1 − fraction) × 0.5", () => {
+    const holidays = holidayLookupFrom([
+      { date: d("2026-11-09"), isHalfDay: true },
+    ]);
+    // Working fraction 0.5 × (1 − 0.5) = 0.25.
+    expect(deriveLopDays(PERIOD, holidays, [], pplSpans(
+      ["2026-11-09", "2026-11-09", true, 0.5, "lt-half"],
+    ))).toBe(0.25);
+  });
+
+  it("PPL shields its days from attendance marks at the FRACTIONAL charge (leave wins)", () => {
+    // An ABSENT mark on a half-pay leave day docks 0.5 — not the full day.
+    expect(deriveLopDays(PERIOD, undefined, marks(
+      ["2026-11-09", "ABSENT"],
+    ), pplSpans(
+      ["2026-11-09", "2026-11-09", true, 0.5, "lt-half"],
+    ))).toBe(0.5);
+  });
+
+  it("mixed spans sum: fully-paid shields, half-pay docks half, unpaid docks all", () => {
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-02", "2026-11-03", true, 1, "lt-full"],      // 0
+      ["2026-11-04", "2026-11-05", true, 0.5, "lt-half"],    // 1.0
+      ["2026-11-06", "2026-11-06", false, 0, "lt-unpaid"],   // 1.0
+    ))).toBe(2);
+  });
+
+  it("the employment window clips PPL days exactly like unpaid ones", () => {
+    // Span Mon 2 → Fri 6, but the employee left on Tue 3: only Mon+Tue
+    // count → 2 × 0.5 = 1.
+    expect(deriveLopDays(PERIOD, undefined, [], pplSpans(
+      ["2026-11-02", "2026-11-06", true, 0.5, "lt-half"],
+    ), { employmentUntil: "2026-11-03" })).toBe(1);
+  });
+});
+
+describe("lop-derivation — P15 (PR-06): the breakdown walk", () => {
+  const bd = (
+    spansIn: LopLeaveSpan[],
+    marksIn: LopAttendanceMark[] = [],
+    opts: { unmarkedMode?: "IGNORED" | "ABSENT"; employmentFrom?: string | null; employmentUntil?: string | null } = {},
+  ) => deriveLopBreakdownBetween(d("2026-11-01"), d("2026-11-30"), undefined, marksIn, spansIn, opts);
+
+  it("returns the total plus per-key leave rows and attendance buckets", () => {
+    const r = bd(pplSpans(
+      ["2026-11-02", "2026-11-03", true, 1, "lt-full"],     // 2 taken, 0 charged
+      ["2026-11-04", "2026-11-05", true, 0.5, "lt-half"],   // 2 taken, 1 charged
+      ["2026-11-06", "2026-11-06", false, 0, "lt-unpaid"],  // 1 taken, 1 charged
+    ), marks(["2026-11-09", "ABSENT"], ["2026-11-10", "HALF_DAY"]));
+    expect(r.total).toBe(3.5); // 1 + 1 + 1 + 0.5
+    expect(r.absentDays).toBe(1);
+    expect(r.halfDays).toBe(0.5);
+    expect(r.unmarkedDays).toBe(0);
+    expect(r.leave).toEqual([
+      { key: "lt-full", takenDays: 2, chargedDays: 0 },
+      { key: "lt-half", takenDays: 2, chargedDays: 1 },
+      { key: "lt-unpaid", takenDays: 1, chargedDays: 1 },
+    ]);
+  });
+
+  it("two requests of the same type MERGE into one breakdown row", () => {
+    const r = bd(pplSpans(
+      ["2026-11-02", "2026-11-03", true, 0.5, "lt-half"],
+      ["2026-11-16", "2026-11-17", true, 0.5, "lt-half"],
+    ));
+    expect(r.total).toBe(2);
+    expect(r.leave).toEqual([{ key: "lt-half", takenDays: 4, chargedDays: 2 }]);
+  });
+
+  it("spans without a key ride the total without a breakdown row", () => {
+    const r = bd(pplSpans(["2026-11-02", "2026-11-03", false]));
+    expect(r.total).toBe(2);
+    expect(r.leave).toEqual([]);
+  });
+
+  it("PR-B07 unmarked mode fills the unmarked bucket, leave still wins", () => {
+    const r = bd(pplSpans(["2026-11-02", "2026-11-02", true, 0.5, "lt-half"]), [], { unmarkedMode: "ABSENT" });
+    // 20 unmarked working days (21 − the leave day) + the half-pay day.
+    expect(r.total).toBe(20.5);
+    expect(r.unmarkedDays).toBe(20);
+    expect(r.leave).toEqual([{ key: "lt-half", takenDays: 1, chargedDays: 0.5 }]);
+  });
+
+  it("an inverted window returns all zeros (the guard clause)", () => {
+    const r = deriveLopBreakdownBetween(d("2026-11-30"), d("2026-11-01"), undefined, [], []);
+    expect(r).toEqual({ total: 0, absentDays: 0, halfDays: 0, unmarkedDays: 0, leave: [] });
+  });
+
+  it("every count is rounded to 2 decimals (no float dust)", () => {
+    // The whole month (21 weekdays) at half pay → 10.5 exactly; the
+    // rounding is what kills 10.499999… float dust.
+    const r = bd(pplSpans(["2026-11-02", "2026-11-30", true, 0.5, "lt-half"]));
+    expect(r.total).toBe(10.5);
+    expect(r.leave[0]).toEqual({ key: "lt-half", takenDays: 21, chargedDays: 10.5 });
+  });
+});

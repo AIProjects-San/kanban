@@ -22,8 +22,9 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
-import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT } from "@/lib/types";
+import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT, LopDetailT } from "@/lib/types";
 import {
   saveSalaryStructureSchema,
   createPayrollRunSchema,
@@ -39,7 +40,7 @@ import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseComponents, type OfferComponent } from "@/lib/offer-math";
 import { workingDaysBetween, paymentWindowBetween, type HolidayLookup } from "@/lib/working-days";
-import { deriveLopDaysBetween, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
+import { deriveLopBreakdownBetween, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { getHolidayLookup } from "./hr-shared";
 import {
@@ -431,6 +432,9 @@ interface PayrollFacts {
   paidDays: number;
   clippedFrom: boolean;
   clippedUntil: boolean;
+  /** P15 (PR-06) — the creation-time charge breakdown (frozen onto the
+   * slip's lopDetail); null when nothing was docked. */
+  lopDetail: LopDetailT | null;
 }
 
 async function deriveLopDaysForUsers(
@@ -476,22 +480,27 @@ async function deriveLopDaysForUsers(
     }),
   ]);
 
-  // Paid flag per leave type. A missing type row (deleted type) defaults to
-  // paid — never dock pay off missing master data.
+  // Leave type facts per request. A missing type row (deleted type)
+  // defaults to paid/fully-paid — never dock pay off missing master data.
+  // P15 (PR-06): salaryFraction rides the span so partially-paid types
+  // charge (1 − fraction) days, and code/name build the lopDetail rows.
   const typeIds = [...new Set(leaveRows.map((r) => r.leaveTypeId))];
   const types = typeIds.length > 0
-    ? await db.leaveType.findMany({ where: { id: { in: typeIds } }, select: { id: true, paid: true } })
+    ? await db.leaveType.findMany({ where: { id: { in: typeIds } }, select: { id: true, paid: true, salaryFraction: true, code: true, name: true } })
     : [];
-  const paidByType = new Map(types.map((t) => [t.id, t.paid]));
+  const typeById = new Map(types.map((t) => [t.id, t]));
 
   const byUser = new Map<string, { marks: LopAttendanceMark[]; spans: LopLeaveSpan[]; opts: { unmarkedMode: "IGNORED" | "ABSENT"; employmentFrom: Date | null; employmentUntil: Date | null } }>();
   for (const u of userIds) byUser.set(u, { marks: [], spans: [], opts: { unmarkedMode, employmentFrom: null, employmentUntil: null } });
   for (const mk of marks) byUser.get(mk.userId)?.marks.push({ date: mk.date, status: mk.status });
   for (const lr of leaveRows) {
+    const t = typeById.get(lr.leaveTypeId);
     byUser.get(lr.userId)?.spans.push({
       startDate: lr.startDate,
       endDate: lr.endDate,
-      paid: paidByType.get(lr.leaveTypeId) ?? true,
+      paid: t?.paid ?? true,
+      salaryFraction: t?.salaryFraction ?? 1,
+      key: lr.leaveTypeId,
     });
   }
   for (const p of profiles) {
@@ -505,14 +514,63 @@ async function deriveLopDaysForUsers(
     // S5 — the payment window from the same employment facts the LOP walk
     // uses (one read, one truth): working days in [hireDate, LWD] ∩ window.
     const win = paymentWindowBetween(start, end, holidays, { from: opts.employmentFrom, until: opts.employmentUntil });
+    // P15 (PR-06) — one walk produces the charge total AND the per-source
+    // breakdown; the detail freezes onto the slip's lopDetail (null when
+    // nothing was docked — an all-zero breakdown is noise, not honesty).
+    const breakdown = deriveLopBreakdownBetween(start, end, holidays, userMarks, spans, opts);
+    const detailLeaveRows: LopDetailT["leave"] = breakdown.leave.map((row) => {
+      const t = typeById.get(row.key);
+      // A deleted type with a live request still docks (the span carried
+      // its facts); the detail row keeps the id and degrades gracefully.
+      const paid = t?.paid ?? true;
+      const fraction = t ? (t.paid ? t.salaryFraction : 0) : 1;
+      return {
+        leaveTypeId: row.key,
+        code: t?.code ?? "—",
+        name: t?.name ?? "(deleted leave type)",
+        takenDays: row.takenDays,
+        chargedDays: row.chargedDays,
+        fraction,
+        paid,
+      };
+    });
+    const lopDetail: LopDetailT | null = breakdown.total > 0
+      ? { absentDays: breakdown.absentDays, halfDays: breakdown.halfDays, unmarkedDays: breakdown.unmarkedDays, leave: detailLeaveRows }
+      : null;
     result.set(u, {
-      lopDays: deriveLopDaysBetween(start, end, holidays, userMarks, spans, opts),
+      lopDays: breakdown.total,
       paidDays: win.paidDays,
       clippedFrom: win.clippedFrom,
       clippedUntil: win.clippedUntil,
+      lopDetail,
     });
   }
   return result;
+}
+
+/** P15 (PR-06) — null-safe read of the frozen charge breakdown (Prisma's
+ * JsonValue narrowed to the stored shape; anything malformed reads as null
+ * rather than crashing the payroll views — the money lives in lopDays and
+ * the LOP line, the detail is display). */
+function parseLopDetail(v: unknown): LopDetailT | null {
+  if (v == null || typeof v !== "object") return null;
+  const d = v as Record<string, unknown>;
+  const num = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+  const leave = Array.isArray(d.leave)
+    ? d.leave.map((r) => {
+        const row = (r ?? {}) as Record<string, unknown>;
+        return {
+          leaveTypeId: typeof row.leaveTypeId === "string" ? row.leaveTypeId : "",
+          code: typeof row.code === "string" ? row.code : "—",
+          name: typeof row.name === "string" ? row.name : "(unknown leave)",
+          takenDays: num(row.takenDays),
+          chargedDays: num(row.chargedDays),
+          fraction: num(row.fraction),
+          paid: row.paid === true,
+        };
+      })
+    : [];
+  return { absentDays: num(d.absentDays), halfDays: num(d.halfDays), unmarkedDays: num(d.unmarkedDays), leave };
 }
 
 /** The runs list (newest window first — P10: sorted by the run's real
@@ -707,12 +765,13 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       data: {
         userId: string; slipNo: string; earnings: string; deductions: string;
         lopDays: number; lopSource: string; paidDays: number; gross: number; net: number; withholdStatus: string;
+        lopDetail: Prisma.InputJsonValue | undefined;
       };
       consumed: ConsumedEntry[];
     };
     const slipPlans: SlipPlan[] = structures.map((s, i) => {
       const facts = lopByUser.get(s.userId)
-        ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false };
+        ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false, lopDetail: null };
       const earnings = scaleEarningsToPaidDays(
         windowEarnings(parseComponents(s.components)),
         facts.paidDays,
@@ -763,6 +822,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           deductions: JSON.stringify(deductions),
           lopDays,
           lopSource: "AUTO",
+          lopDetail: facts.lopDetail ? (facts.lopDetail as unknown as Prisma.InputJsonValue) : undefined,
           paidDays: facts.paidDays,
           gross,
           net,
@@ -964,6 +1024,7 @@ export async function getPayrollRun(
         note: p.note,
         lopDays: p.lopDays,
         lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
+        lopDetail: parseLopDetail(p.lopDetail),
         version: p.version,
         paidDays: p.paidDays ?? null,
         gross: p.gross,
@@ -1078,6 +1139,10 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     // already carries (AUTO or a previous MANUAL).
     const lopDaysChanged = lopDays !== slip.lopDays;
     const lopSource = lopDaysChanged ? "MANUAL" : (slip.lopSource === "MANUAL" ? "MANUAL" : "AUTO");
+    // P15 (PR-06) — a manual override replaces the derivation, so its
+    // frozen breakdown no longer describes the charge: drop it (the modal
+    // honestly says "manually set by HR"). An unchanged save keeps it.
+    const lopDetailWrite = lopDaysChanged ? Prisma.DbNull : undefined;
     const grossBefore = slip.gross;
     const netBefore = slip.net;
     // S6 — the LOP basis excludes window-exempt lines (flags ride the
@@ -1106,6 +1171,7 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
         deductions: JSON.stringify(deductions),
         lopDays,
         lopSource,
+        lopDetail: lopDetailWrite,
         note: data.note,
         gross,
         net,
@@ -1192,7 +1258,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
     const periodHolidays = await getHolidayLookup(windowStart, windowEnd);
     const lopByUser = await deriveLopDaysForUsers([data.userId], { start: windowStart, end: windowEnd }, periodHolidays);
     const facts = lopByUser.get(data.userId)
-      ?? { lopDays: 0, paidDays: run.workingDays, clippedFrom: false, clippedUntil: false };
+      ?? { lopDays: 0, paidDays: run.workingDays, clippedFrom: false, clippedUntil: false, lopDetail: null };
     const lopDays = facts.lopDays;
     // S5 (PR-B06) — the joiner's earnings scale to their employment window:
     // pre-join days are no longer a manual HR LOP call, the run snapshots
@@ -1253,6 +1319,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       deductions: JSON.stringify(deductions),
       lopDays,
       lopSource: "AUTO",
+      lopDetail: facts.lopDetail ? (facts.lopDetail as unknown as Prisma.InputJsonValue) : undefined,
       paidDays: facts.paidDays,
       gross,
       net,
@@ -1495,6 +1562,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         note: p.note,
         lopDays: p.lopDays,
         lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
+        lopDetail: parseLopDetail(p.lopDetail),
         version: p.version,
         paidDays: p.paidDays ?? null,
         gross: p.gross,
