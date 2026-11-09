@@ -737,6 +737,20 @@ export interface SalaryStructureT {
   /** P10 (PR-B05) — the cadence this structure pays on (PR-03's
    * payroll_frequency). Pre-P10 rows read as MONTHLY. */
   frequency: PayrollFrequencyT;
+  /** P16 (PR-04) — optional component-keyed YTD opening rows (annual
+   * amounts earned before this system; seeds the fiscal year containing
+   * this structure's effectiveFrom in the read-time aggregates). null =
+   * none (pre-P16 rows). */
+  openingYtd: OpeningYtdRowT[] | null;
+}
+
+/** P16 (PR-04) — one opening row on a structure. gross/net openings derive
+ * from the rows at aggregate time (Σ earnings − Σ deductions). */
+export interface OpeningYtdRowT {
+  key: string;
+  label: string;
+  side: "EARNING" | "DEDUCTION";
+  amount: number;
 }
 
 /** F1.5 — one catalog row of the salary component vocabulary
@@ -754,6 +768,11 @@ export interface SalaryComponentT {
   /** PR-B02 (S6) — depends_on_payment_days: false = window-exempt flat
    * line (no S5 scaling, no LOP docking). Default true. */
   dependsOnPaymentDays: boolean;
+  /** P16 (PR-11) — optional catalog validity window (null = unbounded).
+   * The structure editor badges rows whose window doesn't cover the
+   * structure's effectiveFrom; saveSalaryStructure refuses them. */
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -824,6 +843,10 @@ export interface PayslipT {
   ytdGross: number;
   mtdNet: number;
   componentYtd: ComponentYtdRowT[];
+  /** P16 (PR-11) — the fiscal-year basis the aggregates were computed under
+   * (1 = calendar year; the modal renders "YTD (FY 2026/27)" otherwise).
+   * Optional: omitted by older callers / the live preview. */
+  fiscalYearStartMonth?: number;
   /** P8 (PR-19/PR-B13) — "" normal | WITHHELD (net held, not disbursed;
    * excluded from YTD) | RELEASED (paid via a WITHHELD_RELEASE adjustment
    * in a later period). */

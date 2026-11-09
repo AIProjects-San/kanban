@@ -61,6 +61,10 @@ export async function updateWorkspaceSettings(input: Partial<{
   /** P9 (PR-B26) — pay attendance overtime into payroll (Settings →
    * General; lib/overtime-bridge.ts prices the slip line). */
   overtimePayEnabled?: boolean;
+  /** P16 (PR-11) — the month the fiscal year starts (1–12; 1 = calendar
+   * year; Settings → General; lib/payslip-aggregates.ts resets YTD at the
+   * fiscal boundary). */
+  fiscalYearStartMonth?: number;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

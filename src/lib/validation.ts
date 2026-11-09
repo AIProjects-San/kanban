@@ -206,6 +206,9 @@ export const workspaceSettingsSchema = z.object({
   payrollRoundingMode: z.enum(["ROUND_2DP", "ROUND_NET_NEAREST"]).optional(),
   // P9 (PR-B26) — pay attendance overtime into payroll (default OFF).
   overtimePayEnabled: z.boolean().optional(),
+  // P16 (PR-11) — the month the fiscal year starts (1–12; 1 = calendar
+  // year = the pre-P16 YTD basis byte-for-byte).
+  fiscalYearStartMonth: z.number().int().finite().min(1).max(12).optional(),
 }).strict(); // reject unknown keys
 
 /**
@@ -866,6 +869,24 @@ export const saveSalaryStructureSchema = z.object({
   // on (default MONTHLY keeps every pre-P10 call byte-identical; only
   // structures matching a run's cadence join it).
   frequency: z.enum(PAYROLL_FREQUENCY_VALUES).default("MONTHLY"),
+  // P16 (PR-04 opening balances) — optional component-keyed YTD opening rows
+  // (annual amounts earned before this system; seeds the fiscal year that
+  // contains this structure's effectiveFrom). Absent = keep the stored
+  // value (the P5 maxBenefits wire convention); null = clear.
+  openingYtd: z
+    .array(
+      z
+        .object({
+          key: z.string().trim().min(1, "A component code is required.").max(60),
+          label: z.string().trim().max(120).default(""),
+          side: z.enum(["EARNING", "DEDUCTION"]),
+          amount: z.number().min(0).max(100_000_000),
+        })
+        .strict(),
+    )
+    .max(30)
+    .nullable()
+    .optional(),
 }).strict();
 
 // F1.5 — the salary component catalog (docs/Fernly_HR_Payroll_Enhancement_Plan.md
@@ -884,9 +905,17 @@ export const saveSalaryComponentSchema = z.object({
   // implicit behavior — every line scaled with the employment window and
   // was docked by LOP). false = window-exempt flat line.
   dependsOnPaymentDays: z.boolean().default(true),
+  // P16 (PR-11 component effective windows) — optional catalog validity
+  // window (YYYY-MM-DD; null/absent = unbounded). from must precede to.
+  effectiveFrom: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use the YYYY-MM-DD date format.").nullable().optional(),
+  effectiveTo: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use the YYYY-MM-DD date format.").nullable().optional(),
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(9_999).default(0),
-}).strict();
+}).strict().refine(
+  (d) =>
+    !d.effectiveFrom || !d.effectiveTo || d.effectiveFrom <= d.effectiveTo,
+  { message: "The effective window's start must precede its end." },
+);
 
 export const deleteSalaryComponentSchema = z.object({
   id: cuidish,

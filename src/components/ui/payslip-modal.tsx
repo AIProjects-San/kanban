@@ -19,6 +19,9 @@ import type { PayslipT, PayslipLineT } from "@/lib/types";
 import { updatePayslip } from "@/server-actions/payroll";
 import { computeLop, payslipTotals, lopBasisGross, withRoundingLine, LOP_LINE_KEY, ROUNDING_LINE_KEY, type PayrollRoundingMode } from "@/lib/payroll-math";
 import { componentYtdAmount } from "@/lib/payslip-aggregates";
+// P16 (PR-11) — the fiscal-year label for the YTD chip ("2026/27" when the
+// workspace basis isn't the calendar year).
+import { fiscalYearLabel, fiscalYearOf, parsePayrollPeriodKey } from "@/lib/payroll-windows";
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -134,6 +137,18 @@ export function PayslipModal({
 
   if (!payslip) return null;
   const p = payslip;
+
+  // P16 (PR-11) — the YTD chip: the fiscal-year label when the workspace
+  // basis isn't the calendar year (null at startMonth 1 — the chip and the
+  // basis sentence stay hidden, byte-identical to the pre-P16 modal).
+  const fyStart = p.fiscalYearStartMonth ?? 1;
+  const ytdBasisChip =
+    fyStart !== 1
+      ? fiscalYearLabel(
+          fiscalYearOf(parsePayrollPeriodKey(p.runPeriod)?.end?.getTime() ?? 0, fyStart),
+          fyStart,
+        )
+      : null;
 
   const lineEditor = (
     lines: PayslipLineT[],
@@ -313,18 +328,20 @@ export function PayslipModal({
         {/* Totals — P11 (PR-B09): the period aggregates ride the same box
             (YTD gross/net through this period + the month-to-date net, which
             sums this calendar month's slips — meaningful when several runs
-            land in one month, e.g. weekly cadences). */}
+            land in one month, e.g. weekly cadences). P16: the YTD cells name
+            the fiscal basis when it isn't the calendar year. */}
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 grid grid-cols-3 gap-2 text-xs" data-testid="payslip-totals">
           <div><div className="text-muted-foreground">Gross</div><div className="font-semibold tabular-nums">{money(totals.gross)}</div></div>
           <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions)}</div></div>
           <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
-          <div><div className="text-muted-foreground">YTD gross</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{money(p.ytdGross)}</div></div>
-          <div><div className="text-muted-foreground">YTD net</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{money(p.ytdNet)}</div></div>
+          <div><div className="text-muted-foreground">YTD gross{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{money(p.ytdGross)}</div></div>
+          <div><div className="text-muted-foreground">YTD net{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{money(p.ytdNet)}</div></div>
           <div><div className="text-muted-foreground">Month-to-date net</div><div className="font-semibold tabular-nums" data-testid="payslip-mtd-net">{money(p.mtdNet)}</div></div>
         </div>
         <div className="text-xs text-muted-foreground" data-testid="payslip-ytd-basis">
           YTD net (through {p.runPeriod}): <strong data-testid="payslip-ytd">{money(p.ytdNet)}</strong>
           {editable ? " — updates when this slip is saved." : ""}
+          {ytdBasisChip ? ` YTD basis: fiscal year ${ytdBasisChip} (resets at the fiscal boundary, not January 1).` : ""}
           {" "}Per-line "YTD" figures are each component's year total through this period (read-time).
           {" "}HR basis: every run of the year including this OPEN one — your
           employees' own payslip view counts locked (paid) runs only, so the

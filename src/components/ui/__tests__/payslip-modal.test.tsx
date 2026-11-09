@@ -236,3 +236,20 @@ describe("PayslipModal (LOCKED run)", () => {
     expect(screen.queryByTestId("payslip-lop-source")).toBeNull();
   });
 });
+
+describe("PayslipModal — P16 (PR-11) fiscal-year YTD chip", () => {
+  it("shows the FY chip + basis note when the workspace basis is April; nothing at calendar year", () => {
+    const { rerender } = render(
+      <PayslipModal payslip={payslip({ fiscalYearStartMonth: 4 })} onClose={onClose} onChanged={onChanged} />,
+    );
+    // Nov 2026 falls in FY 2026/27 (Apr 2026 – Mar 2027).
+    const totals = screen.getByTestId("payslip-totals");
+    expect(totals.textContent).toContain("2026/27");
+    expect(screen.getByTestId("payslip-ytd-basis").textContent).toContain("fiscal year 2026/27");
+
+    // Calendar-year basis (or field absent): no chip, byte-identical note.
+    rerender(<PayslipModal payslip={payslip({ fiscalYearStartMonth: 1 })} onClose={onClose} onChanged={onChanged} />);
+    expect(screen.getByTestId("payslip-totals").textContent).not.toContain("2026/27");
+    expect(screen.getByTestId("payslip-ytd-basis").textContent).not.toContain("fiscal year");
+  });
+});

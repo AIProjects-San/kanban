@@ -24,7 +24,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
-import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT, LopDetailT } from "@/lib/types";
+import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT, LopDetailT, OpeningYtdRowT } from "@/lib/types";
 import {
   saveSalaryStructureSchema,
   createPayrollRunSchema,
@@ -81,11 +81,17 @@ import {
   resolvePayrollWindow,
   runWindowEnd,
   runWindowStart,
+  fiscalYearOf,
   type PayrollFrequency,
 } from "@/lib/payroll-windows";
 // P11 (PR-B09) — read-time payslip aggregates (YTD gross/net, MTD net,
 // per-component YTD) — ONE kernel for both the HR and self-service reads.
-import { computeRunningAggregates } from "@/lib/payslip-aggregates";
+// P16 (PR-11) — the kernel now also takes the fiscal-year basis + the SSA
+// opening entries (both default to the pre-P16 behavior).
+import {
+  computeRunningAggregates,
+  type OpeningYtdEntry,
+} from "@/lib/payslip-aggregates";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -95,7 +101,31 @@ type StructureRow = {
   effectiveFrom: Date; isActive: boolean; createdAt: Date;
   maxBenefits?: number | null;
   frequency?: string | null;
+  openingYtd?: unknown;
 };
+
+/** P16 (PR-04) — parse a structure's stored opening rows defensively
+ * (null / malformed → null; the write path guarantees the shape). */
+function parseOpeningYtd(raw: unknown): OpeningYtdRowT[] | null {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) {
+    const rows = raw.filter(
+      (r): r is OpeningYtdRowT =>
+        !!r && typeof r === "object" &&
+        typeof (r as { key?: unknown }).key === "string" && (r as { key: string }).key.length > 0 &&
+        ((r as { side?: unknown }).side === "EARNING" || (r as { side?: unknown }).side === "DEDUCTION") &&
+        Number.isFinite((r as { amount?: unknown }).amount),
+    );
+    if (rows.length === 0) return null;
+    return rows.map((r) => ({
+      key: r.key,
+      label: typeof r.label === "string" ? r.label : r.key,
+      side: r.side,
+      amount: Math.max(0, Number(r.amount) || 0),
+    }));
+  }
+  return null;
+}
 
 function serializeStructure(
   s: StructureRow,
@@ -117,6 +147,8 @@ function serializeStructure(
     createdAt: s.createdAt.toISOString(),
     maxBenefits: s.maxBenefits ?? 0,
     frequency: (s.frequency || "MONTHLY") as SalaryStructureT["frequency"],
+    // P16 — the SSA opening YTD rows (null = none).
+    openingYtd: parseOpeningYtd(s.openingYtd),
   };
 }
 
@@ -128,6 +160,39 @@ async function signedOfferUserIds(): Promise<Set<string>> {
     select: { userId: true },
   });
   return new Set(rows.map((r) => r.userId).filter((u): u is string => !!u));
+}
+
+/** P16 (PR-04) — the SSA opening entries for the aggregate kernel: every
+ * structure (active OR retired — an opening is a fact of what was earned)
+ * whose parsed opening rows exist and whose effectiveFrom falls in a fiscal
+ * year ANY of the given users has (or will have) a slip in. The entry's
+ * fiscalStartYear is resolved through the SAME fiscalYearOf the kernel uses,
+ * so basis flips re-attribute openings consistently on the next read. */
+async function openingEntriesForUsers(
+  userIds: string[],
+  fiscalYearStartMonth: number,
+): Promise<OpeningYtdEntry[]> {
+  if (userIds.length === 0) return [];
+  const structures = await db.salaryStructure.findMany({
+    where: { userId: { in: userIds } },
+    select: { userId: true, effectiveFrom: true, openingYtd: true },
+  });
+  const out: OpeningYtdEntry[] = [];
+  for (const s of structures) {
+    const rows = parseOpeningYtd(s.openingYtd);
+    if (!rows) continue;
+    out.push({
+      userId: s.userId,
+      fiscalStartYear: fiscalYearOf(s.effectiveFrom.getTime(), fiscalYearStartMonth),
+      components: rows.map((r) => ({
+        key: r.key,
+        label: r.label || r.key,
+        side: r.side,
+        amount: r.amount,
+      })),
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,20 +237,74 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
     if (!data.isActive) {
       throw new AuthorizationError("Deactivate a structure by saving its replacement — history must keep an active record.");
     }
+    const effectiveFrom = data.effectiveFrom
+      ? new Date(`${data.effectiveFrom}T00:00:00Z`)
+      : new Date();
+    const effectiveDay = effectiveFrom.toISOString().slice(0, 10);
+
+    // P16 (PR-04 duplicate guard) — one structure per employee per effective
+    // date (the benchmark's SSA duplicate guard; the retire-on-revision
+    // discipline already guarantees one ACTIVE, this refuses a SECOND row
+    // for the same day — a revision must move the date forward, history
+    // must stay addressable by date). Updates keep their own day.
+    const sameDay = await db.salaryStructure.findFirst({
+      where: { userId: data.userId, effectiveFrom: { gte: effectiveFrom, lt: new Date(`${effectiveDay}T23:59:59.999Z`) } },
+      select: { id: true },
+    });
+    if (sameDay && sameDay.id !== data.id) {
+      throw new AuthorizationError(
+        `${user.name} already has a structure effective ${effectiveDay} — revise it or pick another effective date.`,
+      );
+    }
+
+    // P16 (PR-11 component effective windows) — a structure's lines must be
+    // valid ON the structure's effectiveFrom (the catalog row owns the
+    // window; structures keep snapshot copies, so this check bites only at
+    // write time for the NEW row). Friendly error names the row + window.
+    const catalogRows = await db.salaryComponent.findMany({
+      select: { code: true, effectiveFrom: true, effectiveTo: true },
+    });
+    const windowByCode = new Map(catalogRows.map((r) => [r.code, r]));
+    for (const c of data.components) {
+      const cat = windowByCode.get(c.key);
+      if (!cat) continue; // unseen codes auto-register unbounded at creation
+      const fromOk = !cat.effectiveFrom || cat.effectiveFrom.getTime() <= effectiveFrom.getTime();
+      const toOk = !cat.effectiveTo || effectiveFrom.getTime() <= cat.effectiveTo.getTime();
+      if (!fromOk || !toOk) {
+        throw new AuthorizationError(
+          `Component "${c.key}" is not in its catalog window (${cat.effectiveFrom ? cat.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${cat.effectiveTo ? cat.effectiveTo.toISOString().slice(0, 10) : "—"}) at the structure's effective date ${effectiveDay}.`,
+        );
+      }
+    }
+
     const payload = {
       userId: data.userId,
       components: JSON.stringify(data.components),
       notes: data.notes,
-      effectiveFrom: data.effectiveFrom ? new Date(`${data.effectiveFrom}T00:00:00Z`) : new Date(),
+      effectiveFrom,
       isActive: true,
       createdById: auth.userId,
       // P5 — the flexible-benefit cap rides the structure (0 = no cap).
       ...(data.maxBenefits !== undefined ? { maxBenefits: data.maxBenefits } : {}),
       // P10 — the cadence this structure pays on (default MONTHLY).
       frequency: data.frequency,
+      // P16 (PR-04) — the opening YTD rows. Absent = the key is omitted
+      // entirely (update keeps the stored rows, create stores none); an
+      // explicitly emptied list clears the column (DbNull — the same
+      // discipline updatePayslip uses to clear lopDetail).
+      ...(data.openingYtd !== undefined
+        ? {
+            openingYtd:
+              data.openingYtd && data.openingYtd.length > 0
+                ? (data.openingYtd as unknown as Prisma.InputJsonValue)
+                : Prisma.DbNull,
+          }
+        : {}),
     };
     let row: { id: string };
     if (data.id) {
+      // openingYtd is absent from payload when the wire omitted it → the
+      // column stays untouched (Prisma only writes given keys).
       row = await db.salaryStructure.update({ where: { id: data.id }, data: payload });
     } else {
       // One ACTIVE structure per employee: retire the previous one.
@@ -939,11 +1058,12 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
 }
 
 /** One run's payslips with names + YTD net (windows ending in the same
- * calendar year, up to and including this run — OPEN periods count so the
- * current period is live). */
+ * FISCAL year (P16 — calendar year when fiscalYearStartMonth is 1), up to
+ * and including this run — OPEN periods count so the current period is
+ * live). */
 export async function getPayrollRun(
   runId: string,
-): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT"; roundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST" }>> {
+): Promise<ActionResult<{ run: PayrollRunT; payslips: PayslipT[]; unmarkedMode: "IGNORED" | "ABSENT"; roundingMode: "ROUND_2DP" | "ROUND_NET_NEAREST"; fiscalYearStartMonth: number }>> {
   return toResult(async () => {
     await requirePermission("payroll:manage");
     const id = String(runId ?? "").trim();
@@ -958,10 +1078,16 @@ export async function getPayrollRun(
     // to the old period-string logic for monthly rows; chronological for
     // mixed cadences — a weekly run ending Nov 8 counts toward the November
     // month-end YTD).
+    // P16 — the "year" is now the FISCAL year (Workspace.fiscalYearStartMonth,
+    // default 1 = the calendar year, so the pre-P16 selection is
+    // byte-identical): a run belongs to the fiscal year its window ends in.
     const runEnd = runWindowEnd(run.period, run.endDate);
-    const year = runEnd ? runEnd.getUTCFullYear() : Number(run.period.slice(0, 4));
+    const fiscalYearStartMonth = (
+      await getWorkspaceConfig()
+    ).workspace.fiscalYearStartMonth;
+    const year = runEnd ? fiscalYearOf(runEnd.getTime(), fiscalYearStartMonth) : Number(run.period.slice(0, 4));
 
-    // YTD basis: every payslip in same-year runs up to this period.
+    // YTD basis: every payslip in same-FISCAL-year runs up to this period.
     // P8 — WITHHELD/RELEASED slips never count: a held net is not paid, and
     // a released one already paid through its WITHHELD_RELEASE adjustment
     // (money counts exactly once, in the release period's slip) — the
@@ -973,7 +1099,7 @@ export async function getPayrollRun(
     const runIdsUpTo = yearRuns
       .filter((r) => {
         const end = runWindowEnd(r.period, r.endDate);
-        return end != null && runEnd != null && end.getUTCFullYear() === year && end.getTime() <= runEnd.getTime();
+        return end != null && runEnd != null && fiscalYearOf(end.getTime(), fiscalYearStartMonth) === year && end.getTime() <= runEnd.getTime();
       })
       .map((r) => r.id);
     const windowEndByRun = new Map(
@@ -981,10 +1107,18 @@ export async function getPayrollRun(
     );
     // P11 (PR-B09) — read-time aggregates through the ONE kernel both
     // surfaces share: YTD gross/net, MTD net and per-component YTD.
+    // P16 — the kernel gets the fiscal basis + the SSA opening rows
+    // (structures whose effectiveFrom falls in a represented fiscal year,
+    // active OR retired — an opening is a fact of what was earned, tied to
+    // the fiscal year of the structure that carried it in).
     const yearSlips = await db.payslip.findMany({
       where: { runId: { in: runIdsUpTo } },
       select: { id: true, userId: true, slipNo: true, gross: true, net: true, withholdStatus: true, earnings: true, deductions: true, runId: true },
     });
+    const openings = await openingEntriesForUsers(
+      [...new Set(yearSlips.map((s) => s.userId))],
+      fiscalYearStartMonth,
+    );
     const aggregates = computeRunningAggregates(
       yearSlips.map((s) => ({
         id: s.id,
@@ -997,6 +1131,7 @@ export async function getPayrollRun(
         deductions: s.deductions,
         windowEndMs: windowEndByRun.get(s.runId) ?? 0,
       })),
+      { fiscalYearStartMonth, openings },
     );
 
     const [users, profiles] = await Promise.all([
@@ -1036,6 +1171,8 @@ export async function getPayrollRun(
         ytdGross: aggregates.get(p.id)?.ytdGross ?? p.gross,
         mtdNet: aggregates.get(p.id)?.mtdNet ?? p.net,
         componentYtd: aggregates.get(p.id)?.componentYtd ?? [],
+        // P16 — the fiscal basis behind these numbers (the modal's chip).
+        fiscalYearStartMonth,
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
 
@@ -1061,6 +1198,9 @@ export async function getPayrollRun(
       // creation-time snapshot).
       unmarkedMode: (await getWorkspaceConfig()).workspace.unmarkedAttendanceMode,
       roundingMode: (await getWorkspaceConfig()).workspace.payrollRoundingMode,
+      // P16 — the YTD basis the aggregates were computed under (the modal's
+      // "YTD (FY 2026/27)" chip renders ≠ calendar year).
+      fiscalYearStartMonth,
     };
   });
 }
@@ -1514,7 +1654,7 @@ export async function getPayrollData(): Promise<ActionResult<{ structures: Salar
 export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
   return toResult(async () => {
     const auth = await getSessionOrThrow();
-    const [slips, profile] = await Promise.all([
+    const [slips, profile, fiscalYearStartMonth] = await Promise.all([
       db.payslip.findMany({
         where: { userId: auth.userId, run: { status: "LOCKED" } },
         include: { run: { select: { period: true, workingDays: true, startDate: true, endDate: true } } },
@@ -1523,14 +1663,18 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         where: { userId: auth.userId },
         select: { jobTitle: true },
       }),
+      getWorkspaceConfig().then((c) => c.workspace.fiscalYearStartMonth),
     ]);
 
     // P11 (PR-B09) — read-time aggregates through the ONE kernel both
     // surfaces share (self-service basis: LOCKED runs only, held/released
     // money carried forward, never accumulated). Ordering + year/month
-    // attribution by the run's REAL window end (P10).
+    // attribution by the run's REAL window end (P10). P16 — the same fiscal
+    // basis as the HR surface + this employee's opening rows, so the two
+    // surfaces can never disagree.
     const runEndMs = (p: { run: { period: string; startDate: Date | null; endDate: Date | null } }) =>
       runWindowEnd(p.run.period, p.run.endDate)?.getTime() ?? 0;
+    const openings = await openingEntriesForUsers([auth.userId], fiscalYearStartMonth);
     const aggregates = computeRunningAggregates(
       slips.map((s) => ({
         id: s.id,
@@ -1543,6 +1687,7 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         deductions: s.deductions,
         windowEndMs: runEndMs(s),
       })),
+      { fiscalYearStartMonth, openings },
     );
 
     return [...slips]
@@ -1573,6 +1718,8 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         ytdGross: aggregates.get(p.id)?.ytdGross ?? p.gross,
         mtdNet: aggregates.get(p.id)?.mtdNet ?? p.net,
         componentYtd: aggregates.get(p.id)?.componentYtd ?? [],
+        // P16 — the fiscal basis behind these numbers (the modal's chip).
+        fiscalYearStartMonth,
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
   });

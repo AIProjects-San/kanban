@@ -73,6 +73,8 @@ const STRUCTURES: SalaryStructureT[] = [
     components: [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 80_400 }],
     notes: "", effectiveFrom: "2026-07-01T00:00:00.000Z", isActive: true,
     createdAt: "2026-07-01T00:00:00.000Z", maxBenefits: 0, frequency: "MONTHLY",
+    // P16 — null = no opening rows (the pre-P16 shape).
+    openingYtd: null,
   },
 ];
 

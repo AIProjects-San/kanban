@@ -548,6 +548,14 @@ model Workspace {
   // monthly gross (÷ working days ÷ 8h — the gross-basis rate). Default
   // OFF: overtime pay is a policy choice, never a surprise line.
   overtimePayEnabled  Boolean  @default(false)
+  // P16 (PR-11) — the fiscal year YTD basis for payslip aggregates. 1 =
+  // calendar year (the default — zero behavior change, the pre-P16
+  // semantics byte-for-byte); e.g. 4 = the April–March fiscal year (the NZ
+  // convention the demo seeds). The pure fiscalYearOf helper
+  // (lib/payroll-windows.ts) resolves any date into its fiscal year; the
+  // aggregates kernel resets YTD at the fiscal boundary instead of January
+  // 1. MTD stays the calendar month regardless.
+  fiscalYearStartMonth Int     @default(1)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -1101,6 +1109,16 @@ model SalaryComponent {
   // owns the knob; structures/payslips snapshot copies per line (sparse:
   // only false is stored in the JSON).
   dependsOnPaymentDays Boolean @default(true)
+  // P16 (PR-11's component effective windows) — optional validity window
+  // on the catalog row (the benchmark's Payroll Period Date component
+  // start/end dates, Fernly-shaped on the master instead of the
+  // assignment). Null = unbounded (the default = pre-P16). The structure
+  // editor badges rows whose window doesn't cover the structure's
+  // effectiveFrom and saveSalaryStructure refuses them (friendly error);
+  // structures themselves keep snapshot copies, so editing a window never
+  // rewrites history.
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())
@@ -1658,6 +1676,15 @@ model SalaryStructure {
   // periodic per this cadence. MONTHLY keeps the historical behavior for
   // every pre-P10 row.
   frequency     String   @default("MONTHLY")
+  // P16 (PR-04 opening balances) — optional component-keyed YTD OPENING
+  // rows (annual amounts earned before this system — the mid-fiscal-year
+  // joiner's prior-employer YTD; the benchmark's SSA opening balances,
+  // Fernly-shaped as structure data read at aggregate time). Stored shape:
+  // [{key, label, side, amount}] (same merge discipline as payslip lines;
+  // gross/net openings derive from the rows). Seeds the fiscal year that
+  // contains this structure's effectiveFrom in the read-time aggregates
+  // (lib/payslip-aggregates.ts); null = none (the default).
+  openingYtd    Json?
   effectiveFrom DateTime @default(now())
   isActive      Boolean  @default(true)
   createdById   String   @default("")

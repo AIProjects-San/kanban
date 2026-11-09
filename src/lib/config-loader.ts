@@ -120,6 +120,10 @@ export interface WorkspaceSettingsT {
    * on, run creation emits an "Overtime" earning line per employee from the
    * derived overtimeMinutes (lib/overtime-bridge.ts prices it). */
   overtimePayEnabled: boolean;
+  /** P16 (PR-11) — the month the fiscal year starts (1–12). 1 = calendar
+   * year (the default, pre-P16 semantics); e.g. 4 = April–March. The
+   * payslip-aggregates kernel resets YTD at the fiscal boundary. */
+  fiscalYearStartMonth: number;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -291,6 +295,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           unmarkedAttendanceMode: (workspace.unmarkedAttendanceMode === "ABSENT" ? "ABSENT" : "IGNORED"),
           payrollRoundingMode: (workspace.payrollRoundingMode === "ROUND_NET_NEAREST" ? "ROUND_NET_NEAREST" : "ROUND_2DP"),
           overtimePayEnabled: workspace.overtimePayEnabled === true,
+          fiscalYearStartMonth: Math.min(Math.max(Math.round(workspace.fiscalYearStartMonth) || 1, 1), 12),
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -313,6 +318,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           unmarkedAttendanceMode: "IGNORED",
           payrollRoundingMode: "ROUND_2DP",
           overtimePayEnabled: false,
+          fiscalYearStartMonth: 1,
         },
 
     taskStatuses: taskStatuses.length

@@ -146,6 +146,12 @@ async function main() {
       // P9 (PR-B26) — overtime pays into payroll: the demo's next-month
       // run creation emits Yuki's Overtime line from her derived minutes.
       overtimePayEnabled: true,
+      // P16 (PR-11) — the fiscal year YTD basis: April (the NZ convention).
+      // The demo runs (Oct + Nov 2026, weekly W45) all end inside FY
+      // 2026/27 (Apr 2026 – Mar 2027), so every existing YTD number is
+      // byte-identical to the calendar-year basis — the knob demos without
+      // moving a single fixture.
+      fiscalYearStartMonth: 4,
     },
   });
 
@@ -2303,6 +2309,11 @@ async function main() {
       { code: "bonus", label: "Performance Bonus", kind: "EARNING", mode: "FIXED", defaultAmount: 6_000, sortOrder: 40 },
       { code: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", defaultAmount: 3, sortOrder: 50 },
       { code: "student_loan", label: "Student Loan Repayment", kind: "DEDUCTION", mode: "FIXED", defaultAmount: 2_600, sortOrder: 60 },
+      // P16 (PR-11) — a component with a catalog validity window: the
+      // 2026 study-leave support payment exists only inside FY 2026/27;
+      // the picker badges it ("ends 2027-03-31") and saveSalaryStructure
+      // refuses it for later effective dates.
+      { code: "study_support", label: "Study Support Payment", kind: "EARNING", mode: "FIXED", defaultAmount: 3_000, sortOrder: 65, effectiveFrom: "2026-04-01", effectiveTo: "2027-03-31" },
       // A retired definition: still readable in the catalog list (struck
       // through), never offered by the picker. Structures that used it keep
       // their snapshot copies regardless.
@@ -2317,6 +2328,9 @@ async function main() {
         defaultAmount: c.defaultAmount,
         isActive: c.isActive ?? true,
         sortOrder: c.sortOrder,
+        // P16 — the optional catalog validity window (null = unbounded).
+        effectiveFrom: c.effectiveFrom ? new Date(`${c.effectiveFrom}T00:00:00Z`) : null,
+        effectiveTo: c.effectiveTo ? new Date(`${c.effectiveTo}T00:00:00Z`) : null,
       })),
     });
     const round2 = (n) => Math.round(n * 100) / 100;
@@ -2722,6 +2736,40 @@ async function main() {
           },
         });
         console.log(`  ✓ P10 (PR-B05) cadences: Kofi's WEEKLY structure + the ${weekKey} run LOCKED (window ${weekStart.toISOString().slice(0, 10)} → ${weekEnd.toISOString().slice(0, 10)}, ${weekWorkingDays} working day(s), amounts annual ÷ ${divisor}) — monthly runs exclude him by frequency`);
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // P16 (PR-11 + PR-04) — Diego's opening-YTD structure. Created AFTER
+    // the runs so no seeded payslip moves (zero fixture drift): the next
+    // run HR creates includes him and its YTD visibly seeds from the
+    // prior-employer rows. The workspace basis is April (seeded above), so
+    // the structure's effective date (his October hire) falls inside FY
+    // 2026/27 — the opening rows add to every YTD figure of that fiscal
+    // year, exactly the benchmark's SSA opening-balance semantics.
+    // ------------------------------------------------------------------
+    {
+      const diego = await db.user.findUnique({ where: { email: "diego@fernly.app" }, select: { id: true, name: true } });
+      if (diego) {
+        await db.salaryStructure.create({
+          data: {
+            userId: diego.id,
+            components: JSON.stringify([
+              { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 78_000 },
+              { key: "kiwisaver", label: "KiwiSaver (employer 3%)", kind: "EMPLOYER_CONTRIBUTION", mode: "PERCENT_OF_BASIC", amount: 3 },
+            ]),
+            notes: "Mobile engineer band — joined mid-fiscal-year with prior-employer YTD (P16 demo).",
+            effectiveFrom: new Date("2026-10-05T00:00:00Z"),
+            isActive: true,
+            createdById: hrId,
+            frequency: "MONTHLY",
+            openingYtd: [
+              { key: "basic", label: "Basic Salary (prior employer, Apr–Sep)", side: "EARNING", amount: 39_000 },
+              { key: "student_loan", label: "Student Loan Repayment (prior employer)", side: "DEDUCTION", amount: 1_300 },
+            ],
+          },
+        });
+        console.log("  ✓ P16 (PR-11/PR-04): workspace FY basis April + Diego's structure carries prior-employer opening YTD ($39,000 earned / $1,300 deducted) — the next run's YTD seeds from it");
       }
     }
 

@@ -42,6 +42,8 @@ function serialize(r: {
   mode: string;
   defaultAmount: number;
   dependsOnPaymentDays: boolean;
+  effectiveFrom: Date | null;
+  effectiveTo: Date | null;
   isActive: boolean;
   sortOrder: number;
   createdAt: Date;
@@ -55,6 +57,9 @@ function serialize(r: {
     defaultAmount: r.defaultAmount,
     // S6 — the payment-days knob rides the serialization (UI checkbox).
     dependsOnPaymentDays: r.dependsOnPaymentDays,
+    // P16 — the catalog validity window (null = unbounded).
+    effectiveFrom: r.effectiveFrom ? r.effectiveFrom.toISOString().slice(0, 10) : null,
+    effectiveTo: r.effectiveTo ? r.effectiveTo.toISOString().slice(0, 10) : null,
     isActive: r.isActive,
     sortOrder: r.sortOrder,
     createdAt: r.createdAt.toISOString(),
@@ -89,6 +94,10 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
       mode: data.mode,
       defaultAmount: data.defaultAmount,
       dependsOnPaymentDays: data.dependsOnPaymentDays,
+      // P16 — the optional validity window (null = unbounded; the schema
+      // already refuses a window whose start follows its end).
+      effectiveFrom: data.effectiveFrom ? new Date(`${data.effectiveFrom}T00:00:00Z`) : null,
+      effectiveTo: data.effectiveTo ? new Date(`${data.effectiveTo}T00:00:00Z`) : null,
       isActive: data.isActive,
       sortOrder: data.sortOrder,
     };
@@ -104,7 +113,7 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
           entityType: "SALARY_COMPONENT",
           entityId: updated.id,
           entityLabel: `${updated.code} (${updated.label})`,
-          detail: `${auth.name} updated the salary component ${updated.code} — ${updated.label} (${updated.kind}, ${updated.mode === "PERCENT_OF_BASIC" ? `${updated.defaultAmount}% of basic` : `$${updated.defaultAmount}/yr suggestion`}, ${updated.dependsOnPaymentDays ? "payment-day scaled" : "window-exempt"}, ${updated.isActive ? "active" : "retired"}).`,
+          detail: `${auth.name} updated the salary component ${updated.code} — ${updated.label} (${updated.kind}, ${updated.mode === "PERCENT_OF_BASIC" ? `${updated.defaultAmount}% of basic` : `$${updated.defaultAmount}/yr suggestion`}, ${updated.dependsOnPaymentDays ? "payment-day scaled" : "window-exempt"}${updated.effectiveFrom || updated.effectiveTo ? `, effective ${updated.effectiveFrom ? updated.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${updated.effectiveTo ? updated.effectiveTo.toISOString().slice(0, 10) : "—"}` : ""}, ${updated.isActive ? "active" : "retired"}).`,
         });
         revalidatePath("/");
         return { id: updated.id };
@@ -126,7 +135,7 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
         entityType: "SALARY_COMPONENT",
         entityId: created.id,
         entityLabel: `${created.code} (${created.label})`,
-        detail: `${auth.name} added the salary component ${created.code} — ${created.label} (${created.kind}, ${created.mode === "PERCENT_OF_BASIC" ? `${created.defaultAmount}% of basic` : `$${created.defaultAmount}/yr suggestion`}${created.dependsOnPaymentDays ? "" : ", window-exempt"}).`,
+        detail: `${auth.name} added the salary component ${created.code} — ${created.label} (${created.kind}, ${created.mode === "PERCENT_OF_BASIC" ? `${created.defaultAmount}% of basic` : `$${created.defaultAmount}/yr suggestion`}${created.dependsOnPaymentDays ? "" : ", window-exempt"}${created.effectiveFrom || created.effectiveTo ? `, effective ${created.effectiveFrom ? created.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${created.effectiveTo ? created.effectiveTo.toISOString().slice(0, 10) : "—"}` : ""}).`,
       });
       revalidatePath("/");
       return { id: created.id };

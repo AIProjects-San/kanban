@@ -18,6 +18,7 @@ import { CtcSolverField } from "./ctc-solver-field";
 import { createStructureFromOffer, saveSalaryStructure } from "@/server-actions/payroll";
 import { getSalaryComponents } from "@/server-actions/payroll-components";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
+import type { OpeningYtdRowT } from "@/lib/types";
 
 const KIND_LABEL: Record<string, string> = {
   EARNING: "Earning",
@@ -25,6 +26,25 @@ const KIND_LABEL: Record<string, string> = {
   DEDUCTION: "Deduction",
   STATISTICAL: "Statistical (info)",
 };
+
+/** P16 — one catalog row's window status against a date: null = unbounded
+ * (no badge), else the badge text ("starts …" / "expired …" / "ends …"). */
+function windowBadge(
+  c: Pick<SalaryComponentT, "effectiveFrom" | "effectiveTo">,
+  onDate: string,
+): string | null {
+  if (!c.effectiveFrom && !c.effectiveTo) return null;
+  if (c.effectiveFrom && onDate && onDate < c.effectiveFrom) {
+    return `starts ${c.effectiveFrom}`;
+  }
+  if (c.effectiveTo && onDate && onDate > c.effectiveTo) {
+    return `expired ${c.effectiveTo}`;
+  }
+  if (c.effectiveTo) {
+    return `ends ${c.effectiveTo}`;
+  }
+  return null;
+}
 
 export function StructureModal({
   open,
@@ -49,6 +69,9 @@ export function StructureModal({
   const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
   // P10 (PR-B05) — the cadence this structure pays on (monthly default).
   const [frequency, setFrequency] = useState<PayrollFrequencyT>("MONTHLY");
+  // P16 (PR-04) — the SSA opening YTD rows (annual amounts earned before
+  // this system; seeds the fiscal year containing the effective date).
+  const [openingYtd, setOpeningYtd] = useState<OpeningYtdRowT[]>([]);
   const [busy, setBusy] = useState(false);
   // F1.5 — the component catalog feeding the picker (loaded on open; a
   // failed load degrades to the blank-line path, never blocks the editor).
@@ -56,7 +79,7 @@ export function StructureModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setMaxBenefits(String(edit?.maxBenefits ?? 0)); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setFrequency(edit?.frequency ?? "MONTHLY"); setCatalog([]); }
+    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setMaxBenefits(String(edit?.maxBenefits ?? 0)); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setFrequency(edit?.frequency ?? "MONTHLY"); setOpeningYtd(edit?.openingYtd ? edit.openingYtd.map((r) => ({ ...r })) : []); setCatalog([]); }
   }, [open, edit]);
 
   // F1.5 — catalog for the picker, loaded when the modal opens. The setState
@@ -117,6 +140,9 @@ export function StructureModal({
       isActive: true,
       maxBenefits: Number(maxBenefits) || 0,
       frequency,
+      // P16 — the opening rows ride the save (absent rows = the server
+      // keeps the stored set; an explicitly emptied list clears them).
+      ...(edit ? { openingYtd } : { openingYtd: openingYtd.length > 0 ? openingYtd : null }),
     });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
@@ -242,7 +268,9 @@ export function StructureModal({
             <Plus size={13} /> Add blank component
           </button>
           {/* F1.5 — the catalog picker: prefills a line from a curated
-              definition (amount editable — the catalog row is a suggestion). */}
+              definition (amount editable — the catalog row is a suggestion).
+              P16: options carry their catalog validity window ("ends …") so
+              the window is visible BEFORE a line is added. */}
           {catalog.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
               <select
@@ -256,14 +284,37 @@ export function StructureModal({
                 <option value="">
                   {offerable.length === 0 ? "Catalog fully used" : "Add from catalog…"}
                 </option>
-                {offerable.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.label} ({c.code})
-                  </option>
-                ))}
+                {offerable.map((c) => {
+                  const badge = windowBadge(c, effectiveFrom);
+                  return (
+                    <option key={c.code} value={c.code}>
+                      {c.label} ({c.code}){badge ? ` · ${badge}` : ""}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           )}
+          {/* P16 — client-side pre-check of the server's refusal: lines whose
+              catalog window doesn't cover the effective date are named here
+              (the server still refuses; this makes the reason visible before
+              the round-trip). */}
+          {(() => {
+            const offending = components.flatMap((comp) => {
+              const cat = catalog.find((c) => c.code === comp.key);
+              if (!cat) return [];
+              const badge = windowBadge(cat, effectiveFrom);
+              return badge && (badge.startsWith("starts ") || badge.startsWith("expired "))
+                ? [`${comp.key} — ${badge}`]
+                : [];
+            });
+            if (offending.length === 0) return null;
+            return (
+              <div className="text-xs text-amber-600" data-testid="structure-window-warnings">
+                Outside the catalog window at {effectiveFrom}: {offending.join("; ")}. Saving will be refused until the effective date or the component changes.
+              </div>
+            );
+          })()}
         </div>
 
         {/* Live totals */}
@@ -294,6 +345,74 @@ export function StructureModal({
               data-testid="structure-max-benefits"
             />
           </Field>
+        </div>
+
+        {/* P16 (PR-04) — the SSA opening YTD rows: annual amounts earned
+            before this system (the mid-fiscal-year joiner's prior-employer
+            YTD). They seed the fiscal year containing this structure's
+            effective date in every payslip's read-time YTD; empty = none. */}
+        <div className="rounded-md border border-border px-3 py-2 space-y-1.5" data-testid="structure-opening-block">
+          <div className="flex items-center justify-between">
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Opening YTD balances (annual, earned before Fernly)
+            </div>
+            <button
+              type="button" className="f-btn f-btn-ghost text-xs"
+              onClick={() => setOpeningYtd((prev) => [...prev, { key: "", label: "", side: "EARNING", amount: 0 }])}
+              data-testid="structure-opening-add"
+            >
+              <Plus size={13} /> Add opening row
+            </button>
+          </div>
+          {openingYtd.length === 0 && (
+            <div className="text-xs text-muted-foreground">
+              None — payslip YTD starts from this system's first slip. Add rows only for joiners who earned
+              under a previous employer inside the same fiscal year (the benchmark's SSA opening balances).
+            </div>
+          )}
+          {openingYtd.map((row, i) => (
+            <div key={i} className="flex items-center gap-1.5 flex-wrap" data-testid={`structure-opening-${i}`}>
+              <input
+                className="f-input text-xs grow min-w-[100px]" placeholder="Code (e.g. basic)"
+                value={row.key} maxLength={60}
+                onChange={(e) => setOpeningYtd((prev) => prev.map((r, idx) => (idx === i ? { ...r, key: e.target.value } : r)))}
+                aria-label="Opening component code"
+              />
+              <input
+                className="f-input text-xs grow min-w-[100px]" placeholder="Label"
+                value={row.label} maxLength={120}
+                onChange={(e) => setOpeningYtd((prev) => prev.map((r, idx) => (idx === i ? { ...r, label: e.target.value } : r)))}
+                aria-label="Opening component label"
+              />
+              <select
+                className="f-input text-xs w-auto" value={row.side}
+                onChange={(e) => setOpeningYtd((prev) => prev.map((r, idx) => (idx === i ? { ...r, side: e.target.value as OpeningYtdRowT["side"] } : r)))}
+                aria-label="Opening side"
+              >
+                <option value="EARNING">Earning</option>
+                <option value="DEDUCTION">Deduction</option>
+              </select>
+              <input
+                className="f-input text-xs w-28" type="number" min={0} step="0.01"
+                value={row.amount}
+                onChange={(e) => setOpeningYtd((prev) => prev.map((r, idx) => (idx === i ? { ...r, amount: Number(e.target.value) } : r)))}
+                aria-label="Opening annual amount"
+              />
+              <button
+                type="button" className="f-btn f-btn-icon text-destructive" aria-label="Remove opening row"
+                onClick={() => setOpeningYtd((prev) => prev.filter((_, idx) => idx !== i))}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+          {openingYtd.length > 0 && (
+            <div className="text-xs text-muted-foreground" data-testid="structure-opening-total">
+              Opening gross {formatMoney(openingYtd.filter((r) => r.side === "EARNING").reduce((s, r) => s + (Number(r.amount) || 0), 0))}
+              {" · "}opening net {formatMoney(openingYtd.reduce((s, r) => s + (Number(r.amount) || 0) * (r.side === "EARNING" ? 1 : -1), 0))}
+              {" — "}added to every YTD figure in the fiscal year of {effectiveFrom}.
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap justify-end gap-2">

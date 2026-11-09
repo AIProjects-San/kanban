@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   PAYROLL_FREQUENCY_VALUES,
+  fiscalYearBounds,
+  fiscalYearLabel,
+  fiscalYearOf,
   parsePayrollPeriodKey,
   periodEndMs,
   periodStartMs,
@@ -251,3 +254,44 @@ describe("labels and run-row fallbacks", () => {
 function dayCount(w: { start: Date; end: Date } | null): number {
   return Math.round((w!.end.getTime() - w!.start.getTime()) / 86_400_000) + 1;
 }
+
+describe("fiscal-year helpers (P16 / PR-11)", () => {
+  it("fiscalYearOf maps a date to the year its fiscal year STARTS", () => {
+    // Calendar-year basis (the default): identity.
+    expect(fiscalYearOf(iso("2026-11-30").getTime(), 1)).toBe(2026);
+    expect(fiscalYearOf(iso("2027-01-31").getTime(), 1)).toBe(2027);
+    // April basis: Jan–Mar 2027 still belong to the FY that started Apr 2026.
+    expect(fiscalYearOf(iso("2026-04-01").getTime(), 4)).toBe(2026);
+    expect(fiscalYearOf(iso("2026-12-31").getTime(), 4)).toBe(2026);
+    expect(fiscalYearOf(iso("2027-01-31").getTime(), 4)).toBe(2026);
+    expect(fiscalYearOf(iso("2027-03-31").getTime(), 4)).toBe(2026);
+    expect(fiscalYearOf(iso("2027-04-01").getTime(), 4)).toBe(2027);
+    // A December-start FY rolls in December.
+    expect(fiscalYearOf(iso("2026-11-30").getTime(), 12)).toBe(2025);
+    expect(fiscalYearOf(iso("2026-12-01").getTime(), 12)).toBe(2026);
+    // Out-of-range months clamp to the calendar-year answer (defensive).
+    expect(fiscalYearOf(iso("2026-11-30").getTime(), 0)).toBe(2026);
+    expect(fiscalYearOf(iso("2026-11-30").getTime(), 13)).toBe(2026);
+    expect(fiscalYearOf(iso("2026-11-30").getTime(), Number.NaN)).toBe(2026);
+  });
+
+  it("fiscalYearBounds returns [start, next-start) ms bounds", () => {
+    const { startMs, endMs } = fiscalYearBounds(2026, 4);
+    expect(startMs).toBe(iso("2026-04-01").getTime());
+    expect(endMs).toBe(iso("2027-04-01").getTime());
+    // Calendar-year bounds are exactly the year.
+    const cal = fiscalYearBounds(2026, 1);
+    expect(cal.startMs).toBe(iso("2026-01-01").getTime());
+    expect(cal.endMs).toBe(iso("2027-01-01").getTime());
+    // Membership: end is exclusive.
+    expect(fiscalYearOf(endMs - 1, 4)).toBe(2026);
+    expect(fiscalYearOf(endMs, 4)).toBe(2027);
+  });
+
+  it("fiscalYearLabel renders the calendar year or the spanning form", () => {
+    expect(fiscalYearLabel(2026, 1)).toBe("2026");
+    expect(fiscalYearLabel(2026, 4)).toBe("2026/27");
+    expect(fiscalYearLabel(1999, 7)).toBe("1999/00");
+    expect(fiscalYearLabel(2026, 0)).toBe("2026"); // defensive clamp
+  });
+});

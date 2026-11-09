@@ -315,6 +315,35 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               <option value="ROUND_NET_NEAREST">Round net to whole dollars (auto line)</option>
             </select>
           </Field>
+          {/* P16 (PR-11) — the fiscal year YTD basis. The rule is pure
+              (lib/payroll-windows.ts fiscalYearOf + the payslip-aggregates
+              kernel); this row owns the instance. Read-time only — changing
+              it re-bases every YTD on the next read, nothing stored moves. */}
+          <Field label="Fiscal year starts">
+            <select
+              className="f-input"
+              value={form.fiscalYearStartMonth ?? 1}
+              onChange={(e) => setForm({ ...form, fiscalYearStartMonth: Number(e.target.value) })}
+              data-testid="fiscal-year-select"
+            >
+              {[
+                [1, "January (calendar year)"],
+                [2, "February"],
+                [3, "March"],
+                [4, "April (NZ fiscal year)"],
+                [5, "May"],
+                [6, "June"],
+                [7, "July"],
+                [8, "August"],
+                [9, "September"],
+                [10, "October"],
+                [11, "November"],
+                [12, "December"],
+              ].map(([m, label]) => (
+                <option key={m} value={m}>{label}</option>
+              ))}
+            </select>
+          </Field>
         </FormRow>
         <FormRow>
           {/* P9 (PR-B26) — pay attendance overtime into payroll. The rule is

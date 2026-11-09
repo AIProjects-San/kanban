@@ -1373,8 +1373,11 @@ describe("P1 — createPayAdjustment (the manual writer)", () => {
 
   it("refuses an unknown employee", async () => {
     db.user.findUnique.mockResolvedValueOnce(null);
-    const res = await createPayAdjustment({ userId: "u-ghost", side: "EARNING", period: "2026-12", amount: 5 });
+    // (A label is required too — without one the schema gate fires BEFORE
+    // the employee lookup and the once-mock leaks into the next test.)
+    const res = await createPayAdjustment({ userId: "u-ghost", side: "EARNING", period: "2026-12", amount: 5, label: "Ghost pay" });
     expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/Employee not found/i);
   });
 });
 
@@ -2123,5 +2126,162 @@ describe("P14 — createPayrollRun employee filter (PR-04)", () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("for the selected employees");
     expect(db.payrollRun.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("P16 (PR-11 + PR-04) — fiscal basis, openings, effective windows", () => {
+  it("saveSalaryStructure refuses a second structure on the same effective date (duplicate guard)", async () => {
+    db.salaryStructure.findFirst.mockResolvedValue({ id: "ss-existing" });
+    db.salaryComponent.findMany.mockResolvedValue([]);
+    const res = await saveSalaryStructure({
+      userId: "u-yuki", components: COMPONENTS, effectiveFrom: "2026-11-01",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/already has a structure effective 2026-11-01/);
+    expect(db.salaryStructure.create).not.toHaveBeenCalled();
+  });
+
+  it("the duplicate guard keeps its own row on update (same id passes)", async () => {
+    db.salaryStructure.findFirst.mockResolvedValue({ id: "ss-1" });
+    db.salaryComponent.findMany.mockResolvedValue([]);
+    const res = await saveSalaryStructure({
+      id: "ss-1", userId: "u-yuki", components: COMPONENTS, effectiveFrom: "2026-11-01",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.salaryStructure.update).toHaveBeenCalled();
+  });
+
+  it("saveSalaryStructure refuses a component outside its catalog window at the effective date", async () => {
+    db.salaryStructure.findFirst.mockResolvedValue(null);
+    db.salaryComponent.findMany.mockResolvedValue([
+      { code: "basic", effectiveFrom: null, effectiveTo: new Date("2026-06-30T00:00:00Z") },
+    ]);
+    const res = await saveSalaryStructure({
+      userId: "u-yuki", components: COMPONENTS, effectiveFrom: "2026-11-01",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toMatch(/Component "basic" is not in its catalog window/);
+      expect(res.error).toMatch(/2026-11-01/);
+    }
+    expect(db.salaryStructure.create).not.toHaveBeenCalled();
+  });
+
+  it("a component whose window COVERS the effective date passes", async () => {
+    db.salaryStructure.findFirst.mockResolvedValue(null);
+    db.salaryComponent.findMany.mockResolvedValue([
+      { code: "basic", effectiveFrom: new Date("2026-04-01T00:00:00Z"), effectiveTo: new Date("2027-03-31T00:00:00Z") },
+    ]);
+    const res = await saveSalaryStructure({
+      userId: "u-yuki", components: COMPONENTS, effectiveFrom: "2026-11-01",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.salaryStructure.create).toHaveBeenCalled();
+  });
+
+  it("persists openingYtd rows on create; omitted key never touches the column; emptied clears", async () => {
+    db.salaryStructure.findFirst.mockResolvedValue(null);
+    db.salaryComponent.findMany.mockResolvedValue([]);
+    const openings = [
+      { key: "basic", label: "Basic (prior employer)", side: "EARNING", amount: 39_000 },
+      { key: "student_loan", label: "SL", side: "DEDUCTION", amount: 1_300 },
+    ];
+    const res = await saveSalaryStructure({
+      userId: "u-yuki", components: COMPONENTS, effectiveFrom: "2026-10-05",
+      openingYtd: openings,
+    });
+    expect(res.ok).toBe(true);
+    const createData = (db.salaryStructure.create.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(createData.openingYtd).toEqual(openings);
+
+    // Emptied list → DbNull (the clear).
+    await saveSalaryStructure({
+      userId: "u-yuki", components: COMPONENTS, effectiveFrom: "2026-10-05",
+      openingYtd: [],
+    });
+    const cleared = (db.salaryStructure.create.mock.calls[1][0] as { data: Record<string, unknown> }).data;
+    expect(cleared.openingYtd).toBe(Prisma.DbNull);
+  });
+
+  it("getPayrollRun seeds YTD from the opening rows and names the fiscal basis", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED", fiscalYearStartMonth: 4 } });
+    db.payrollRun.findUnique.mockResolvedValue({
+      ...OPEN_RUN,
+      payslips: [payslipRow({ id: "ps-nov", net: 6_700, gross: 6_700 })],
+    });
+    db.payrollRun.findMany.mockResolvedValue([
+      { id: "run-1", period: "2026-11", startDate: new Date("2026-11-01T00:00:00Z"), endDate: new Date("2026-11-30T00:00:00Z") },
+    ]);
+    db.payslip.findMany.mockResolvedValue([
+      { id: "ps-nov", userId: "u-yuki", slipNo: "PS-2026-11-001", runId: "run-1", gross: 6_700, net: 6_700, withholdStatus: "", earnings: JSON.stringify([{ key: "basic", label: "Basic Salary", amount: 6_700 }]), deductions: "[]" },
+    ]);
+    db.salaryStructure.findMany.mockResolvedValue([
+      { userId: "u-yuki", effectiveFrom: new Date("2026-10-05T00:00:00Z"), openingYtd: [{ key: "basic", label: "Basic (prior)", side: "EARNING", amount: 39_000 }] },
+    ]);
+    const res = await getPayrollRun("run-1");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // Opening (39,000) + the November slip (6,700) — same FY 2026/27.
+      expect(res.data.payslips[0].ytdGross).toBe(45_700);
+      expect(res.data.payslips[0].ytdNet).toBe(45_700);
+      expect(res.data.fiscalYearStartMonth).toBe(4);
+      expect(res.data.payslips[0].fiscalYearStartMonth).toBe(4);
+    }
+  });
+
+  it("getPayrollRun spans the calendar boundary under an April basis (Dec + Jan same FY; Apr next FY)", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED", fiscalYearStartMonth: 4 } });
+    db.payrollRun.findUnique.mockResolvedValue({
+      ...OPEN_RUN,
+      id: "run-jan",
+      period: "2027-01",
+      payslips: [payslipRow({ id: "ps-jan", net: 700, gross: 700, slipNo: "PS-2027-01-001" })],
+    });
+    db.payrollRun.findMany.mockResolvedValue([
+      { id: "run-dec", period: "2026-12", startDate: new Date("2026-12-01T00:00:00Z"), endDate: new Date("2026-12-31T00:00:00Z") },
+      { id: "run-jan", period: "2027-01", startDate: new Date("2027-01-01T00:00:00Z"), endDate: new Date("2027-01-31T00:00:00Z") },
+      { id: "run-apr", period: "2027-04", startDate: new Date("2027-04-01T00:00:00Z"), endDate: new Date("2027-04-30T00:00:00Z") },
+      { id: "run-mar", period: "2027-03", startDate: new Date("2027-03-01T00:00:00Z"), endDate: new Date("2027-03-31T00:00:00Z") },
+    ]);
+    db.payslip.findMany.mockImplementation(async ({ where }: { where: { runId: { in: string[] } } }) =>
+      where.runId.in.includes("run-dec")
+        ? [
+            { id: "ps-dec", userId: "u-yuki", slipNo: "PS-2026-12-001", runId: "run-dec", gross: 300, net: 300, withholdStatus: "", earnings: "[]", deductions: "[]" },
+            { id: "ps-jan", userId: "u-yuki", slipNo: "PS-2027-01-001", runId: "run-jan", gross: 700, net: 700, withholdStatus: "", earnings: "[]", deductions: "[]" },
+          ]
+        : [],
+    );
+    db.salaryStructure.findMany.mockResolvedValue([]);
+    const res = await getPayrollRun("run-jan");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // December 2026 + January 2027 are ONE fiscal year (Apr 2026 – Mar 2027):
+      // the Dec slip counts toward the Jan run's YTD; the Apr run never does.
+      expect(res.data.payslips[0].ytdNet).toBe(1_000);
+    }
+  });
+
+  it("getMyPayslips carries the fiscal basis + the employee's own openings", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { unmarkedAttendanceMode: "IGNORED", fiscalYearStartMonth: 4 } });
+    db.payslip.findMany.mockResolvedValue([
+      {
+        id: "ps-nov", runId: "run-1", userId: "u-yuki", slipNo: "PS-2026-11-001",
+        gross: 6_700, net: 6_700, withholdStatus: "", lopDays: 0, lopSource: "AUTO", version: 0,
+        paidDays: null, note: "",
+        earnings: JSON.stringify([{ key: "basic", label: "Basic Salary", amount: 6_700 }]),
+        deductions: "[]",
+        run: { period: "2026-11", workingDays: 21, startDate: new Date("2026-11-01T00:00:00Z"), endDate: new Date("2026-11-30T00:00:00Z") },
+      },
+    ]);
+    db.salaryStructure.findMany.mockResolvedValue([
+      { userId: "u-yuki", effectiveFrom: new Date("2026-10-05T00:00:00Z"), openingYtd: [{ key: "basic", label: "Basic (prior)", side: "EARNING", amount: 39_000 }, { key: "student_loan", label: "SL", side: "DEDUCTION", amount: 1_300 }] },
+    ]);
+    const res = await getMyPayslips();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data[0].ytdGross).toBe(45_700);
+      expect(res.data[0].ytdNet).toBe(44_400);
+      expect(res.data[0].fiscalYearStartMonth).toBe(4);
+    }
   });
 });

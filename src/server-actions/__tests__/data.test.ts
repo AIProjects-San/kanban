@@ -1219,3 +1219,26 @@ describe("reminder ownership (P2-17)", () => {
     expect(reminderCall.where).toEqual({ ownerId: ADMIN.userId });
   });
 });
+
+describe("P16 (PR-11) — fiscal-year start month setting", () => {
+  it("persists a valid month through the workspace upsert", async () => {
+    signIn(ADMIN);
+    db.workspace.upsert.mockResolvedValue({});
+    expectOk(await updateWorkspaceSettings({ fiscalYearStartMonth: 4 }));
+    // The upsert carries the month in both the create and update branches.
+    expect(db.workspace.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "default" },
+        update: expect.objectContaining({ fiscalYearStartMonth: 4 }),
+      }),
+    );
+  });
+
+  it("rejects months outside 1–12 at the write-time gate", async () => {
+    signIn(ADMIN);
+    expectErr(await updateWorkspaceSettings({ fiscalYearStartMonth: 0 }), /fiscalYearStartMonth/i);
+    expectErr(await updateWorkspaceSettings({ fiscalYearStartMonth: 13 }), /fiscalYearStartMonth/i);
+    expectErr(await updateWorkspaceSettings({ fiscalYearStartMonth: 4.5 }), /fiscalYearStartMonth/i);
+    expect(db.workspace.upsert).not.toHaveBeenCalled();
+  });
+});

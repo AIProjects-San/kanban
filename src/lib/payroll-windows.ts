@@ -357,6 +357,46 @@ export function windowsInYear(frequency: PayrollFrequency, year: number): number
 }
 
 // ---------------------------------------------------------------------------
+// Fiscal year (P16 / PR-11)
+// ---------------------------------------------------------------------------
+
+/** Resolve the fiscal year a date falls in, given the month the fiscal
+ * year STARTS (1–12; 1 = calendar year). The return value is the year the
+ * fiscal year starts in — e.g. with startMonth 4, Dec 2026 → 2026 (the FY
+ * that began Apr 2026) while Feb 2027 → 2026 too (both inside Apr 2026 –
+ * Mar 2027); Jan–Dec of a calendar year map to themselves at startMonth 1.
+ * Out-of-range months clamp to the calendar-year answer (defensive — the
+ * write path validates 1–12). */
+export function fiscalYearOf(ms: number, startMonth: number): number {
+  const d = new Date(ms);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + 1;
+  if (!Number.isFinite(startMonth) || startMonth <= 1 || startMonth > 12) return y;
+  return m < startMonth ? y - 1 : y;
+}
+
+/** The [start, end) ms bounds of one fiscal year (end = the NEXT fiscal
+ * year's start — exclusive, so membership tests are two comparisons). */
+export function fiscalYearBounds(
+  startYear: number,
+  startMonth: number,
+): { startMs: number; endMs: number } {
+  const m = Math.min(Math.max(Math.round(startMonth), 1), 12);
+  const start = Date.UTC(startYear, m - 1, 1);
+  const end = Date.UTC(startYear + 1, m - 1, 1);
+  return { startMs: start, endMs: end };
+}
+
+/** Human label for a fiscal year: "2026" when it is the calendar year, or
+ * "2026/27" style when it spans two (the payslip modal's YTD chip). */
+export function fiscalYearLabel(startYear: number, startMonth: number): string {
+  if (!Number.isFinite(startMonth) || startMonth <= 1 || startMonth > 12) {
+    return String(startYear);
+  }
+  return `${startYear}/${String((startYear + 1) % 100).padStart(2, "0")}`;
+}
+
+// ---------------------------------------------------------------------------
 // Display
 // ---------------------------------------------------------------------------
 

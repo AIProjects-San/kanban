@@ -86,7 +86,9 @@ function denyFor(perm: string) {
 const CATALOG_ROW = {
   id: "sc-1", code: "senior_basic", label: "Senior Basic Salary",
   kind: "EARNING", mode: "FIXED", defaultAmount: 84_000,
+  dependsOnPaymentDays: true,
   isActive: true, sortOrder: 10,
+  effectiveFrom: null, effectiveTo: null,
   createdAt: new Date("2026-01-01T00:00:00Z"), updatedAt: new Date("2026-01-01T00:00:00Z"),
 };
 
@@ -172,6 +174,8 @@ describe("F1.5 — catalog CRUD", () => {
       expect(res.data[0]).toEqual({
         id: "sc-1", code: "senior_basic", label: "Senior Basic Salary",
         kind: "EARNING", mode: "FIXED", defaultAmount: 84_000,
+        dependsOnPaymentDays: true,
+        effectiveFrom: null, effectiveTo: null,
         isActive: true, sortOrder: 10, createdAt: CATALOG_ROW.createdAt.toISOString(),
       });
     }
@@ -188,6 +192,7 @@ describe("F1.5 — catalog CRUD", () => {
         code: "senior_basic", label: "Senior Basic Salary", kind: "EARNING",
         mode: "FIXED", defaultAmount: 84_000,
         dependsOnPaymentDays: true, // S6 — schema default rides the payload
+        effectiveFrom: null, effectiveTo: null, // P16 — unbounded by default
         isActive: true, sortOrder: 10,
       },
     });
@@ -396,5 +401,56 @@ describe("F1.5 — catalog → structure → payslip roundtrip", () => {
     ]);
     expect(slip.gross).toBe(7_000);
     void savedComponents;
+  });
+});
+
+describe("P16 (PR-11) — catalog validity windows", () => {
+  it("saveSalaryComponent persists a window (Dates) and the audit names it", async () => {
+    const res = await saveSalaryComponent({
+      code: "study_support", label: "Study Support Payment", kind: "EARNING",
+      mode: "FIXED", defaultAmount: 3_000, isActive: true, sortOrder: 65,
+      effectiveFrom: "2026-04-01", effectiveTo: "2027-03-31",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.salaryComponent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        code: "study_support",
+        effectiveFrom: new Date("2026-04-01T00:00:00Z"),
+        effectiveTo: new Date("2027-03-31T00:00:00Z"),
+      }),
+    });
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "payroll.component_created",
+        detail: expect.stringContaining("effective 2026-04-01 → 2027-03-31"),
+      }),
+    );
+  });
+
+  it("refuses a window whose start follows its end (schema gate)", async () => {
+    const res = await saveSalaryComponent({
+      code: "bad_window", label: "Bad", kind: "EARNING",
+      mode: "FIXED", defaultAmount: 1, isActive: true, sortOrder: 1,
+      effectiveFrom: "2027-03-31", effectiveTo: "2026-04-01",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/start must precede its end/i);
+    expect(db.salaryComponent.create).not.toHaveBeenCalled();
+  });
+
+  it("serializes a window back as YYYY-MM-DD strings (null when unbounded)", async () => {
+    db.salaryComponent.findMany.mockResolvedValue([
+      {
+        ...CATALOG_ROW,
+        effectiveFrom: new Date("2026-04-01T00:00:00Z"),
+        effectiveTo: new Date("2027-03-31T00:00:00Z"),
+      },
+    ]);
+    const res = await getSalaryComponents();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data[0].effectiveFrom).toBe("2026-04-01");
+      expect(res.data[0].effectiveTo).toBe("2027-03-31");
+    }
   });
 });
