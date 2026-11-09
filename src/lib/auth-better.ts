@@ -46,6 +46,20 @@ import { verifyJwt } from "@/lib/jwt";
 
 const WEAK_SECRET_PREFIX = "fernly-dev-secret";
 
+// CI-repair — process-wide cache for the dev ephemeral secret.
+// Next.js dev (turbopack) gives every route its own module instance, so a
+// module-scoped `crypto.randomUUID()` differs between the auth handler
+// (`/api/auth-better/[...all]`) and the page that resolves the session
+// (`app/page.tsx`): cookies signed by one instance failed signature
+// verification in the other, so every sign-in silently bounced back to the
+// login screen — the long-misdiagnosed "sandbox e2e login quirk" (browsers
+// were innocent; fetches carried the cookies, navigation carried them too,
+// the SSR session check just never validated). globalThis is shared by the
+// whole process, so all dev instances now agree on ONE ephemeral secret.
+// Production is unaffected (a strong secret is required there) and the
+// secret still rotates on server restart.
+const EPHEMERAL_SECRET_KEY = "__fernlyEphemeralBetterAuthSecret";
+
 function resolveBetterSecret(): string {
   const secret = process.env.BETTER_AUTH_SECRET ?? "";
   const isWeak = !secret || secret.startsWith(WEAK_SECRET_PREFIX);
@@ -59,11 +73,18 @@ function resolveBetterSecret(): string {
     );
   }
   if (isWeak) {
-    logWarn(
-      "[auth-better] secret not set (or is the dev default) — using an " +
-        "ephemeral secret. Sessions will reset on server restart.",
-    );
-    return crypto.randomUUID();
+    const shared = globalThis as Record<string, unknown>;
+    const cached = shared[EPHEMERAL_SECRET_KEY];
+    if (typeof cached !== "string") {
+      logWarn(
+        "[auth-better] secret not set (or is the dev default) — using an " +
+          "ephemeral secret. Sessions will reset on server restart.",
+      );
+      const generated = crypto.randomUUID();
+      shared[EPHEMERAL_SECRET_KEY] = generated;
+      return generated;
+    }
+    return cached;
   }
   return secret;
 }

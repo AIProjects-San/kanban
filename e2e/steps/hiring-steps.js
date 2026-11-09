@@ -350,14 +350,23 @@ When("I open the offer builder", async function () {
 
 Then("the offer builder should list a draft offer with the live CTC total", async function () {
   const driver = await this.getDriver();
-  const row = await driver.wait(
+  // CI-repair: F2.10 seeded an EXPIRED earlier attempt for the same
+  // candidate, and the offer list sorts createdAt-desc — the FIRST row is
+  // not necessarily the DRAFT. Scan every row for the draft-with-CTC shape
+  // the scenario actually asserts ("a draft offer with the live CTC total").
+  await driver.wait(
     until.elementLocated(By.css('[data-testid^="offer-row-"]')),
     10_000,
     "no offer row rendered",
   );
-  const text = await row.getText();
-  assert.ok(/DRAFT/.test(text), `offer should be a DRAFT, got: ${text}`);
-  assert.ok(/CTC \$[\d,]+/.test(text), `offer row should show a CTC total, got: ${text}`);
+  const rows = await driver.findElements(By.css('[data-testid^="offer-row-"]'));
+  const texts = [];
+  for (const row of rows) texts.push(await row.getText());
+  const draft = texts.find((t) => /DRAFT/.test(t) && /CTC \$[\d,]+/.test(t));
+  assert.ok(
+    draft,
+    `no DRAFT offer row with a CTC total, got: ${texts.map((t) => t.slice(0, 90)).join(" || ")}`,
+  );
 });
 
 Then("the offers panel should show {string} with a DRAFT chip", async function (name) {
@@ -648,7 +657,7 @@ When("I send the approved offer", async function () {
   await driver.wait(until.elementLocated(By.css('[data-testid="offer-link-box"]')), 15_000);
 });
 
-Then("the signed page should offer the printable appointment letter (F2.10)", async function () {
+Then("the signed page should offer the printable appointment letter \\(F2.10\\)", async function () {
   const driver = await this.getDriver();
   const letter = await driver.wait(
     until.elementLocated(By.css('[data-testid="appointment-letter"]')),
@@ -656,8 +665,12 @@ Then("the signed page should offer the printable appointment letter (F2.10)", as
     "the appointment letter did not render on the signed state",
   );
   const text = await letter.getText();
-  assert.ok(text.includes("Letter of Appointment"), `letter heading missing, got: "${text.slice(0, 120)}"`);
-  assert.ok(text.includes("Accepted electronically"), "the signature block is missing");
+  // CI-repair: the signature block renders with Tailwind `uppercase`, and
+  // Selenium's getText() returns the CSS-TRANSFORMED text ("ACCEPTED
+  // ELECTRONICALLY"), so the assertion must be case-insensitive — the unit
+  // suite never caught this because it asserts textContent (untransformed).
+  assert.ok(/letter of appointment/i.test(text), `letter heading missing, got: ${text.slice(0, 120)}`);
+  assert.ok(/accepted electronically/i.test(text), "the signature block is missing");
   const printBtn = await driver.wait(
     until.elementLocated(By.css('[data-testid="appointment-letter-print"]')),
     10_000,
@@ -738,7 +751,7 @@ When("I clear the background check", async function () {
   await driver.sleep(600);
 });
 
-Then("the hired summary should confirm the salary structure was copied (F2.10)", async function () {
+Then("the hired summary should confirm the salary structure was copied \\(F2.10\\)", async function () {
   const driver = await this.getDriver();
   const line = await driver.wait(
     until.elementLocated(By.css('[data-testid="payroll-ready-line"]')),

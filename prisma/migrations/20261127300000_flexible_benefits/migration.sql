@@ -7,7 +7,7 @@
 -- append-only mini-ledger: +ACCRUAL rows at run lock, −CLAIM rows at claim
 -- approval — the same ledger discipline the leave module proves).
 
-ALTER TABLE "SalaryStructure" ADD COLUMN "maxBenefits" REAL NOT NULL DEFAULT 0;
+ALTER TABLE "SalaryStructure" ADD COLUMN "maxBenefits" DOUBLE PRECISION NOT NULL DEFAULT 0;
 
 CREATE TABLE "BenefitElection" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -15,11 +15,11 @@ CREATE TABLE "BenefitElection" (
     "year" INTEGER NOT NULL,
     "componentCode" TEXT NOT NULL,
     "label" TEXT NOT NULL DEFAULT '',
-    "annualAmount" REAL NOT NULL,
+    "annualAmount" DOUBLE PRECISION NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'ACTIVE',
     "createdById" TEXT NOT NULL DEFAULT '',
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 CREATE UNIQUE INDEX "BenefitElection_userId_year_componentCode_key" ON "BenefitElection"("userId", "year", "componentCode");
 CREATE INDEX "BenefitElection_userId_year_status_idx" ON "BenefitElection"("userId", "year", "status");
@@ -30,11 +30,11 @@ CREATE TABLE "BenefitAccrual" (
     "year" INTEGER NOT NULL,
     "componentCode" TEXT NOT NULL,
     "entryType" TEXT NOT NULL,
-    "delta" REAL NOT NULL,
+    "delta" DOUBLE PRECISION NOT NULL,
     "sourceId" TEXT NOT NULL DEFAULT '',
     "period" TEXT NOT NULL DEFAULT '',
     "note" TEXT NOT NULL DEFAULT '',
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 CREATE INDEX "BenefitAccrual_userId_year_componentCode_idx" ON "BenefitAccrual"("userId", "year", "componentCode");

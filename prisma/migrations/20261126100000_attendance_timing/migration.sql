@@ -12,7 +12,7 @@
 -- (defaults 09:00 / 17:30). Shifts (F3.5) will supersede the reference; the
 -- rule stays pure and the knob stays data.
 
-ALTER TABLE "Workspace" ADD COLUMN "attendanceDayStart" TEXT NOT NULL DEFAULT '09:00',
+ALTER TABLE "Workspace" ADD COLUMN "attendanceDayStart" TEXT NOT NULL DEFAULT '09:00';
 ALTER TABLE "Workspace" ADD COLUMN "attendanceDayEnd" TEXT NOT NULL DEFAULT '17:30';
 ALTER TABLE "AttendanceRecord" ADD COLUMN "lateMinutes" INTEGER;
 ALTER TABLE "AttendanceRecord" ADD COLUMN "earlyMinutes" INTEGER;

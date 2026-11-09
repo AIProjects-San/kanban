@@ -18,9 +18,9 @@ CREATE TABLE "SalaryWithholding" (
     "status" TEXT NOT NULL DEFAULT 'ACTIVE',
     "createdById" TEXT NOT NULL DEFAULT '',
     "releasedById" TEXT NOT NULL DEFAULT '',
-    "releasedAt" DATETIME,
+    "releasedAt" TIMESTAMP(3),
     "releasePeriod" TEXT NOT NULL DEFAULT '',
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 CREATE INDEX "SalaryWithholding_userId_status_idx" ON "SalaryWithholding"("userId", "status");

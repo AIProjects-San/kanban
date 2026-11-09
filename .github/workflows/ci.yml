@@ -34,6 +34,27 @@ jobs:
       - name: Generate Prisma client
         run: bun run db:generate
 
+      # CI-repair — migration replay + drift + tx-hygiene gates. The e2e
+      # job's `prisma migrate deploy` replays the hand-written migration SQL
+      # on a fresh Postgres; the sandbox applies schema changes with `db
+      # push` (SQLite, ADR-008), so invalid SQL in a migration file previously
+      # surfaced only ~20 min into the e2e job (comma-joined ALTER TABLE
+      # statements, SQLite-only type names like DATETIME/REAL, integer
+      # defaults on BOOLEAN columns — the exact bugs that kept e2e red on
+      # main through P1–P9). Replay every migration through PGlite (real
+      # Postgres 16 compiled to WASM, devDependency) and diff the resulting
+      # schema against prisma/schema.prisma so migrations can never drift
+      # from the schema the app/seed actually uses. The tx-hygiene audit
+      # guards the other class found in the same repair: global-db calls
+      # (logAudit) inside interactive transactions deadlock on SQLite and
+      # break atomicity on Postgres. All three finish in seconds.
+      - name: Migration replay + drift + tx-hygiene gates (PGlite)
+        run: |
+          bun scripts/pg-replay/replay.ts
+          python3 scripts/drift-check.py
+          python3 scripts/audit-migrations.py
+          python3 scripts/audit-tx-db-access.py
+
       - name: Lint
         run: bun run lint
 
@@ -128,11 +149,11 @@ jobs:
   e2e:
     name: e2e (cucumber + selenium)
     runs-on: ubuntu-latest
-    # CI-stabilization: the suite grew to 93 scenarios (R1..R8 + payslip
-    # self-service + P0-6) and observed runs take ~19.5 min on 2-core
-    # runners before retries of flaky scenarios; 20 min was the binding
-    # wall (observed cancellations). 30 min gives headroom without
-    # hiding genuine hangs.
+    # CI-stabilization: the suite grew to 116 scenarios (R1..R8 + payslip
+    # self-service + P0-6 + the F2.10 hiring scenarios) and observed runs
+    # take ~19.5 min on 2-core runners before retries of flaky scenarios;
+    # 20 min was the binding wall (observed cancellations). 30 min gives
+    # headroom without hiding genuine hangs.
     timeout-minutes: 30
     needs: verify
     services:

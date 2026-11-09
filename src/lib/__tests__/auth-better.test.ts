@@ -742,12 +742,53 @@ describe("config posture", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubEnv("BETTER_AUTH_SECRET", "fernly-dev-secret-legacy");
     try {
+      // CI-repair: the ephemeral secret is now cached on globalThis, and the
+      // file's hoisted static import (which loads with an unset secret)
+      // populates that cache at file-load time — before this spy exists.
+      // Clear it so this test observes the MINTING path (warn + UUID).
+      delete (globalThis as Record<string, unknown>).__fernlyEphemeralBetterAuthSecret;
       vi.resetModules();
       await expect(import("@/lib/auth-better")).resolves.toBeDefined();
       const logged = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
       expect(logged).toContain("ephemeral secret");
     } finally {
       vi.unstubAllEnvs();
+      delete (globalThis as Record<string, unknown>).__fernlyEphemeralBetterAuthSecret;
+      vi.resetModules();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("CI-repair: the dev ephemeral secret is shared across module instances (globalThis cache)", async () => {
+    // Next.js dev gives every route its own module instance of
+    // auth-better.ts. A module-scoped random secret meant the auth handler
+    // and the SSR session resolver signed/verified with DIFFERENT secrets,
+    // so every dev sign-in bounced back to the login screen — the
+    // long-misdiagnosed sandbox e2e login quirk. The contract: two fresh
+    // module loads with a weak env secret must resolve the SAME ephemeral
+    // secret (observable via auth.options.secret), and clearing the
+    // process-wide cache must mint a new one (restart semantics).
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("BETTER_AUTH_SECRET", "fernly-dev-secret-legacy");
+    try {
+      delete (globalThis as Record<string, unknown>).__fernlyEphemeralBetterAuthSecret;
+      const first = await import("@/lib/auth-better");
+      const secretOne = first.auth.options.secret;
+
+      vi.resetModules(); // a DIFFERENT route's module instance
+      const second = await import("@/lib/auth-better");
+      const secretTwo = second.auth.options.secret;
+
+      expect(secretOne).toMatch(/^[0-9a-f-]{36}$/); // a UUID, not the weak literal
+      expect(secretTwo).toBe(secretOne); // the fix: both instances agree
+
+      delete (globalThis as Record<string, unknown>).__fernlyEphemeralBetterAuthSecret;
+      vi.resetModules();
+      const third = await import("@/lib/auth-better");
+      expect(third.auth.options.secret).not.toBe(secretOne); // rotates per process
+    } finally {
+      vi.unstubAllEnvs();
+      delete (globalThis as Record<string, unknown>).__fernlyEphemeralBetterAuthSecret;
       vi.resetModules();
       errSpy.mockRestore();
     }

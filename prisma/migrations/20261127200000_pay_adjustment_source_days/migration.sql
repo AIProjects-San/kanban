@@ -6,4 +6,4 @@
 -- (Σ reversed ≤ stored lopDays) is enforced from data, never note-parsing.
 -- Null for every existing row (not day-denominated sources).
 
-ALTER TABLE "PayAdjustment" ADD COLUMN "sourceDays" REAL;
+ALTER TABLE "PayAdjustment" ADD COLUMN "sourceDays" DOUBLE PRECISION;

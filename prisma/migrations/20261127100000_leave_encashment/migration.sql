@@ -18,28 +18,28 @@
 -- transaction (days × daily rate, GROSS_OVER_WORKING_DAYS basis).
 
 ALTER TABLE "LeavePolicy" ADD COLUMN "encashable" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "LeavePolicy" ADD COLUMN "maxEncashableDays" REAL NOT NULL DEFAULT 5;
-ALTER TABLE "LeavePolicy" ADD COLUMN "nonEncashableDays" REAL NOT NULL DEFAULT 5;
+ALTER TABLE "LeavePolicy" ADD COLUMN "maxEncashableDays" DOUBLE PRECISION NOT NULL DEFAULT 5;
+ALTER TABLE "LeavePolicy" ADD COLUMN "nonEncashableDays" DOUBLE PRECISION NOT NULL DEFAULT 5;
 
 CREATE TABLE "LeaveEncashment" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userId" TEXT NOT NULL,
     "leaveTypeId" TEXT NOT NULL,
     "year" INTEGER NOT NULL,
-    "days" REAL NOT NULL,
+    "days" DOUBLE PRECISION NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'PENDING',
     "payoutPeriod" TEXT NOT NULL,
-    "amount" REAL NOT NULL DEFAULT 0,
-    "dailyRate" REAL NOT NULL DEFAULT 0,
+    "amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "dailyRate" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "reason" TEXT NOT NULL DEFAULT '',
     "createdById" TEXT NOT NULL DEFAULT '',
     "decidedById" TEXT,
-    "decidedAt" DATETIME,
+    "decidedAt" TIMESTAMP(3),
     "decisionNote" TEXT NOT NULL DEFAULT '',
     "paidRunId" TEXT NOT NULL DEFAULT '',
-    "paidAt" DATETIME,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "paidAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 CREATE INDEX "LeaveEncashment_userId_status_idx" ON "LeaveEncashment"("userId", "status");
 CREATE INDEX "LeaveEncashment_status_idx" ON "LeaveEncashment"("status");

@@ -23,8 +23,8 @@ CREATE TABLE "PayAdjustment" (
     "side" TEXT NOT NULL DEFAULT 'EARNING',
     "recurrence" TEXT NOT NULL DEFAULT 'ONE_SHOT',
     "calcMode" TEXT NOT NULL DEFAULT 'FIXED',
-    "percent" REAL,
-    "amount" REAL NOT NULL DEFAULT 0,
+    "percent" DOUBLE PRECISION,
+    "amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "period" TEXT NOT NULL,
     "endPeriod" TEXT,
     "lastConsumedPeriod" TEXT NOT NULL DEFAULT '',
@@ -33,8 +33,8 @@ CREATE TABLE "PayAdjustment" (
     "note" TEXT NOT NULL DEFAULT '',
     "createdById" TEXT NOT NULL DEFAULT '',
     "consumedRunId" TEXT NOT NULL DEFAULT '',
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 CREATE INDEX "PayAdjustment_period_status_idx" ON "PayAdjustment"("period", "status");
 CREATE INDEX "PayAdjustment_userId_status_idx" ON "PayAdjustment"("userId", "status");

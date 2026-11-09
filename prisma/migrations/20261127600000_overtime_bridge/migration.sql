@@ -11,4 +11,4 @@
 
 ALTER TABLE "AttendanceRecord" ADD COLUMN "overtimeMinutes" INTEGER;
 
-ALTER TABLE "Workspace" ADD COLUMN "overtimePayEnabled" BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE "Workspace" ADD COLUMN "overtimePayEnabled" BOOLEAN NOT NULL DEFAULT false;

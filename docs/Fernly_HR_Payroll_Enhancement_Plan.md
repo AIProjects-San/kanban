@@ -174,7 +174,7 @@ Inventoried from the codebase at `b932258` and **re-verified at `bb2e046` after 
 5. **ADR-008 schema discipline** — edit canonical `prisma/schema.prisma` + hand-checked migration with `down.sql`; SQLite variant generated, never committed.
 6. **ADR-014 payroll honesty** — no statutory computation without superseding the ADR; banner text test-pinned.
 7. **Seed discipline** — `scripts/seed.js` mirrors production math deterministically; every status gets seeded data.
-8. **CI gates** (`/.github/workflows/ci.yml`) — lint + typecheck + coverage-gated unit tests, bundle-budget production build, Cucumber e2e on Postgres with migrate+seed.
+8. **CI gates** (`/.github/workflows/ci.yml`) — lint + typecheck + coverage-gated unit tests, migration replay + drift gate (PGlite; added by the CI-repair — hand-written migration SQL is replayed on real Postgres WASM and diffed against schema.prisma before e2e ever runs, since the sandbox `db push` flow never replays the SQL files), bundle-budget production build, Cucumber e2e on Postgres with migrate+seed.
 9. **Audit every mutation** (`logAudit` before/after) + `ActionResult` envelope + validation via `parseOrThrow`.
 
 ---

@@ -10,18 +10,18 @@
 
 CREATE TABLE "GratuityRule" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "enabled" BOOLEAN NOT NULL DEFAULT 0,
+    "enabled" BOOLEAN NOT NULL DEFAULT false,
     "averagingMonths" INTEGER NOT NULL DEFAULT 3,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 
 CREATE TABLE "GratuitySlab" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "fromYears" INTEGER NOT NULL,
     "toYears" INTEGER,
-    "fraction" REAL NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "fraction" DOUBLE PRECISION NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL
 );
 CREATE UNIQUE INDEX "GratuitySlab_fromYears_key" ON "GratuitySlab"("fromYears");

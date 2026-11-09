@@ -1054,59 +1054,73 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
       if (list) list.push(e);
       else electionByUser.set(e.userId, [e]);
     }
-    await db.$transaction(async (tx) => {
-      await tx.payrollRun.update({
-        where: { id: run.id },
-        data: { status: "LOCKED", lockedById: auth.userId, lockedAt: new Date() },
-      });
-      if (encashmentIds.length > 0) {
-        await tx.leaveEncashment.updateMany({
-          where: { id: { in: encashmentIds }, status: "APPROVED" },
-          data: { status: "PAID", paidRunId: run.id, paidAt: new Date() },
+    // CI-repair — the lock transaction grew with every payroll phase (P2
+    // encashment PAID flips, P5 accrual rows) and its audit MUST stay outside
+    // the callback: logAudit writes on the GLOBAL client, so calling it
+    // inside the interactive transaction opens a second connection that, on
+    // SQLite, blocks on the transaction's own write lock — deadlock until
+    // the 5s interactive-transaction timeout expires and the lock fails
+    // ("Transaction already closed", the e2e "run did not render as LOCKED"
+    // failure). The timeout itself is raised for the batch shape: one accrual
+    // create per election per employee is a per-row round trip, which stays
+    // comfortably under 5s at seeded volumes but deserves headroom at the
+    // documented ≤200-employee scale on a remote Postgres (Supabase RTT).
+    const accrualCount = { rows: 0 };
+    await db.$transaction(
+      async (tx) => {
+        await tx.payrollRun.update({
+          where: { id: run.id },
+          data: { status: "LOCKED", lockedById: auth.userId, lockedAt: new Date() },
         });
-      }
-      // P5 — append-only ACCRUAL rows, one per election with a priced amount.
-      const accrualCount = { rows: 0 };
-      const payslipRows = await tx.payslip.findMany({
-        where: { runId: run.id },
-        select: { userId: true, paidDays: true },
-      });
-      const paidDaysByUser = new Map(payslipRows.map((p) => [p.userId, p.paidDays]));
-      for (const [userId, elections] of electionByUser) {
-        if (!paidDaysByUser.has(userId)) continue;
-        for (const e of elections) {
-          const amount = accrualAmount({
-            annualAmount: e.annualAmount,
-            paidDays: paidDaysByUser.get(userId) ?? null,
-            workingDays: run.workingDays,
+        if (encashmentIds.length > 0) {
+          await tx.leaveEncashment.updateMany({
+            where: { id: { in: encashmentIds }, status: "APPROVED" },
+            data: { status: "PAID", paidRunId: run.id, paidAt: new Date() },
           });
-          if (amount <= 0) continue;
-          await tx.benefitAccrual.create({
-            data: {
-              userId,
-              year: e.year,
-              componentCode: e.componentCode,
-              entryType: "ACCRUAL",
-              delta: amount,
-              sourceId: run.id,
-              period: run.period,
-              note: `${e.label || e.componentCode} accrual (${run.period} lock)`,
-            },
-          });
-          accrualCount.rows += 1;
         }
-      }
-      if (accrualCount.rows > 0) {
-        await logAudit({
-          actor: auth,
-          action: "payroll.benefits_accrued",
-          entityType: "PAYROLL_RUN",
-          entityId: run.id,
-          entityLabel: run.period,
-          detail: `${run.period} lock accrued ${accrualCount.rows} benefit row(s) (elections ÷ 12, paid-days-scaled).`,
+        // P5 — append-only ACCRUAL rows, one per election with a priced amount.
+        const payslipRows = await tx.payslip.findMany({
+          where: { runId: run.id },
+          select: { userId: true, paidDays: true },
         });
-      }
-    });
+        const paidDaysByUser = new Map(payslipRows.map((p) => [p.userId, p.paidDays]));
+        for (const [userId, elections] of electionByUser) {
+          if (!paidDaysByUser.has(userId)) continue;
+          for (const e of elections) {
+            const amount = accrualAmount({
+              annualAmount: e.annualAmount,
+              paidDays: paidDaysByUser.get(userId) ?? null,
+              workingDays: run.workingDays,
+            });
+            if (amount <= 0) continue;
+            await tx.benefitAccrual.create({
+              data: {
+                userId,
+                year: e.year,
+                componentCode: e.componentCode,
+                entryType: "ACCRUAL",
+                delta: amount,
+                sourceId: run.id,
+                period: run.period,
+                note: `${e.label || e.componentCode} accrual (${run.period} lock)`,
+              },
+            });
+            accrualCount.rows += 1;
+          }
+        }
+      },
+      { timeout: 30_000 },
+    );
+    if (accrualCount.rows > 0) {
+      await logAudit({
+        actor: auth,
+        action: "payroll.benefits_accrued",
+        entityType: "PAYROLL_RUN",
+        entityId: run.id,
+        entityLabel: run.period,
+        detail: `${run.period} lock accrued ${accrualCount.rows} benefit row(s) (elections ÷ 12, paid-days-scaled).`,
+      });
+    }
     const total = Math.round(run.payslips.reduce((s, p) => s + p.net, 0) * 100) / 100;
     await logAudit({
       actor: auth,

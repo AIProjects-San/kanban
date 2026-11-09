@@ -4,10 +4,11 @@
 
 | Layer | Tool | Command | Scope & gate |
 |-------|------|---------|--------------|
-| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, components & views — **1727 tests** (94 files), coverage gate 90% stmts / 80% branches |
+| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, components & views — **2428 tests** (131 files), coverage gate 90% stmts / 80% branches |
 | Coverage report | Vitest + v8 | `bun run test:coverage` | HTML report in `coverage/` |
-| Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login & lockout, RBAC gating, board CRUD, messaging isolation, a11y, HR (leave/directory/reviews/onboarding), hiring pipeline + email outbox + e-sign + payroll runs/payslips + funnel analytics — **89 scenarios / 13 feature files** (see `e2e/README.md`; requires Chrome) |
+| Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login & lockout, RBAC gating, board CRUD, messaging isolation, a11y, HR (leave/directory/reviews/onboarding/holidays/attendance/offboarding), hiring pipeline + email outbox + e-sign + payroll runs/payslips + funnel analytics — **116 scenarios / 18 feature files** (see `e2e/README.md`; requires Chrome) |
 | Static | ESLint + tsc | `bun run lint` / `bun run typecheck` | zero errors |
+| Migration replay + tx hygiene | PGlite (Postgres 16 WASM) | `bun scripts/pg-replay/replay.ts` + `python3 scripts/drift-check.py` + `python3 scripts/audit-migrations.py` + `python3 scripts/audit-tx-db-access.py` | every `prisma/migrations/*/migration.sql` replays cleanly on fresh Postgres AND produces exactly the `prisma/schema.prisma` schema (column types, nullability, unique constraints); the migrations linter rejects comma-joined DDL statements; the tx-hygiene audit rejects global-db calls (`db.*`, `logAudit`) inside `db.$transaction` callbacks — they deadlock on SQLite (second connection blocks on the transaction's own write lock) and break atomicity on Postgres. Runs as a fast CI gate before the e2e job's `migrate deploy` — the sandbox's `db push` flow (ADR-008) never replays the SQL files, so this gate is the only place invalid migration SQL is caught before e2e |
 | Production | Next build | `bun run build` | must pass with full type checking |
 | Production smoke | `bun run test:prodsmoke` | health, headers, CSP shape, credential flow | must pass against a built app |
 | Load | k6 + `scripts/load-smoke.mjs` | see `docs/PRODUCTION_READINESS.md` §5 | p95 budgets, incl. 100k-row dataset via `scripts/seed-load.js` |
@@ -29,6 +30,16 @@ policy, the hierarchy subtree logic, the shared component library and the view l
 **What they do NOT cover (by design):** pixel layout, drag-and-drop physics, Recharts
 rendering, keyboard-shortcut handling — these are covered by the manual plan below and
 the Selenium suite where a browser is available.
+
+**Running e2e in the sandbox (no system Chrome):** download Chrome-for-Testing + the
+matching chromedriver into `.chrome-e2e/` (gitignored), start the standalone driver on
+port 9515, then run `bash scripts/e2e-local.sh` — it points selenium-webdriver at the
+standalone driver via `SELENIUM_REMOTE_URL` and the Chrome-for-Testing binary via
+`CHROME_BIN` (the hook in `e2e/support/world.js`). The dev server must be running and
+`.env` must carry `NEXT_PUBLIC_DEMO_PASSWORD` (resolved by
+`e2e/support/demo-password.js`). Note: the suite's stdout is buffered when redirected —
+cucumber only prints the progress/summary output at the end, so watch the process table
+(chrome processes) rather than the log while it runs.
 
 ---
 

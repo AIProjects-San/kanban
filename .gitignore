@@ -80,3 +80,12 @@ prisma/schema.local.prisma
 # Phase 0 spike scratch artifacts (better-auth validation)
 scripts/spike-better-auth/gen/
 scripts/spike-better-auth/spike.db
+
+# CI-repair: local Chrome-for-Testing + standalone chromedriver for sandbox e2e
+/.chrome-e2e/
+
+# CI-repair: PGlite migration-replay artifacts (dev dep installed at root)
+scripts/pg-replay/node_modules/
+scripts/pg-replay/package.json
+scripts/pg-replay/bun.lock
+scripts/pg-replay/schema-dump.json
