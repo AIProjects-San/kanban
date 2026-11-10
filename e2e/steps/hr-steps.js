@@ -78,14 +78,21 @@ async function setInputValue(driver, element, value) {
 
 async function waitForToast(driver, keyword, timeout = 10_000) {
   const target = keyword.toLowerCase();
+  // Toasts re-render/animate (sonner) — a toast can go stale between
+  // locate and read, so staleness means "not this poll", never a failure.
   await driver.wait(
     async () => {
-      const toasts = await driver.findElements(By.css("[data-sonner-toast]"));
-      for (const t of toasts) {
-        const text = (await t.getText()).toLowerCase();
-        if (text.includes(target)) return true;
+      try {
+        const toasts = await driver.findElements(By.css("[data-sonner-toast]"));
+        for (const t of toasts) {
+          const text = (await t.getText()).toLowerCase();
+          if (text.includes(target)) return true;
+        }
+        return false;
+      } catch (e) {
+        if (e && /stale/i.test(String(e.name || e.message))) return false;
+        throw e;
       }
-      return false;
     },
     timeout,
     `no toast mentioning "${keyword}" appeared`,
@@ -112,14 +119,23 @@ When("I sign out", async function () {
 Then("the leave balance for {string} should show {int} days available", async function (typeName, days) {
   const driver = await this.getDriver();
   // Re-locate on every poll: the view re-renders after mutations and React
-  // replaces the card node, invalidating any held element reference.
+  // replaces the card node, invalidating any held element reference. The
+  // getText can STILL go stale in the locate→read window (the cancel flow
+  // re-renders the card mid-poll — the CI flake of run 140), so a
+  // StaleElementReferenceError is swallowed into "not yet" and the next
+  // poll re-locates — never a step failure.
   await driver.wait(
     async () => {
-      const cards = await driver.findElements(
-        By.xpath(`//div[contains(@class, "f-card")][contains(., "${typeName}")]//*[@data-testid='balance-available']`),
-      );
-      if (cards.length === 0) return false;
-      return (await cards[0].getText()).trim() === String(days);
+      try {
+        const cards = await driver.findElements(
+          By.xpath(`//div[contains(@class, "f-card")][contains(., "${typeName}")]//*[@data-testid='balance-available']`),
+        );
+        if (cards.length === 0) return false;
+        return (await cards[0].getText()).trim() === String(days);
+      } catch (e) {
+        if (e && /stale/i.test(String(e.name || e.message))) return false;
+        throw e;
+      }
     },
     10_000,
     `balance for "${typeName}" never showed ${days} days`,
@@ -540,11 +556,16 @@ Then("the leave balance for {string} should show the accrued advance balance", a
   const expected = Math.min(24, monthsElapsed * 2);
   await driver.wait(
     async () => {
-      const cards = await driver.findElements(
-        By.xpath(`//div[contains(@class, "f-card")][contains(., "${typeName}")]//*[@data-testid='balance-available']`),
-      );
-      if (cards.length === 0) return false;
-      return (await cards[0].getText()).trim() === String(expected);
+      try {
+        const cards = await driver.findElements(
+          By.xpath(`//div[contains(@class, "f-card")][contains(., "${typeName}")]//*[@data-testid='balance-available']`),
+        );
+        if (cards.length === 0) return false;
+        return (await cards[0].getText()).trim() === String(expected);
+      } catch (e) {
+        if (e && /stale/i.test(String(e.name || e.message))) return false;
+        throw e;
+      }
     },
     10_000,
     `balance for "${typeName}" never showed the accrued ${expected} days`,
