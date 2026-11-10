@@ -172,6 +172,9 @@ beforeEach(() => {
   ]);
   db.leaveLedgerEntry.create.mockResolvedValue({ id: "lle-1" });
   db.leaveLedgerEntry.createMany.mockResolvedValue({ count: 0 });
+  // P29 (LV-05) — the cancel path mirrors the approval's split rows by
+  // reading them back; default to none (the whole-days fallback reversal).
+  db.leaveLedgerEntry.findMany.mockResolvedValue([]);
   db.user.findUnique.mockResolvedValue(null);
   db.user.findMany.mockResolvedValue([]);
   db.notification.create.mockResolvedValue({});
@@ -548,7 +551,7 @@ const PENDING_REQUEST = {
 };
 
 describe("decideLeaveRequest", () => {
-  it("approves: flips status, writes a CONSUME ledger row, and syncs the cache inside a transaction", async () => {
+  it("approves: flips status, writes the split CONSUME ledger row(s), and syncs the cache inside a transaction", async () => {
     requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
     db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
     db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" }); // requester's manager
@@ -556,19 +559,23 @@ describe("decideLeaveRequest", () => {
 
     const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE", note: "Enjoy" });
     expect(res.ok).toBe(true);
-    // F1.2 — the consumption row: append-only truth, one per approval,
-    // double-book-proof via the guarded status flip.
-    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+    // F1.2 — the consumption rows: append-only truth, one PAIR per approval
+    // (P29/LV-05 — split at the CF boundary; no carry here → ONE row drawn
+    // from the current allocation), double-book-proof via the guarded
+    // status flip.
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          userId: "u-theo",
-          leaveTypeId: "lt-annual",
-          delta: -2,
-          entryType: "CONSUME",
-          sourceType: "LEAVE_REQUEST",
-          sourceId: "lr-1",
-          isReversal: false,
-        }),
+        data: [
+          expect.objectContaining({
+            userId: "u-theo",
+            leaveTypeId: "lt-annual",
+            delta: -2,
+            entryType: "CONSUME",
+            sourceType: "LEAVE_REQUEST",
+            sourceId: "lr-1",
+            isReversal: false,
+          }),
+        ],
       }),
     );
     // Cache sync — ABSOLUTE set from the ledger projection (QA-1b's atomic
@@ -720,6 +727,9 @@ describe("decideLeaveRequest", () => {
     // the guarded flip inside the transaction is rolled back with it
     // (QA-16), so no debit ever lands.
     expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.arrayContaining([expect.objectContaining({ entryType: "CONSUME" })]) }),
+    );
     expect(db.leaveBalance.update).not.toHaveBeenCalled();
   });
 
@@ -734,9 +744,9 @@ describe("decideLeaveRequest", () => {
 
     const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
     expect(res.ok).toBe(true);
-    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ delta: -5, entryType: "CONSUME" }),
+        data: [expect.objectContaining({ delta: -5, entryType: "CONSUME" })],
       }),
     );
     expect(db.leaveBalance.update).toHaveBeenCalledWith(
@@ -776,10 +786,11 @@ describe("decideLeaveRequest", () => {
         }),
       }),
     );
-    // ...then the consumption row and the cache sync.
-    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+    // ...then the consumption row(s) and the cache sync. No carry on the
+    // ledger → the single current-allocation part (P29/LV-05).
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ delta: -2, entryType: "CONSUME", sourceId: "lr-1" }),
+        data: [expect.objectContaining({ delta: -2, entryType: "CONSUME", sourceId: "lr-1" })],
       }),
     );
     expect(db.leaveBalance.update).toHaveBeenCalledWith(
@@ -874,18 +885,21 @@ describe("cancelLeaveRequest", () => {
     const res = await cancelLeaveRequest({ requestId: "lr-1" });
     expect(res.ok).toBe(true);
     // F1.2 — the reversal row: append-only undo of the approval's CONSUME
-    // entry (the pair nets to zero; both events survive as rows).
-    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+    // entry (the pair nets to zero; both events survive as rows). P29: no
+    // split rows on the ledger → the whole-days fallback reversal.
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          userId: "u-theo",
-          leaveTypeId: "lt-annual",
-          delta: 2,
-          entryType: "CONSUME",
-          sourceType: "LEAVE_REQUEST",
-          sourceId: "lr-1",
-          isReversal: true,
-        }),
+        data: [
+          expect.objectContaining({
+            userId: "u-theo",
+            leaveTypeId: "lt-annual",
+            delta: 2,
+            entryType: "CONSUME",
+            sourceType: "LEAVE_REQUEST",
+            sourceId: "lr-1",
+            isReversal: true,
+          }),
+        ],
       }),
     );
     // Cache sync — absolute set from the post-reversal projection.
@@ -1081,8 +1095,12 @@ describe("F1.2 leave ledger", () => {
     res = await cancelLeaveRequest({ requestId: "lr-1" });
     expect(res.ok).toBe(true);
 
-    // Exactly two ledger rows were written: the consumption and its undo.
-    const rows = db.leaveLedgerEntry.create.mock.calls.map((c) => c[0].data);
+    // Exactly two ledger rows were written: the consumption and its undo
+    // (both via the P29 createMany writers; one part each — no carry).
+    // mock.calls elements are the per-call ARGUMENT arrays ([arg0]).
+    const rows = (db.leaveLedgerEntry.createMany.mock.calls as unknown as Array<[unknown]>)
+      .flatMap((c) => (c[0] as { data: Array<{ entryType: string }> }).data)
+      .filter((r) => r.entryType === "CONSUME");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ delta: -2, entryType: "CONSUME", isReversal: false, sourceId: "lr-1" });
     expect(rows[1]).toMatchObject({ delta: 2, entryType: "CONSUME", isReversal: true, sourceId: "lr-1" });
@@ -1110,7 +1128,132 @@ describe("F1.2 leave ledger", () => {
     const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/3 day/i);
-    expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.arrayContaining([expect.objectContaining({ entryType: "CONSUME" })]) }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P29 (LV-05) — split-at-CF-boundary FIFO consumption on the action surface.
+// The approval books the unspent carried-over days FIRST (one row per part,
+// notes naming the source), the cancel mirrors the split row-for-row, and
+// every aggregate (guard, cache sync) rides the unchanged totals.
+// ---------------------------------------------------------------------------
+
+describe("P29/LV-05 split-at-CF-boundary consumption", () => {
+  it("an approval splits at the boundary: 2 unspent carry → a 3-day request books 2 carry + 1 new", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, days: 3 });
+    // GRANT 20, CARRY 3, 1 consumed → unspent carry 2; days 3 → 2 + 1.
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([
+      { entryType: "GRANT", _sum: { delta: 20 } },
+      { entryType: "CARRY", _sum: { delta: 3 } },
+      { entryType: "CONSUME", _sum: { delta: -1 } },
+    ]);
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    const calls = db.leaveLedgerEntry.createMany.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { data: { entryType: string }[] }).data.some((r) => r.entryType === "CONSUME"),
+    );
+    expect(calls).toHaveLength(1);
+    const rows = (calls[0][0] as { data: { delta: number; note: string; isReversal: boolean }[] }).data;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ delta: -2, isReversal: false });
+    expect(rows[0].note).toContain("carried-over days");
+    expect(rows[1]).toMatchObject({ delta: -1, isReversal: false });
+    expect(rows[1].note).toContain("current allocation");
+    // The cache sync rides the TOTAL (unchanged aggregate math).
+    expect(db.leaveBalance.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { used: 4 } }), // 1 prior + 3 requested
+    );
+  });
+
+  it("a request fully covered by unspent carry books a single carry row (FIFO eats it all)", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, days: 2 });
+    // GRANT 20, CARRY 5, 1 consumed → unspent carry 4 ≥ days 2.
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([
+      { entryType: "GRANT", _sum: { delta: 20 } },
+      { entryType: "CARRY", _sum: { delta: 5 } },
+      { entryType: "CONSUME", _sum: { delta: -1 } },
+    ]);
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    const calls = db.leaveLedgerEntry.createMany.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { data: { entryType: string }[] }).data.some((r) => r.entryType === "CONSUME"),
+    );
+    const rows = (calls[0][0] as { data: { delta: number; note: string }[] }).data;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ delta: -2 });
+    expect(rows[0].note).toContain("carried-over days");
+  });
+
+  it("a fully spent carry consumes from the current allocation only (single row)", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, days: 2 });
+    // GRANT 20, CARRY 5, 5 consumed → unspent carry 0.
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([
+      { entryType: "GRANT", _sum: { delta: 20 } },
+      { entryType: "CARRY", _sum: { delta: 5 } },
+      { entryType: "CONSUME", _sum: { delta: -5 } },
+    ]);
+
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    const calls = db.leaveLedgerEntry.createMany.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { data: { entryType: string }[] }).data.some((r) => r.entryType === "CONSUME"),
+    );
+    const rows = (calls[0][0] as { data: { delta: number; note: string }[] }).data;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ delta: -2 });
+    expect(rows[0].note).toContain("current allocation");
+  });
+
+  it("a cancel mirrors the split pair row-for-row (each part gets its own return)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, status: "APPROVED", days: 3 });
+    // The approval booked the 3 days as 2 carry + 1 new.
+    db.leaveLedgerEntry.findMany.mockResolvedValue([
+      { delta: -2, entryType: "CONSUME", sourceType: "LEAVE_REQUEST", sourceId: "lr-1", isReversal: false },
+      { delta: -1, entryType: "CONSUME", sourceType: "LEAVE_REQUEST", sourceId: "lr-1", isReversal: false },
+    ]);
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([
+      { entryType: "GRANT", _sum: { delta: 20 } },
+      { entryType: "CARRY", _sum: { delta: 3 } },
+      { entryType: "CONSUME", _sum: { delta: 0 } },
+    ]);
+
+    const res = await cancelLeaveRequest({ requestId: "lr-1" });
+    expect(res.ok).toBe(true);
+    const calls = db.leaveLedgerEntry.createMany.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { data: { entryType: string; isReversal?: boolean }[] }).data.some(
+        (r) => r.entryType === "CONSUME" && r.isReversal === true,
+      ),
+    );
+    expect(calls).toHaveLength(1);
+    const rows = (calls[0][0] as { data: { delta: number; isReversal: boolean }[] }).data;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ delta: 2, isReversal: true });
+    expect(rows[1]).toMatchObject({ delta: 1, isReversal: true });
+  });
+
+  it("the pair nets to zero exactly (the projection invariant holds per-part)", () => {
+    const net = projectLeaveBalance([
+      { entryType: "GRANT", delta: 20 },
+      { entryType: "CARRY", delta: 3 },
+      { entryType: "CONSUME", delta: -2 },
+      { entryType: "CONSUME", delta: -1 },
+      { entryType: "CONSUME", delta: 2 },
+      { entryType: "CONSUME", delta: 1 },
+    ]);
+    expect(net.used).toBe(0);
+    expect(net.available).toBe(23);
   });
 });
 
@@ -2154,19 +2297,20 @@ describe("F2.4 — advance (negative) leave", () => {
     ]);
     const at = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
     expect(at.ok).toBe(true);
-    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ delta: -11, entryType: "CONSUME" }) }),
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [expect.objectContaining({ delta: -11, entryType: "CONSUME" })] }),
     );
 
     // Requesting 11.25 → −5.25 < −5 → refused, nothing written for it.
     db.leaveRequest.updateMany.mockClear();
     db.leaveLedgerEntry.create.mockClear();
+    db.leaveLedgerEntry.createMany.mockClear();
     db.leaveRequest.findUnique.mockResolvedValue({ ...PENDING_REQUEST, leaveTypeId: "lt-advance", days: 11.25 });
     db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
     const past = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
     expect(past.ok).toBe(false);
     expect(past.ok === false && past.error).toMatch(/insufficient balance/i);
-    expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
   });
 });
 

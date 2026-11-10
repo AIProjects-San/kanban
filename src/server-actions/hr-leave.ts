@@ -41,6 +41,7 @@ import {
   advanceHint,
   resolveLeavePolicy,
   capBalanceForConsumption,
+  splitConsumptionAtCarryBoundary,
   type LeavePolicyRow,
 } from "@/lib/leave-policy";
 import { planLeaveAdjustment } from "@/lib/leave-ledger";
@@ -807,22 +808,51 @@ export async function decideLeaveRequest(input: {
           );
         }
 
-        // The consumption row — append-only (F1.2). One row per approval,
-        // double-book-proof via the guarded status flip above; its undo (a
-        // cancel) will be a sibling reversal row, never an edit or delete.
-        await tx.leaveLedgerEntry.create({
-          data: {
-            userId: request.userId,
-            leaveTypeId: request.leaveTypeId,
-            year,
-            delta: -request.days,
-            entryType: "CONSUME",
-            sourceType: "LEAVE_REQUEST",
-            sourceId: request.id,
-            note: `${type?.name ?? "Leave"} ${request.startDate.toISOString().slice(0, 10)} → ${request.endDate.toISOString().slice(0, 10)} (${request.days} d)`,
-            isReversal: false,
-          },
+        // The consumption rows — append-only (F1.2), double-book-proof via
+        // the guarded status flip above; their undo (a cancel) is sibling
+        // reversal rows, never an edit or delete.
+        // P29 (LV-05) — split-at-CF-boundary FIFO consumption: the days
+        // draw from the unspent carried-over portion FIRST (FIFO — the
+        // same unspentCarryDays formula the lapse walk runs), then from the
+        // current allocation, one row per part when both are non-zero (the
+        // benchmark books the CF and new debits separately, each part with
+        // its own expiry). The pair sums to `days` exactly, so every
+        // aggregate — QA-1's guard above, LV-B14's cap, the cache sync
+        // below — is unchanged.
+        const split = splitConsumptionAtCarryBoundary({
+          days: request.days,
+          carriedOver: projection.carriedOver,
+          used: projection.used,
         });
+        const baseNote = `${type?.name ?? "Leave"} ${requestStartKey} → ${requestEndKey}`;
+        const consumeRows: Array<{ delta: number; note: string }> = [];
+        if (split.carryPart > 0) {
+          consumeRows.push({
+            delta: -split.carryPart,
+            note: `${baseNote} — ${split.carryPart} d from carried-over days (FIFO)`,
+          });
+        }
+        if (split.newPart > 0) {
+          consumeRows.push({
+            delta: -split.newPart,
+            note: `${baseNote} — ${split.newPart} d from the current allocation`,
+          });
+        }
+        if (consumeRows.length > 0) {
+          await tx.leaveLedgerEntry.createMany({
+            data: consumeRows.map((r) => ({
+              userId: request.userId,
+              leaveTypeId: request.leaveTypeId,
+              year,
+              delta: r.delta,
+              entryType: "CONSUME",
+              sourceType: "LEAVE_REQUEST",
+              sourceId: request.id,
+              note: r.note,
+              isReversal: false,
+            })),
+          });
+        }
 
         // Cache sync — an ABSOLUTE set from the projection (QA-1b's atomic
         // increment, superseded): the ledger row above is the truth, and an
@@ -979,23 +1009,47 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
             "This request is no longer approved — it was just cancelled or changed elsewhere. Refresh and try again.",
           );
         }
-        // F1.2 — the reversal row: append-only undo of the approval's
-        // CONSUME entry. `used` lands exactly where the old decrement put
-        // it (the pair nets to zero), but now BOTH events survive as rows —
-        // the ledger's story of "approved then cancelled" is auditable.
-        await tx.leaveLedgerEntry.create({
-          data: {
+        // F1.2 — the reversal rows: append-only undo of the approval's
+        // CONSUME entries. `used` lands exactly where the old decrement put
+        // it (the pair nets to zero), and BOTH events survive as rows — the
+        // ledger's story of "approved then cancelled" is auditable.
+        // P29 (LV-05) — one mirror per split row (the carry/new parts each
+        // get their own return; a pre-P29 single-row approval or a drifted
+        // ledger falls back to the whole-days reversal, byte-identical).
+        const approvalRows = await tx.leaveLedgerEntry.findMany({
+          where: {
             userId: request.userId,
             leaveTypeId: request.leaveTypeId,
             year,
-            delta: request.days,
             entryType: "CONSUME",
             sourceType: "LEAVE_REQUEST",
             sourceId: request.id,
-            note: `Reversal: approved request cancelled (${request.days} d returned)`,
-            isReversal: true,
+            isReversal: false,
           },
+          select: { delta: true },
         });
+        const reversals: Array<{ delta: number; note: string }> =
+          approvalRows.length > 0
+            ? approvalRows.map((r) => ({
+                delta: -r.delta,
+                note: `Reversal: approved request cancelled (${-r.delta} d returned)`,
+              }))
+            : [{ delta: request.days, note: `Reversal: approved request cancelled (${request.days} d returned)` }];
+        if (reversals.length > 0) {
+          await tx.leaveLedgerEntry.createMany({
+            data: reversals.map((r) => ({
+              userId: request.userId,
+              leaveTypeId: request.leaveTypeId,
+              year,
+              delta: r.delta,
+              entryType: "CONSUME",
+              sourceType: "LEAVE_REQUEST",
+              sourceId: request.id,
+              note: r.note,
+              isReversal: true,
+            })),
+          });
+        }
 
         // Cache sync — absolute set from the post-reversal projection,
         // clamped at zero (the old min() decrement's guarantee, kept).

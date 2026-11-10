@@ -673,9 +673,173 @@ export function rolloverOps(prevAvailable: number, maxCarryOver: number): Rollov
  * carryGranted − min(used, carryGranted).
  */
 export function carryLapseDelta(carryGranted: number, used: number): number {
-  const carry = Math.max(0, round2(carryGranted));
-  const unspent = round2(carry - Math.min(Math.max(0, used), carry));
+  const unspent = unspentCarryDays(carryGranted, used);
   return unspent > 0 ? -unspent : 0;
+}
+
+/**
+ * P29 (LV-05) — the FIFO core every carry reader shares: how many of the
+ * granted carried days are still unspent. Consumption is FIFO (carried days
+ * spend before current-window grants — the benchmark's own leave ledger
+ * discipline), so the first `min(used, carryGranted)` days of usage ate the
+ * carry. One formula, three callers: the aggregate lapse (carryLapseDelta),
+ * the per-row lapse walk (leave-allocation-core), and the split-at-CF-
+ * boundary consumption kernel below — they can never disagree.
+ */
+export function unspentCarryDays(carryGranted: number, used: number): number {
+  const carry = Math.max(0, round2(carryGranted));
+  return round2(carry - Math.min(Math.max(0, used), carry));
+}
+
+/** P29 (LV-05) — the split of one approval's days at the carry-forward
+ * boundary: the FIFO carry part first, the current-allocation part after.
+ * Mirrors the benchmark's Leave Application consumption, which books the CF
+ * portion and the new portion as separate ledger debits (each allocation
+ * part carries its own expiry). Pure; the approval writer turns this into
+ * one or two append-only CONSUME rows — the pair sums to `days` exactly,
+ * so every aggregate guard (QA-1, LV-B14, the cache sync) is unchanged. */
+export interface ConsumptionSplit {
+  /** Days drawn from the unspent carried-over portion (FIFO first). */
+  carryPart: number;
+  /** Days drawn from the current allocation (grants net of adjustments). */
+  newPart: number;
+  /** The unspent carried days BEFORE this consumption (diagnostic). */
+  unspentCarry: number;
+}
+
+/** Split `days` of consumption at the CF boundary. See ConsumptionSplit. */
+export function splitConsumptionAtCarryBoundary(input: {
+  days: number;
+  carriedOver: number;
+  used: number;
+}): ConsumptionSplit {
+  const unspentCarry = unspentCarryDays(input.carriedOver, input.used);
+  const carryPart = round2(Math.min(Math.max(0, input.days), unspentCarry));
+  const newPart = round2(Math.max(0, input.days) - carryPart);
+  return { carryPart, newPart, unspentCarry };
+}
+
+/**
+ * P29 (LV-04) — the day a bucket's CARRY row lapses, frozen at write time:
+ * the allocation window's start + carryExpiresAfterMonths (null = the carry
+ * never lapses). The benchmark's Leave Allocation writes its new + CF parts
+ * each with its own expiry date; Fernly stamps the date on the CARRY ledger
+ * row itself so the lapse phase honors the date the CARRY was written with,
+ * never the policy's LATER edits (frozen-at-write semantics). Month-end
+ * clamping rides addMonths (Jan 31 + 1 month → Feb 28/29).
+ */
+export function carryExpiryDay(
+  windowStart: string,
+  carryExpiresAfterMonths: number | null,
+): string | null {
+  if (carryExpiresAfterMonths === null) return null;
+  return addMonths(windowStart, Math.max(1, Math.round(carryExpiresAfterMonths)));
+}
+
+// ---------------------------------------------------------------------------
+// P29 (LV-04) — the per-row carry lapse walk (the expiry job's planner)
+// ---------------------------------------------------------------------------
+
+/** One due carry lapse: the EXPIRE row the lapse phase writes for a single
+ * CARRY ledger row (sourceId "carry-lapse#<carryRowId>" — the per-row
+ * idempotency key). */
+export interface CarryLapseOp {
+  carryRowId: string;
+  /** Signed day delta to append (always < 0). */
+  delta: number;
+  note: string;
+}
+
+/**
+ * Plan the due carry lapses for one ledger bucket (user × type × year).
+ * Pure: the lapse phase feeds the bucket's rows (in write order) plus the
+ * window facts, and appends exactly the returned ops. Rules:
+ *   • FIFO — net CONSUME deltas (reversals included) eat the CARRY rows in
+ *     write order; a row's unspent part is what can still lapse
+ *     (the per-row twin of unspentCarryDays — one formula, both shapes);
+ *   • a row stamped with `expiryAt` (day key) lapses on ITS frozen day —
+ *     even when the policy's carryExpiresAfterMonths has since changed or
+ *     been removed (the benchmark's per-row expiry: the date is allocation
+ *     data, not live policy);
+ *   • a row WITHOUT a stamp (pre-P29 data, or written while the knob was
+ *     null) bridges on the policy's CURRENT knob — due once N complete
+ *     months of the window elapsed (the pre-P29 aggregate rule,
+ *     byte-identical for single-row buckets);
+ *   • idempotency — a legacy aggregate "carry-lapse" row retires the whole
+ *     pair (never double-lapse old data); a "carry-lapse#<id>" row retires
+ *     its own CARRY row.
+ */
+export function planCarryLapses(input: {
+  asOf: string;
+  /** The active window's first day (the bridge clock's anchor). */
+  windowStart: string;
+  /** The active window's label for notes (name or bucket year). */
+  windowLabel: string;
+  /** The policy's CURRENT knob — the bridge rule only. */
+  carryExpiresAfterMonths: number | null;
+  /** The bucket's ledger rows in createdAt (write) order. `expiryAt` is a
+   * day key ("YYYY-MM-DD") or null. */
+  rows: ReadonlyArray<{
+    id: string;
+    delta: number;
+    entryType: string;
+    sourceType: string;
+    sourceId: string;
+    expiryAt: string | null;
+  }>;
+}): CarryLapseOp[] {
+  const carryRows = input.rows.filter((r) => r.entryType === "CARRY");
+  if (carryRows.length === 0) return [];
+  const lapsedKeys = new Set(
+    input.rows
+      .filter(
+        (r) =>
+          r.entryType === "EXPIRE" &&
+          r.sourceType === "POLICY" &&
+          (r.sourceId === "carry-lapse" || r.sourceId.startsWith("carry-lapse#")),
+      )
+      .map((r) => r.sourceId),
+  );
+  // A legacy aggregate lapse already retired this pair's carry.
+  if (lapsedKeys.has("carry-lapse")) return [];
+
+  // FIFO: net consumption (reversals included) eats carry rows in write order.
+  const usedNet = input.rows.reduce(
+    (s, r) => (r.entryType === "CONSUME" ? s - r.delta : s),
+    0,
+  );
+  let remaining = Math.max(0, round2(usedNet));
+
+  const due: CarryLapseOp[] = [];
+  for (const c of carryRows) {
+    const granted = Math.max(0, round2(c.delta));
+    const consumedFromRow = Math.min(remaining, granted);
+    remaining = round2(Math.max(0, remaining - consumedFromRow));
+    const unspent = round2(granted - consumedFromRow);
+    if (unspent <= 0) continue;
+    if (lapsedKeys.has(`carry-lapse#${c.id}`)) continue; // already lapsed
+
+    if (c.expiryAt) {
+      if (c.expiryAt > input.asOf) continue; // frozen date not yet due
+      due.push({
+        carryRowId: c.id,
+        delta: -unspent,
+        note: `Carried ${unspent} day(s) lapsed on ${c.expiryAt} (expiry frozen at carry time)`,
+      });
+    } else if (
+      input.carryExpiresAfterMonths !== null &&
+      Math.max(0, monthsBetween(input.windowStart, input.asOf)) >= input.carryExpiresAfterMonths
+    ) {
+      // Pre-P29 bridge: no frozen date — the policy's CURRENT knob governs.
+      due.push({
+        carryRowId: c.id,
+        delta: -unspent,
+        note: `Carried days lapsed after ${input.carryExpiresAfterMonths} month(s) of ${input.windowLabel}`,
+      });
+    }
+    // else: not due, or never lapses (no frozen date and no knob).
+  }
+  return due;
 }
 
 /** COMPLETE months of the new year elapsed at asOf (0 through January,

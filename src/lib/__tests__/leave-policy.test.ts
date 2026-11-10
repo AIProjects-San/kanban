@@ -20,6 +20,10 @@ import {
   addMonths,
   monthsBetween,
   capBalanceForConsumption,
+  unspentCarryDays,
+  splitConsumptionAtCarryBoundary,
+  carryExpiryDay,
+  planCarryLapses,
   type LeavePolicyRow,
   type EmploymentFacts,
   type DueGrantsInput,
@@ -426,6 +430,203 @@ describe("carryLapseDelta", () => {
     expect(carryLapseDelta(5, 3)).toBe(-2); // 2 of the 5 carried days unspent
     expect(carryLapseDelta(5, 7)).toBe(0); // all carry spent
     expect(carryLapseDelta(0, 5)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P29 (LV-04/LV-05) — per-row CARRY expiry dates + split-at-CF-boundary
+// FIFO consumption. The three kernels share ONE FIFO core (unspentCarryDays)
+// so the split the approval books, the walk the lapse phase runs, and the
+// aggregate lapse can never disagree.
+// ---------------------------------------------------------------------------
+
+describe("unspentCarryDays (P29 — the shared FIFO core)", () => {
+  it("carry minus FIFO-attributed usage, clamped at zero both ways", () => {
+    expect(unspentCarryDays(5, 3)).toBe(2);
+    expect(unspentCarryDays(5, 7)).toBe(0); // usage outran the carry: none left
+    expect(unspentCarryDays(0, 5)).toBe(0);
+    expect(unspentCarryDays(-3, 0)).toBe(0); // a negative CARRY row reads as none
+    expect(unspentCarryDays(5, -1)).toBe(5); // negative used (drift) reads as zero usage
+  });
+
+  it("agrees with the aggregate lapse kernel on every shape", () => {
+    for (const [carry, used] of [[5, 3], [5, 7], [0, 5], [12, 2.5], [4, 4]] as const) {
+      expect(unspentCarryDays(carry, used)).toBe(-carryLapseDelta(carry, used) || 0);
+    }
+  });
+});
+
+describe("splitConsumptionAtCarryBoundary (P29/LV-05)", () => {
+  it("days draw from the unspent carry FIRST, then the current allocation", () => {
+    // 4 unspent carry of 5 granted (1 used) → a 3-day request is ALL carry.
+    expect(splitConsumptionAtCarryBoundary({ days: 3, carriedOver: 5, used: 1 }))
+      .toEqual({ carryPart: 3, newPart: 0, unspentCarry: 4 });
+    // 2 unspent carry → a 3-day request splits 2 carry + 1 new (the boundary).
+    expect(splitConsumptionAtCarryBoundary({ days: 3, carriedOver: 3, used: 1 }))
+      .toEqual({ carryPart: 2, newPart: 1, unspentCarry: 2 });
+  });
+
+  it("no carry (the seeded default) is a pure current-allocation split", () => {
+    expect(splitConsumptionAtCarryBoundary({ days: 5, carriedOver: 0, used: 2 }))
+      .toEqual({ carryPart: 0, newPart: 5, unspentCarry: 0 });
+  });
+
+  it("fully spent carry consumes from the current allocation only", () => {
+    expect(splitConsumptionAtCarryBoundary({ days: 4, carriedOver: 5, used: 5 }))
+      .toEqual({ carryPart: 0, newPart: 4, unspentCarry: 0 });
+  });
+
+  it("the pair always sums to days exactly (guards and cache sync unchanged)", () => {
+    for (const [days, carriedOver, used] of [[3, 5, 1], [7, 2, 0], [2.5, 1.5, 0], [1, 0, 9]] as const) {
+      const s = splitConsumptionAtCarryBoundary({ days, carriedOver, used });
+      expect(s.carryPart + s.newPart).toBe(days);
+      expect(s.carryPart).toBeLessThanOrEqual(Math.max(0, carriedOver));
+    }
+  });
+
+  it("half-day fractions ride the same rounding (F1.1 semantics)", () => {
+    expect(splitConsumptionAtCarryBoundary({ days: 1.5, carriedOver: 1, used: 0 }))
+      .toEqual({ carryPart: 1, newPart: 0.5, unspentCarry: 1 });
+  });
+});
+
+describe("carryExpiryDay (P29/LV-04 — the frozen stamp)", () => {
+  it("window start + N months, month-end clamped", () => {
+    expect(carryExpiryDay("2026-01-01", 3)).toBe("2026-04-01");
+    expect(carryExpiryDay("2027-04-01", 3)).toBe("2027-07-01"); // named FY window
+    expect(carryExpiryDay("2026-01-31", 1)).toBe("2026-02-28");
+  });
+
+  it("null knob = the carry never lapses (no stamp)", () => {
+    expect(carryExpiryDay("2026-01-01", null)).toBeNull();
+  });
+});
+
+describe("planCarryLapses (P29/LV-04 — the per-row walk)", () => {
+  /** Row factory for the walk's input shape. */
+  const row = (
+    id: string,
+    entryType: string,
+    delta: number,
+    extra: Partial<{ sourceType: string; sourceId: string; expiryAt: string | null }> = {},
+  ) => ({
+    id,
+    entryType,
+    delta,
+    sourceType: extra.sourceType ?? "POLICY",
+    sourceId: extra.sourceId ?? "",
+    expiryAt: extra.expiryAt ?? null,
+  });
+
+  const plan = (rows: ReturnType<typeof row>[], opts: Partial<{
+    asOf: string;
+    windowStart: string;
+    carryExpiresAfterMonths: number | null;
+  }> = {}) =>
+    planCarryLapses({
+      asOf: opts.asOf ?? "2026-04-01",
+      windowStart: opts.windowStart ?? "2026-01-01",
+      windowLabel: "2026",
+      // `` ?? 3 would swallow an explicit null — the knob default is 3 only
+      // when the caller did not say anything.
+      carryExpiresAfterMonths:
+        opts.carryExpiresAfterMonths === undefined ? 3 : opts.carryExpiresAfterMonths,
+      rows,
+    });
+
+  it("a stamped row lapses on ITS frozen day — even when the policy knob was since removed", () => {
+    // Frozen 2026-04-01; the CURRENT knob is null (HR edited the policy
+    // after the rollover) — the stamp still governs (allocation data,
+    // not live policy).
+    const ops = plan(
+      [row("c1", "CARRY", 5, { expiryAt: "2026-04-01" }), row("g1", "GRANT", 20)],
+      { carryExpiresAfterMonths: null },
+    );
+    expect(ops).toEqual([
+      { carryRowId: "c1", delta: -5, note: expect.stringContaining("lapsed on 2026-04-01") },
+    ]);
+  });
+
+  it("a stamped row lapses on its own date, not the knob's clock (frozen ≠ live)", () => {
+    // Knob says 3 months (Apr 1) but the stamp says Jun 1 → NOT due on Apr 1.
+    expect(plan([row("c1", "CARRY", 5, { expiryAt: "2026-06-01" })])).toEqual([]);
+    const ops = plan([row("c1", "CARRY", 5, { expiryAt: "2026-06-01" })], { asOf: "2026-06-01" });
+    expect(ops.map((o) => o.delta)).toEqual([-5]);
+  });
+
+  it("an unstamped row bridges on the policy's CURRENT knob (pre-P29 data, byte-identical)", () => {
+    // March 31: only 2 complete months → not due; April 1: due.
+    expect(plan([row("c1", "CARRY", 5), row("x", "CONSUME", -2, { sourceType: "LEAVE_REQUEST" })], { asOf: "2026-03-31" })).toEqual([]);
+    const ops = plan([row("c1", "CARRY", 5), row("x", "CONSUME", -2, { sourceType: "LEAVE_REQUEST" })], { asOf: "2026-04-01" });
+    expect(ops).toEqual([
+      { carryRowId: "c1", delta: -3, note: "Carried days lapsed after 3 month(s) of 2026" },
+    ]);
+  });
+
+  it("no stamp and no knob = the carry never lapses", () => {
+    expect(plan([row("c1", "CARRY", 5)], { carryExpiresAfterMonths: null, asOf: "2026-12-31" })).toEqual([]);
+  });
+
+  it("FIFO: consumption eats carry rows in write order, reversals return days", () => {
+    // Two CARRY rows (3 then 2); net consumption 4 eats row1 entirely (3)
+    // plus 1 of row2 → only row2's last day can lapse.
+    const rows = [
+      row("c1", "CARRY", 3, { expiryAt: "2026-04-01" }),
+      row("c2", "CARRY", 2, { expiryAt: "2026-04-01" }),
+      row("k1", "CONSUME", -4, { sourceType: "LEAVE_REQUEST" }),
+    ];
+    const ops = plan(rows);
+    expect(ops.map((o) => [o.carryRowId, o.delta])).toEqual([["c2", -1]]);
+
+    // A cancel returns the 4 days to the member — the carry is unspent
+    // again (FIFO over the final row set: the consume/reverse pair nets to
+    // zero), so the whole 3 + 2 is due when both stamps pass.
+    const withReversal = [
+      ...rows,
+      row("r1", "CONSUME", 4, { sourceType: "LEAVE_REQUEST" }),
+    ];
+    expect(plan(withReversal).map((o) => [o.carryRowId, o.delta])).toEqual([
+      ["c1", -3],
+      ["c2", -2],
+    ]);
+  });
+
+  it("idempotency: a legacy aggregate 'carry-lapse' row retires the WHOLE pair", () => {
+    const ops = plan([
+      row("c1", "CARRY", 5, { expiryAt: "2026-04-01" }),
+      row("e0", "EXPIRE", -5, { sourceId: "carry-lapse" }), // pre-P29 row
+    ]);
+    expect(ops).toEqual([]);
+  });
+
+  it("idempotency: a 'carry-lapse#<id>' row retires only its own CARRY row", () => {
+    const ops = plan([
+      row("c1", "CARRY", 3, { expiryAt: "2026-04-01" }),
+      row("c2", "CARRY", 2, { expiryAt: "2026-04-01" }),
+      row("e1", "EXPIRE", -3, { sourceId: "carry-lapse#c1" }), // c1 already lapsed
+    ]);
+    expect(ops.map((o) => [o.carryRowId, o.delta])).toEqual([["c2", -2]]);
+  });
+
+  it("an expired row above the carry cap (sourceId 'carry-expire') is not a lapse mark", () => {
+    // The rollover's cap EXPIRE row must not block the carry lapse — only
+    // 'carry-lapse'-prefixed POLICY rows are marks.
+    const ops = plan([
+      row("c1", "CARRY", 5, { expiryAt: "2026-04-01" }),
+      row("e1", "EXPIRE", -3, { sourceId: "carry-expire" }),
+    ]);
+    expect(ops.map((o) => o.delta)).toEqual([-5]);
+  });
+
+  it("no CARRY rows at all = nothing to plan", () => {
+    expect(plan([row("g1", "GRANT", 20), row("k", "CONSUME", -2, { sourceType: "LEAVE_REQUEST" })])).toEqual([]);
+  });
+
+  it("the named-window bridge counts months into the WINDOW (Apr start ⇒ July lapse for N=3)", () => {
+    const rows = [row("c1", "CARRY", 4, {}), row("x", "CONSUME", -1, { sourceType: "LEAVE_REQUEST" })];
+    expect(plan(rows, { windowStart: "2027-04-01", asOf: "2027-06-15" })).toEqual([]); // 2 complete months
+    const ops = plan(rows, { windowStart: "2027-04-01", asOf: "2027-07-02" });
+    expect(ops.map((o) => o.delta)).toEqual([-3]);
   });
 });
 

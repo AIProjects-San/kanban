@@ -42,7 +42,8 @@ import {
   resolveLeavePolicy,
   dueGrantOps,
   rolloverOps,
-  carryLapseDelta,
+  carryExpiryDay,
+  planCarryLapses,
   type EmploymentFacts,
   type GrantOp,
 } from "@/lib/leave-policy";
@@ -51,7 +52,6 @@ import {
 import {
   resolveActiveWindow,
   carrySourceBucket,
-  monthsIntoWindow,
   type LeavePeriodInput,
   type LeaveWindow,
 } from "@/lib/leave-period";
@@ -373,13 +373,19 @@ async function runRolloverForType(
           create: { userId: b.userId, leaveTypeId, year, entitled: 0, carriedOver: 0, used: 0 },
           update: {},
         });
-        const rows: Array<{ delta: number; entryType: string; sourceId: string; note: string }> = [];
+        // P29 (LV-04) — the CARRY row carries its OWN frozen expiry day
+        // (window start + carryExpiresAfterMonths; null = never lapses).
+        // The lapse phase honors the stamped date, never the policy's
+        // later edits — the benchmark's per-row CF expiry discipline.
+        const carryExpiry = carryExpiryDay(active.start, policy.carryExpiresAfterMonths);
+        const rows: Array<{ delta: number; entryType: string; sourceId: string; note: string; expiryAt: Date | null }> = [];
         if (carry > 0) {
           rows.push({
             delta: carry,
             entryType: "CARRY",
             sourceId: "carry",
-            note: `Carried over ${carry} day(s) from ${sourceBucket}${active.name ? ` (${active.name})` : ""} (cap ${policy.maxCarryOver})`,
+            expiryAt: carryExpiry ? new Date(`${carryExpiry}T00:00:00.000Z`) : null,
+            note: `Carried over ${carry} day(s) from ${sourceBucket}${active.name ? ` (${active.name})` : ""} (cap ${policy.maxCarryOver})${carryExpiry ? ` — lapses ${carryExpiry}` : ""}`,
           });
         }
         if (expire < 0) {
@@ -387,6 +393,7 @@ async function runRolloverForType(
             delta: expire,
             entryType: "EXPIRE",
             sourceId: "carry-expire",
+            expiryAt: null,
             note: `Expired ${-expire} day(s) above the ${policy.maxCarryOver}-day carry cap at the window's end`,
           });
         }
@@ -400,6 +407,7 @@ async function runRolloverForType(
             sourceType: "POLICY",
             sourceId: r.sourceId,
             note: r.note,
+            expiryAt: r.expiryAt,
             isReversal: false,
           })),
         });
@@ -424,11 +432,16 @@ async function runRolloverForType(
   }
 }
 
-/** Carry lapse for one type (carryExpiresAfterMonths): once N complete
- * months of the ACTIVE WINDOW elapsed, expire the still-unspent carried
- * days (FIFO). Idempotent: the "carry-lapse" EXPIRE row is written once.
- * P27 (LV-08): the clock counts months into the window (its start), not
- * the calendar year — identical when the window IS the calendar year. */
+/** Carry lapse for one type (P29/LV-04): expire the still-unspent carried
+ * days once due, ONE EXPIRE row per CARRY ledger row. The pure planner
+ * (planCarryLapses) owns every rule: FIFO attribution of net consumption,
+ * the per-row frozen expiryAt (honored even when the policy's knob has
+ * since changed or been removed), the pre-P29 bridge for unstamped rows
+ * (the policy's CURRENT knob — N complete months into the active window,
+ * byte-identical to the old aggregate lapse), and the idempotency marks
+ * (a legacy "carry-lapse" row retires the pair; a "carry-lapse#<id>" row
+ * retires its own CARRY row). This writer only reads the bucket's rows,
+ * appends the planned ops transactionally, and re-syncs the cache. */
 async function runLapseForType(
   leaveTypeId: string,
   leaveTypeName: string,
@@ -436,10 +449,7 @@ async function runLapseForType(
   active: LeaveWindow,
   report: LeaveAllocationJobReport,
 ): Promise<void> {
-  if (policy.carryExpiresAfterMonths === null) return;
   const asOf = report.asOf;
-  if (monthsIntoWindow(active.start, asOf) < policy.carryExpiresAfterMonths) return;
-
   const year = active.bucketYear;
   const balances = await db.leaveBalance.findMany({
     where: { leaveTypeId, year },
@@ -447,29 +457,44 @@ async function runLapseForType(
   });
   for (const b of balances) {
     try {
-      const lapsed = await db.leaveLedgerEntry.findFirst({
-        where: { userId: b.userId, leaveTypeId, year, sourceType: "POLICY", sourceId: "carry-lapse" },
-        select: { id: true },
+      // The bucket's rows in write order — the FIFO walk's input. The read
+      // runs for EVERY policy shape (even knob-null types) because frozen
+      // expiryAt rows must lapse on their stamped day regardless of the
+      // policy's current state.
+      const rows = await db.leaveLedgerEntry.findMany({
+        where: { userId: b.userId, leaveTypeId, year },
+        select: { id: true, delta: true, entryType: true, sourceType: true, sourceId: true, expiryAt: true },
+        orderBy: { createdAt: "asc" },
       });
-      if (lapsed) continue;
-
-      const projection = await ledgerProjection(db, b.userId, leaveTypeId, year);
-      const delta = carryLapseDelta(projection.carriedOver, projection.used);
-      if (delta >= 0) continue;
+      const due = planCarryLapses({
+        asOf,
+        windowStart: active.start,
+        windowLabel: String(active.name ?? year),
+        carryExpiresAfterMonths: policy.carryExpiresAfterMonths,
+        rows: rows.map((r) => ({
+          id: r.id,
+          delta: r.delta,
+          entryType: r.entryType,
+          sourceType: r.sourceType,
+          sourceId: r.sourceId,
+          expiryAt: r.expiryAt ? dayKey(r.expiryAt) : null,
+        })),
+      });
+      if (due.length === 0) continue;
 
       await db.$transaction(async (tx) => {
-        await tx.leaveLedgerEntry.create({
-          data: {
+        await tx.leaveLedgerEntry.createMany({
+          data: due.map((d) => ({
             userId: b.userId,
             leaveTypeId,
             year,
-            delta,
+            delta: d.delta,
             entryType: "EXPIRE",
             sourceType: "POLICY",
-            sourceId: "carry-lapse",
-            note: `Carried days lapsed after ${policy.carryExpiresAfterMonths} month(s) of ${active.name ?? year}`,
+            sourceId: `carry-lapse#${d.carryRowId}`,
+            note: d.note,
             isReversal: false,
-          },
+          })),
         });
         const after = await ledgerProjection(tx, b.userId, leaveTypeId, year);
         await tx.leaveBalance.update({
@@ -481,7 +506,7 @@ async function runLapseForType(
           },
         });
       });
-      report.expireRowsWritten += 1;
+      report.expireRowsWritten += due.length;
     } catch (err) {
       report.failures += 1;
       const reason = err instanceof Error ? err.message : String(err);

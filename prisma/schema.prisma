@@ -1157,6 +1157,13 @@ model LeaveLedgerEntry {
   // True on a row that undoes a prior row (cancel-of-approval). The
   // benchmark's is_reversal discipline: the pair is self-describing.
   isReversal  Boolean  @default(false)
+  // P29 (LV-04) — the day this row's days lapse, frozen at write time.
+  // Set ONLY on CARRY rows (the benchmark's per-row CF expiry: the new-year
+  // allocation document writes its new + CF parts each with its own expiry
+  // date). Null = never lapses — including pre-P29 rows, which the lapse
+  // phase bridges with the policy's CURRENT carryExpiresAfterMonths clock
+  // (the pre-P29 aggregate rule, byte-identical).
+  expiryAt    DateTime?
   createdAt   DateTime @default(now())
 
   @@index([userId, leaveTypeId, year])

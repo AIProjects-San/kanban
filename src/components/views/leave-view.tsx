@@ -15,7 +15,7 @@ import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT, LeaveEncashmen
 import { cn } from "@/lib/utils";
 import { getMyLeaveData, createLeaveRequest, cancelLeaveRequest } from "@/server-actions/hr-leave";
 import { holidayLookupFrom, workingDaysBetween } from "@/lib/working-days";
-import { capBalanceForConsumption } from "@/lib/leave-policy";
+import { capBalanceForConsumption, splitConsumptionAtCarryBoundary } from "@/lib/leave-policy";
 import { useApp } from "@/store/app-store";
 import { getMyEncashments, requestLeaveEncashment } from "@/server-actions/leave-encashment";
 import { planLeaveEncashment, type EncashmentPolicy } from "@/lib/leave-encashment";
@@ -403,6 +403,19 @@ function RequestFormModal({
     if (!selectedBalance || crossYear || !startDate) return null;
     return capBalanceForConsumption(selectedBalance.available, startDate, startYear);
   }, [selectedBalance, crossYear, startDate, startYear]);
+  // P29 (LV-05) — the split-at-CF-boundary preview: the same pure kernel the
+  // approval runs (FIFO — carried days spend first). Submission-time numbers,
+  // so the approval's split may differ if other requests land first; the
+  // guard and the ledger stay authoritative either way. Only surfaced when
+  // there IS a carried-over portion to split.
+  const fifoSplit = useMemo(() => {
+    if (!selectedBalance || crossYear || days <= 0 || selectedBalance.carriedOver <= 0) return null;
+    return splitConsumptionAtCarryBoundary({
+      days,
+      carriedOver: selectedBalance.carriedOver,
+      used: selectedBalance.used,
+    });
+  }, [selectedBalance, crossYear, days]);
   // F2.4 — the floor-aware client guard (mirrors checkLeaveRequestAgainstBalance:
   // reject when days > available + floor; identical to the classic guard at
   // floor 0). P21 (LV-B14): `available` is the capped consumable when the
@@ -532,7 +545,7 @@ function RequestFormModal({
             >
               {consumption?.capped
                 ? `${days} of ${consumption.consumable} consumable (${selectedBalance.available} available, ${consumption.daysLeftInYear} calendar day${consumption.daysLeftInYear === 1 ? "" : "s"} left in ${startYear})`
-                : `${days} of ${selectedBalance.available} available${advanceFloor > 0 ? ` (advance allowed to −${advanceFloor})` : ""}`}
+                : `${days} of ${selectedBalance.available} available${advanceFloor > 0 ? ` (advance allowed to −${advanceFloor})` : ""}${fifoSplit && fifoSplit.carryPart > 0 ? ` — spends ${fifoSplit.carryPart} carried + ${fifoSplit.newPart || 0} new` : ""}`}
             </span>
           )}
         </div>

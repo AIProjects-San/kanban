@@ -290,6 +290,31 @@ describe("runLeaveAllocationJob — year-end rollover phase", () => {
       expect.objectContaining({ entryType: "CARRY", delta: 5, sourceType: "POLICY", sourceId: "carry" }),
       expect.objectContaining({ entryType: "EXPIRE", delta: -3, sourceType: "POLICY", sourceId: "carry-expire" }),
     ]);
+    // P29 (LV-04) — a knob-null policy stamps NO expiry (never lapses).
+    expect(rows[0].expiryAt).toBeNull();
+    expect(rows[0].note).not.toContain("lapses");
+  });
+
+  it("P29/LV-04: the rollover stamps the CARRY row's frozen expiry day (window start + knob months)", async () => {
+    const lapsing = {
+      ...EARNED_TYPE,
+      id: "lt-stamp",
+      policy: { ...EARNED_TYPE.policy, id: "lp-stamp", leaveTypeId: "lt-stamp", allocationStrategy: "MANUAL", carryExpiresAfterMonths: 3 },
+    };
+    db.leaveType.findMany.mockResolvedValue([lapsing]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2025 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ GRANT: 8 });
+
+    const report = await runLeaveAllocationJob(new Date("2026-01-02T00:00:00Z"));
+
+    expect(report.carryRowsWritten).toBe(1);
+    const rows = db.leaveLedgerEntry.createMany.mock.calls[0][0].data;
+    expect(rows[0]).toMatchObject({ entryType: "CARRY", delta: 5, sourceId: "carry" });
+    // 2026-01-01 + 3 months, UTC-midnight — the frozen lapse day.
+    expect(rows[0].expiryAt).toEqual(new Date("2026-04-01T00:00:00.000Z"));
+    expect(rows[0].note).toContain("— lapses 2026-04-01");
   });
 
   it("writes nothing when the prior balance is non-positive", async () => {
@@ -317,41 +342,160 @@ describe("runLeaveAllocationJob — year-end rollover phase", () => {
   });
 });
 
-describe("runLeaveAllocationJob — carry lapse phase", () => {
+describe("runLeaveAllocationJob — carry lapse phase (P29/LV-04: per-row expiry)", () => {
   const LAPSING_TYPE = {
     ...EARNED_TYPE,
     id: "lt-lapse",
     policy: { ...EARNED_TYPE.policy, id: "lp-3", leaveTypeId: "lt-lapse", allocationStrategy: "MANUAL", carryExpiresAfterMonths: 3 },
   };
 
-  it("expires the unspent carry once N months elapsed (FIFO)", async () => {
+  /** Ledger rows for one bucket, the shape the lapse phase reads. */
+  const carryRow = (delta: number, expiryAt: Date | null) => ({
+    id: "c1",
+    delta,
+    entryType: "CARRY",
+    sourceType: "POLICY",
+    sourceId: "carry",
+    expiryAt,
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+  });
+  const consumeRow = (delta: number) => ({
+    id: "k1",
+    delta,
+    entryType: "CONSUME",
+    sourceType: "LEAVE_REQUEST",
+    sourceId: "lr-1",
+    expiryAt: null,
+    createdAt: new Date("2026-02-01T00:00:00Z"),
+  });
+
+  it("unstamped rows (pre-P29 data) bridge on the knob: unspent carry expires once N months elapsed", async () => {
     db.leaveType.findMany.mockResolvedValue([LAPSING_TYPE]);
     db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
       args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
     );
-    // 5 carried, 2 consumed → 3 unspent → EXPIRE −3 on April 1st or later.
+    // 5 carried (NO stamp), 2 consumed → 3 unspent → EXPIRE −3 on April 1st.
     groupsBy({ CARRY: 5, CONSUME: -2 });
+    db.leaveLedgerEntry.findMany.mockResolvedValue([carryRow(5, null), consumeRow(-2)]);
 
     const before = await runLeaveAllocationJob(new Date("2026-03-31T00:00:00Z"));
     expect(before.expireRowsWritten).toBe(0); // March: only 2 complete months
 
     const report = await runLeaveAllocationJob(new Date("2026-04-01T00:00:00Z"));
     expect(report.expireRowsWritten).toBe(1);
-    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ entryType: "EXPIRE", delta: -3, sourceType: "POLICY", sourceId: "carry-lapse" }),
+        data: [expect.objectContaining({ entryType: "EXPIRE", delta: -3, sourceType: "POLICY", sourceId: "carry-lapse#c1" })],
+      }),
+    );
+    // The cache re-sync rides the same transaction.
+    expect(db.leaveBalance.update).toHaveBeenCalled();
+  });
+
+  it("a STAMPED row lapses on its frozen day — even when the policy knob was since removed", async () => {
+    const unstampedPolicy = {
+      ...LAPSING_TYPE,
+      policy: { ...LAPSING_TYPE.policy, carryExpiresAfterMonths: null }, // HR nulled the knob AFTER the rollover stamped the row
+    };
+    db.leaveType.findMany.mockResolvedValue([unstampedPolicy]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ CARRY: 5 });
+    db.leaveLedgerEntry.findMany.mockResolvedValue([carryRow(5, new Date("2026-04-01T00:00:00Z"))]);
+
+    const before = await runLeaveAllocationJob(new Date("2026-03-31T00:00:00Z"));
+    expect(before.expireRowsWritten).toBe(0); // the frozen day hasn't passed
+
+    const report = await runLeaveAllocationJob(new Date("2026-04-01T00:00:00Z"));
+    expect(report.expireRowsWritten).toBe(1);
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ delta: -5, sourceId: "carry-lapse#c1" })],
       }),
     );
   });
 
-  it("never lapses when the type has no carryExpiresAfterMonths", async () => {
+  it("a stamped row does NOT lapse on the knob's clock (the stamp, not the live policy, governs)", async () => {
+    db.leaveType.findMany.mockResolvedValue([LAPSING_TYPE]); // knob says Apr 1
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ CARRY: 5 });
+    db.leaveLedgerEntry.findMany.mockResolvedValue([carryRow(5, new Date("2026-06-01T00:00:00Z"))]); // stamp says Jun 1
+
+    const report = await runLeaveAllocationJob(new Date("2026-04-01T00:00:00Z"));
+    expect(report.expireRowsWritten).toBe(0);
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("never lapses when there is no stamp and no knob", async () => {
     db.leaveType.findMany.mockResolvedValue([MANUAL_TYPE]);
     db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
       args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
     );
     groupsBy({ CARRY: 5 });
+    db.leaveLedgerEntry.findMany.mockResolvedValue([carryRow(5, null)]);
     const report = await runLeaveAllocationJob(new Date("2026-12-31T00:00:00Z"));
     expect(report.expireRowsWritten).toBe(0);
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("idempotency: a legacy aggregate 'carry-lapse' row retires the pair — never double-lapse", async () => {
+    db.leaveType.findMany.mockResolvedValue([LAPSING_TYPE]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ CARRY: 5, CONSUME: -2, EXPIRE: -3 });
+    db.leaveLedgerEntry.findMany.mockResolvedValue([
+      carryRow(5, null),
+      consumeRow(-2),
+      { id: "e0", delta: -3, entryType: "EXPIRE", sourceType: "POLICY", sourceId: "carry-lapse", expiryAt: null, createdAt: new Date("2026-04-01T00:00:00Z") },
+    ]);
+
+    const report = await runLeaveAllocationJob(new Date("2026-04-02T00:00:00Z"));
+    expect(report.expireRowsWritten).toBe(0);
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("idempotency: a 'carry-lapse#<id>' row retires only its own CARRY row", async () => {
+    db.leaveType.findMany.mockResolvedValue([LAPSING_TYPE]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ CARRY: 5 });
+    db.leaveLedgerEntry.findMany.mockResolvedValue([
+      { id: "c1", delta: 3, entryType: "CARRY", sourceType: "POLICY", sourceId: "carry", expiryAt: new Date("2026-04-01T00:00:00Z"), createdAt: new Date("2026-01-01T00:00:00Z") },
+      { id: "c2", delta: 2, entryType: "CARRY", sourceType: "POLICY", sourceId: "carry", expiryAt: new Date("2026-04-01T00:00:00Z"), createdAt: new Date("2026-01-01T00:05:00Z") },
+      { id: "e1", delta: -3, entryType: "EXPIRE", sourceType: "POLICY", sourceId: "carry-lapse#c1", expiryAt: null, createdAt: new Date("2026-04-01T00:00:00Z") },
+    ]);
+
+    const report = await runLeaveAllocationJob(new Date("2026-04-02T00:00:00Z"));
+    expect(report.expireRowsWritten).toBe(1);
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ delta: -2, sourceId: "carry-lapse#c2" })],
+      }),
+    );
+  });
+
+  it("P29/LV-05: split consume rows attribute FIFO — the carry part eats the carry before any lapse", async () => {
+    db.leaveType.findMany.mockResolvedValue([LAPSING_TYPE]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ CARRY: 5, CONSUME: -5 });
+    // The approval split its 5 days as 3 carry + 2 new (both stamped rows
+    // are CONSUME): the carry is FULLY spent → nothing left to lapse.
+    db.leaveLedgerEntry.findMany.mockResolvedValue([
+      carryRow(5, new Date("2026-04-01T00:00:00Z")),
+      { id: "k1", delta: -3, entryType: "CONSUME", sourceType: "LEAVE_REQUEST", sourceId: "lr-1", expiryAt: null, createdAt: new Date("2026-02-01T00:00:00Z") },
+      { id: "k2", delta: -2, entryType: "CONSUME", sourceType: "LEAVE_REQUEST", sourceId: "lr-1", expiryAt: null, createdAt: new Date("2026-02-01T00:05:00Z") },
+    ]);
+
+    const report = await runLeaveAllocationJob(new Date("2026-04-01T00:00:00Z"));
+    expect(report.expireRowsWritten).toBe(0);
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
   });
 });
 
@@ -512,15 +656,43 @@ describe("runLeaveAllocationJob — named windows (P27/LV-08)", () => {
       args?.where?.year === 2027 ? [{ userId: "u1" }] : [],
     );
     groupsBy({ CARRY: 4, CONSUME: -1 }); // unspent carry 3
+    db.leaveLedgerEntry.findMany.mockResolvedValue([
+      { id: "c1", delta: 4, entryType: "CARRY", sourceType: "POLICY", sourceId: "carry", expiryAt: null, createdAt: new Date("2027-04-01T00:00:00Z") },
+      { id: "k1", delta: -1, entryType: "CONSUME", sourceType: "LEAVE_REQUEST", sourceId: "lr-1", expiryAt: null, createdAt: new Date("2027-05-01T00:00:00Z") },
+    ]);
 
     const report = await runLeaveAllocationJob(new Date("2027-07-02T00:00:00Z"));
 
     expect(report.expireRowsWritten).toBe(1);
-    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+    expect(db.leaveLedgerEntry.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ year: 2027, delta: -3, entryType: "EXPIRE", sourceId: "carry-lapse" }),
+        data: [expect.objectContaining({ year: 2027, delta: -3, entryType: "EXPIRE", sourceId: "carry-lapse#c1" })],
       }),
     );
+  });
+
+  it("P29/LV-04: a named window's rollover stamps the expiry from the WINDOW's start", async () => {
+    db.leavePeriod.findMany.mockResolvedValue([FISCAL_27_ROW]);
+    const lapsing = {
+      ...EARNED_TYPE,
+      id: "lt-stamp-w",
+      policy: { ...EARNED_TYPE.policy, id: "lp-sw", leaveTypeId: "lt-stamp-w", allocationStrategy: "MANUAL", carryExpiresAfterMonths: 3 },
+    };
+    db.leaveType.findMany.mockResolvedValue([lapsing]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ GRANT: 4 });
+
+    const report = await runLeaveAllocationJob(new Date("2027-04-02T00:00:00Z"));
+
+    expect(report.carryRowsWritten).toBe(1);
+    const rows = db.leaveLedgerEntry.createMany.mock.calls[0][0].data;
+    expect(rows[0]).toMatchObject({ entryType: "CARRY", delta: 4, year: 2027 });
+    // The window starts 2027-04-01 → the frozen expiry is 2027-07-01, not a
+    // calendar-year guess.
+    expect(rows[0].expiryAt).toEqual(new Date("2027-07-01T00:00:00.000Z"));
+    expect(rows[0].note).toContain("— lapses 2027-07-01");
   });
 
   it("the migration gap (asOf precedes the first period): the pass is an honest no-op", async () => {
