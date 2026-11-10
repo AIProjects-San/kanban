@@ -1533,6 +1533,33 @@ model MailOutbox {
   @@index([status])
 }
 
+// P24 (PL-01) — the notification template master. One row per CUSTOMIZED
+// event; the built-in defaults live in lib/notification-template.ts and a
+// missing row (or a Reset) falls back to them byte-identically, so an
+// unmigrated/drifted database keeps the exact pre-P24 strings. The event
+// vocabulary itself is a code registry (NOTIFICATION_TEMPLATE_EVENTS) — the
+// editor and the writers both read it, rows only ever hold overrides.
+// Placeholders use {{name}} / {{ name }} substitution (single pass,
+// replacements are never re-scanned); unknown names are refused at save
+// time so a typo can never silently render empty in production mail.
+model NotificationTemplate {
+  id             String   @id @default(cuid())
+  // Registry key — LEAVE_PENDING | LEAVE_DECIDED today; P25/P26/P40 events
+  // (reminders, scheduler nudges, the exit questionnaire) join the same
+  // registry as their epics land.
+  eventKey       String   @unique
+  // Email subject (the neutral, preview-safe line).
+  subjectTemplate String
+  // Email plain-text body — the audit copy the Outbox re-reads.
+  bodyTemplate   String
+  // In-app Notification.title.
+  titleTemplate  String
+  // In-app Notification.message.
+  messageTemplate String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
 // R4 — joining-formalities document checklist. The workspace-level template:
 // which documents HR collects from every joining candidate (ID, bank details,
 // right to work, education certificates, previous-employment proof…).

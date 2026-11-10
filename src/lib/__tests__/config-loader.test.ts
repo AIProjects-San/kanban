@@ -57,6 +57,8 @@ vi.mock("@/lib/db", () => ({
     role: { findMany },
     permission: { findMany },
     rolePermission: { findMany },
+    // P24 — the notification template override rows (empty = defaults).
+    notificationTemplate: { findMany },
   },
 }));
 

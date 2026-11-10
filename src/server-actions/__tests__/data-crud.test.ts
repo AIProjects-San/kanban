@@ -17,6 +17,8 @@ const { db, getBetterSession } = vi.hoisted(() => {
     // P1 (edge-case audit) — changePassword now invalidates pending reset
     // tokens via $transaction, so the test mock needs this model.
     "passwordResetToken",
+    // P24 — the notification template master (config-loader reads it).
+    "notificationTemplate",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -812,6 +814,7 @@ describe("profile & settings", () => {
       "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
       "taskTagConfig", "priorityConfig", "departmentConfig",
       "role", "permission", "rolePermission",
+      "notificationTemplate",
     ]) {
       db[table].findMany.mockResolvedValue([]);
     }

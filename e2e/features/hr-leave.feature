@@ -170,3 +170,34 @@ Feature: HR leave management
     When I sign in as "member@fernly.app" with the demo password
     And I open the "Leave" view
     Then the leave balance for "Advance Annual" should show the accrued advance balance
+
+  # --- P24 (PL-01): notification templates --------------------------------
+
+  @hr-e
+  Scenario: A customized notification template flows into the leave notifications
+    The admin customizes the "leave decided" template in Settings →
+    Notifications; the decision notification the member then receives is
+    rendered from the customized template, and resetting restores the
+    system default without touching the already-delivered notification.
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "Settings" view
+    And I open the notification templates settings tab
+    Then the leave decided template shows the system default
+    When I customize the leave decided notification to title "SIGNED OFF: {{typeName}}" and message "{{deciderName}} signed off on your {{daysCount}}-day {{typeName}}{{noteClose}}"
+    And I sign out
+    And I sign in as "member@fernly.app" with the demo password
+    And I open the "Leave" view
+    And I request "Annual Leave" from a Monday 21 days out to the following day with reason "Template flow e2e"
+    And I sign out
+    And I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I approve the request with reason "Template flow e2e"
+    And I open the "Settings" view
+    And I open the notification templates settings tab
+    And I reset the leave decided notification template
+    Then the leave decided template shows the system default
+    And I sign out
+    And I sign in as "member@fernly.app" with the demo password
+    And I open the notifications bell
+    Then the notification feed should mention "SIGNED OFF: Annual Leave"
+    And the notification feed should mention "signed off on your 2-day Annual Leave"

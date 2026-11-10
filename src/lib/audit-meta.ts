@@ -202,7 +202,11 @@ export type AuditAction =
   | "payroll.withholding_released"
   | "leave.encashment_requested"
   | "leave.encashment_approved"
-  | "leave.encashment_rejected";
+  | "leave.encashment_rejected"
+  // P24 (PL-01) — the notification template master (Settings →
+  // Notifications): customize / reset one event's override row.
+  | "notification.template_updated"
+  | "notification.template_reset";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -371,6 +375,8 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.encashment_requested": { icon: CircleDollarSign, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_approved": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_rejected": { icon: CircleDollarSign, cls: "text-rose-500 bg-rose-500/10" },
+  "notification.template_updated": { icon: MessageSquareText, cls: "text-violet-500 bg-violet-500/10" },
+  "notification.template_reset": { icon: RotateCcw, cls: "text-violet-500 bg-violet-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with
@@ -408,6 +414,7 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   CONFIG: { label: "Config", cls: "bg-violet-500/10 text-violet-700" },
   BUG: { label: "Bug", cls: "bg-red-500/10 text-red-700" },
   CANDIDATE: { label: "Candidate", cls: "bg-teal-500/10 text-teal-700" },
+  NOTIFICATION_TEMPLATE: { label: "Notification", cls: "bg-violet-500/10 text-violet-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -438,5 +445,5 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },
-  { key: "other", label: "Other", types: ["REMINDER", "TIME", "AUTH", "WORKSPACE", "CONFIG"] },
+  { key: "other", label: "Other", types: ["REMINDER", "TIME", "AUTH", "WORKSPACE", "CONFIG", "NOTIFICATION_TEMPLATE"] },
 ];

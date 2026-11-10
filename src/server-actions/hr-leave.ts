@@ -47,13 +47,18 @@ import { planLeaveAdjustment } from "@/lib/leave-ledger";
 import { checkCrossRequestConsecutive } from "@/lib/leave-policy";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { runWindowEnd, runWindowStart } from "@/lib/payroll-windows";
+// P24 — the leave pair rides the notification template engine: the four
+// rendered surfaces (in-app title/message + email subject/body) come from
+// resolveNotificationTemplate (workspace override row → registry default,
+// byte-identical to the pre-P24 constants the leave-email builders used to
+// hard-code; leave-email.ts stays for the failure alarm + the HTML wrap +
+// as the byte-identity pin the kernel test asserts against).
 import {
-  leavePendingEmailSubject,
-  leavePendingEmailText,
-  leaveDecidedEmailSubject,
-  leaveDecidedEmailText,
-  leaveEmailHtml,
-} from "@/lib/leave-email";
+  resolveNotificationTemplate,
+  renderTemplate,
+  formatLeaveDays,
+} from "@/lib/notification-template";
+import { leaveEmailHtml } from "@/lib/leave-email";
 import {
   buildLeaveBalanceReportRows,
   leaveBalanceReportCsv,
@@ -550,8 +555,22 @@ export async function createLeaveRequest(input: {
     // best-effort after the request exists; the P18 discipline adapted to
     // this non-transactional path — both notifications share the
     // best-effort posture, neither can fail the request).
-    const emailLeave =
-      (await getWorkspaceConfig()).workspace.emailLeaveNotifications === true;
+    // P24 — all four rendered surfaces come from the template engine
+    // (override row → registry default, byte-identical pre-P24).
+    const config = await getWorkspaceConfig();
+    const emailLeave = config.workspace.emailLeaveNotifications === true;
+    const pendingTpl = resolveNotificationTemplate(
+      config.notificationTemplates,
+      "LEAVE_PENDING",
+    );
+    const pendingVars = {
+      requesterName: auth.name,
+      typeName: type.name,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      daysCount: days,
+      days: formatLeaveDays(days),
+    };
     const pendingEmailRowIds: string[] = [];
     try {
       const approverIds = await getApproverIdsFor(auth.userId);
@@ -560,8 +579,8 @@ export async function createLeaveRequest(input: {
           data: approverIds.map((id) => ({
             recipientUserId: id,
             type: "INFO",
-            title: "Leave request awaiting your approval",
-            message: `${auth.name} requested ${days} day(s) of ${type.name} (${data.startDate} → ${data.endDate}).`,
+            title: renderTemplate(pendingTpl.title, pendingVars),
+            message: renderTemplate(pendingTpl.message, pendingVars),
           })),
         });
         if (emailLeave) {
@@ -569,20 +588,13 @@ export async function createLeaveRequest(input: {
             where: { id: { in: approverIds }, deletedAt: null },
             select: { email: true },
           });
-          const facts = {
-            requesterName: auth.name,
-            typeName: type.name,
-            startDate: data.startDate,
-            endDate: data.endDate,
-            days,
-          };
           for (const a of approvers) {
             if (!a.email) continue;
             const row = await queueOutboxMail(db, {
               kind: "LEAVE_PENDING",
               toAddress: a.email,
-              subject: leavePendingEmailSubject(),
-              text: leavePendingEmailText(facts),
+              subject: renderTemplate(pendingTpl.subject, pendingVars),
+              text: renderTemplate(pendingTpl.body, pendingVars),
               sentById: auth.userId,
             });
             pendingEmailRowIds.push(row.id);
@@ -652,8 +664,30 @@ export async function decideLeaveRequest(input: {
     // branch: the approve path queues its row INSIDE the transaction — no
     // email without its decision — while reject queues right after the
     // guarded flip; both deliver best-effort at the end).
-    const emailLeave =
-      (await getWorkspaceConfig()).workspace.emailLeaveNotifications === true;
+    // P24 — the four rendered surfaces come from the template engine
+    // (override row → registry default, byte-identical pre-P24). Resolved
+    // BEFORE the approve transaction so the in-tx queue call stays a pure
+    // data pass; the note/decision vars are known up front.
+    const config = await getWorkspaceConfig();
+    const emailLeave = config.workspace.emailLeaveNotifications === true;
+    const decidedTpl = resolveNotificationTemplate(
+      config.notificationTemplates,
+      "LEAVE_DECIDED",
+    );
+    const requestStartKey = request.startDate.toISOString().slice(0, 10);
+    const requestEndKey = request.endDate.toISOString().slice(0, 10);
+    const decidedVars = {
+      requesterName: requester?.name ?? "the requester",
+      typeName: type?.name ?? "leave",
+      startDate: requestStartKey,
+      endDate: requestEndKey,
+      daysCount: request.days,
+      days: formatLeaveDays(request.days),
+      decision: data.decision === "APPROVE" ? "approved" : "rejected",
+      deciderName: auth.name,
+      noteSuffix: data.note ? ` Note: ${data.note}` : "",
+      noteClose: data.note ? `: ${data.note}` : ".",
+    };
     const decidedEmailRowIds: string[] = [];
 
     if (data.decision === "APPROVE") {
@@ -718,7 +752,6 @@ export async function decideLeaveRequest(input: {
           tx, request.userId, request.leaveTypeId, year,
         );
         const resolved = resolveLeavePolicy(type?.policy);
-        const requestStartKey = request.startDate.toISOString().slice(0, 10);
         const cap = capBalanceForConsumption(projection.available, requestStartKey, year);
         const guard = checkLeaveRequestAgainstBalance(resolved, request.days, cap.consumable);
         if (!guard.ok) {
@@ -763,24 +796,14 @@ export async function decideLeaveRequest(input: {
         // P21 (LV-T02) — queue the decision email on the SAME transaction:
         // no email without its decision (the P18 lock discipline; a lost
         // race throws above and this row never lands). Subjects stay
-        // neutral; the body is the plain-text audit copy.
+        // neutral; the body is the plain-text audit copy. P24 — both come
+        // from the resolved template (rendered before the transaction).
         if (emailLeave && requester?.email) {
           const row = await queueOutboxMail(tx, {
             kind: "LEAVE_DECIDED",
             toAddress: requester.email,
-            subject: leaveDecidedEmailSubject(),
-            text: leaveDecidedEmailText(
-              {
-                requesterName: requester.name,
-                typeName: type?.name ?? "leave",
-                startDate: requestStartKey,
-                endDate: request.endDate.toISOString().slice(0, 10),
-                days: request.days,
-              },
-              data.decision,
-              auth.name,
-              data.note ?? "",
-            ),
+            subject: renderTemplate(decidedTpl.subject, decidedVars),
+            text: renderTemplate(decidedTpl.body, decidedVars),
             sentById: auth.userId,
           });
           decidedEmailRowIds.push(row.id);
@@ -806,25 +829,14 @@ export async function decideLeaveRequest(input: {
       }
       // P21 (LV-T02) — the reject path has no transaction to ride; queue
       // right after the CONFIRMED flip (a lost race throws above and never
-      // reaches here), still best-effort.
+      // reaches here), still best-effort. P24 — the rendered template.
       if (emailLeave && requester?.email) {
         try {
           const row = await queueOutboxMail(db, {
             kind: "LEAVE_DECIDED",
             toAddress: requester.email,
-            subject: leaveDecidedEmailSubject(),
-            text: leaveDecidedEmailText(
-              {
-                requesterName: requester.name,
-                typeName: type?.name ?? "leave",
-                startDate: request.startDate.toISOString().slice(0, 10),
-                endDate: request.endDate.toISOString().slice(0, 10),
-                days: request.days,
-              },
-              data.decision,
-              auth.name,
-              data.note ?? "",
-            ),
+            subject: renderTemplate(decidedTpl.subject, decidedVars),
+            text: renderTemplate(decidedTpl.body, decidedVars),
             sentById: auth.userId,
           });
           decidedEmailRowIds.push(row.id);
@@ -834,14 +846,16 @@ export async function decideLeaveRequest(input: {
       }
     }
 
-    // Notify the requester (best-effort).
+    // Notify the requester (best-effort). P24 — title/message come from
+    // the resolved template (the notification TYPE stays semantic: SUCCESS
+    // on approval, WARNING on rejection — never templated).
     try {
       await db.notification.create({
         data: {
           recipientUserId: request.userId,
           type: data.decision === "APPROVE" ? "SUCCESS" : "WARNING",
-          title: `Leave request ${newStatus.toLowerCase()}`,
-          message: `${auth.name} ${data.decision === "APPROVE" ? "approved" : "rejected"} your ${request.days}-day ${type?.name ?? "leave"} request${data.note ? `: ${data.note}` : "."}`,
+          title: renderTemplate(decidedTpl.title, decidedVars),
+          message: renderTemplate(decidedTpl.message, decidedVars),
         },
       });
     } catch (err) {

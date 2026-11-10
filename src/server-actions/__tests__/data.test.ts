@@ -16,6 +16,8 @@ const { db, getBetterSession } = vi.hoisted(() => {
     "taskStatusConfig", "projectStatusConfig", "eventTypeConfig",
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "taskTagConfig", "priorityConfig", "departmentConfig",
+    // P24 — the notification template master (config-loader reads it).
+    "notificationTemplate",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -196,6 +198,7 @@ beforeEach(() => {
     "taskTagConfig", "priorityConfig", "departmentConfig",
     "role", "permission", "rolePermission",
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
+    "notificationTemplate",
   ]) {
     db[table].findMany.mockResolvedValue([]);
   }

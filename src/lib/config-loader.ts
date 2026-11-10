@@ -84,6 +84,18 @@ export interface PermissionConfigT {
   group: string;
 }
 
+/** P24 (PL-01) — one customized notification event, verbatim from the
+ * NotificationTemplate row. Rows exist only for CUSTOMIZED events; the
+ * built-in defaults live in lib/notification-template.ts's registry and
+ * resolveNotificationTemplate falls back to them when no row matches. */
+export interface NotificationTemplateConfigT {
+  eventKey: string;
+  subjectTemplate: string;
+  bodyTemplate: string;
+  titleTemplate: string;
+  messageTemplate: string;
+}
+
 export interface WorkspaceSettingsT {
   name: string;
   defaultTimezone: string;
@@ -166,6 +178,8 @@ export interface WorkspaceConfig {
   departments: DepartmentConfigT[];
   roles: RoleConfigT[];
   permissions: PermissionConfigT[];
+  /** P24 (PL-01) — customized notification events (override rows only). */
+  notificationTemplates: NotificationTemplateConfigT[];
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +283,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
     departments,
     roles,
     permissions,
+    notificationTemplates,
   ] = await Promise.all([
     db.workspace.findFirst({ where: { id: "default" } }),
     db.taskStatusConfig.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -282,6 +297,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
       include: { permissions: { include: { permission: true } } },
     }),
     db.permission.findMany({ orderBy: { sortOrder: "asc" } }),
+    db.notificationTemplate.findMany(),
   ]);
 
   const config: WorkspaceConfig = {
@@ -486,6 +502,17 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           description: "",
           group: "General",
         })),
+
+    // P24 — override rows only; the registry defaults live in code and
+    // resolveNotificationTemplate applies them per event (empty table =
+    // every event renders the pre-P24 constants, byte-identical).
+    notificationTemplates: notificationTemplates.map((t) => ({
+      eventKey: t.eventKey,
+      subjectTemplate: t.subjectTemplate,
+      bodyTemplate: t.bodyTemplate,
+      titleTemplate: t.titleTemplate,
+      messageTemplate: t.messageTemplate,
+    })),
   };
 
   cachedConfig = config;

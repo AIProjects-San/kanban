@@ -571,3 +571,97 @@ Then("the leave balance for {string} should show the accrued advance balance", a
     `balance for "${typeName}" never showed the accrued ${expected} days`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// P24 (PL-01) — notification templates (Settings → Notifications) + the
+// leave render-through: the admin customizes the "leave decided" template,
+// the member's decision notification renders from it, and Reset restores
+// the system default (the already-written notification row is frozen text
+// — resetting never rewrites history).
+// ---------------------------------------------------------------------------
+
+async function openNotificationsSettingsTab(driver) {
+  const tab = await driver.wait(
+    until.elementLocated(By.css("[data-testid='settings-tab-notification-templates']")),
+    10_000,
+    "notification templates tab button not found",
+  );
+  await driver.executeScript("arguments[0].click();", tab);
+  await driver.wait(
+    until.elementsLocated(By.css("[data-testid='notification-template-card-LEAVE_PENDING']")),
+    10_000,
+    "notification template cards did not render",
+  );
+}
+
+When("I open the notification templates settings tab", async function () {
+  await openNotificationsSettingsTab(await this.getDriver());
+});
+
+async function waitForTemplateBadge(driver, eventKey, text) {
+  // Re-locate per poll — the card re-renders (new config prop) after the
+  // save/reset reload, invalidating held element references.
+  await driver.wait(
+    async () => {
+      try {
+        const badge = await driver.findElement(By.css(`[data-testid='tpl-badge-${eventKey}']`));
+        return (await badge.getText()) === text;
+      } catch {
+        return false;
+      }
+    },
+    10_000,
+    `${eventKey} template badge never showed "${text}"`,
+  );
+}
+
+Then("the leave decided template shows the system default", async function () {
+  await waitForTemplateBadge(await this.getDriver(), "LEAVE_DECIDED", "System default");
+});
+
+When("I customize the leave decided notification to title {string} and message {string}", async function (title, message) {
+  const driver = await this.getDriver();
+  const titleEl = await driver.wait(
+    until.elementLocated(By.css("[data-testid='tpl-title-LEAVE_DECIDED']")),
+    10_000,
+    "leave decided title field not found",
+  );
+  await titleEl.clear();
+  await titleEl.sendKeys(title);
+  const messageEl = await driver.findElement(By.css("[data-testid='tpl-message-LEAVE_DECIDED']"));
+  await messageEl.clear();
+  await messageEl.sendKeys(message);
+  await driver.findElement(By.css("[data-testid='tpl-save-LEAVE_DECIDED']")).click();
+  // The badge flips after the save → reload round-trip.
+  await waitForTemplateBadge(driver, "LEAVE_DECIDED", "Customized");
+});
+
+When("I reset the leave decided notification template", async function () {
+  const driver = await this.getDriver();
+  await driver.findElement(By.css("[data-testid='tpl-reset-LEAVE_DECIDED']")).click();
+  await waitForTemplateBadge(driver, "LEAVE_DECIDED", "System default");
+});
+
+When("I open the notifications bell", async function () {
+  const driver = await this.getDriver();
+  const bell = await driver.wait(
+    until.elementLocated(By.css("button[aria-label='Notifications']")),
+    10_000,
+    "notifications bell not found",
+  );
+  await bell.click();
+  await driver.wait(
+    until.elementLocated(By.xpath("//*[contains(text(), 'Mark all read')]")),
+    10_000,
+    "notifications dropdown did not open",
+  );
+});
+
+Then("the notification feed should mention {string}", async function (text) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.xpath(`//*[contains(text(), ${JSON.stringify(text)})]`)),
+    10_000,
+    `notification feed never mentioned "${text}"`,
+  );
+});

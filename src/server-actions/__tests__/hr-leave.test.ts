@@ -2535,3 +2535,122 @@ describe("P21 (LV-R01) — the balance report", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// P24 (PL-01) — template-driven leave notifications. The four rendered
+// surfaces (in-app title/message + email subject/body) come from
+// resolveNotificationTemplate: a workspace override row wins whole, a
+// missing row (the beforeEach default: the config mock has no
+// notificationTemplates key) falls back to the registry default — which
+// the kernel test pins byte-identical to the pre-P24 constants. Here the
+// pin is behavioral: the exact strings the writers used to hard-code.
+// ---------------------------------------------------------------------------
+
+describe("P24 — template-driven leave notifications", () => {
+  it("no override row: the in-app notification + email render the pre-P24 strings byte-identically", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailLeaveNotifications: true } });
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.user.findMany.mockResolvedValue([{ email: "ingrid@x.co" }]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(true);
+    const notifData = db.notification.createMany.mock.calls[0][0].data[0];
+    expect(notifData.title).toBe("Leave request awaiting your approval");
+    expect(notifData.message).toBe("Theo requested 2 day(s) of Annual Leave (2027-06-07 → 2027-06-08).");
+    const mailArg = queueOutboxMailMock.mock.calls[0][1] as { subject: string; text: string };
+    expect(mailArg.subject).toBe("Leave request awaiting your approval");
+    expect(mailArg.text).toBe(
+      [
+        "A leave request from Theo is awaiting your approval.",
+        "",
+        "Employee: Theo",
+        "Leave type: Annual Leave",
+        "From: 2027-06-07",
+        "To: 2027-06-08",
+        "Duration: 2 days",
+        "",
+        "Review it in Fernly under HR → Requests.",
+        "",
+        "— Fernly HR",
+      ].join("\n"),
+    );
+  });
+
+  it("a customized LEAVE_PENDING row flows into BOTH the in-app notification and the email", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { emailLeaveNotifications: true },
+      notificationTemplates: [{
+        eventKey: "LEAVE_PENDING",
+        subjectTemplate: "Heads up: {{typeName}}",
+        bodyTemplate: "{{requesterName}} wants {{daysCount}} day(s) of {{typeName}}, {{startDate}} → {{endDate}} ({{days}}).",
+        titleTemplate: "{{typeName}} ping",
+        messageTemplate: "{{requesterName}} → {{daysCount}}d {{typeName}}",
+      }],
+    });
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.user.findMany.mockResolvedValue([{ email: "ingrid@x.co" }]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(true);
+    const notifData = db.notification.createMany.mock.calls[0][0].data[0];
+    expect(notifData.title).toBe("Annual Leave ping");
+    expect(notifData.message).toBe("Theo → 2d Annual Leave");
+    const mailArg = queueOutboxMailMock.mock.calls[0][1] as { subject: string; text: string };
+    expect(mailArg.subject).toBe("Heads up: Annual Leave");
+    expect(mailArg.text).toBe("Theo wants 2 day(s) of Annual Leave, 2027-06-07 → 2027-06-08 (2 days).");
+  });
+
+  it("a customized LEAVE_DECIDED row flows into the requester's in-app notification and the email", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { emailLeaveNotifications: true },
+      notificationTemplates: [{
+        eventKey: "LEAVE_DECIDED",
+        subjectTemplate: "Decision: {{typeName}}",
+        bodyTemplate: "Hi {{requesterName}} — {{decision}} by {{deciderName}}, {{days}}.{{noteSuffix}}",
+        titleTemplate: "REQ {{decision}}",
+        messageTemplate: "{{deciderName}} said {{decision}} to your {{daysCount}}d {{typeName}}{{noteClose}}",
+      }],
+    });
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr", name: "Theo", email: "theo@x.co" });
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE", note: "Enjoy" });
+    expect(res.ok).toBe(true);
+    const notifData = db.notification.create.mock.calls[0][0].data;
+    expect(notifData.title).toBe("REQ approved");
+    expect(notifData.message).toBe("Ingrid said approved to your 2d Annual Leave: Enjoy");
+    const mailArg = queueOutboxMailMock.mock.calls[0][1] as { subject: string; text: string };
+    expect(mailArg.subject).toBe("Decision: Annual Leave");
+    expect(mailArg.text).toBe("Hi Theo — approved by Ingrid, 2 days. Note: Enjoy");
+  });
+
+  it("the decision email still rides the approve transaction when the template is customized", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({
+      workspace: { emailLeaveNotifications: true },
+      notificationTemplates: [{
+        eventKey: "LEAVE_DECIDED",
+        subjectTemplate: "S: {{decision}}",
+        bodyTemplate: "B: {{decision}}",
+        titleTemplate: "T: {{decision}}",
+        messageTemplate: "M: {{decision}}",
+      }],
+    });
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr", name: "Theo", email: "theo@x.co" });
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    expect(queueOutboxMailMock.mock.calls[0][0]).toBe(db); // the tx client
+    const mailArg = queueOutboxMailMock.mock.calls[0][1] as { subject: string; text: string };
+    expect(mailArg.subject).toBe("S: approved");
+    expect(mailArg.text).toBe("B: approved");
+  });
+});

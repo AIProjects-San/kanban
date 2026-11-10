@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import {
   Settings2, Save, Loader2, Plus, Shield,
-  Tag, Flag, Building2, Calendar, CheckSquare, FolderKanban,
+  Tag, Flag, Building2, Calendar, CheckSquare, FolderKanban, Bell, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -13,8 +13,18 @@ import { Field, FormRow } from "../ui/field";
 import {
   loadWorkspaceConfig, updateWorkspaceSettings,
   updateConfigItem, createConfigItem, deleteConfigItem,
-  updateRole, createRole, deleteRole, type WorkspaceConfig } from "@/server-actions/data";
+  updateRole, createRole, deleteRole,
+  updateNotificationTemplate, resetNotificationTemplate,
+  type WorkspaceConfig } from "@/server-actions/data";
 import { actionErrorMessage } from "@/lib/action-errors";
+// P24 — the notification template registry + renderer (pure, client-safe:
+// the editor previews render locally with the registry's sample values).
+import {
+  NOTIFICATION_TEMPLATE_EVENTS,
+  sampleTemplateVars,
+  renderTemplate,
+  type NotificationTemplateEventDef,
+} from "@/lib/notification-template";
 
 interface WorkspaceSettingsViewProps {
   currentUser: { id: string; name: string; role: string };
@@ -70,6 +80,8 @@ export function WorkspaceSettingsView({ currentUser: _currentUser }: WorkspaceSe
     { key: "priorities", label: "Priorities", icon: Flag },
     { key: "departments", label: "Departments", icon: Building2 },
     { key: "roles", label: "Roles & Permissions", icon: Shield },
+    // P24 (PL-01) — the notification template master.
+    { key: "notification-templates", label: "Notifications", icon: Bell },
   ];
 
   return (
@@ -93,6 +105,7 @@ export function WorkspaceSettingsView({ currentUser: _currentUser }: WorkspaceSe
             <button
               key={t.key}
               onClick={() => setActiveTab(t.key)}
+              data-testid={`settings-tab-${t.key}`}
               className={cn(
                 "px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5",
                 activeTab === t.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
@@ -144,6 +157,7 @@ export function WorkspaceSettingsView({ currentUser: _currentUser }: WorkspaceSe
         { key: "sortOrder", label: "Sort order", type: "number" },
       ]} />}
       {activeTab === "roles" && <RolesEditor config={config} reload={reload} />}
+      {activeTab === "notification-templates" && <NotificationTemplatesPanel config={config} reload={reload} />}
     </div>
   );
 }
@@ -504,15 +518,16 @@ function ConfigListEditor({
     taskTags: "taskTagConfig",
     priorities: "priorityConfig",
     departments: "departmentConfig",
-    // WorkspaceConfig carries four more keys that this editor never
-    // reaches (workspace settings, the computed mail section, and
-    // role/permission management have their own editors/surfaces). The
-    // record must still be exhaustive; we map them to a placeholder table
-    // that will never be hit at runtime.
+    // WorkspaceConfig carries five more keys that this editor never
+    // reaches (workspace settings, the computed mail section, the P24
+    // notification templates, and role/permission management have their
+    // own editors/surfaces). The record must still be exhaustive; we map
+    // them to a placeholder table that will never be hit at runtime.
     workspace: "taskStatusConfig",
     mail: "taskStatusConfig",
     roles: "taskStatusConfig",
     permissions: "taskStatusConfig",
+    notificationTemplates: "taskStatusConfig",
   };
   const table: ConfigTable = tableMap[type];
 
@@ -886,6 +901,200 @@ function NewRoleForm({ config, reload, onDone }: { config: WorkspaceConfig; relo
         <button onClick={create} disabled={saving} className="f-btn f-btn-primary f-btn-sm">
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create role
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P24 (PL-01) — Notification templates (the master editor)
+//
+// One card per registry event. A card with no override row starts from the
+// BUILT-IN default templates ({{placeholders}} visible — the admin edits
+// from the real text); Save upserts the override row, Reset deletes it.
+// The live preview renders locally with the registry's sample values — no
+// server round-trip, and the exact renderer the writers use (the pure
+// renderTemplate kernel is shared client/server).
+// ---------------------------------------------------------------------------
+
+function NotificationTemplatesPanel({ config, reload }: { config: WorkspaceConfig; reload: () => Promise<void> }) {
+  return (
+    <Section icon={Bell} title="Notification templates" description="Customize what Fernly writes in its notifications — every event without a customization uses the system default.">
+      <div className="space-y-5">
+        {NOTIFICATION_TEMPLATE_EVENTS.map((def) => (
+          <NotificationTemplateCard
+            // The key flips when the override state changes (system default ↔
+            // customized): the card REMOUNTS and its form re-initializes from
+            // the fresh row/default — the reset-without-an-effect pattern
+            // (lint forbids setState-in-effect; identity-stable otherwise, so
+            // unrelated re-renders never clobber the admin's edits).
+            key={`${def.eventKey}:${config.notificationTemplates.find((t) => t.eventKey === def.eventKey) ? "custom" : "default"}`}
+            def={def}
+            row={config.notificationTemplates.find((t) => t.eventKey === def.eventKey) ?? null}
+            reload={reload}
+          />
+        ))}
+        <p className="text-xs text-muted-foreground">
+          Emails ride the workspace&apos;s opt-in toggles (leave email, payslip email — Settings → General); in-app
+          notifications are always on. Placeholders use {"{{name}}"} — the chips above each field list what the event
+          provides, and saving refuses an unknown name so a typo can never blank a field.
+        </p>
+      </div>
+    </Section>
+  );
+}
+
+function NotificationTemplateCard({
+  def,
+  row,
+  reload,
+}: {
+  def: NotificationTemplateEventDef;
+  row: { eventKey: string; subjectTemplate: string; bodyTemplate: string; titleTemplate: string; messageTemplate: string } | null;
+  reload: () => Promise<void>;
+}) {
+  const [form, setForm] = useState(() => ({
+    subject: row?.subjectTemplate ?? def.defaults.subject,
+    body: row?.bodyTemplate ?? def.defaults.body,
+    title: row?.titleTemplate ?? def.defaults.title,
+    message: row?.messageTemplate ?? def.defaults.message,
+  }));
+  const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  // No effect re-seeding the form: the parent's key flip (see above) remounts
+  // this card after every save/reset, re-initializing the form from the
+  // fresh row/default — and the saved values equal what the admin typed.
+
+  const samples = sampleTemplateVars(def.eventKey);
+  const preview = {
+    subject: renderTemplate(form.subject, samples),
+    title: renderTemplate(form.title, samples),
+    message: renderTemplate(form.message, samples),
+  };
+
+  async function save() {
+    setSaving(true);
+    try {
+      const res = await updateNotificationTemplate({ eventKey: def.eventKey, ...form });
+      if (!res.ok) throw new Error(res.error);
+      toast.success(`“${def.label}” template saved`);
+      await reload();
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to save the template"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reset() {
+    setResetting(true);
+    try {
+      const res = await resetNotificationTemplate({ eventKey: def.eventKey });
+      if (!res.ok) throw new Error(res.error);
+      toast.success(`“${def.label}” reset to the system default`);
+      await reload();
+    } catch (e) {
+      toast.error(actionErrorMessage(e, "Failed to reset the template"));
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  const variableChip = (name: string, description: string) => (
+    <span
+      key={name}
+      title={description}
+      className="inline-flex items-center px-1.5 py-0.5 rounded text-[0.6875rem] font-mono bg-muted text-muted-foreground border border-border cursor-help"
+    >
+      {`{{${name}}}`}
+    </span>
+  );
+
+  return (
+    <div
+      className="rounded-lg border border-border p-4 space-y-3"
+      data-testid={`notification-template-card-${def.eventKey}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-foreground">{def.label}</span>
+            <span className="text-[0.625rem] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">{def.eventKey}</span>
+            <span
+              className={`text-[0.625rem] font-medium px-1.5 py-0.5 rounded-full border ${
+                row ? "bg-violet-500/10 text-violet-600 border-violet-500/30" : "bg-muted text-muted-foreground border-border"
+              }`}
+              data-testid={`tpl-badge-${def.eventKey}`}
+            >
+              {row ? "Customized" : "System default"}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1 max-w-xl">{def.description} Channels: {def.channels}.</p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={reset}
+            disabled={resetting || !row}
+            className="f-btn f-btn-ghost f-btn-sm"
+            data-testid={`tpl-reset-${def.eventKey}`}
+            title={row ? "Delete the customization — the event falls back to the system default" : "Nothing to reset — the system default is already in force"}
+          >
+            {resetting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Reset
+          </button>
+          <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm" data-testid={`tpl-save-${def.eventKey}`}>
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {def.variables.map((v) => variableChip(v.name, v.description))}
+      </div>
+
+      <FormRow>
+        <Field label="In-app title">
+          <input
+            className="f-input font-mono text-xs"
+            value={form.title}
+            maxLength={250}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            data-testid={`tpl-title-${def.eventKey}`}
+          />
+        </Field>
+        <Field label="Email subject">
+          <input
+            className="f-input font-mono text-xs"
+            value={form.subject}
+            maxLength={250}
+            onChange={(e) => setForm({ ...form, subject: e.target.value })}
+            data-testid={`tpl-subject-${def.eventKey}`}
+          />
+        </Field>
+      </FormRow>
+      <Field label="In-app message">
+        <textarea
+          className="f-input min-h-16 font-mono text-xs"
+          value={form.message}
+          maxLength={1000}
+          onChange={(e) => setForm({ ...form, message: e.target.value })}
+          data-testid={`tpl-message-${def.eventKey}`}
+        />
+      </Field>
+      <Field label="Email body (plain text — the Outbox audit copy)">
+        <textarea
+          className="f-input min-h-32 font-mono text-xs"
+          value={form.body}
+          maxLength={5000}
+          onChange={(e) => setForm({ ...form, body: e.target.value })}
+          data-testid={`tpl-body-${def.eventKey}`}
+        />
+      </Field>
+
+      {/* Live preview — the shared renderer with the registry's samples. */}
+      <div className="rounded-md bg-muted/50 border border-border p-3 space-y-1.5">
+        <div className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground">Preview (sample values)</div>
+        <div className="text-sm font-semibold text-foreground" data-testid={`tpl-preview-title-${def.eventKey}`}>{preview.title}</div>
+        <div className="text-sm text-foreground" data-testid={`tpl-preview-message-${def.eventKey}`}>{preview.message}</div>
       </div>
     </div>
   );

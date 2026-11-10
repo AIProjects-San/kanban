@@ -147,4 +147,9 @@ export {
   createRole,
   deleteRole,
 } from "./workspace";
+// P24 (PL-01) — the notification template master (Settings → Notifications).
+export {
+  updateNotificationTemplate,
+  resetNotificationTemplate,
+} from "./notification-templates";
 export { getAuditLogs, getAuditLogsForEntity } from "./audit";

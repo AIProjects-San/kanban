@@ -224,6 +224,26 @@ export const workspaceSettingsSchema = z.object({
 }).strict(); // reject unknown keys
 
 /**
+ * P24 (PL-01) — the notification template save payload. Structural
+ * validation only (non-empty, bounded); the SEMANTIC check — placeholder
+ * names must exist in the event's registry vocabulary — lives in the
+ * server action, which can name the offending field and the unknown
+ * names in a friendly refusal (the QA-18 convention).
+ */
+export const notificationTemplateSchema = z.object({
+  eventKey: z.string().trim().min(1).max(64),
+  subject: z.string().trim().min(1).max(250),
+  body: z.string().trim().min(1).max(5000),
+  title: z.string().trim().min(1).max(250),
+  message: z.string().trim().min(1).max(1000),
+}).strict(); // reject unknown keys
+
+/** P24 — the reset payload (back to the registry default). */
+export const notificationTemplateResetSchema = z.object({
+  eventKey: z.string().trim().min(1).max(64),
+}).strict();
+
+/**
  * Schema for the config-item tables (taskStatusConfig, projectStatusConfig,
  * eventTypeConfig, taskTagConfig, priorityConfig, departmentConfig). All
  * share the same shape: a key, label, optional accent/badge classes, and a
