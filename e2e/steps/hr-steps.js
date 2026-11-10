@@ -733,3 +733,104 @@ Then("the {string} notification template card should render", async function (ev
     `${eventKey} template card did not render`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// P27 (LV-08) — the leave period master's e2e surface (the Types & Policies
+// tab's "Leave periods" section). The scenario walks create → refuse →
+// delete so the fixture returns to the implicit-calendar default (zero
+// drift; the engine never runs against the created window).
+// ---------------------------------------------------------------------------
+
+async function fillPeriodFormAndSubmit(driver, name, start, end) {
+  const nameInput = await driver.wait(
+    until.elementLocated(By.css("[data-testid='leave-period-name-input']")),
+    10_000,
+    "leave period name input not found",
+  );
+  await setInputValue(driver, nameInput, name);
+  await setInputValue(
+    driver,
+    await driver.findElement(By.css("[data-testid='leave-period-start-input']")),
+    start,
+  );
+  await setInputValue(
+    driver,
+    await driver.findElement(By.css("[data-testid='leave-period-end-input']")),
+    end,
+  );
+  await driver.findElement(By.css("[data-testid='leave-period-create-button']")).click();
+}
+
+When("I create a leave period {string} from {string} to {string}", async function (name, start, end) {
+  const driver = await this.getDriver();
+  await fillPeriodFormAndSubmit(driver, name, start, end);
+  // The row appears after the create → reload round-trip.
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid^='leave-period-row-']")),
+    10_000,
+    "the created leave period row did not render",
+  );
+});
+
+When("I try to create a rejected leave period {string} from {string} to {string}", async function (name, start, end) {
+  // The refusal lands as a toast; the assertion step owns the wait.
+  await fillPeriodFormAndSubmit(await this.getDriver(), name, start, end);
+});
+
+Then("the leave periods empty notice should render", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid='leave-periods-empty']")),
+    10_000,
+    "the leave-periods empty (implicit calendar year) notice did not render",
+  );
+});
+
+Then("the leave periods list should show {string} as {string} in bucket {int}", async function (name, status, bucket) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    async () => {
+      try {
+        const rows = await driver.findElements(By.css("[data-testid^='leave-period-row-']"));
+        for (const row of rows) {
+          const text = await row.getText();
+          if (text.includes(name) && text.includes(status) && text.includes(`ledger bucket ${bucket}`)) {
+            return true;
+          }
+        }
+        return false;
+      } catch (e) {
+        if (e && /stale/i.test(String(e.name || e.message))) return false;
+        throw e;
+      }
+    },
+    10_000,
+    `no leave period row showed "${name}" as ${status} in bucket ${bucket}`,
+  );
+});
+
+Then("a toast should mention the period refusal {string}", async function (keyword) {
+  await waitForToast(await this.getDriver(), keyword);
+});
+
+When("I delete the leave period {string}", async function (name) {
+  const driver = await this.getDriver();
+  const rows = await driver.findElements(By.css("[data-testid^='leave-period-row-']"));
+  let target = null;
+  for (const row of rows) {
+    if ((await row.getText()).includes(name)) {
+      target = row;
+      break;
+    }
+  }
+  assert.ok(target, `no leave period row named "${name}"`);
+  const del = await target.findElement(By.xpath(".//button[contains(., 'Delete')]"));
+  await driver.executeScript("arguments[0].click();", del);
+  // This scenario's create-then-delete shape returns the master to the
+  // implicit-calendar notice after the reload.
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid='leave-periods-empty']")),
+    10_000,
+    "the deleted period's row never cleared back to the empty notice",
+  );
+});

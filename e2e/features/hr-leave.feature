@@ -223,3 +223,25 @@ Feature: HR leave management
     And the "EMPLOYEE_BIRTHDAY" notification template card should render
     And the "EMPLOYEE_ANNIVERSARY" notification template card should render
     And the "HOLIDAY_UPCOMING" notification template card should render
+
+  # --- P27 (LV-08): the leave period master --------------------------------
+
+  @hr-e
+  Scenario: The leave period master manages named allocation windows
+    The Types & Policies tab carries the window master: with no rows the
+    implicit calendar-year notice renders (the zero-change default); a
+    future fiscal window lists with its dates, its ledger bucket and the
+    upcoming badge; a same-start-year candidate is refused with the
+    kernel's sentence (the bucket key must stay unique); deleting the
+    window before it ever takes effect returns the master to the implicit
+    default — create-then-delete, zero fixture drift.
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Types & Policies" tab
+    Then the leave periods empty notice should render
+    When I create a leave period "FY 2031/32 (Apr → Mar)" from "2031-04-01" to "2032-03-31"
+    Then the leave periods list should show "FY 2031/32 (Apr → Mar)" as "upcoming" in bucket 2031
+    When I try to create a rejected leave period "Calendar 2031" from "2031-01-01" to "2031-03-31"
+    Then a toast should mention the period refusal "one allocation window per start year"
+    When I delete the leave period "FY 2031/32 (Apr → Mar)"
+    Then the leave periods empty notice should render

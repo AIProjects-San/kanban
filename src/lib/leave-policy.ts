@@ -193,12 +193,14 @@ function dayStr(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function daysBetween(a: string, b: string): number {
-  return Math.round((parseDayStr(b).getTime() - parseDayStr(a).getTime()) / 86_400_000);
-}
-
 function addDays(s: string, n: number): string {
   return dayStr(new Date(parseDayStr(s).getTime() + n * 86_400_000));
+}
+
+/** Whole calendar days from a to b (negative when b precedes a).
+ * P27 (LV-08): exported for the leave-period window kernel. */
+export function daysBetween(a: string, b: string): number {
+  return Math.round((parseDayStr(b).getTime() - parseDayStr(a).getTime()) / 86_400_000);
 }
 
 /** Add whole months with end-of-month clamping (Jan 31 + 1 → Feb 28/29). */
@@ -266,10 +268,16 @@ export interface GrantOp {
 export interface DueGrantsInput {
   policy: ResolvedLeavePolicy;
   employment: EmploymentFacts | null;
-  /** The ledger year being advanced (the calendar year of the grants). */
+  /** The ledger bucket being advanced — the calendar year when no named
+   * period applies, else the period's start year (P27/LV-08). */
   year: number;
   /** "today" — injected, never read from the clock. */
   asOf: string;
+  /** P27 (LV-08) — the named allocation window the grants land in
+   * ({start, end} inclusive day keys). Absent = the implicit calendar
+   * year of `year` (the pre-P27 behavior, byte-identical — pinned by the
+   * existing suite). */
+  window?: { start: string; end: string };
   /** Σ GRANT deltas already written for (user, type, year) — true-up math. */
   grantedSoFar: number;
   /** The standing balance for (user, type, year) — EARNED cap room. */
@@ -285,44 +293,63 @@ interface PeriodPlan {
   dueDate: string;
 }
 
-/** ANNUAL_LUMP_SUM / AFTER_SERVICE / EARNED period plans per strategy. */
+/** ANNUAL_LUMP_SUM / AFTER_SERVICE / EARNED period plans per strategy.
+ * P27 (LV-08): every boundary derives from the allocation window —
+ * `input.window` when the caller resolved a named period, else the
+ * implicit calendar year of `year` (byte-identical to the pre-P27
+ * plans: window.start = Jan 1, window.end = Dec 31). */
 function planPeriods(input: DueGrantsInput): PeriodPlan[] {
   const { policy, employment, year } = input;
   const hire = employment?.hireDate ?? null;
+  const winStart = input.window?.start ?? `${year}-01-01`;
+  const winEnd = input.window?.end ?? `${year}-12-31`;
 
   if (policy.allocationStrategy === "ANNUAL_LUMP_SUM") {
     if (policy.grantOn === "ANNIVERSARY") {
       if (!hire) {
-        // No hire date — treat as "employed since before the year": the
-        // grant is due Jan 1, full amount (same facts-free default the
-        // pre-F2.4 materializer used).
-        return [{ periodKey: `${year}`, nominal: policy.annualDays, dueDate: `${year}-01-01` }];
+        // No hire date — treat as "employed since before the window": the
+        // grant is due on the window's first day, full amount (same
+        // facts-free default the pre-F2.4 materializer used).
+        return [{ periodKey: `${year}`, nominal: policy.annualDays, dueDate: winStart }];
       }
-      const hireY = Number(hire.slice(0, 4));
-      // The hire-year grant lands on the hire date itself; later years on
-      // each anniversary (addMonths clamps Feb 29 → Feb 28 in non-leap
-      // years). Years before the hire have no grant at all.
-      if (year < hireY) return [];
-      const anniversary = addMonths(hire, 12 * (year - hireY));
+      // The hire-window grant lands on the hire date itself; later windows
+      // on each anniversary (addMonths clamps Feb 29 → Feb 28 in non-leap
+      // years). Windows before the hire have no grant at all. A window
+      // spans ≤ 370 days, so at most ONE anniversary lands in it.
+      if (hire > winEnd) return [];
+      let anniversary = hire;
+      if (hire < winStart) {
+        // Step anniversaries FORWARD until one lands in the window —
+        // monthsBetween's complete-month count can stop one step short
+        // when the anniversary's day precedes the window's day (hire
+        // Mar 15, window starting Apr 1: +48 months lands Mar 15, still
+        // before the start — the in-window one is +60).
+        let k = 0;
+        while (anniversary < winStart) {
+          k += 1;
+          anniversary = addMonths(hire, 12 * k);
+        }
+      }
+      if (anniversary > winEnd) return [];
       return [{ periodKey: `${year}-${anniversary.slice(5, 7)}`, nominal: policy.annualDays, dueDate: anniversary }];
     }
-    // PERIOD_START — the whole year at once: Jan 1 for pre-year hires,
-    // the hire date itself for mid-year joiners (whether or not the amount
-    // is pro-rated — a Dec 1 joiner must not lose the year's grant to a
-    // Jan 1 due date they were not employed for).
+    // PERIOD_START — the whole window at once: the first day for
+    // pre-window hires, the hire date itself for mid-window joiners
+    // (whether or not the amount is pro-rated — a joiner near the window's
+    // end must not lose the window's grant to a start date they were not
+    // employed for).
     let nominal = policy.annualDays;
-    let dueDate = `${year}-01-01`;
+    let dueDate = winStart;
     if (hire) {
-      const hireY = Number(hire.slice(0, 4));
-      if (hireY > year) return []; // not employed this year at all
-      if (hireY === year) {
+      if (hire > winEnd) return []; // not employed in this window at all
+      if (hire >= winStart) {
         dueDate = hire;
         if (policy.prorateForJoiners) {
-          // Calendar days remaining in the year (the hire day counts — the
+          // Calendar days remaining in the window (the hire day counts — the
           // employee works it), rounded per accrualRounding.
-          const remaining = daysBetween(hire, `${year}-12-31`) + 1;
-          const yearLen = daysBetween(`${year}-01-01`, `${year}-12-31`) + 1;
-          nominal = roundDays((policy.annualDays * remaining) / yearLen, policy.accrualRounding);
+          const remaining = daysBetween(hire, winEnd) + 1;
+          const windowLen = daysBetween(winStart, winEnd) + 1;
+          nominal = roundDays((policy.annualDays * remaining) / windowLen, policy.accrualRounding);
         }
       }
     }
@@ -334,17 +361,23 @@ function planPeriods(input: DueGrantsInput): PeriodPlan[] {
     // fabrication — nothing is due until HR records one.
     const first = addMonths(hire, policy.minServiceMonths);
     // Deposits: first at hire + minServiceMonths, then every 12 months.
-    // At most ONE lands in any calendar year (steps are 12 months apart
-    // after the first, which itself is a single date).
-    const firstY = Number(first.slice(0, 4));
-    if (year < firstY) return [];
-    const monthsAfterFirst = (year - firstY) * 12;
-    const deposit = addMonths(first, monthsAfterFirst);
-    if (Number(deposit.slice(0, 4)) !== year) return []; // calendar clamp moved it (e.g. Feb 29)
+    // At most ONE lands in any window (steps are 12 months apart after
+    // the first, which itself is a single date). Step FORWARD from the
+    // first deposit until one lands in the window — the complete-month
+    // count alone can stop a step short (see ANNIVERSARY above).
+    let deposit = first;
+    let k = 0;
+    while (deposit < winStart) {
+      k += 1;
+      deposit = addMonths(first, 12 * k);
+    }
+    if (deposit > winEnd) return [];
     return [{ periodKey: `${year}-${deposit.slice(5, 7)}`, nominal: policy.annualDays, dueDate: deposit }];
   }
 
-  // EARNED — accrual periods.
+  // EARNED — accrual periods, anchored at the window's start (Jan 1 when
+  // implicit: the calendar months/quarters/halves the pre-P27 engine
+  // produced, byte-identically).
   const freq = policy.accrualFrequency;
   const periodsPerYear = freq === "MONTHLY" ? 12 : freq === "QUARTERLY" ? 4 : freq === "HALF_YEARLY" ? 2 : 1;
   const share = policy.annualDays / periodsPerYear;
@@ -357,29 +390,26 @@ function planPeriods(input: DueGrantsInput): PeriodPlan[] {
     let periodKey: string;
     switch (freq) {
       case "MONTHLY": {
-        const mm = String(i + 1).padStart(2, "0");
-        periodStart = `${year}-${mm}-01`;
-        periodEnd = addDays(i < 11 ? `${year}-${String(i + 2).padStart(2, "0")}-01` : `${year + 1}-01-01`, -1);
-        periodKey = `${year}-${mm}`;
+        periodStart = addMonths(winStart, i);
+        periodEnd = addDays(addMonths(winStart, i + 1), -1);
+        periodKey = periodStart.slice(0, 7);
         break;
       }
       case "QUARTERLY": {
-        const startM = i * 3 + 1;
-        const mm = String(startM).padStart(2, "0");
-        periodStart = `${year}-${mm}-01`;
-        periodEnd = addDays(i < 3 ? `${year}-${String(startM + 3).padStart(2, "0")}-01` : `${year + 1}-01-01`, -1);
+        periodStart = addMonths(winStart, i * 3);
+        periodEnd = addDays(addMonths(winStart, (i + 1) * 3), -1);
         periodKey = `${year}-Q${i + 1}`;
         break;
       }
       case "HALF_YEARLY": {
-        periodStart = i === 0 ? `${year}-01-01` : `${year}-07-01`;
-        periodEnd = i === 0 ? `${year}-06-30` : `${year}-12-31`;
+        periodStart = addMonths(winStart, i * 6);
+        periodEnd = addDays(addMonths(winStart, (i + 1) * 6), -1);
         periodKey = `${year}-H${i + 1}`;
         break;
       }
       default: {
-        periodStart = `${year}-01-01`;
-        periodEnd = `${year}-12-31`;
+        periodStart = winStart;
+        periodEnd = winEnd;
         periodKey = `${year}`;
       }
     }
@@ -390,14 +420,16 @@ function planPeriods(input: DueGrantsInput): PeriodPlan[] {
         dueDate = periodEnd;
         break;
       case "DOJ_DAY": {
-        // The hire day-of-month, clamped into the period's start month.
-        // (Date.UTC month is 0-based; passing the 1-based month number with
-        // day 0 yields the last day OF that month.)
+        // The hire day-of-month, clamped into the period's start month
+        // (the month's own calendar length — a period may start in the
+        // bucket year + 1 under a named window). (Date.UTC month is
+        // 0-based; passing the 1-based month number with day 0 yields the
+        // last day OF that month.)
         const startMonthLen = new Date(
-          Date.UTC(year, Number(periodStart.slice(5, 7)), 0),
+          Date.UTC(Number(periodStart.slice(0, 4)), Number(periodStart.slice(5, 7)), 0),
         ).getUTCDate();
         const day = Math.min(Math.max(1, hireDayOfMonth), startMonthLen);
-        dueDate = `${periodStart.slice(0, 8)}${String(day).padStart(2, "0")}`;
+        dueDate = `${periodStart.slice(0, 7)}-${String(day).padStart(2, "0")}`;
         break;
       }
       default:
@@ -540,28 +572,33 @@ export function checkLeaveRequestAgainstBalance(
 // ---------------------------------------------------------------------------
 
 export interface ConsumptionCap {
-  /** min(balance, days left in the allocation year) — the consumable days. */
+  /** min(balance, days left in the allocation window) — the consumable days. */
   consumable: number;
-  /** Calendar days from requestStart through Dec 31 (inclusive). */
+  /** Calendar days from requestStart through the window's end (Dec 31
+   * when no named period applies — P27/LV-08). */
   daysLeftInYear: number;
   /** True when the cap, not the balance, is the binding constraint. */
   capped: boolean;
 }
 
 /**
- * Cap the consumable balance at the days left in the allocation year.
+ * Cap the consumable balance at the days left in the allocation window.
  * Mirrors the benchmark exactly: the cap applies ONLY to positive balances
  * (a member already in an advance keeps the floor path); daysLeft counts
- * calendar days from the request's start through Dec 31 inclusive.
+ * calendar days from the request's start through the window's end
+ * inclusive. P27 (LV-08): `windowEnd` is the named period's last day —
+ * absent, the implicit calendar year's Dec 31 (the pre-P27 behavior,
+ * byte-identical).
  */
 export function capBalanceForConsumption(
   available: number,
   requestStart: string,
   year: number,
+  windowEnd?: string,
 ): ConsumptionCap {
-  const endOfYear = `${year}-12-31`;
+  const endOfWindow = windowEnd ?? `${year}-12-31`;
   const daysLeftInYear = Math.floor(
-    (Date.parse(endOfYear) - Date.parse(requestStart)) / 86_400_000,
+    (Date.parse(endOfWindow) - Date.parse(requestStart)) / 86_400_000,
   ) + 1;
   const consumable =
     available > 0 ? Math.min(round2(available), daysLeftInYear) : round2(available);

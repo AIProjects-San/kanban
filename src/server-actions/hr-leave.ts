@@ -34,7 +34,7 @@ import {
 import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
-import { workingDaysBetween } from "@/lib/working-days";
+import { workingDaysBetween, dayKey } from "@/lib/working-days";
 import {
   checkLeaveRequestAgainstBalance,
   checkServiceEligibility,
@@ -47,6 +47,10 @@ import { planLeaveAdjustment } from "@/lib/leave-ledger";
 import { checkCrossRequestConsecutive } from "@/lib/leave-policy";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { runWindowEnd, runWindowStart } from "@/lib/payroll-windows";
+// P27 (LV-08) — named allocation windows: the request/decide/cancel bucket
+// resolution + the consumption cap ride the same pure kernel the cron job
+// advances. No periods = the implicit calendar year = pre-P27 behavior.
+import { windowForDate, resolveActiveWindow } from "@/lib/leave-period";
 // P24 — the leave pair rides the notification template engine: the four
 // rendered surfaces (in-app title/message + email subject/body) come from
 // resolveNotificationTemplate (workspace override row → registry default,
@@ -73,6 +77,8 @@ import {
   assertLeaveDecider,
   getOrCreateBalance,
   getOrCreateBalancesBatch,
+  loadLeavePeriods,
+  windowArgFor,
   findOverlappingActiveRequest,
   getHolidayLookup,
   getHolidayRows,
@@ -98,7 +104,12 @@ export async function getMyLeaveData(): Promise<
 > {
   return toResult(async () => {
     const auth = await requirePermission("leave:request");
-    const year = todayUTC().getUTCFullYear();
+    // P27 (LV-08) — the display/materialization bucket: the ACTIVE
+    // allocation window's bucket (the named period containing today, else
+    // the implicit calendar year — byte-identical when no periods exist).
+    const periods = await loadLeavePeriods();
+    const active = resolveActiveWindow(periods, dayKey(todayUTC()));
+    const year = active.bucketYear;
 
     const [types, requests, holidays] = await Promise.all([
       db.leaveType.findMany({
@@ -131,6 +142,7 @@ export async function getMyLeaveData(): Promise<
       auth.userId,
       types.map((t) => ({ id: t.id, policy: t.policy })),
       year,
+      windowArgFor(periods, active),
     );
     const balances: LeaveBalanceT[] = types.map((t) => {
       const b = balancesByType.get(t.id) ?? { entitled: t.policy?.annualDays ?? 0, carriedOver: 0, used: 0 };
@@ -519,15 +531,27 @@ export async function createLeaveRequest(input: {
     // decision). F2.4: floor-aware — with allowNegative the member may
     // spend into an advance down to −negativeFloor days.
     // P21 (LV-B14) — balance-for-consumption: the consumable days are
-    // capped at the calendar days remaining in the allocation year
+    // capped at the calendar days remaining in the allocation window
     // (benchmark get_remaining_leaves — min(balance, days left)); a
-    // balance that outruns the year's remaining days can't be spent on
-    // future leave, so a range crossing into January refuses with the
-    // cap named.
-    const year = start.getUTCFullYear();
-    const balance = await getOrCreateBalance(auth.userId, type.id, year, type.policy);
+    // balance that outruns the window's remaining days can't be spent on
+    // future leave, so a range crossing into the next window refuses with
+    // the cap named.
+    // P27 (LV-08) — the request's LEDGER BUCKET is the window containing
+    // its first day (a named period's start year, else the calendar
+    // year); the same rule at decide/cancel keeps the consume/reversal
+    // rows in the bucket the submission debited.
+    const periods = await loadLeavePeriods();
+    const requestWindow = windowForDate(periods, data.startDate);
+    const year = requestWindow.bucketYear;
+    const balance = await getOrCreateBalance(
+      auth.userId,
+      type.id,
+      year,
+      type.policy,
+      windowArgFor(periods, requestWindow),
+    );
     const available = balance.entitled + balance.carriedOver - balance.used;
-    const cap = capBalanceForConsumption(available, data.startDate, year);
+    const cap = capBalanceForConsumption(available, data.startDate, year, requestWindow.end);
     const guard = checkLeaveRequestAgainstBalance(resolvedPolicy, days, cap.consumable);
     if (!guard.ok) {
       throw new AuthorizationError(
@@ -711,7 +735,14 @@ export async function decideLeaveRequest(input: {
       // The guarded updateMany flips the row atomically; a zero count means
       // someone else won the race — abort BEFORE any ledger write, with a
       // message the UI can show as a normal (retryable) failure.
-      const year = request.startDate.getUTCFullYear();
+      // P27 (LV-08) — the request's ledger bucket, resolved by the SAME
+      // windowForDate rule the submission used (the window containing the
+      // request's first day), so the consume row lands in the bucket the
+      // member's balance was actually debited from — never a calendar-year
+      // guess that a named window may have moved.
+      const periods = await loadLeavePeriods();
+      const requestWindow = windowForDate(periods, request.startDate.toISOString().slice(0, 10));
+      const year = requestWindow.bucketYear;
       await db.$transaction(async (tx) => {
         const flipped = await tx.leaveRequest.updateMany({
           where: { id: request.id, status: "PENDING" },
@@ -735,6 +766,7 @@ export async function decideLeaveRequest(input: {
         // explanation can never exist).
         await materializeLeaveBalanceTx(
           tx, request.userId, request.leaveTypeId, year,
+          windowArgFor(periods, requestWindow),
         );
 
         // QA-1: the guard reads the LEDGER projection (one groupBy
@@ -752,7 +784,7 @@ export async function decideLeaveRequest(input: {
           tx, request.userId, request.leaveTypeId, year,
         );
         const resolved = resolveLeavePolicy(type?.policy);
-        const cap = capBalanceForConsumption(projection.available, requestStartKey, year);
+        const cap = capBalanceForConsumption(projection.available, requestStartKey, year, requestWindow.end);
         const guard = checkLeaveRequestAgainstBalance(resolved, request.days, cap.consumable);
         if (!guard.ok) {
           throw new AuthorizationError(
@@ -919,7 +951,11 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
       // cancelling the same APPROVED request both passed it and the second
       // restore was a double refund. The guarded updateMany makes a stale
       // cancel a zero-row update that aborts BEFORE the reversal.
-      const year = request.startDate.getUTCFullYear();
+      // P27 (LV-08) — the request's ledger bucket, same windowForDate rule
+      // as submission/approval: the reversal lands beside its CONSUME row.
+      const periods = await loadLeavePeriods();
+      const requestWindow = windowForDate(periods, request.startDate.toISOString().slice(0, 10));
+      const year = requestWindow.bucketYear;
       await db.$transaction(async (tx) => {
         const flipped = await tx.leaveRequest.updateMany({
           where: { id: request.id, status: "APPROVED" },

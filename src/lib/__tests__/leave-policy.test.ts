@@ -575,3 +575,129 @@ describe("capBalanceForConsumption", () => {
     expect(checkLeaveRequestAgainstBalance(resolveLeavePolicy(null), 5, 30).ok).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P27 (LV-08) — named allocation windows. Every strategy's planPeriods
+// derives its boundaries from the window; absent, the implicit calendar
+// year (byte-identical — the whole suite above IS that pin). The window
+// kernel's own matrix lives in leave-period.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("P27 window strategies (fiscal Apr → Mar, bucket 2027)", () => {
+  const WIN = { start: "2027-04-01", end: "2028-03-31" };
+
+  function dueWin(
+    row: Partial<LeavePolicyRow>,
+    employment: EmploymentFacts | null,
+    year: number,
+    asOf: string,
+    window?: { start: string; end: string },
+  ): ReturnType<typeof dueGrantOps> {
+    return dueGrantOps({
+      policy: resolveLeavePolicy(policyRow(row)),
+      employment,
+      year,
+      asOf,
+      window,
+      grantedSoFar: 0,
+      availableNow: 0,
+      existingPeriodKeys: new Set<string>(),
+    });
+  }
+
+  const win = (): { start: string; end: string } => ({ ...WIN });
+
+  it("ANNUAL_LUMP_SUM PERIOD_START lands the lump on the window's first day", () => {
+    const ops = dueWin({ allocationStrategy: "ANNUAL_LUMP_SUM", grantOn: "PERIOD_START" }, ACTIVE_FROM_2023, 2027, "2027-04-02", win());
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ periodKey: "2027", delta: 20, dueDate: "2027-04-01" });
+  });
+
+  it("ANNUAL_LUMP_SUM PERIOD_START + prorateForJoiners: a mid-window joiner's grant is window-pro-rated", () => {
+    // Hired Jul 1 2027 — 274 days remain of the 365-day window
+    // (Jul 1 → Mar 31 inclusive).
+    const hireMid: EmploymentFacts = { hireDate: "2027-07-01", employmentStatus: "ACTIVE", probationEndsAt: null };
+    const ops = dueWin({ allocationStrategy: "ANNUAL_LUMP_SUM", grantOn: "PERIOD_START", annualDays: 20, prorateForJoiners: true }, hireMid, 2027, "2027-07-02", win());
+    expect(ops).toHaveLength(1);
+    // 20 × 274/365 = 15.01… → floor-quarter = 15.
+    expect(ops[0].delta).toBe(15);
+    expect(ops[0].dueDate).toBe("2027-07-01");
+  });
+
+  it("ANNUAL_LUMP_SUM ANNIVERSARY: the hire anniversary inside the window", () => {
+    // hire 2023-03-15: the anniversaries at +48 months (2027-03-15) precede
+    // the Apr 2027 window start — the in-window one is 2028-03-15 (+60),
+    // due once asOf reaches it.
+    const notYet = dueWin({ allocationStrategy: "ANNUAL_LUMP_SUM", grantOn: "ANNIVERSARY" }, ACTIVE_FROM_2023, 2027, "2028-01-01", win());
+    expect(notYet).toHaveLength(0);
+    const ops = dueWin({ allocationStrategy: "ANNUAL_LUMP_SUM", grantOn: "ANNIVERSARY" }, ACTIVE_FROM_2023, 2027, "2028-03-20", win());
+    expect(ops).toHaveLength(1);
+    expect(ops[0].dueDate).toBe("2028-03-15");
+    expect(ops[0].periodKey).toBe("2027-03");
+  });
+
+  it("AFTER_SERVICE deposits land inside the window", () => {
+    // hire 2023-03-15 + 12 months = 2024-03-15; deposits yearly. In-window:
+    // 2028-03-15 (the 2027-03-15 deposit precedes the window start).
+    const ops = dueWin({ allocationStrategy: "AFTER_SERVICE", minServiceMonths: 12 }, ACTIVE_FROM_2023, 2027, "2028-03-20", win());
+    expect(ops).toHaveLength(1);
+    expect(ops[0].dueDate).toBe("2028-03-15");
+    expect(ops[0].periodKey).toBe("2027-03");
+  });
+
+  it("EARNED MONTHLY periods anchor at the window's months (keys run Apr → Mar)", () => {
+    const ops = dueWin({ allocationStrategy: "EARNED", accrualFrequency: "MONTHLY", annualDays: 24 }, ACTIVE_FROM_2023, 2027, "2028-03-31", win());
+    expect(ops).toHaveLength(12);
+    expect(ops[0]).toMatchObject({ periodKey: "2027-04", dueDate: "2027-04-01" });
+    expect(ops[11]).toMatchObject({ periodKey: "2028-03", dueDate: "2028-03-01" });
+    // The last period true-ups the full year: 24 days exactly.
+    expect(ops.reduce((s, o) => s + o.delta, 0)).toBe(24);
+  });
+
+  it("EARNED QUARTERLY anchors its four quarters at the window start", () => {
+    const ops = dueWin({ allocationStrategy: "EARNED", accrualFrequency: "QUARTERLY", annualDays: 24 }, ACTIVE_FROM_2023, 2027, "2028-03-31", win());
+    expect(ops.map((o) => o.periodKey)).toEqual(["2027-Q1", "2027-Q2", "2027-Q3", "2027-Q4"]);
+    expect(ops[0].dueDate).toBe("2027-04-01");
+    expect(ops[3].dueDate).toBe("2028-01-01");
+    expect(ops.reduce((s, o) => s + o.delta, 0)).toBe(24);
+  });
+
+  it("EARNED with DOJ_DAY clamps the hire day into the period's OWN month (bucket year + 1 included)", () => {
+    const ops = dueWin({ allocationStrategy: "EARNED", accrualFrequency: "MONTHLY", annualDays: 24, allocateOnDay: "DOJ_DAY" }, ACTIVE_FROM_2023, 2027, "2028-03-31", win());
+    // hire day 15: every period lands on its month's 15th — including the
+    // periods whose months fall in 2028 (the bucket year + 1).
+    expect(ops[0].dueDate).toBe("2027-04-15");
+    expect(ops[11].dueDate).toBe("2028-03-15");
+  });
+
+  it("a joiner hired mid-window accrues only from their hire month", () => {
+    const hireMid: EmploymentFacts = { hireDate: "2027-07-01", employmentStatus: "ACTIVE", probationEndsAt: null };
+    const ops = dueWin({ allocationStrategy: "EARNED", accrualFrequency: "MONTHLY", annualDays: 24 }, hireMid, 2027, "2028-03-31", win());
+    // Jul → Mar = 9 periods, each floor-quarter 2 → 18 days.
+    expect(ops).toHaveLength(9);
+    expect(ops[0].periodKey).toBe("2027-07");
+    expect(ops.reduce((s, o) => s + o.delta, 0)).toBe(18);
+  });
+
+  it("absent window: the implicit calendar year (the byte-identical default)", () => {
+    const ops = dueWin({ allocationStrategy: "EARNED", accrualFrequency: "MONTHLY", annualDays: 24 }, ACTIVE_FROM_2023, 2027, "2027-12-31");
+    expect(ops[0]).toMatchObject({ periodKey: "2027-01", dueDate: "2027-01-01" });
+    expect(ops[11]).toMatchObject({ periodKey: "2027-12" });
+  });
+});
+
+describe("P27 capBalanceForConsumption — the window end", () => {
+  it("caps at the days left in the named window (not Dec 31)", () => {
+    // Window ends 2028-03-31; a request starting 2028-03-02 has 30 days
+    // left — a 35-day balance caps to 30.
+    const r = capBalanceForConsumption(35, "2028-03-02", 2027, "2028-03-31");
+    expect(r.daysLeftInYear).toBe(30);
+    expect(r.consumable).toBe(30);
+    expect(r.capped).toBe(true);
+  });
+
+  it("absent windowEnd: Dec 31 of the year (byte-identical)", () => {
+    const r = capBalanceForConsumption(30, "2027-12-15", 2027);
+    expect(r.daysLeftInYear).toBe(17);
+  });
+});

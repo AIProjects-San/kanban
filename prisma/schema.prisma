@@ -942,6 +942,28 @@ model LeavePolicy {
   updatedAt           DateTime  @updatedAt
 }
 
+// P27 (LV-08) — leave period master: NAMED allocation windows (the
+// benchmark's `Leave Period` doctype). One row = one window (name, start,
+// end; 1..370 days; validated non-overlapping, contiguous chain, one
+// window per start calendar year). The window's LEDGER BUCKET is the
+// calendar year of its start date — the integer `year` the ledger and
+// LeaveBalance cache key on (src/lib/leave-period.ts, the pure rule).
+// ZERO-CHANGE DEFAULT: the table starts EMPTY; with no rows every date
+// falls to the implicit calendar-year window and every engine path is
+// byte-identical to the pre-P27 behavior. A non-empty table stops implicit
+// grants entirely (a half-migrated workspace must not double-grant);
+// requests during uncovered dates spend against the latest closed window.
+model LeavePeriod {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  // Inclusive first/last day of the window (UTC-midnight date-only, the
+  // LeaveRequest convention).
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // P2 (LV-09, F2.2) — one encashment request: days sold back from a leave
 // balance, paying through the P1 PayAdjustment adapter. The member requests
 // (against the LEDGER projection), the leave-approver chain decides

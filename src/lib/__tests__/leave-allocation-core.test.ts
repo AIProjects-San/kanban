@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["leaveType", "leaveBalance", "leaveLedgerEntry", "employeeProfile", "user", "mailOutbox"];
+  const models = ["leaveType", "leaveBalance", "leaveLedgerEntry", "employeeProfile", "user", "mailOutbox", "leavePeriod"];
   const methods = ["findMany", "findUnique", "findFirst", "create", "createMany", "update", "upsert", "groupBy"];
   const obj: Record<string, Record<string, ReturnType<typeof vi.fn>>> = {};
   for (const m of models) {
@@ -92,6 +92,10 @@ beforeEach(() => {
   db.leaveLedgerEntry.findFirst.mockResolvedValue(null);
   db.leaveBalance.findMany.mockResolvedValue([]);
   db.employeeProfile.findMany.mockResolvedValue([]);
+  // P27 (LV-08) — the period table defaults EMPTY (the implicit
+  // calendar-year windows; every pre-P27 expectation below stays the
+  // byte-identical pin).
+  db.leavePeriod.findMany.mockResolvedValue([]);
 });
 
 describe("runLeaveAllocationJob — grant phase", () => {
@@ -321,5 +325,126 @@ describe("P26 — sendLeaveJobFailureAlarm", () => {
       sendLeaveJobFailureAlarm({ asOf: "2026-11-10", failures: 2, failuresDetail: [] } as never),
     ).resolves.toBeUndefined();
     expect(logErrorSpy).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P27 (LV-08) — the pass under NAMED allocation windows. The period table
+// mocked non-empty switches the job onto the active window (bucket = the
+// period's start year); the migration gap is an honest no-op. The suite
+// above with leavePeriod.findMany → [] IS the byte-identical implicit pin.
+// ---------------------------------------------------------------------------
+
+const FISCAL_27_ROW = {
+  id: "p27-1",
+  name: "FY 2027/28 (Apr → Mar)",
+  startDate: new Date("2027-04-01T00:00:00.000Z"),
+  endDate: new Date("2028-03-31T00:00:00.000Z"),
+};
+
+describe("runLeaveAllocationJob — named windows (P27/LV-08)", () => {
+  it("advances the ACTIVE window: EARNED grants land in the period's bucket with Apr→Mar keys", async () => {
+    db.leavePeriod.findMany.mockResolvedValue([FISCAL_27_ROW]);
+    db.leaveType.findMany.mockResolvedValue([EARNED_TYPE]);
+    // Balance row exists in the window's bucket (2027 = the start year).
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2027 ? [{ userId: "u1" }] : [],
+    );
+    db.employeeProfile.findMany.mockResolvedValue([{ userId: "u1", hireDate: new Date("2023-03-15T00:00:00.000Z"), employmentStatus: "ACTIVE", probationEndsAt: null }]);
+    groupsBy({}); // nothing granted yet
+
+    const report = await runLeaveAllocationJob(new Date("2027-06-15T00:00:00Z"));
+
+    expect(report.grantsWritten).toBe(3); // Apr, May, Jun — 2 days each
+    const rows = db.leaveLedgerEntry.createMany.mock.calls[0][0].data;
+    expect(rows.map((r: { sourceId: string }) => r.sourceId)).toEqual(["2027-04", "2027-05", "2027-06"]);
+    expect(rows.every((r: { year: number }) => r.year === 2027)).toBe(true);
+    expect(rows.every((r: { delta: number }) => r.delta === 2)).toBe(true);
+  });
+
+  it("the FIRST window's rollover carries startYear − 1 (the last calendar bucket with history)", async () => {
+    db.leavePeriod.findMany.mockResolvedValue([FISCAL_27_ROW]);
+    db.leaveType.findMany.mockResolvedValue([MANUAL_TYPE]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ GRANT: 8 }); // 2026 final available: 8
+
+    const report = await runLeaveAllocationJob(new Date("2027-04-02T00:00:00Z"));
+
+    expect(report.carryRowsWritten).toBe(1);
+    expect(report.expireRowsWritten).toBe(1);
+    const rows = db.leaveLedgerEntry.createMany.mock.calls[0][0].data;
+    expect(rows.every((r: { year: number }) => r.year === 2027)).toBe(true); // the window's bucket
+    expect(rows).toEqual([
+      expect.objectContaining({ entryType: "CARRY", delta: 5, sourceId: "carry" }),
+      expect.objectContaining({ entryType: "EXPIRE", delta: -3, sourceId: "carry-expire" }),
+    ]);
+    // The cache row upserted into 2027 (not a calendar-year guess).
+    expect(db.leaveBalance.upsert.mock.calls[0][0].where.userId_leaveTypeId_year.year).toBe(2027);
+  });
+
+  it("a LATER window's rollover carries its chain predecessor's bucket", async () => {
+    db.leavePeriod.findMany.mockResolvedValue([
+      FISCAL_27_ROW,
+      {
+        id: "p27-2",
+        name: "FY 2028/29 (Apr → Mar)",
+        startDate: new Date("2028-04-01T00:00:00.000Z"),
+        endDate: new Date("2029-03-31T00:00:00.000Z"),
+      },
+    ]);
+    db.leaveType.findMany.mockResolvedValue([MANUAL_TYPE]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2027 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ GRANT: 4 });
+
+    const report = await runLeaveAllocationJob(new Date("2028-04-02T00:00:00Z"));
+
+    expect(report.carryRowsWritten).toBe(1);
+    const rows = db.leaveLedgerEntry.createMany.mock.calls[0][0].data;
+    expect(rows.every((r: { year: number }) => r.year === 2028)).toBe(true);
+    expect(rows[0]).toMatchObject({ entryType: "CARRY", delta: 4, sourceId: "carry" });
+  });
+
+  it("the carry lapse counts months INTO the window (Apr start ⇒ July lapse for N=3)", async () => {
+    db.leavePeriod.findMany.mockResolvedValue([FISCAL_27_ROW]);
+    const lapsing = {
+      ...EARNED_TYPE,
+      id: "lt-lapse-w",
+      policy: { ...EARNED_TYPE.policy, id: "lp-w", leaveTypeId: "lt-lapse-w", allocationStrategy: "MANUAL", carryExpiresAfterMonths: 3 },
+    };
+    db.leaveType.findMany.mockResolvedValue([lapsing]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2027 ? [{ userId: "u1" }] : [],
+    );
+    groupsBy({ CARRY: 4, CONSUME: -1 }); // unspent carry 3
+
+    const report = await runLeaveAllocationJob(new Date("2027-07-02T00:00:00Z"));
+
+    expect(report.expireRowsWritten).toBe(1);
+    expect(db.leaveLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ year: 2027, delta: -3, entryType: "EXPIRE", sourceId: "carry-lapse" }),
+      }),
+    );
+  });
+
+  it("the migration gap (asOf precedes the first period): the pass is an honest no-op", async () => {
+    db.leavePeriod.findMany.mockResolvedValue([FISCAL_27_ROW]);
+    db.leaveType.findMany.mockResolvedValue([EARNED_TYPE]);
+
+    const report = await runLeaveAllocationJob(new Date("2027-01-15T00:00:00Z"));
+
+    expect(report).toMatchObject({
+      grantsWritten: 0,
+      carryRowsWritten: 0,
+      expireRowsWritten: 0,
+      failures: 0,
+    });
+    expect(db.leaveBalance.findMany).not.toHaveBeenCalled();
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
+    expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
   });
 });

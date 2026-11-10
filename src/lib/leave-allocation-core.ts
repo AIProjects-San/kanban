@@ -43,10 +43,23 @@ import {
   dueGrantOps,
   rolloverOps,
   carryLapseDelta,
-  monthsIntoYear,
   type EmploymentFacts,
   type GrantOp,
 } from "@/lib/leave-policy";
+// P27 (LV-08) — the named allocation windows. No rows = the implicit
+// calendar year, byte-identical to the pre-P27 pass.
+import {
+  resolveActiveWindow,
+  carrySourceBucket,
+  monthsIntoWindow,
+  type LeavePeriodInput,
+  type LeaveWindow,
+} from "@/lib/leave-period";
+
+/** DB row → the kernel's plain-data shape (day keys). */
+function toPeriodInput(row: { id: string; name: string; startDate: Date; endDate: Date }): LeavePeriodInput {
+  return { id: row.id, name: row.name, startDate: dayKey(row.startDate), endDate: dayKey(row.endDate) };
+}
 
 export interface LeaveAllocationJobReport {
   asOf: string;
@@ -139,11 +152,24 @@ async function appendGrantsTx(
 
 /** The cron job: advance every strategy to `asOf` (default today UTC).
  * Idempotent; savepoint-per-pair; never throws (failures are counted and
- * logged — a cron pass must report, not crash). */
+ * logged — a cron pass must report, not crash).
+ * P27 (LV-08): the pass advances the ACTIVE allocation window — the named
+ * period containing asOf (its ledger bucket = the period's start year),
+ * or the implicit calendar year when the period table is empty
+ * (byte-identical to the pre-P27 pass). When periods EXIST but asOf
+ * precedes the first one (the migration gap), the pass is an honest
+ * no-op: implicit grants stop the moment the table is non-empty, so a
+ * half-migrated workspace can never double-grant. */
 export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAllocationJobReport> {
   const asOfD = asOfDate ?? new Date();
   const asOf = dayKey(asOfD);
-  const year = Number(asOf.slice(0, 4));
+
+  const periods = (
+    await db.leavePeriod.findMany({ orderBy: { startDate: "asc" } })
+  ).map(toPeriodInput);
+  const active = resolveActiveWindow(periods, asOf);
+  const namedWindow = active.periodId !== null ? { start: active.start, end: active.end } : undefined;
+  const year = active.bucketYear;
 
   const report: LeaveAllocationJobReport = {
     asOf,
@@ -163,13 +189,23 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
   });
   report.typesConsidered = types.length;
 
-  // ROLLOVER + LAPSE first (they create the new-year balance rows the grant
-  // phase then advances), then GRANTS.
+  if (periods.length > 0 && active.periodId === null) {
+    // Pre-first-period migration gap: no window covers asOf and none has
+    // ended yet — nothing to advance. The first period's own pass (once
+    // asOf enters it) grants its window and rolls startYear − 1 into it.
+    logInfo(
+      `[leave-allocation] pass skipped: ${asOf} precedes the first named period (${periods[0].name}, ${periods[0].startDate}) — no implicit grants while periods exist`,
+    );
+    return report;
+  }
+
+  // ROLLOVER + LAPSE first (they create the new-bucket balance rows the
+  // grant phase then advances), then GRANTS.
   for (const type of types) {
     if (!type.policy) continue;
     const policy = resolveLeavePolicy(type.policy);
-    await runRolloverForType(type.id, type.name, policy, year, report);
-    await runLapseForType(type.id, type.name, policy, year, asOf, report);
+    await runRolloverForType(type.id, type.name, policy, active, periods, report);
+    await runLapseForType(type.id, type.name, policy, active, report);
   }
 
   // GRANTS — every non-MANUAL strategy (MANUAL's only writer is the lazy
@@ -182,7 +218,7 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
       report.manualTypesSkipped += 1;
       continue;
     }
-    // Only pairs whose CURRENT-year balance row exists (the no-race
+    // Only pairs whose CURRENT-bucket balance row exists (the no-race
     // contract above). Profile-less users stay on the lazy path.
     const balances = await db.leaveBalance.findMany({
       where: { leaveTypeId: type.id, year },
@@ -220,6 +256,7 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
           employment: factsByUser.get(b.userId) ?? null,
           year,
           asOf,
+          window: namedWindow,
           grantedSoFar: projection.entitled,
           availableNow: projection.available,
           existingPeriodKeys: existingKeys,
@@ -245,26 +282,32 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
   }
 
   logInfo(
-    `[leave-allocation] pass complete: ${report.grantsWritten} grant(s), ` +
+    `[leave-allocation] pass complete (${active.name ?? `calendar year ${year}`}): ${report.grantsWritten} grant(s), ` +
       `${report.carryRowsWritten} carry row(s), ${report.expireRowsWritten} expire row(s), ` +
       `${report.failures} failure(s) at ${asOf}`,
   );
   return report;
 }
 
-/** Year-end rollover for one type: carry min(prevAvailable, maxCarryOver)
- * into `year`, expire the excess. Idempotent: any CARRY row already in the
- * new year (any source — engine or backfill) means the pair is done. */
+/** Window-boundary rollover for one type: carry min(prevAvailable,
+ * maxCarryOver) from the active window's SOURCE bucket into the active
+ * window's bucket, expire the excess. Idempotent: any CARRY row already in
+ * the target bucket (any source — engine or backfill) means the pair is
+ * done. The source bucket: the chain predecessor's bucket (a named
+ * window), else target − 1 (the implicit calendar year — the pre-P27
+ * behavior, byte-identical). */
 async function runRolloverForType(
   leaveTypeId: string,
   leaveTypeName: string,
   policy: ReturnType<typeof resolveLeavePolicy>,
-  year: number,
+  active: LeaveWindow,
+  periods: ReadonlyArray<LeavePeriodInput>,
   report: LeaveAllocationJobReport,
 ): Promise<void> {
-  const prevYear = year - 1;
+  const year = active.bucketYear;
+  const sourceBucket = carrySourceBucket(periods, active) ?? year - 1;
   const prevBalances = await db.leaveBalance.findMany({
-    where: { leaveTypeId, year: prevYear },
+    where: { leaveTypeId, year: sourceBucket },
     select: { userId: true },
   });
   if (prevBalances.length === 0) return;
@@ -277,14 +320,14 @@ async function runRolloverForType(
       });
       if (carryRow) continue; // already rolled over (idempotent)
 
-      const prev = await ledgerProjection(db, b.userId, leaveTypeId, prevYear);
+      const prev = await ledgerProjection(db, b.userId, leaveTypeId, sourceBucket);
       const { carry, expire } = rolloverOps(prev.available, policy.maxCarryOver);
       if (carry <= 0 && expire >= 0) continue; // nothing to carry or expire
 
       await db.$transaction(async (tx) => {
-        // The new-year cache row (create-if-missing; a unique-trio race
-        // with a concurrent lazy materialization loses loudly and retries
-        // on the next daily pass — never a half-written state).
+        // The target-bucket cache row (create-if-missing; a unique-trio
+        // race with a concurrent lazy materialization loses loudly and
+        // retries on the next daily pass — never a half-written state).
         await tx.leaveBalance.upsert({
           where: { userId_leaveTypeId_year: { userId: b.userId, leaveTypeId, year } },
           create: { userId: b.userId, leaveTypeId, year, entitled: 0, carriedOver: 0, used: 0 },
@@ -296,7 +339,7 @@ async function runRolloverForType(
             delta: carry,
             entryType: "CARRY",
             sourceId: "carry",
-            note: `Carried over ${carry} day(s) from ${prevYear} (cap ${policy.maxCarryOver})`,
+            note: `Carried over ${carry} day(s) from ${sourceBucket}${active.name ? ` (${active.name})` : ""} (cap ${policy.maxCarryOver})`,
           });
         }
         if (expire < 0) {
@@ -304,7 +347,7 @@ async function runRolloverForType(
             delta: expire,
             entryType: "EXPIRE",
             sourceId: "carry-expire",
-            note: `Expired ${-expire} day(s) above the ${policy.maxCarryOver}-day carry cap at year end`,
+            note: `Expired ${-expire} day(s) above the ${policy.maxCarryOver}-day carry cap at the window's end`,
           });
         }
         await tx.leaveLedgerEntry.createMany({
@@ -342,19 +385,22 @@ async function runRolloverForType(
 }
 
 /** Carry lapse for one type (carryExpiresAfterMonths): once N complete
- * months of the year elapsed, expire the still-unspent carried days (FIFO).
- * Idempotent: the "carry-lapse" EXPIRE row is written once. */
+ * months of the ACTIVE WINDOW elapsed, expire the still-unspent carried
+ * days (FIFO). Idempotent: the "carry-lapse" EXPIRE row is written once.
+ * P27 (LV-08): the clock counts months into the window (its start), not
+ * the calendar year — identical when the window IS the calendar year. */
 async function runLapseForType(
   leaveTypeId: string,
   leaveTypeName: string,
   policy: ReturnType<typeof resolveLeavePolicy>,
-  year: number,
-  asOf: string,
+  active: LeaveWindow,
   report: LeaveAllocationJobReport,
 ): Promise<void> {
   if (policy.carryExpiresAfterMonths === null) return;
-  if (monthsIntoYear(year, asOf) < policy.carryExpiresAfterMonths) return;
+  const asOf = report.asOf;
+  if (monthsIntoWindow(active.start, asOf) < policy.carryExpiresAfterMonths) return;
 
+  const year = active.bucketYear;
   const balances = await db.leaveBalance.findMany({
     where: { leaveTypeId, year },
     select: { userId: true },
@@ -381,7 +427,7 @@ async function runLapseForType(
             entryType: "EXPIRE",
             sourceType: "POLICY",
             sourceId: "carry-lapse",
-            note: `Carried days lapsed after ${policy.carryExpiresAfterMonths} month(s) of ${year}`,
+            note: `Carried days lapsed after ${policy.carryExpiresAfterMonths} month(s) of ${active.name ?? year}`,
             isReversal: false,
           },
         });

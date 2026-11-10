@@ -17,6 +17,7 @@ import {
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
 import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/employment";
 import { resolveLeaveApprover } from "@/lib/hierarchy";
+import type { LeavePeriodInput, LeaveWindow } from "@/lib/leave-period";
 import {
   resolveLeavePolicy,
   dueGrantOps,
@@ -184,14 +185,25 @@ async function employmentFactsFor(
 }
 
 /** The strategy grants due at materialization time (MANUAL → the legacy
- * single full-year grant op with the legacy sourceId). Pure rule + a
- * facts read; called only when the balance row is missing. */
+ * single full-window grant op with the legacy sourceId). Pure rule + a
+ * facts read; called only when the balance row is missing. P27 (LV-08)
+ * window semantics:
+ *   undefined — no period knowledge (the pre-P27 callers/tests): the
+ *               implicit calendar year, byte-identical materialization;
+ *   object    — the named window the bucket maps to (grants land inside
+ *               it; its start/end drive every boundary);
+ *   null      — periods EXIST but no window covers the bucket (the
+ *               migration gap before the first period): NO grants —
+ *               implicit materialization stops the moment the period
+ *               table is non-empty (the no-double-grant law). */
 async function materializationGrantOps(
   userId: string,
   policyRow: LeavePolicyInput,
   year: number,
+  window?: { start: string; end: string } | null,
 ): Promise<GrantOp[]> {
   const policy = resolveLeavePolicy(policyRow);
+  if (window === null) return []; // periods exist, no window here — no grants
   if (policy.allocationStrategy === "MANUAL") {
     // Legacy path, unchanged: one GRANT of annualDays, sourceId = the type
     // id (the F1.2 convention existing rows and tests pin).
@@ -199,7 +211,7 @@ async function materializationGrantOps(
     return [{
       periodKey: "", // caller writes the legacy sourceId (leaveTypeId)
       delta: policy.annualDays,
-      dueDate: `${year}-01-01`,
+      dueDate: window?.start ?? `${year}-01-01`,
       note: `Entitlement materialized (${policy.annualDays} days)`,
     }];
   }
@@ -208,10 +220,39 @@ async function materializationGrantOps(
     employment: await employmentFactsFor(userId),
     year,
     asOf: dayKey(new Date()), // "now" at materialization time (documented)
+    window: window ?? undefined,
     grantedSoFar: 0,
     availableNow: 0,
     existingPeriodKeys: new Set<string>(), // no balance row ⇒ no POLICY rows
   });
+}
+
+/** P27 (LV-08) — resolve the materialization window argument for a
+ * bucket: the named window when the bucket maps to a period, `null` when
+ * periods exist but none covers the bucket (the migration gap — no
+ * materialization), `undefined` when the period table is EMPTY (the
+ * implicit calendar year — the pre-P27 behavior). One helper so every
+ * call site speaks the same tri-state. */
+export function windowArgFor(
+  periods: ReadonlyArray<LeavePeriodInput>,
+  window: LeaveWindow,
+): { start: string; end: string } | null | undefined {
+  if (window.periodId !== null) return { start: window.start, end: window.end };
+  return periods.length > 0 ? null : undefined;
+}
+
+// P27 (LV-08) — the leave period master rows as the kernel's plain-data
+// shape, ordered by start. One read per action call (the periods are tiny
+// and cold — no cache machinery; the config cache stays for hot reads).
+// The empty result IS the default: implicit calendar-year windows.
+export async function loadLeavePeriods(): Promise<LeavePeriodInput[]> {
+  const rows = await db.leavePeriod.findMany({ orderBy: { startDate: "asc" } });
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    startDate: dayKey(r.startDate),
+    endDate: dayKey(r.endDate),
+  }));
 }
 
 export async function getOrCreateBalance(
@@ -219,16 +260,21 @@ export async function getOrCreateBalance(
   leaveTypeId: string,
   year: number,
   policyRow: LeavePolicyInput,
+  window?: { start: string; end: string } | null,
 ): Promise<{ entitled: number; carriedOver: number; used: number }> {
   const existing = await db.leaveBalance.findUnique({
     where: { userId_leaveTypeId_year: { userId, leaveTypeId, year } },
     select: { entitled: true, carriedOver: true, used: true },
   });
   if (existing) return existing;
+  // P27 null — periods exist but no window covers this bucket: NO
+  // materialization (implicit grants stop with a non-empty period table).
+  // The read is honest zeros; a row only appears when a window grants one.
+  if (window === null) return { entitled: 0, carriedOver: 0, used: 0 };
   // No row yet — materialize the entitlement from the policy AND its
   // ledger GRANT row(s) that explain it, in ONE transaction (F1.2: a
   // balance row must never exist without its ledger rows).
-  const ops = await materializationGrantOps(userId, policyRow, year);
+  const ops = await materializationGrantOps(userId, policyRow, year, window);
   const entitled = ops.reduce((s, o) => s + o.delta, 0);
   const legacySourceId = resolveLeavePolicy(policyRow).allocationStrategy === "MANUAL";
   await db
@@ -301,6 +347,7 @@ export async function getOrCreateBalancesBatch(
   userId: string,
   types: Array<{ id: string; policy: LeavePolicyInput }>,
   year: number,
+  window?: { start: string; end: string } | null,
 ): Promise<Map<string, { entitled: number; carriedOver: number; used: number }>> {
   const result = new Map<string, { entitled: number; carriedOver: number; used: number }>();
   if (types.length === 0) return result;
@@ -310,6 +357,10 @@ export async function getOrCreateBalancesBatch(
     select: { leaveTypeId: true, entitled: true, carriedOver: true, used: true },
   });
   const byType = new Map(rows.map((r) => [r.leaveTypeId, r]));
+
+  // P27 null — periods exist but no window covers this bucket: NO
+  // materialization (implicit grants stop with a non-empty period table).
+  if (window === null) return byType as Map<string, { entitled: number; carriedOver: number; used: number }>;
 
   const missing = types.filter((t) => !byType.has(t.id));
   if (missing.length > 0) {
@@ -341,7 +392,7 @@ export async function getOrCreateBalancesBatch(
           : [{
               periodKey: "", // legacy sourceId (the type id) — see below
               delta: policy.annualDays,
-              dueDate: `${year}-01-01`,
+              dueDate: window?.start ?? `${year}-01-01`,
               note: `Entitlement materialized (${policy.annualDays} days)`,
             }];
       }
@@ -350,6 +401,7 @@ export async function getOrCreateBalancesBatch(
         employment: facts,
         year,
         asOf,
+        window: window ?? undefined,
         grantedSoFar: 0,
         availableNow: 0,
         existingPeriodKeys: new Set<string>(),
@@ -467,12 +519,18 @@ export async function materializeLeaveBalanceTx(
   userId: string,
   leaveTypeId: string,
   year: number,
+  window?: { start: string; end: string } | null,
 ): Promise<void> {
   const existing = await tx.leaveBalance.findUnique({
     where: { userId_leaveTypeId_year: { userId, leaveTypeId, year } },
     select: { id: true },
   });
   if (existing) return;
+  // P27 null — periods exist but no window covers this bucket: no
+  // materialization inside the decision either (the QA-1 projection
+  // below then reads the honest empty ledger — an approval can only pass
+  // a policy that allows an advance).
+  if (window === null) return;
   const policyRow = await tx.leavePolicy.findUnique({ where: { leaveTypeId } });
   const policy = resolveLeavePolicy(policyRow);
 
@@ -486,7 +544,7 @@ export async function materializeLeaveBalanceTx(
         : [{
             periodKey: "",
             delta: policy.annualDays,
-            dueDate: `${year}-01-01`,
+            dueDate: window?.start ?? `${year}-01-01`,
             note: `Entitlement materialized (${policy.annualDays} days)`,
           }];
   } else {
@@ -507,6 +565,7 @@ export async function materializeLeaveBalanceTx(
       employment: facts,
       year,
       asOf: dayKey(new Date()),
+      window: window ?? undefined,
       grantedSoFar: 0,
       availableNow: 0,
       existingPeriodKeys: new Set<string>(),

@@ -11,7 +11,7 @@ const db = vi.hoisted(() => {
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "leaveLedgerEntry", "payslip", "payrollRun",
     "user", "auditLog", "notification", "holidayCalendarEntry",
-    "attendanceRecord", "employeeProfile", "mailOutbox",
+    "attendanceRecord", "employeeProfile", "mailOutbox", "leavePeriod",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -134,6 +134,9 @@ beforeEach(() => {
   db.mailOutbox.findUnique.mockResolvedValue(null);
   db.leaveType.findUnique.mockResolvedValue(null);
   db.leaveType.findMany.mockResolvedValue([]);
+  // P27 (LV-08) — the period table defaults EMPTY (implicit calendar
+  // windows; the pre-P27 request/decide/cancel expectations stay pinned).
+  db.leavePeriod.findMany.mockResolvedValue([]);
   db.leavePolicy.findUnique.mockResolvedValue(ANNUAL_TYPE.policy);
   db.leaveRequest.findMany.mockResolvedValue([]);
   db.leaveRequest.findFirst.mockResolvedValue(null);

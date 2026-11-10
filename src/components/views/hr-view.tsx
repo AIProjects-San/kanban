@@ -35,6 +35,13 @@ import { BalancesTab } from "./hr-leave-balances";
 import { getEncashmentQueue, decideLeaveEncashment } from "@/server-actions/leave-encashment";
 import type { LeaveEncashmentT } from "@/lib/types";
 import { getDirectory } from "@/server-actions/hr-directory";
+// P27 (LV-08) — the leave period master (named allocation windows).
+import {
+  listLeavePeriods,
+  createLeavePeriod,
+  deleteLeavePeriod,
+  type LeavePeriodT,
+} from "@/server-actions/leave-periods";
 
 interface CurrentUser {
   id: string;
@@ -596,7 +603,177 @@ function TypesTab({ types, onChanged }: { types: LeaveTypeT[]; onChanged: () => 
         ))}
       </div>
 
+      {/* P27 (LV-08) — the allocation windows the engine advances. An
+          empty master = the implicit calendar year (the zero-change
+          default the suite pins). */}
+      <LeavePeriodsSection />
+
       <CreateTypeModal open={creating} onClose={() => setCreating(false)} onChanged={onChanged} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P27 (LV-08) — the leave period master: named allocation windows
+// (benchmark `Leave Period`). The section lists the chain, marks the live
+// window, and creates/deletes future periods. The honest boundaries the
+// actions enforce (forward-looking, engine-clean buckets, immutable
+// history) surface here as the empty-state notice and the refusal toasts.
+// ---------------------------------------------------------------------------
+/** Exported for the focused component test (the whole HRView drags in
+ * eight child views and their action modules — this section is the P27
+ * surface the test pins). */
+export function LeavePeriodsSection() {
+  const [periods, setPeriods] = useState<LeavePeriodT[] | null>(null);
+  const [name, setName] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    const res = await listLeavePeriods();
+    if (res.ok) setPeriods(res.data.periods);
+    else toast.error(res.error);
+  }, []);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void reload(); }, [reload]);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  async function submit() {
+    if (busy) return;
+    setBusy(true);
+    const res = await createLeavePeriod({ name, startDate, endDate });
+    setBusy(false);
+    if (res.ok) {
+      toast.success(`Leave period “${res.data.period.name}” created`);
+      setName("");
+      setStartDate("");
+      setEndDate("");
+      await reload();
+    } else {
+      toast.error(res.error);
+    }
+  }
+
+  async function remove(id: string) {
+    if (busy) return;
+    setBusy(true);
+    const res = await deleteLeavePeriod({ id });
+    setBusy(false);
+    if (res.ok) {
+      toast.success("Leave period deleted before it took effect");
+      await reload();
+    } else {
+      toast.error(res.error);
+    }
+  }
+
+  return (
+    <div className="f-card p-4" data-testid="leave-periods-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-medium text-foreground">Leave periods</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Named allocation windows the policy engine grants into — one ledger bucket per start year. With no periods, every year is an implicit Jan–Dec window.
+          </p>
+        </div>
+      </div>
+
+      {periods === null ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
+          <Loader2 size={14} className="animate-spin" /> Loading periods…
+        </div>
+      ) : periods.length === 0 ? (
+        <div className="text-sm text-muted-foreground mt-3 rounded-md border border-dashed border-border p-3" data-testid="leave-periods-empty">
+          No named periods — allocations ride the implicit calendar year (Jan 1 → Dec 31). Create a future window to
+          switch the workspace to named periods (e.g. an Apr→Mar fiscal leave year). Named periods are forward-looking:
+          the first one must start in a year the engine has not yet granted into.
+        </div>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {periods.map((p, i) => {
+            const status = p.startDate > today ? "upcoming" : p.endDate >= today ? "active" : "closed";
+            return (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-2 rounded-md border border-border p-2.5"
+                data-testid={`leave-period-row-${i}`}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground truncate" data-testid={`leave-period-name-${i}`}>{p.name}</span>
+                    <span
+                      className={cn(
+                        "text-[0.625rem] px-1.5 py-0.5 rounded shrink-0",
+                        status === "active" && "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+                        status === "upcoming" && "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                        status === "closed" && "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+                      )}
+                    >
+                      {status}
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {p.startDate} → {p.endDate} · ledger bucket {p.bucketYear}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {status === "upcoming" && (
+                    <button
+                      className="f-btn f-btn-ghost f-btn-sm text-muted-foreground"
+                      onClick={() => void remove(p.id)}
+                      data-testid={`leave-period-delete-${i}`}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 mt-3 items-end">
+        <Field label="Name" className="min-w-0">
+          <input
+            className="f-input"
+            placeholder="e.g. FY 2028/29 (Apr → Mar)"
+            value={name}
+            maxLength={80}
+            data-testid="leave-period-name-input"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </Field>
+        <Field label="Starts">
+          <input
+            type="date"
+            className="f-input"
+            value={startDate}
+            data-testid="leave-period-start-input"
+            onChange={(e) => setStartDate(e.target.value)}
+          />
+        </Field>
+        <Field label="Ends">
+          <input
+            type="date"
+            className="f-input"
+            value={endDate}
+            data-testid="leave-period-end-input"
+            onChange={(e) => setEndDate(e.target.value)}
+          />
+        </Field>
+        <button
+          className="f-btn f-btn-primary f-btn-sm"
+          disabled={busy || !name.trim() || !startDate || !endDate}
+          onClick={() => void submit()}
+          data-testid="leave-period-create-button"
+        >
+          <Plus size={14} /> Add period
+        </button>
+      </div>
     </div>
   );
 }

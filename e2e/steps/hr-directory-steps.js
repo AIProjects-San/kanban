@@ -77,6 +77,22 @@ When("I open the {string} tab", async function (label) {
     );
     return;
   }
+  if (label === "Types & Policies") {
+    // P27 (LV-08) — the leave type/policy editor + the leave period master
+    // (hr:admin-gated). EXACT match: nothing else carries the "&" label.
+    const tab = await driver.wait(
+      until.elementLocated(By.xpath(`//button[normalize-space(.) = "Types & Policies"]`)),
+      10_000,
+      "Types & Policies tab button not found",
+    );
+    await driver.executeScript("arguments[0].click();", tab);
+    await driver.wait(
+      until.elementsLocated(By.css("[data-testid='leave-periods-section']")),
+      10_000,
+      "types & policies tab did not render the leave period master",
+    );
+    return;
+  }
   if (label === "Offboarding") {
     // F2.1 — the offboarding tab (hr-offboarding.tsx), hr:admin-gated.
     // EXACT match so the sidebar never shadows it.

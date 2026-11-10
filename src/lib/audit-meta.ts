@@ -88,6 +88,9 @@ export type AuditAction =
   | "hr.leave_adjusted"
   // P21 (LV-R01) — the balance report CSV export.
   | "leave.report_exported"
+  // P27 (LV-08) — the leave period master lifecycle.
+  | "leave.period_created"
+  | "leave.period_deleted"
   // F1.1 — holiday calendar lifecycle
   // (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1)
   | "hr.holiday_created"
@@ -290,6 +293,8 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.leave_adjusted": { icon: Scale, cls: "text-sky-500 bg-sky-500/10" },
   "leave.report_exported": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
+  "leave.period_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
+  "leave.period_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hr.holiday_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
   "hr.holiday_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
@@ -415,6 +420,7 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   BUG: { label: "Bug", cls: "bg-red-500/10 text-red-700" },
   CANDIDATE: { label: "Candidate", cls: "bg-teal-500/10 text-teal-700" },
   NOTIFICATION_TEMPLATE: { label: "Notification", cls: "bg-violet-500/10 text-violet-700" },
+  LEAVE_PERIOD: { label: "Leave period", cls: "bg-lime-500/10 text-lime-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -445,5 +451,5 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },
-  { key: "other", label: "Other", types: ["REMINDER", "TIME", "AUTH", "WORKSPACE", "CONFIG", "NOTIFICATION_TEMPLATE"] },
+  { key: "other", label: "Other", types: ["REMINDER", "TIME", "AUTH", "WORKSPACE", "CONFIG", "NOTIFICATION_TEMPLATE", "LEAVE_PERIOD"] },
 ];

@@ -152,4 +152,11 @@ export {
   updateNotificationTemplate,
   resetNotificationTemplate,
 } from "./notification-templates";
+// P27 (LV-08) — the leave period master (HR console → Types & Policies).
+export {
+  listLeavePeriods,
+  createLeavePeriod,
+  deleteLeavePeriod,
+  type LeavePeriodT,
+} from "./leave-periods";
 export { getAuditLogs, getAuditLogsForEntity } from "./audit";

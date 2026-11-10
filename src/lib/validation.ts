@@ -255,6 +255,19 @@ export const notificationTemplateResetSchema = z.object({
   eventKey: z.string().trim().min(1).max(64),
 }).strict();
 
+/** P27 (LV-08) — the leave period master payloads. Dates are "YYYY-MM-DD"
+ * day keys (the kernel validates the semantics: ordering, span, overlap,
+ * chain extension). */
+export const leavePeriodCreateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Start date must be YYYY-MM-DD."),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "End date must be YYYY-MM-DD."),
+}).strict(); // reject unknown keys
+
+export const leavePeriodDeleteSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+}).strict();
+
 /**
  * Schema for the config-item tables (taskStatusConfig, projectStatusConfig,
  * eventTypeConfig, taskTagConfig, priorityConfig, departmentConfig). All
