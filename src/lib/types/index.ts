@@ -650,12 +650,15 @@ export interface BackgroundCheckT {
   completedAt: string | null;
 }
 
-/** R5 — one salary line of an offer (lib/offer-math.ts). */
+/** R5 — one salary line of an offer (lib/offer-math.ts). P23 — the mode
+ * vocabulary widens: PERCENT_OF_GROSS (annual resolution in computeOffer)
+ * and PERCENT_OF_NET (payroll-time only — offers refuse it; structures
+ * carry it and the run's two-pass kernel resolves it). */
 export type OfferComponentT = {
   key: string;
   label: string;
   kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION" | "STATISTICAL";
-  mode: "FIXED" | "PERCENT_OF_BASIC";
+  mode: "FIXED" | "PERCENT_OF_BASIC" | "PERCENT_OF_GROSS" | "PERCENT_OF_NET";
   amount: number;
   /** PR-B02 (S6) — payment-days exemption snapshot (sparse: only false is
    * meaningful; absent = true). */
@@ -742,6 +745,10 @@ export interface SalaryStructureT {
    * this structure's effectiveFrom in the read-time aggregates). null =
    * none (pre-P16 rows). */
   openingYtd: OpeningYtdRowT[] | null;
+  /** P23 (PR-03) — the workspace default package flag: at most one
+   * structure carries it; new structures prefill from its components.
+   * Pre-P23 rows read false. */
+  isDefault: boolean;
 }
 
 /** P16 (PR-04) — one opening row on a structure. gross/net openings derive
@@ -756,14 +763,15 @@ export interface OpeningYtdRowT {
 /** F1.5 — one catalog row of the salary component vocabulary
  * (payroll:manage). `code` joins onto OfferComponentT.key; the structure
  * editor's picker prefills a line from a row. defaultAmount is a SUGGESTION
- * by mode (FIXED → annual amount; PERCENT_OF_BASIC → percent of basic) —
- * structures snapshot their own copies, so this never rewrites history. */
+ * by mode (FIXED → annual amount; PERCENT_OF_* → percent of the named
+ * basis — P23 widens the percent vocabulary) — structures snapshot their
+ * own copies, so this never rewrites history. */
 export interface SalaryComponentT {
   id: string;
   code: string;
   label: string;
   kind: "EARNING" | "EMPLOYER_CONTRIBUTION" | "DEDUCTION" | "STATISTICAL";
-  mode: "FIXED" | "PERCENT_OF_BASIC";
+  mode: "FIXED" | "PERCENT_OF_BASIC" | "PERCENT_OF_GROSS" | "PERCENT_OF_NET";
   defaultAmount: number;
   /** PR-B02 (S6) — depends_on_payment_days: false = window-exempt flat
    * line (no S5 scaling, no LOP docking). Default true. */

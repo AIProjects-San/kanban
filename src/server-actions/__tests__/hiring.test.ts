@@ -2348,3 +2348,54 @@ describe("F2.10 — getOffersAwaitingApproval (the approver's queue)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// P23 (PR-02/PR-03) — offers refuse percent-of-net lines: net resolves only
+// at payroll time (the run's two-pass kernel); the mode lives in salary
+// structures. The refusal names the offending line (QA-18 convention).
+// ---------------------------------------------------------------------------
+
+describe("P23 — percent-of-net refusals on offer surfaces", () => {
+  const NET_LINE = { key: "advance_recovery", label: "Advance Recovery", kind: "DEDUCTION" as const, mode: "PERCENT_OF_NET" as const, amount: 6 };
+  const OK_LINE = { key: "basic", label: "Basic Salary", kind: "EARNING" as const, mode: "FIXED" as const, amount: 72_000 };
+
+  it("saveOfferTemplate refuses a percent-of-net line with the line named", async () => {
+    const res = await saveOfferTemplate({
+      key: "net_pkg", label: "Bad Package",
+      components: [OK_LINE, NET_LINE], benefits: [], letterTemplate: "", isActive: true, sortOrder: 1,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("Advance Recovery");
+      expect(res.error).toContain("percent-of-net");
+      expect(res.error).toContain("salary structures accept it");
+    }
+    expect(db.offerTemplate.create).not.toHaveBeenCalled();
+  });
+
+  it("saveOfferTemplate accepts percent-of-GROSS lines (annual resolution in the offer totals)", async () => {
+    const res = await saveOfferTemplate({
+      key: "gross_pkg", label: "Gross Package",
+      components: [
+        OK_LINE,
+        { key: "variable_pay", label: "Variable Pay", kind: "EARNING" as const, mode: "PERCENT_OF_GROSS" as const, amount: 8 },
+      ],
+      benefits: [], letterTemplate: "", isActive: true, sortOrder: 2,
+    });
+    expect(res.ok).toBe(true);
+    expect(db.offerTemplate.create).toHaveBeenCalled();
+  });
+
+  it("updateOfferRecord refuses a percent-of-net line on a DRAFT offer", async () => {
+    db.offerRecord.findUnique.mockResolvedValue({
+      id: "or-1", candidateId: "cand-1", templateId: "ot-1", templateLabel: "Designer Band",
+      components: JSON.stringify([OK_LINE]), benefits: "[]", letterText: "Hi", status: "DRAFT", notes: "",
+      createdById: "u-hr", createdAt: new Date(), updatedAt: new Date(),
+      candidate: { fullName: "Nadia Petrova", position: "Product Designer" },
+    });
+    const res = await updateOfferRecord({ id: "or-1", components: [OK_LINE, NET_LINE], benefits: [], letterText: "x", notes: "" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("percent-of-net");
+    expect(db.offerRecord.update).not.toHaveBeenCalled();
+  });
+});

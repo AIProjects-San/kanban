@@ -2322,6 +2322,11 @@ async function main() {
       // through), never offered by the picker. Structures that used it keep
       // their snapshot copies regardless.
       { code: "relocation", label: "Relocation Allowance", kind: "EARNING", mode: "FIXED", defaultAmount: 5_000, isActive: false, sortOrder: 70 },
+      // P23 (PR-02/PR-03) — the catalog percent modes: an earning that rides
+      // the annual gross, and a deduction that resolves only at payroll time
+      // (the run's two-pass kernel, sequential on the docked running net).
+      { code: "variable_pay", label: "Variable Pay Allowance", kind: "EARNING", mode: "PERCENT_OF_GROSS", defaultAmount: 8, sortOrder: 75 },
+      { code: "advance_recovery", label: "Advance Recovery", kind: "DEDUCTION", mode: "PERCENT_OF_NET", defaultAmount: 6, sortOrder: 80 },
     ];
     await db.salaryComponent.createMany({
       data: CATALOG_SEEDS.map((c) => ({
@@ -2389,6 +2394,9 @@ async function main() {
           notes: s.notes,
           effectiveFrom: addDays(TODAY, -120),
           isActive: true,
+          // P23 — the workspace default package flag (only Diego's demo
+          // structure carries it; every other seed row reads false).
+          isDefault: s.isDefault === true,
           createdById: hrId,
         },
       });
@@ -2773,6 +2781,41 @@ async function main() {
             ],
           },
         });
+
+    // ------------------------------------------------------------------
+    // P23 (PR-02/PR-03) — Lena's percent-mode + default-package structure.
+    // Created AFTER the runs (the P16 discipline: no seeded payslip moves —
+    // the seed's mirror math only knows FIXED/PERCENT_OF_BASIC, so a
+    // percent-mode structure must NOT ride the seeded runs). The next run
+    // HR creates through the app materializes both lines through the REAL
+    // kernel: the 8%-of-gross earning resolves annually (5,280 → 440/mo)
+    // and the 6%-of-net advance recovery rides the run's two-pass kernel
+    // (6% × the window's running net). The workspace DEFAULT PACKAGE flag
+    // rides this row (new structures prefill from it in the editor); Diego
+    // keeps his single P16 opening-YTD structure — one ACTIVE structure
+    // per employee is the invariant.
+    // ------------------------------------------------------------------
+    {
+      const lena = await db.user.findUnique({ where: { email: "lena@fernly.app" }, select: { id: true, name: true } });
+      if (lena) {
+        await db.salaryStructure.create({
+          data: {
+            userId: lena.id,
+            components: JSON.stringify([
+              { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 66_000 },
+              { key: "variable_pay", label: "Variable Pay Allowance", kind: "EARNING", mode: "PERCENT_OF_GROSS", amount: 8 },
+              { key: "advance_recovery", label: "Advance Recovery", kind: "DEDUCTION", mode: "PERCENT_OF_NET", amount: 6 },
+            ]),
+            notes: "Backend band — the P23 percent-mode demo (8% of gross; 6%-of-net advance recovery).",
+            effectiveFrom: addDays(TODAY, -120),
+            isActive: true,
+            isDefault: true,
+            createdById: hrId,
+          },
+        });
+        console.log("  ✓ P23 (PR-02/PR-03) percent modes: Lena's default-package structure (8% of gross + 6% of net, created after the runs — the next HR-created run materializes them)");
+      }
+    }
         console.log("  ✓ P16 (PR-11/PR-04): workspace FY basis April + Diego's structure carries prior-employer opening YTD ($39,000 earned / $1,300 deducted) — the next run's YTD seeds from it");
       }
     }

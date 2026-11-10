@@ -192,9 +192,10 @@ export function OfferTemplateModal({
                 <select className="f-input text-xs w-auto" value={comp.kind} onChange={(e) => patch(i, { kind: e.target.value as OfferComponentT["kind"] })} aria-label="Kind">
                   {Object.keys(KIND_LABEL).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
                 </select>
-                <select className="f-input text-xs w-auto" value={comp.mode} onChange={(e) => patch(i, { mode: e.target.value as OfferComponentT["mode"] })} aria-label="Mode">
+                <select className="f-input text-xs w-auto" value={comp.mode} onChange={(e) => patch(i, { mode: e.target.value as OfferComponentT["mode"] })} aria-label="Mode" title="P23: % of gross resolves annually. (% of net is refused in offer templates — net resolves only at payroll time.)">
                   <option value="FIXED">$/yr</option>
                   <option value="PERCENT_OF_BASIC">% basic</option>
+                  <option value="PERCENT_OF_GROSS">% gross</option>
                 </select>
                 <input
                   className="f-input text-xs w-24" type="number" min={0} step="0.01"

@@ -74,6 +74,32 @@ export function windowEarningsFromStructure(
     }));
 }
 
+/** P23 (PR-02) — the per-window DEDUCTION lines for a structure: the
+ * FIXED / PERCENT_OF_BASIC / PERCENT_OF_GROSS deduction components the
+ * editor has always accepted but the run silently DROPPED (the real
+ * PR-02 remainder): annual resolution (the same computeOffer pass) ÷
+ * the cadence's windows in the year, FLAT per window — deductions do not
+ * scale with paid days (absence already docks the day-scaled earnings
+ * through the LOP line; docking the deduction too would pay absent days).
+ * PERCENT_OF_NET deduction lines are excluded here — they resolve at
+ * payroll time through the two-pass kernel (see structureNetDeductionRows
+ * in lib/pay-adjustment.ts), sequential on the window's running net. */
+export function windowDeductionsFromStructure(
+  components: OfferComponent[],
+  frequency: PayrollFrequency,
+  year: number,
+): PayslipLine[] {
+  const totals = computeOffer(components);
+  const divisor = windowsInYear(frequency, year);
+  return components
+    .filter((c) => c.kind === "DEDUCTION" && c.mode !== "PERCENT_OF_NET")
+    .map((c) => ({
+      key: c.key,
+      label: c.label,
+      amount: round2((totals.resolved[c.key] ?? 0) / divisor),
+    }));
+}
+
 /** PR-B06 (S5) — scale a full-month earning set to the paid window.
  * Pure: each line × paidDays / denominator, rounded per line (the snapshot
  * discipline keeps whatever numbers are stored — scaling happens once, at

@@ -27,6 +27,7 @@
 
 import {
   monthlyEarningsFromStructure,
+  windowDeductionsFromStructure,
   payslipTotals,
   scaleEarningsToPaidDays,
   lopBasisGross,
@@ -35,6 +36,7 @@ import {
   round2,
   type PayslipLine,
 } from "@/lib/payroll-math";
+import { applyAdjustments, structureNetDeductionRows } from "@/lib/pay-adjustment";
 import { parseComponents, type OfferComponent } from "@/lib/offer-math";
 import type { PayrollRoundingMode } from "@/lib/payroll-math";
 
@@ -94,16 +96,29 @@ export function simulateArrearsForSlip(
     return { ...base, reason: "no active salary structure" };
   }
 
-  // The run-creation pipeline, replayed with today's structure:
+  // The run-creation pipeline, replayed with today's structure. P23 — the
+  // replay mirrors the NEW chain too: the structure's flat deduction lines
+  // materialize (windowDeductionsFromStructure) and its percent-of-net
+  // lines resolve through the same two-pass kernel (structure rows only —
+  // the stored slip's ADJUSTMENTS were consumed at lock time and are facts
+  // of history, not of the structure; the delta discipline stays the same:
+  // a current structure that now deducts more simulates LOWER net → a
+  // negative delta is reported as overpayment, never arrears).
   const earnings = scaleEarningsToPaidDays(
     monthlyEarningsFromStructure(components),
     facts.paidDays,
     facts.workingDays > 0 ? facts.workingDays : undefined,
   );
-  const lopDeductions = facts.lopDays > 0
-    ? withLopLine([], lopBasisGross(earnings), facts.lopDays, facts.period, facts.workingDays > 0 ? facts.workingDays : undefined)
-    : [];
-  const { earnings: finalEarnings, deductions } = withRoundingLine(earnings, lopDeductions, roundingMode);
+  const structureDeductions = windowDeductionsFromStructure(components, "MONTHLY", 2024);
+  const baseDeductions = facts.lopDays > 0
+    ? withLopLine(structureDeductions, lopBasisGross(earnings), facts.lopDays, facts.period, facts.workingDays > 0 ? facts.workingDays : undefined)
+    : structureDeductions;
+  const applied = applyAdjustments(
+    { earnings, deductions: baseDeductions },
+    structureNetDeductionRows(components),
+    facts.period,
+  );
+  const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
   const { net: simulatedNet } = payslipTotals(finalEarnings, deductions);
 
   const delta = round2(simulatedNet - facts.storedNet);

@@ -193,7 +193,7 @@ export function OfferSignView({
                     {c.label}
                     <span className="ml-2 text-xs text-muted-foreground">
                       {KIND_LABEL[c.kind] ?? c.kind}
-                      {c.mode === "PERCENT_OF_BASIC" ? ` · ${c.amount}% of basic` : ""}
+                      {c.mode === "PERCENT_OF_BASIC" ? ` · ${c.amount}% of basic` : c.mode === "PERCENT_OF_GROSS" ? ` · ${c.amount}% of gross` : ""}
                     </span>
                   </span>
                   <span className="tabular-nums font-medium">{formatMoney(c.resolved)}</span>

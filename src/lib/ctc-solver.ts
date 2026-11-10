@@ -87,6 +87,22 @@ export function solveBaseForCtc(input: CtcSolveInput): CtcSolveResult {
     return fail("No basic component to flex — add a fixed earning (e.g. Basic Salary) first.");
   }
 
+  // P23 — percent-of-gross EARNING/EMPLOYER lines make the CTC non-linear
+  // in the basic (a rate on Σ earnings — the basic itself included — is a
+  // geometric series, not C0 + B×P). The solver refuses to lie: the refusal
+  // names the discipline; percent-of-NET lines are deductions and never
+  // count into CTC, so they stay harmless here.
+  const nonLinear = components.some(
+    (c) =>
+      (c.kind === "EARNING" || c.kind === "EMPLOYER_CONTRIBUTION") &&
+      c.mode === "PERCENT_OF_GROSS",
+  );
+  if (nonLinear) {
+    return fail(
+      "Percent-of-gross earnings make the CTC non-linear in the basic — remove them (or solve by hand) before solving.",
+    );
+  }
+
   // C0 + B×P decomposition over the CTC-contributing components (earnings +
   // employer contributions; deductions and statistical lines never count).
   let fixed = 0;

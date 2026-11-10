@@ -1541,10 +1541,32 @@ export async function getOfferTemplates(): Promise<ActionResult<OfferTemplateT[]
   });
 }
 
+/** P23 (PR-02/PR-03) — offers and offer templates REFUSE percent-of-net
+ * lines: "net" resolves only at payroll time (the run's two-pass kernel,
+ * sequential on the docked running net — an offer's net is not stable). The
+ * mode lives in salary structures; the friendly error names the offending
+ * line (QA-18 convention). */
+function assertNoNetPercentLines(
+  components: Array<{ key: string; label: string; mode: string }>,
+  context: string,
+): void {
+  const offender = components.find((c) => c.mode === "PERCENT_OF_NET");
+  if (offender) {
+    throw new AuthorizationError(
+      `"${offender.label || offender.key}" is a percent-of-net line — net resolves only at payroll time. Remove it from the ${context} (salary structures accept it).`,
+    );
+  }
+}
+
 export async function saveOfferTemplate(input: unknown): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("hiring:config");
     const data = parseOrThrow(saveOfferTemplateSchema, input);
+    // P23 — offers refuse percent-of-net lines: net is not stable at offer
+    // time (it depends on the window's LOP and the period's adjustments);
+    // the mode resolves only at payroll time, so it lives in salary
+    // structures. The refusal names the line (QA-18).
+    assertNoNetPercentLines(data.components, "offer template");
     const payload = {
       key: data.key,
       label: data.label,
@@ -1661,6 +1683,9 @@ export async function updateOfferRecord(input: unknown): Promise<ActionResult<{ 
   return toResult(async () => {
     const auth = await requirePermission("hiring:manage");
     const data = parseOrThrow(updateOfferRecordSchema, input);
+    // P23 — offers refuse percent-of-net lines (net resolves only at
+    // payroll time; salary structures accept them).
+    assertNoNetPercentLines(data.components, "offer");
     const offer = await db.offerRecord.findUnique({
       where: { id: data.id },
       include: { candidate: { select: { fullName: true } } },

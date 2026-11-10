@@ -80,6 +80,8 @@ const STRUCTURES: SalaryStructureT[] = [
     createdAt: "2026-07-01T00:00:00.000Z", maxBenefits: 0, frequency: "MONTHLY",
     // P16 — null = no opening rows (the pre-P16 shape).
     openingYtd: null,
+    // P23 — the workspace default package flag (fixture default false).
+    isDefault: false,
   },
 ];
 
@@ -191,6 +193,19 @@ describe("PayrollView", () => {
     expect(text).toContain("Yuki Tanaka");
     expect(text).toContain("ACTIVE");
     expect(text).toContain("6,700.00/mo");
+  });
+
+  it("P23 — the default-package structure carries the DEFAULT PKG chip", async () => {
+    getPayrollData.mockResolvedValue({
+      ok: true,
+      data: {
+        structures: [{ ...STRUCTURES[0], isDefault: true }, ...STRUCTURES.slice(1)],
+        runs: RUNS,
+      },
+    });
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const chip = await screen.findByTestId("structure-default-chip");
+    expect(chip.textContent).toBe("DEFAULT PKG");
   });
 
   it("surfaces a creation error as a toast without navigating", async () => {

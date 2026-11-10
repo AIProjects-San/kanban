@@ -127,7 +127,10 @@ export function ComponentCatalogModal({
               <span className={r.isActive ? "min-w-0 grow truncate" : "min-w-0 grow truncate text-muted-foreground line-through"}>{r.label}</span>
               <span className="shrink-0 text-muted-foreground">{KIND_LABEL[r.kind] ?? r.kind}</span>
               <span className="shrink-0 text-muted-foreground tabular-nums">
-                {r.mode === "PERCENT_OF_BASIC" ? `${r.defaultAmount}% basic` : `$${r.defaultAmount.toLocaleString("en-NZ")}/yr`}
+                {r.mode === "PERCENT_OF_BASIC" ? `${r.defaultAmount}% basic`
+                  : r.mode === "PERCENT_OF_GROSS" ? `${r.defaultAmount}% gross`
+                  : r.mode === "PERCENT_OF_NET" ? `${r.defaultAmount}% net`
+                  : `$${r.defaultAmount.toLocaleString("en-NZ")}/yr`}
               </span>
               {!r.dependsOnPaymentDays && (
                 <span className="shrink-0 text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-700 dark:text-sky-400">
@@ -203,14 +206,18 @@ export function ComponentCatalogModal({
                 </select>
               </Field>
               <Field label="Mode">
-                <select className="f-input text-xs" value={editing.mode} onChange={(e) => setEditing({ ...editing, mode: e.target.value })} aria-label="Mode">
+                <select className="f-input text-xs" value={editing.mode} onChange={(e) => setEditing({ ...editing, mode: e.target.value })} aria-label="Mode" title="P23: % of gross resolves annually in the structure editor; % of net resolves only at payroll time (deduction-only).">
                   <option value="FIXED">$/yr</option>
                   <option value="PERCENT_OF_BASIC">% basic</option>
+                  <option value="PERCENT_OF_GROSS">% gross</option>
+                  {/* P23 — deduction-only mode: an earning on "net" has no
+                      stable basis (the kernel rule). */}
+                  <option value="PERCENT_OF_NET" disabled={editing.kind !== "DEDUCTION"}>% net</option>
                 </select>
               </Field>
-              <Field label={editing.mode === "PERCENT_OF_BASIC" ? "Percent" : "Suggested $/yr"}>
+              <Field label={editing.mode === "FIXED" ? "Suggested $/yr" : "Percent"}>
                 <input
-                  className="f-input text-xs" type="number" min={0} step="0.01"
+                  className="f-input text-xs" type="number" min={0} step={0.01} max={editing.mode === "PERCENT_OF_GROSS" || editing.mode === "PERCENT_OF_NET" ? 100 : undefined}
                   value={editing.defaultAmount}
                   onChange={(e) => setEditing({ ...editing, defaultAmount: Number(e.target.value) })}
                   data-testid="catalog-amount"

@@ -680,6 +680,18 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 )}>
                   {s.isActive ? "ACTIVE" : "HISTORY"}
                 </span>
+                {/* P23 — the workspace default package chip: this structure's
+                    components prefill new structures (a retired default still
+                    prefills — the flag is a package pointer, not pay state). */}
+                {s.isDefault && (
+                  <span
+                    className="text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0 bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                    title="New structures prefill from this package's components."
+                    data-testid="structure-default-chip"
+                  >
+                    DEFAULT PKG
+                  </span>
+                )}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">
                     {s.userName}

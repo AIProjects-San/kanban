@@ -59,6 +59,21 @@ Feature: Payroll (Recruitment R7)
     When I open the payslip for "Hana Park"
     Then the payslip provenance note should say the LOP was auto-derived
 
+  Scenario: Percent modes materialize on payslips (P23)
+    Lena's default-package structure carries an 8%-of-gross earning and a
+    6%-of-net advance recovery. The run's payslip shows the percent-of-gross
+    line resolved annually (÷12) and the percent-of-net line resolved at
+    payroll time through the two-pass kernel on the running net; the
+    structure list shows the DEFAULT PKG chip (new structures prefill from
+    it). No LOP marks or adjustments exist for Lena, so the numbers are
+    deterministic: gross 5,940 (5,500 + 440), deductions 356.40 (6% of
+    5,940), net 5,583.60.
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Payroll" view
+    Then the structure list should show the default package chip
+    And I create a payroll run for next month
+    Then the payslip list should show a deduction hint for "Lena Okafor"
+
   Scenario: HR creates next month's run and locks it
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Payroll" view

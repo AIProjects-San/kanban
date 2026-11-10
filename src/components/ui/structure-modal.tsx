@@ -15,7 +15,7 @@ import { Field } from "./field";
 import type { OfferComponentT, SalaryComponentT, SalaryStructureT, PayrollFrequencyT } from "@/lib/types";
 import { PAYROLL_FREQUENCY_OPTIONS } from "@/lib/payroll-windows";
 import { CtcSolverField } from "./ctc-solver-field";
-import { createStructureFromOffer, saveSalaryStructure } from "@/server-actions/payroll";
+import { createStructureFromOffer, saveSalaryStructure, getSalaryStructures } from "@/server-actions/payroll";
 import { getSalaryComponents } from "@/server-actions/payroll-components";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 import type { OpeningYtdRowT } from "@/lib/types";
@@ -72,6 +72,9 @@ export function StructureModal({
   // P16 (PR-04) — the SSA opening YTD rows (annual amounts earned before
   // this system; seeds the fiscal year containing the effective date).
   const [openingYtd, setOpeningYtd] = useState<OpeningYtdRowT[]>([]);
+  // P23 (PR-03) — the workspace default package flag (at most one; new
+  // structures prefill from the flagged row's components).
+  const [isDefault, setIsDefault] = useState(false);
   const [busy, setBusy] = useState(false);
   // F1.5 — the component catalog feeding the picker (loaded on open; a
   // failed load degrades to the blank-line path, never blocks the editor).
@@ -79,7 +82,7 @@ export function StructureModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setMaxBenefits(String(edit?.maxBenefits ?? 0)); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setFrequency(edit?.frequency ?? "MONTHLY"); setOpeningYtd(edit?.openingYtd ? edit.openingYtd.map((r) => ({ ...r })) : []); setCatalog([]); }
+    if (open) { setUserId(edit?.userId ?? ""); setComponents(edit ? edit.components.map((c) => ({ ...c })) : [{ key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 }]); setNotes(edit?.notes ?? ""); setMaxBenefits(String(edit?.maxBenefits ?? 0)); setEffectiveFrom(edit ? edit.effectiveFrom.slice(0, 10) : new Date().toISOString().slice(0, 10)); setFrequency(edit?.frequency ?? "MONTHLY"); setOpeningYtd(edit?.openingYtd ? edit.openingYtd.map((r) => ({ ...r })) : []); setIsDefault(edit?.isDefault ?? false); setCatalog([]); }
   }, [open, edit]);
 
   // F1.5 — catalog for the picker, loaded when the modal opens. The setState
@@ -91,8 +94,33 @@ export function StructureModal({
     void getSalaryComponents().then((res) => {
       if (!cancelled && res.ok) setCatalog(res.data);
     });
+    // P23 (PR-03) — the workspace default package prefill: a NEW structure
+    // (no edit) starts from the flagged default's components instead of the
+    // hard-coded basic-only line (the organization's package becomes data;
+    // the fallback stays for workspaces without a default). The functional
+    // updater only replaces the UNTOUCHED fallback — if the user is already
+    // editing lines, their edits win and the prefill never clobbers.
+    if (!edit) {
+      void getSalaryStructures().then((res) => {
+        if (cancelled || !res.ok) return;
+        const pkg = res.data.find((s) => s.isDefault);
+        if (pkg && pkg.components.length > 0) {
+          setComponents((prev) => {
+            if (
+              prev.length !== 1 ||
+              prev[0].key !== "basic" ||
+              prev[0].mode !== "FIXED" ||
+              prev[0].amount !== 60_000
+            ) {
+              return prev;
+            }
+            return pkg.components.map((c) => ({ ...c }));
+          });
+        }
+      });
+    }
     return () => { cancelled = true; };
-  }, [open]);
+  }, [open, edit]);
 
   // Catalog rows worth offering: active, and not already on the structure
   // (one line per code — the duplicate would just confuse the math).
@@ -140,6 +168,9 @@ export function StructureModal({
       isActive: true,
       maxBenefits: Number(maxBenefits) || 0,
       frequency,
+      // P23 — the workspace default package flag rides the save (the
+      // server clears any other holder atomically).
+      isDefault,
       // P16 — the opening rows ride the save (absent rows = the server
       // keeps the stored set; an explicitly emptied list clears them).
       ...(edit ? { openingYtd } : { openingYtd: openingYtd.length > 0 ? openingYtd : null }),
@@ -228,15 +259,31 @@ export function StructureModal({
               <select className="f-input text-xs w-auto" value={comp.mode} onChange={(e) => patch(i, { mode: e.target.value as OfferComponentT["mode"] })} aria-label="Mode">
                 <option value="FIXED">$/yr</option>
                 <option value="PERCENT_OF_BASIC">% basic</option>
+                <option value="PERCENT_OF_GROSS">% gross</option>
+                {/* P23 — percent-of-net is deduction-only (an earning on
+                    "net" has no stable basis — the kernel rule); the option
+                    is offered only when the line IS a deduction. */}
+                <option value="PERCENT_OF_NET" disabled={comp.kind !== "DEDUCTION"}>% net</option>
               </select>
               <input
-                className="f-input text-xs w-24" type="number" min={0} step="0.01"
+                className="f-input text-xs w-24" type="number" min={0} step={0.01} max={comp.mode === "PERCENT_OF_GROSS" || comp.mode === "PERCENT_OF_NET" ? 100 : undefined}
                 value={comp.amount}
                 onChange={(e) => patch(i, { amount: Number(e.target.value) })}
-                aria-label="Amount"
+                aria-label={comp.mode === "FIXED" ? "Annual amount" : "Percent"}
               />
-              <span className="text-xs text-muted-foreground w-20 text-right tabular-nums">
-                {comp.mode === "PERCENT_OF_BASIC" ? formatMoney(annual.resolved[comp.key] ?? 0) : ""}
+              {/* P23 — percent lines show their ANNUAL resolution; a
+                  percent-of-net line cannot resolve here (it sees the
+                  window's running net) — the muted note says so. */}
+              <span
+                className="text-xs text-muted-foreground w-20 text-right tabular-nums"
+                title={comp.mode === "PERCENT_OF_NET" ? "Resolves at payroll time against the window's running net (after the LOP line and flat deductions)." : undefined}
+                data-testid={`structure-component-${i}-resolved`}
+              >
+                {comp.mode === "PERCENT_OF_NET"
+                  ? "at payroll"
+                  : comp.mode !== "FIXED"
+                    ? formatMoney(annual.resolved[comp.key] ?? 0)
+                    : ""}
               </span>
               {/* S6 — payment-days exemption: earnings scale with the
                   employment window and are docked by LOP unless exempt. */}
@@ -324,6 +371,14 @@ export function StructureModal({
           <div><div className="text-muted-foreground">Annual CTC</div><div className="font-semibold tabular-nums text-emerald-600">{formatMoney(annual.ctc)}</div></div>
           <div><div className="text-muted-foreground">Monthly gross</div><div className="font-semibold tabular-nums text-primary">${monthlyGross.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
         </div>
+        {/* P23 — honesty note: percent-of-net lines resolve only at payroll
+            time, so the totals above (and the monthly gross) exclude them;
+            the hint names them so the exclusion is never a silent surprise. */}
+        {annual.unresolved.length > 0 && (
+          <div className="text-xs text-muted-foreground" data-testid="structure-unresolved-note">
+            {annual.unresolved.length} percent-of-net line{annual.unresolved.length === 1 ? "" : "s"} ({annual.unresolved.join(", ")}) resolve{annual.unresolved.length === 1 ? "s" : ""} at payroll time — the totals above exclude {annual.unresolved.length === 1 ? "it" : "them"}.
+          </div>
+        )}
 
         {/* P12 (PR-B20/RJ-B14) — the CTC solver: enter the target annual
             CTC, the pure kernel solves the basic that hits it (fixed
@@ -346,6 +401,23 @@ export function StructureModal({
             />
           </Field>
         </div>
+
+        {/* P23 (PR-03) — the workspace default package flag: at most one
+            structure carries it (saving this one clears the previous); its
+            components prefill every NEW structure in this editor. */}
+        <label
+          className="inline-flex items-center gap-2 text-xs cursor-pointer"
+          title="New structures prefill from the default package's components (replacing the basic-only starter line). Not employment state: a retired default still prefills until HR marks another."
+        >
+          <input
+            type="checkbox"
+            className="accent-primary"
+            checked={isDefault}
+            onChange={(e) => setIsDefault(e.target.checked)}
+            data-testid="structure-default-package"
+          />
+          Workspace default package — new structures prefill from this one
+        </label>
 
         {/* P16 (PR-04) — the SSA opening YTD rows: annual amounts earned
             before this system (the mid-fiscal-year joiner's prior-employer

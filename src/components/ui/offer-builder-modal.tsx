@@ -166,6 +166,14 @@ export function OfferBuilderModal({
       toast.error("Every component needs a key and a label.");
       return;
     }
+    // P23 — defensive mirror of the server refusal: percent-of-net lines
+    // cannot live in an offer (net resolves only at payroll time). The
+    // mode picker never offers it, so this only fires on crafted states.
+    const netOffender = components.find((x) => x.mode === "PERCENT_OF_NET");
+    if (netOffender) {
+      toast.error(`"${netOffender.label || netOffender.key}" is a percent-of-net line — net resolves only at payroll time. Remove it (salary structures accept it).`);
+      return;
+    }
     setBusy(true);
     const res = await updateOfferRecord({
       id: editing.id,
@@ -345,9 +353,10 @@ export function OfferBuilderModal({
                 <select className="f-input text-xs w-auto" value={comp.kind} onChange={(e) => patch(i, { kind: e.target.value as OfferComponentT["kind"] })} aria-label="Kind">
                   {Object.keys(KIND_LABEL).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
                 </select>
-                <select className="f-input text-xs w-auto" value={comp.mode} onChange={(e) => patch(i, { mode: e.target.value as OfferComponentT["mode"] })} aria-label="Mode">
+                <select className="f-input text-xs w-auto" value={comp.mode} onChange={(e) => patch(i, { mode: e.target.value as OfferComponentT["mode"] })} aria-label="Mode" title="P23: % of gross resolves annually below. (% of net is refused in offers — net resolves only at payroll time.)">
                   <option value="FIXED">$/yr</option>
                   <option value="PERCENT_OF_BASIC">% basic</option>
+                  <option value="PERCENT_OF_GROSS">% gross</option>
                 </select>
                 <input
                   className="f-input text-xs w-24" type="number" min={0} step="0.01"
@@ -356,7 +365,7 @@ export function OfferBuilderModal({
                   aria-label="Amount"
                 />
                 <span className="text-xs text-muted-foreground w-20 text-right tabular-nums">
-                  {comp.mode === "PERCENT_OF_BASIC" ? formatMoney(totals.resolved[comp.key] ?? 0) : ""}
+                  {comp.mode !== "FIXED" ? formatMoney(totals.resolved[comp.key] ?? 0) : ""}
                 </span>
                 <button
                   type="button" className="f-btn f-btn-icon text-destructive" aria-label={`Remove ${comp.label || "component"}`}

@@ -48,6 +48,7 @@ import { payslipEmailSubject, payslipEmailText, payslipEmailHtml } from "@/lib/p
 import { salaryRegisterCsv, bankRemittanceCsv } from "@/lib/payroll-csv";
 import {
   windowEarningsFromStructure,
+  windowDeductionsFromStructure,
   payslipTotals,
   scaleEarningsToPaidDays,
   lopBasisGross,
@@ -63,6 +64,7 @@ import {
 import {
   applyAdjustments,
   isDueInPeriod,
+  structureNetDeductionRows,
   validateAdjustmentInput,
   type PayAdjustmentRow,
 } from "@/lib/pay-adjustment";
@@ -108,6 +110,7 @@ type StructureRow = {
   maxBenefits?: number | null;
   frequency?: string | null;
   openingYtd?: unknown;
+  isDefault?: boolean | null;
 };
 
 /** P16 (PR-04) — parse a structure's stored opening rows defensively
@@ -155,6 +158,8 @@ function serializeStructure(
     frequency: (s.frequency || "MONTHLY") as SalaryStructureT["frequency"],
     // P16 — the SSA opening YTD rows (null = none).
     openingYtd: parseOpeningYtd(s.openingYtd),
+    // P23 — the workspace default package flag (pre-P23 rows read false).
+    isDefault: s.isDefault ?? false,
   };
 }
 
@@ -294,6 +299,10 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
       ...(data.maxBenefits !== undefined ? { maxBenefits: data.maxBenefits } : {}),
       // P10 — the cadence this structure pays on (default MONTHLY).
       frequency: data.frequency,
+      // P23 (PR-03) — the workspace default package flag; the wire omits
+      // it to keep the stored value (the maxBenefits convention), so it is
+      // only written when the caller sends it.
+      ...(data.isDefault !== undefined ? { isDefault: data.isDefault } : {}),
       // P16 (PR-04) — the opening YTD rows. Absent = the key is omitted
       // entirely (update keeps the stored rows, create stores none); an
       // explicitly emptied list clears the column (DbNull — the same
@@ -307,11 +316,26 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
           }
         : {}),
     };
+    // P23 — at most ONE default package per workspace: saving this row as
+    // the default clears every other holder. The clear + write must be ONE
+    // transaction (a crash between them could leave two defaults — the
+    // F-R1 discipline). Retirement of the old default is NOT automatic: a
+    // retired default still prefills (the flag is a package pointer, not
+    // employment state); HR moves it by marking the new structure.
+    const clearOtherDefaults =
+      data.isDefault === true
+        ? { isDefault: true as const, ...(data.id ? { id: { not: data.id } } : {}) }
+        : null;
     let row: { id: string };
     if (data.id) {
       // openingYtd is absent from payload when the wire omitted it → the
       // column stays untouched (Prisma only writes given keys).
-      row = await db.salaryStructure.update({ where: { id: data.id }, data: payload });
+      row = clearOtherDefaults
+        ? await db.$transaction(async (tx) => {
+            await tx.salaryStructure.updateMany({ where: clearOtherDefaults, data: { isDefault: false } });
+            return tx.salaryStructure.update({ where: { id: data.id }, data: payload });
+          })
+        : await db.salaryStructure.update({ where: { id: data.id }, data: payload });
     } else {
       // One ACTIVE structure per employee: retire the previous one.
       // F-R1: retire + create in ONE transaction — two separate writes could
@@ -324,6 +348,9 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
           where: { userId: data.userId, isActive: true },
           data: { isActive: false },
         });
+        if (clearOtherDefaults) {
+          await tx.salaryStructure.updateMany({ where: clearOtherDefaults, data: { isDefault: false } });
+        }
         return tx.salaryStructure.create({ data: payload });
       });
     }
@@ -333,7 +360,7 @@ export async function saveSalaryStructure(input: unknown): Promise<ActionResult<
       entityType: "SALARY_STRUCTURE",
       entityId: row.id,
       entityLabel: user.name,
-      detail: `${auth.name} ${data.id ? "revised" : "created"} the salary structure for ${user.name} (${data.components.length} components, effective ${payload.effectiveFrom.toISOString().slice(0, 10)}).`,
+      detail: `${auth.name} ${data.id ? "revised" : "created"} the salary structure for ${user.name} (${data.components.length} components, effective ${payload.effectiveFrom.toISOString().slice(0, 10)}${data.isDefault === true ? " — now the workspace default package" : ""}).`,
     });
     revalidatePath("/");
     return { id: row.id };
@@ -900,11 +927,18 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     const slipPlans: SlipPlan[] = structures.map((s, i) => {
       const facts = lopByUser.get(s.userId)
         ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false, lopDetail: null };
+      const components = parseComponents(s.components);
       const earnings = scaleEarningsToPaidDays(
-        windowEarnings(parseComponents(s.components)),
+        windowEarnings(components),
         facts.paidDays,
         runWorkingDays,
       );
+      // P23 (PR-02) — the structure's flat deduction lines materialize on
+      // every slip (FIXED / percent-of-basic / percent-of-gross, annual
+      // resolution ÷ windows — flat per window: absence already docks the
+      // day-scaled earnings through the LOP line). Pre-P23 structures carry
+      // no DEDUCTION lines, so their slips stay byte-identical.
+      const structureDeductions = windowDeductionsFromStructure(components, window.frequency, earningsYear);
       // P9 (PR-B26) — the overtime line prices from the structure's
       // UNSCALED per-window gross (÷ working days ÷ 8h) and lands AFTER
       // the LOP basis: overtime minutes were worked on attended
@@ -912,7 +946,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       const otPayout = planOvertimePayout({
         enabled: overtimePayEnabled,
         minutes: otByUser.get(s.userId) ?? null,
-        monthlyGross: lineSum(windowEarnings(parseComponents(s.components))),
+        monthlyGross: lineSum(windowEarnings(components)),
         workingDays: runWorkingDays,
       });
       const earningsWithOt: PayslipLine[] = otPayout
@@ -922,16 +956,21 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       // The auto LOP line is materialized at creation (net totals are
       // honest immediately — no per-slip save needed to see the dock).
       // S6 — the LOP basis excludes window-exempt lines (a flat
-      // allowance is not reduced by absent days).
-      const lopDeductions = lopDays > 0
-        ? withLopLine([], lopBasisGross(earnings), lopDays, window.periodKey, runWorkingDays > 0 ? runWorkingDays : undefined)
-        : [];
+      // allowance is not reduced by absent days). P23 — the structure's
+      // flat deductions ride the base BEFORE the LOP line, so the
+      // percent-of-net pass below sees the fully docked net.
+      const baseDeductions = lopDays > 0
+        ? withLopLine(structureDeductions, lopBasisGross(earnings), lopDays, window.periodKey, runWorkingDays > 0 ? runWorkingDays : undefined)
+        : structureDeductions;
       // P1 — adjustments land on the docked base (post scaling,
       // post LOP, overtime included), the rounding line wraps the
-      // final net.
+      // final net. P23 — the structure's PERCENT_OF_NET lines ride the
+      // SAME two-pass kernel, PREPENDED before the period's adapter rows
+      // (the package's own deductions resolve first, sequentially on the
+      // running net; one kernel serves adapter + catalog).
       const applied = applyAdjustments(
-        { earnings: earningsWithOt, deductions: lopDeductions },
-        dueByUser.get(s.userId) ?? [],
+        { earnings: earningsWithOt, deductions: baseDeductions },
+        [...structureNetDeductionRows(components), ...(dueByUser.get(s.userId) ?? [])],
         window.periodKey,
       );
       const consumed: ConsumedEntry[] = [];
@@ -939,7 +978,9 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
         const row = (dueByUser.get(s.userId) ?? []).find((r) => r.id === c.id);
         if (row) consumed.push({ row, final: c.final });
       }
-      kernelSkips.push(...applied.skipped);
+      // Synthetic struct: ids never match a stored row — filtered out so
+      // the run's failure summary stays about real adapter rows.
+      kernelSkips.push(...applied.skipped.filter((sk) => !sk.id.startsWith("struct:")));
       const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
       const { gross, net } = payslipTotals(finalEarnings, deductions);
       return {
@@ -1440,8 +1481,9 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
     if (!windowStart || !windowEnd) {
       throw new AuthorizationError("The run's period is not a parseable payroll window — recreate the run.");
     }
+    const components = parseComponents(structure.components);
     const earnings = windowEarningsFromStructure(
-      parseComponents(structure.components),
+      components,
       runFrequency,
       windowStart.getUTCFullYear(),
     );
@@ -1459,10 +1501,17 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       facts.paidDays,
       run.workingDays > 0 ? run.workingDays : undefined,
     );
+    // P23 (PR-02) — the joiner's structure deductions ride the slip exactly
+    // like run creation (flat per window; percent-of-net through the kernel).
+    const structureDeductions = windowDeductionsFromStructure(
+      components,
+      runFrequency,
+      windowStart.getUTCFullYear(),
+    );
     // S6 — the LOP basis excludes window-exempt lines.
-    const lopDeductions = lopDays > 0
-      ? withLopLine([], lopBasisGross(scaledEarnings), lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
-      : [];
+    const baseDeductions = lopDays > 0
+      ? withLopLine(structureDeductions, lopBasisGross(scaledEarnings), lopDays, run.period, run.workingDays > 0 ? run.workingDays : undefined)
+      : structureDeductions;
     // S7 — the rounding line lands last (auto-managed). P9 — the overtime
     // knob rides the same config read.
     const workspaceConfig = await getWorkspaceConfig();
@@ -1500,7 +1549,14 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       orderBy: { createdAt: "asc" },
     });
     const due = pendingAdjustments.filter((row) => isDueInPeriod(row, run.period));
-    const applied = applyAdjustments({ earnings: earningsWithOt, deductions: lopDeductions }, due, run.period);
+    // P23 — the joiner's percent-of-net structure lines ride the same
+    // two-pass kernel, prepended before the adapter rows (as at run
+    // creation).
+    const applied = applyAdjustments(
+      { earnings: earningsWithOt, deductions: baseDeductions },
+      [...structureNetDeductionRows(components), ...due],
+      run.period,
+    );
     const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
     const { gross, net } = payslipTotals(finalEarnings, deductions);
     const createData = {

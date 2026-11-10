@@ -29,6 +29,7 @@
 
 import { round2, lineSum, type PayslipLine } from "@/lib/payroll-math";
 import { parsePayrollPeriodKey } from "@/lib/payroll-windows";
+import type { OfferComponent } from "@/lib/offer-math";
 
 export type AdjustmentSide = "EARNING" | "DEDUCTION";
 export type AdjustmentRecurrence = "ONE_SHOT" | "RECURRING" | "OVERWRITE";
@@ -184,6 +185,42 @@ export function validateAdjustmentInput(input: {
  * (hand-made rows never collide; shared codes merge by design). */
 export function adjustmentLineKey(row: Pick<PayAdjustmentRow, "id" | "componentCode">): string {
   return row.componentCode.trim() || `adj:${row.id}`;
+}
+
+/** P23 (PR-02/PR-03) — the structure's PERCENT_OF_NET deduction lines as
+ * adapter-shaped rows so the SAME two-pass kernel resolves them (one kernel
+ * serves adapter + catalog): the run PREPENDS these to its due list, so
+ * pass 2 processes the structure's own percent-of-net lines FIRST (the
+ * package's deductions see the pay before the period's special payments),
+ * sequentially on the running net computed from the docked base (scaled
+ * earnings + structure flat deductions + the LOP line).
+ *
+ * Synthetic rows carry `struct:`-prefixed ids — they are never persisted,
+ * never consumed, never skipped into SKIPPED rows; the caller filters the
+ * prefix from the kernel's consumed/skipped outcomes (a mismatching id is
+ * equally harmless — the id lookups simply miss). */
+export function structureNetDeductionRows(components: OfferComponent[]): PayAdjustmentRow[] {
+  return components
+    .filter((c) => c.kind === "DEDUCTION" && c.mode === "PERCENT_OF_NET")
+    .map((c) => ({
+      id: `struct:${c.key}`,
+      userId: "",
+      sourceType: "MANUAL",
+      sourceId: "",
+      componentCode: c.key,
+      label: c.label,
+      side: "DEDUCTION",
+      recurrence: "ONE_SHOT",
+      calcMode: "PERCENT_OF_NET",
+      percent: Number.isFinite(c.amount) ? c.amount : null,
+      amount: 0,
+      period: "",
+      endPeriod: null,
+      lastConsumedPeriod: "",
+      status: "PENDING",
+      skipReason: "",
+      note: "",
+    }));
 }
 
 /**

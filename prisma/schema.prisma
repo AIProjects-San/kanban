@@ -1701,6 +1701,14 @@ model SalaryStructure {
   // periodic per this cadence. MONTHLY keeps the historical behavior for
   // every pre-P10 row.
   frequency     String   @default("MONTHLY")
+  // P23 (PR-03) — the workspace default package flag (the benchmark's
+  // is_active/is_default pair; its is_default is hidden machinery at the
+  // pin — Fernly gives it a real duty): at most ONE structure workspace-wide
+  // carries it (saving one clears the previous, atomically); the structure
+  // editor PREFILLS new structures from its components. Not employment
+  // state: a retired default still prefills (the badge says "Default
+  // package", never "current pay"). Default false = zero behavior change.
+  isDefault     Boolean  @default(false)
   // P16 (PR-04 opening balances) — optional component-keyed YTD OPENING
   // rows (annual amounts earned before this system — the mid-fiscal-year
   // joiner's prior-employer YTD; the benchmark's SSA opening balances,

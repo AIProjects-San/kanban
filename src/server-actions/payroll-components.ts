@@ -34,6 +34,15 @@ import {
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 
+/** P23 — the human-readable amount suggestion by mode (audit lines + the
+ * catalog list agree on one phrasing). */
+function describeAmount(mode: string, defaultAmount: number): string {
+  if (mode === "PERCENT_OF_BASIC") return `${defaultAmount}% of basic`;
+  if (mode === "PERCENT_OF_GROSS") return `${defaultAmount}% of gross`;
+  if (mode === "PERCENT_OF_NET") return `${defaultAmount}% of net (at payroll time)`;
+  return `$${defaultAmount}/yr suggestion`;
+}
+
 function serialize(r: {
   id: string;
   code: string;
@@ -113,7 +122,7 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
           entityType: "SALARY_COMPONENT",
           entityId: updated.id,
           entityLabel: `${updated.code} (${updated.label})`,
-          detail: `${auth.name} updated the salary component ${updated.code} — ${updated.label} (${updated.kind}, ${updated.mode === "PERCENT_OF_BASIC" ? `${updated.defaultAmount}% of basic` : `$${updated.defaultAmount}/yr suggestion`}, ${updated.dependsOnPaymentDays ? "payment-day scaled" : "window-exempt"}${updated.effectiveFrom || updated.effectiveTo ? `, effective ${updated.effectiveFrom ? updated.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${updated.effectiveTo ? updated.effectiveTo.toISOString().slice(0, 10) : "—"}` : ""}, ${updated.isActive ? "active" : "retired"}).`,
+          detail: `${auth.name} updated the salary component ${updated.code} — ${updated.label} (${updated.kind}, ${describeAmount(updated.mode, updated.defaultAmount)}, ${updated.dependsOnPaymentDays ? "payment-day scaled" : "window-exempt"}${updated.effectiveFrom || updated.effectiveTo ? `, effective ${updated.effectiveFrom ? updated.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${updated.effectiveTo ? updated.effectiveTo.toISOString().slice(0, 10) : "—"}` : ""}, ${updated.isActive ? "active" : "retired"}).`,
         });
         revalidatePath("/");
         return { id: updated.id };
@@ -135,7 +144,7 @@ export async function saveSalaryComponent(input: unknown): Promise<ActionResult<
         entityType: "SALARY_COMPONENT",
         entityId: created.id,
         entityLabel: `${created.code} (${created.label})`,
-        detail: `${auth.name} added the salary component ${created.code} — ${created.label} (${created.kind}, ${created.mode === "PERCENT_OF_BASIC" ? `${created.defaultAmount}% of basic` : `$${created.defaultAmount}/yr suggestion`}${created.dependsOnPaymentDays ? "" : ", window-exempt"}${created.effectiveFrom || created.effectiveTo ? `, effective ${created.effectiveFrom ? created.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${created.effectiveTo ? created.effectiveTo.toISOString().slice(0, 10) : "—"}` : ""}).`,
+        detail: `${auth.name} added the salary component ${created.code} — ${created.label} (${created.kind}, ${describeAmount(created.mode, created.defaultAmount)}${created.dependsOnPaymentDays ? "" : ", window-exempt"}${created.effectiveFrom || created.effectiveTo ? `, effective ${created.effectiveFrom ? created.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${created.effectiveTo ? created.effectiveTo.toISOString().slice(0, 10) : "—"}` : ""}).`,
       });
       revalidatePath("/");
       return { id: created.id };

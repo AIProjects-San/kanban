@@ -2541,3 +2541,188 @@ describe("P20 (PR-R01/PR-R02) — exportPayrollRunCsv", () => {
     if (res.ok) expect(res.data.csv).toContain("(deleted user)");
   });
 });
+
+// ---------------------------------------------------------------------------
+// P23 (PR-02/PR-03) — the catalog percent modes + the isDefault structure
+// flag (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2.2): percent-of-gross
+// resolves annually (computeOffer) and divides by the cadence's windows;
+// percent-of-net rides the run's two-pass kernel (structure rows prepended
+// before the adapter's); the structure's flat DEDUCTION lines materialize on
+// every slip (previously silently dropped — the PR-02 remainder); at most
+// one structure is the workspace DEFAULT PACKAGE (prefill source).
+// ---------------------------------------------------------------------------
+
+describe("P23 — percent modes materialize on payslips (run creation)", () => {
+  const P23_COMPONENTS = [
+    { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 66_000 },
+    { key: "variable_pay", label: "Variable Pay Allowance", kind: "EARNING", mode: "PERCENT_OF_GROSS", amount: 8 },
+    { key: "student_loan", label: "Student Loan Repayment", kind: "DEDUCTION", mode: "FIXED", amount: 2_400 },
+    { key: "advance_recovery", label: "Advance Recovery", kind: "DEDUCTION", mode: "PERCENT_OF_NET", amount: 6 },
+  ];
+  const P23_STRUCTURE = {
+    ...STRUCTURE_ROW,
+    components: JSON.stringify(P23_COMPONENTS),
+  };
+
+  it("percent-of-gross earnings ÷ windows + flat deductions + percent-of-net through the two-pass kernel", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([P23_STRUCTURE]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; deductions: string; gross: number; net: number }> } };
+    };
+    const slip = createArg.data.payslips.create[0];
+    // Annual: basic 66,000 → variable_pay = 8% × 66,000 = 5,280 → earnings
+    // 71,280. Monthly: 5,500 + 440 = 5,940 gross. Flat deduction: 2,400 ÷ 12
+    // = 200. Percent-of-net on the running net (no LOP, no adjustments):
+    // 6% × (5,940 − 200) = 344.40 → net 5,940 − 200 − 344.40 = 5,395.60.
+    expect(JSON.parse(slip.earnings)).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 5_500 },
+      { key: "variable_pay", label: "Variable Pay Allowance", amount: 440 },
+    ]);
+    expect(JSON.parse(slip.deductions)).toEqual([
+      { key: "student_loan", label: "Student Loan Repayment", amount: 200 },
+      { key: "advance_recovery", label: "Advance Recovery", amount: 344.4 },
+    ]);
+    expect(slip.gross).toBe(5_940);
+    expect(slip.net).toBe(5_395.6);
+  });
+
+  it("percent-of-net sees the LOP-docked net (the LOP line rides the base first)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([P23_STRUCTURE]);
+    // One ABSENT working day in the window → auto LOP 1 day, holiday-aware
+    // denominator = the run's workingDays (empty calendar → Mon–Fri).
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { userId: "u-yuki", date: new Date("2026-11-02T00:00:00Z"), status: "ABSENT", overtimeMinutes: null },
+    ]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { workingDays: number; payslips: { create: Array<{ deductions: string; gross: number; net: number; lopDays: number }> } };
+    };
+    const slip = createArg.data.payslips.create[0];
+    const lines = JSON.parse(slip.deductions) as Array<{ key: string; amount: number }>;
+    const lop = lines.find((l) => l.key === "lop");
+    const advance = lines.find((l) => l.key === "advance_recovery");
+    // Earnings dock 1 working day (day-scaled), the LOP line prices from the
+    // docked basis, and the percent-of-net line sees what remains after BOTH.
+    expect(slip.lopDays).toBe(1);
+    expect(lop).toBeDefined();
+    const gross = slip.gross;
+    const netAfterLopAndLoan = gross - (lop?.amount ?? 0) - 200;
+    expect(advance?.amount).toBe(Math.round(netAfterLopAndLoan * 0.06 * 100) / 100);
+    expect(slip.net).toBe(Math.round((netAfterLopAndLoan - (advance?.amount ?? 0)) * 100) / 100);
+  });
+
+  it("a pre-P23 structure (no deduction lines) stays byte-identical (empty deduction base)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([STRUCTURE_ROW]);
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
+    expect(res.ok).toBe(true);
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ earnings: string; deductions: string; gross: number; net: number }> } };
+    };
+    const slip = createArg.data.payslips.create[0];
+    expect(JSON.parse(slip.earnings)).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 6_500 },
+      { key: "transport", label: "Transport Allowance", amount: 200 },
+    ]);
+    expect(JSON.parse(slip.deductions)).toEqual([]);
+    expect(slip.gross).toBe(6_700);
+    expect(slip.net).toBe(6_700);
+  });
+});
+
+describe("P23 — saveSalaryStructure: the workspace default package flag", () => {
+  it("creating with isDefault clears every other holder atomically (one transaction)", async () => {
+    const res = await saveSalaryStructure({ userId: "u-yuki", components: COMPONENTS, isDefault: true });
+    expect(res.ok).toBe(true);
+    // The clear ran inside the SAME transaction as retire + create.
+    const updateManyCalls = db.salaryStructure.updateMany.mock.calls.map((c) => c[0]);
+    const clear = updateManyCalls.find((c) => (c as { data?: { isDefault?: unknown } }).data?.isDefault === false);
+    expect(clear).toMatchObject({ where: { isDefault: true } });
+    const createCall = db.salaryStructure.create.mock.calls[0][0] as { data: { isDefault?: boolean } };
+    expect(createCall.data.isDefault).toBe(true);
+  });
+
+  it("updating with isDefault clears the OTHER holders (never this row)", async () => {
+    const res = await saveSalaryStructure({ id: "ss-1", userId: "u-yuki", components: COMPONENTS, isDefault: true });
+    expect(res.ok).toBe(true);
+    const clear = db.salaryStructure.updateMany.mock.calls.map((c) => c[0]).find(
+      (c) => (c as { data?: { isDefault?: unknown } }).data?.isDefault === false,
+    );
+    expect(clear).toMatchObject({ where: { isDefault: true, id: { not: "ss-1" } } });
+  });
+
+  it("an update that omits isDefault keeps the stored value (the maxBenefits wire convention)", async () => {
+    const res = await saveSalaryStructure({ id: "ss-1", userId: "u-yuki", components: COMPONENTS });
+    expect(res.ok).toBe(true);
+    const updateCall = db.salaryStructure.update.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect("isDefault" in updateCall.data).toBe(false);
+    expect(db.salaryStructure.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("the audit line names the default package hand-off", async () => {
+    await saveSalaryStructure({ userId: "u-yuki", components: COMPONENTS, isDefault: true });
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payroll.structure_saved",
+      detail: expect.stringContaining("workspace default package"),
+    }));
+  });
+
+  it("getSalaryStructures serializes the flag (pre-P23 rows read false)", async () => {
+    db.salaryStructure.findMany.mockResolvedValue([
+      { ...STRUCTURE_ROW, isDefault: true },
+      { ...STRUCTURE_ROW, id: "ss-2" },
+    ]);
+    const res = await getSalaryStructures();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data[0].isDefault).toBe(true);
+      expect(res.data[1].isDefault).toBe(false);
+    }
+  });
+});
+
+describe("P23 — component-line validation (the shared refinements)", () => {
+  it("a percent-of-net EARNING is refused (deduction-only — the kernel rule)", async () => {
+    const res = await saveSalaryStructure({
+      userId: "u-yuki",
+      components: [
+        { key: "basic", label: "Basic", kind: "EARNING", mode: "FIXED", amount: 60_000 },
+        { key: "weird", label: "Weird", kind: "EARNING", mode: "PERCENT_OF_NET", amount: 6 },
+      ],
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("deduction-only");
+  });
+
+  it("percent modes outside (0, 100] are refused", async () => {
+    const tooBig = await saveSalaryStructure({
+      userId: "u-yuki",
+      components: [
+        { key: "basic", label: "Basic", kind: "EARNING", mode: "FIXED", amount: 60_000 },
+        { key: "vp", label: "VP", kind: "EARNING", mode: "PERCENT_OF_GROSS", amount: 150 },
+      ],
+    });
+    expect(tooBig.ok).toBe(false);
+    if (!tooBig.ok) expect(tooBig.error).toContain("between 0 and 100");
+
+    const zero = await saveSalaryStructure({
+      userId: "u-yuki",
+      components: [
+        { key: "basic", label: "Basic", kind: "EARNING", mode: "FIXED", amount: 60_000 },
+        { key: "adv", label: "Adv", kind: "DEDUCTION", mode: "PERCENT_OF_NET", amount: 0 },
+      ],
+    });
+    expect(zero.ok).toBe(false);
+  });
+
+  it("the catalog CRUD refuses the same shapes (one rule, both surfaces)", async () => {
+    const { saveSalaryComponent } = await import("../payroll-components");
+    const res = await saveSalaryComponent({
+      code: "bad_net", label: "Bad", kind: "EARNING", mode: "PERCENT_OF_NET", defaultAmount: 6,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("deduction-only");
+  });
+});

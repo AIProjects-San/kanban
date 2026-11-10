@@ -300,3 +300,37 @@ Then("the statutory cards should render the ADR-014 note", async function () {
     `the statutory cards should render an em dash, never a fake zero, got: ${text}`,
   );
 });
+
+// --- P23: percent modes + the default package (PR-02/PR-03) --------------
+
+Then("the structure list should show the default package chip", async function () {
+  const driver = await this.getDriver();
+  const chip = await driver.wait(
+    until.elementLocated(By.css('[data-testid="structure-default-chip"]')),
+    15_000,
+    "no DEFAULT PKG chip rendered on a structure row",
+  );
+  const text = await chip.getText();
+  assert.strictEqual(text, "DEFAULT PKG", `chip text, got: ${text}`);
+});
+
+Then("the payslip list should show a deduction hint for {string}", async function (name) {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(
+      By.xpath(`//*[@data-testid="payslip-row"]//*[contains(text(), "${name}")]`),
+    ),
+    15_000,
+    `no payslip row for "${name}"`,
+  );
+  const slip = await row.findElement(By.xpath('ancestor::*[@data-testid="payslip-row"]'));
+  const text = await slip.getText();
+  // Seeded Lena structure: basic 66,000 (+5,500/mo) + 8%-of-gross variable
+  // pay (+440/mo) → gross 5,940; 6%-of-net advance recovery on the running
+  // net (no flat deductions, no LOP, no adjustments) = 356.40 → net 5,583.60.
+  assert.ok(
+    /deductions \$356\.40/.test(text),
+    `payslip should show the percent-of-net deduction (deductions $356.40), got: ${text}`,
+  );
+  assert.ok(/5,940/.test(text), `payslip should show the resolved gross (5,940), got: ${text}`);
+});

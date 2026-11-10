@@ -785,7 +785,35 @@ export const updateBackgroundCheckSchema = z.object({
 // PR-B03 (S8) — STATISTICAL: display-only component (slip info line,
 // never money).
 export const OFFER_COMPONENT_KINDS = ["EARNING", "EMPLOYER_CONTRIBUTION", "DEDUCTION", "STATISTICAL"] as const;
-export const OFFER_COMPONENT_MODES = ["FIXED", "PERCENT_OF_BASIC"] as const;
+// P23 (PR-02/PR-03) — the catalog percent modes join the vocabulary:
+// PERCENT_OF_GROSS resolves annually in computeOffer; PERCENT_OF_NET
+// resolves only at payroll time (the run's two-pass kernel) and is
+// DEDUCTION-only (no stable earning basis) — offers/offer templates refuse
+// it at the action layer (assertNoNetPercentLines in hiring.ts).
+export const OFFER_COMPONENT_MODES = ["FIXED", "PERCENT_OF_BASIC", "PERCENT_OF_GROSS", "PERCENT_OF_NET"] as const;
+
+/** P23 — the shared component-line refinements: percent-of-net is
+ * deduction-only (the kernel rule), and the new percent modes carry a
+ * percent in (0, 100] (PERCENT_OF_BASIC stays unbounded — pre-existing
+ * behavior, left byte-identical). */
+function refineOfferComponent(c: { kind: string; mode: string; amount: number }, ctx: z.RefinementCtx): void {
+  if (c.mode === "PERCENT_OF_NET" && c.kind !== "DEDUCTION") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["mode"],
+      message: "Percent-of-net is a deduction-only mode — an earning on \"net\" has no stable basis.",
+    });
+  }
+  if (c.mode === "PERCENT_OF_GROSS" || c.mode === "PERCENT_OF_NET") {
+    if (!(c.amount > 0 && c.amount <= 100)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amount"],
+        message: "Percent modes need a percent between 0 and 100.",
+      });
+    }
+  }
+}
 
 export const offerComponentSchema = z.object({
   key: z.string().trim().min(1).max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
@@ -796,7 +824,7 @@ export const offerComponentSchema = z.object({
   // PR-B02 (S6) — snapshot of the payment-days exemption (sparse: only
   // false is meaningful; absent = true).
   dependsOnPaymentDays: z.boolean().optional(),
-}).strict();
+}).strict().superRefine(refineOfferComponent);
 
 export const saveOfferTemplateSchema = z.object({
   id: cuidish.optional(),
@@ -899,13 +927,20 @@ export const saveSalaryStructureSchema = z.object({
     .max(30)
     .nullable()
     .optional(),
+  // P23 (PR-03) — the workspace default package flag: at most ONE
+  // structure carries it (saving one clears the previous — atomic); its
+  // duty is the PREFILL of new structures (the hard-coded basic-only
+  // prefill becomes data). Absent = keep the stored value (the
+  // maxBenefits wire convention).
+  isDefault: z.boolean().optional(),
 }).strict();
 
 // F1.5 — the salary component catalog (docs/Fernly_HR_Payroll_Enhancement_Plan.md
 // §7.1). `code` follows the OfferComponent.key convention (lowercase snake)
 // so catalog rows and structure lines join on it. defaultAmount is a
-// suggestion by mode: FIXED → annual amount; PERCENT_OF_BASIC → percent of
-// the basic anchor (same dual meaning as OfferComponent.amount).
+// suggestion by mode: FIXED → annual amount; PERCENT_OF_* → percent of the
+// named basis (same dual meaning as OfferComponent.amount; P23 widens the
+// percent vocabulary).
 export const saveSalaryComponentSchema = z.object({
   id: cuidish.optional(),
   code: z.string().trim().min(1, "A code is required.").max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
@@ -923,11 +958,18 @@ export const saveSalaryComponentSchema = z.object({
   effectiveTo: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use the YYYY-MM-DD date format.").nullable().optional(),
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(9_999).default(0),
-}).strict().refine(
-  (d) =>
-    !d.effectiveFrom || !d.effectiveTo || d.effectiveFrom <= d.effectiveTo,
-  { message: "The effective window's start must precede its end." },
-);
+}).strict()
+  .refine(
+    (d) =>
+      !d.effectiveFrom || !d.effectiveTo || d.effectiveFrom <= d.effectiveTo,
+    { message: "The effective window's start must precede its end." },
+  )
+  // P23 — the catalog rows obey the same component-line rules as the
+  // lines they prefill (percent-of-net is deduction-only; the new percent
+  // modes carry a percent in (0, 100]).
+  .superRefine((d, ctx) =>
+    refineOfferComponent({ kind: d.kind, mode: d.mode, amount: d.defaultAmount }, ctx),
+  );
 
 export const deleteSalaryComponentSchema = z.object({
   id: cuidish,
