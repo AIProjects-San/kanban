@@ -1472,6 +1472,10 @@ async function main() {
     grant(u.id, annualType, 20);
     grant(u.id, sickType, 10);
     grant(u.id, unpaidType, 0);
+    // P21 — the P15 half-pay demo type's 4-day entitlement rides the ledger
+    // too (the cache row above is derived truth; a GRANT row must explain
+    // it or the balance report reads an empty pair — the F1.2 invariant).
+    grant(u.id, halfPayType, 4);
     // F2.4 — EARNED strategy grants: one row per elapsed month, sourceId =
     // the deterministic period key (the cron job's idempotency input).
     for (let m = 0; m <= nowMonth; m++) {
@@ -2873,8 +2877,11 @@ async function main() {
           decisionNote: "Approved per policy.",
         },
       });
-      // The approval's two transactional writes, mirrored by hand:
-      // the CONSUME ledger row + the adapter row.
+      // The approval's three transactional writes, mirrored by hand: the
+      // CONSUME ledger row, the adapter row, and the cache re-sync (the
+      // real approve path updates used in the same transaction — the seed
+      // previously skipped it, leaving the ESS card one number off the
+      // ledger the QA-1 guard and the P21 balance report read).
       await db.leaveLedgerEntry.create({
         data: {
           userId: p2Mira, leaveTypeId: annualType.id, year: TODAY.getFullYear(),
@@ -2882,6 +2889,10 @@ async function main() {
           note: `Annual Leave encashment (2 d → ${nextPeriod})`,
           isReversal: false,
         },
+      });
+      await db.leaveBalance.update({
+        where: { userId_leaveTypeId_year: { userId: p2Mira, leaveTypeId: annualType.id, year: TODAY.getFullYear() } },
+        data: { used: { increment: 2 } },
       });
       await db.payAdjustment.create({
         data: {

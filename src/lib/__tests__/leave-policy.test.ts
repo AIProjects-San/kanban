@@ -19,6 +19,7 @@ import {
   monthsIntoYear,
   addMonths,
   monthsBetween,
+  capBalanceForConsumption,
   type LeavePolicyRow,
   type EmploymentFacts,
   type DueGrantsInput,
@@ -522,5 +523,55 @@ describe("checkCrossRequestConsecutive (LV-B08 / S12)", () => {
     });
     expect(r.chainDays).toBe(4);
     expect(r.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P21 (LV-B14) — the balance-for-consumption cap
+// (benchmark get_remaining_leaves: consumable = min(positive balance,
+// calendar days left in the allocation year, inclusive of the start day))
+// ---------------------------------------------------------------------------
+
+describe("capBalanceForConsumption", () => {
+  it("caps a balance that outruns the days left in the year", () => {
+    // Dec 15 → Dec 31 = 17 calendar days (inclusive).
+    const r = capBalanceForConsumption(30, "2026-12-15", 2026);
+    expect(r.daysLeftInYear).toBe(17);
+    expect(r.consumable).toBe(17);
+    expect(r.capped).toBe(true);
+  });
+
+  it("a balance under the cap passes through untouched", () => {
+    const r = capBalanceForConsumption(5, "2026-12-15", 2026);
+    expect(r.consumable).toBe(5);
+    expect(r.capped).toBe(false);
+  });
+
+  it("an advance (negative) balance is never capped — the floor path owns it", () => {
+    const r = capBalanceForConsumption(-3, "2026-12-15", 2026);
+    expect(r.consumable).toBe(-3);
+    expect(r.capped).toBe(false);
+  });
+
+  it("December 31 itself leaves exactly one consumable day", () => {
+    const r = capBalanceForConsumption(10, "2026-12-31", 2026);
+    expect(r.daysLeftInYear).toBe(1);
+    expect(r.consumable).toBe(1);
+  });
+
+  it("January 1 sees the whole (leap-aware) year", () => {
+    expect(capBalanceForConsumption(400, "2027-01-01", 2027).daysLeftInYear).toBe(365);
+    expect(capBalanceForConsumption(400, "2028-01-01", 2028).daysLeftInYear).toBe(366);
+  });
+
+  it("the guard chain: a request past the cap refuses where balance alone would pass", () => {
+    // Balance 30 would cover a 5-working-day request; the year has 2 days left.
+    const cap = capBalanceForConsumption(30, "2026-12-30", 2026);
+    const guard = checkLeaveRequestAgainstBalance(
+      resolveLeavePolicy(null), 5, cap.consumable,
+    );
+    expect(guard.ok).toBe(false);
+    // The uncapped balance would have passed — the cap is what refused.
+    expect(checkLeaveRequestAgainstBalance(resolveLeavePolicy(null), 5, 30).ok).toBe(true);
   });
 });

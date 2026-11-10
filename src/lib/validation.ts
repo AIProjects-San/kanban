@@ -217,6 +217,10 @@ export const workspaceSettingsSchema = z.object({
   // P18 (PR-B16) — email each payslip when its run locks (default OFF =
   // the pre-P18 silence; one PAYSLIP outbox row per slip on lock).
   emailPayslipsOnLock: z.boolean().optional(),
+  // P21 (LV-T01/LV-T02) — leave email notifications (default OFF = the
+  // F-R17 zero-mail posture; LEAVE_PENDING to approvers on request,
+  // LEAVE_DECIDED to the requester on decision).
+  emailLeaveNotifications: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**
@@ -990,6 +994,14 @@ export const adjustLeaveBalanceSchema = z.object({
     .refine((n) => Math.abs(n) <= 365, "Adjustments are capped at 365 days.")
     .refine((n) => Math.round(n * 4) === n * 4, "Adjustments move in quarter-day steps."),
   reason: z.string().trim().min(3, "A reason is required — adjustments are audited corrections.").max(500),
+}).strict();
+
+// P21 (LV-R01) — the employee leave balance report filters. All optional:
+// the unfiltered shape is the whole workspace for the current year.
+export const leaveBalanceReportSchema = z.object({
+  year: z.number().int().min(2020).max(2100).optional(),
+  userId: cuidish.optional(),
+  leaveTypeId: cuidish.optional(),
 }).strict();
 
 export const addPayslipSchema = z.object({

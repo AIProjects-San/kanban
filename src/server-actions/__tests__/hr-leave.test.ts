@@ -11,7 +11,7 @@ const db = vi.hoisted(() => {
     "leaveRequest", "leaveType", "leavePolicy", "leaveBalance",
     "leaveLedgerEntry", "payslip", "payrollRun",
     "user", "auditLog", "notification", "holidayCalendarEntry",
-    "attendanceRecord", "employeeProfile",
+    "attendanceRecord", "employeeProfile", "mailOutbox",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -44,8 +44,20 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
+const queueOutboxMailMock = vi.fn();
+const deliverOutboxMailMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
+  queueOutboxMail: (...a: unknown[]) => queueOutboxMailMock(...a),
+  deliverOutboxMail: (...a: unknown[]) => deliverOutboxMailMock(...a),
+}));
+
+// P21 (LV-T01/LV-T02) — the leave email knob reads the workspace config;
+// mocked like payroll.test.ts (auth-guard is fully mocked too, so nothing
+// else in this import graph needs the real module).
+const getWorkspaceConfigMock = vi.fn();
+vi.mock("@/lib/config-loader", () => ({
+  getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
 }));
 
 // PR-56 — partial mock so the best-effort notification catch blocks can be
@@ -68,6 +80,8 @@ import {
   getMyLeaveData,
   getLeaveQueue,
   adjustLeaveBalance,
+  getLeaveBalanceReport,
+  exportLeaveBalanceReportCsv,
 } from "../hr-leave";
 import { projectLeaveBalance } from "@/lib/leave-ledger";
 import { monthsInRange } from "@/lib/payroll-math";
@@ -111,6 +125,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
   getSessionMock.mockResolvedValue(MEMBER_AUTH);
+  // P21 — the knob defaults OFF (the F-R17 zero-mail posture).
+  getWorkspaceConfigMock.mockResolvedValue({ workspace: {} });
+  queueOutboxMailMock.mockImplementation(async () => ({ id: "mo-1" }));
+  deliverOutboxMailMock.mockResolvedValue({ status: "SENT", providerMessageId: "", error: "" });
+  // P21 — the delivery loop re-reads the queued row; default null skips it
+  // (queue assertions are the point; one test seeds a row for delivery).
+  db.mailOutbox.findUnique.mockResolvedValue(null);
   db.leaveType.findUnique.mockResolvedValue(null);
   db.leaveType.findMany.mockResolvedValue([]);
   db.leavePolicy.findUnique.mockResolvedValue(ANNUAL_TYPE.policy);
@@ -2205,5 +2226,312 @@ describe("F2.4 — strategy-aware materialization", () => {
       }),
     );
     expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P21 (LV-B14) — the balance-for-consumption cap (submission + approval)
+// ---------------------------------------------------------------------------
+
+describe("P21 (LV-B14) — balance-for-consumption cap", () => {
+  it("refuses a request the year can't fit: the balance covers it, the calendar doesn't", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    // mockReset first: earlier tests' unconsumed mockResolvedValueOnce values
+    // survive vi.clearAllMocks() and would shadow this default (the once
+    // queue drains before any mockResolvedValue default).
+    db.leaveBalance.findUnique.mockReset();
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 30, carriedOver: 0, used: 0 });
+    // 2026-12-30 (Wed) → 2027-01-04 (Mon): 4 working days, but only 2
+    // calendar days remain in 2026 → consumable 2 < 4. The pre-P21 guard
+    // (30 available) would have passed this request.
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2026-12-30", endDate: "2027-01-04",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/consumable/i);
+    expect(res.ok === false && res.error).toContain("2 day(s) consumable");
+    expect(res.ok === false && res.error).toContain("30 day(s) are available");
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("the same shape mid-year passes untouched (the cap never binds away from year end)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.leaveBalance.findUnique.mockReset();
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 30, carriedOver: 0, used: 0 });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-10",
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.days).toBe(4);
+  });
+
+  it("an in-year shortfall keeps the CLASSIC message (byte-identical, no cap wording)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.leaveBalance.findUnique.mockReset();
+    db.leaveBalance.findUnique.mockResolvedValue({ entitled: 1, carriedOver: 0, used: 0 });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toBe(
+      "Insufficient balance: 2 day(s) requested, 1 available for Annual Leave.",
+    );
+  });
+
+  it("approval re-validates the cap inside the transaction (the late-December race)", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue({
+      ...PENDING_REQUEST,
+      startDate: parseDay("2026-12-30"), endDate: parseDay("2027-01-04"), days: 4,
+    });
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([{ entryType: "GRANT", _sum: { delta: 30 } }]);
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/consumable/i);
+    // A refused approval never consumes: no ledger row, no cache sync.
+    expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
+    expect(db.leaveBalance.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P21 (LV-T01/LV-T02) — opt-in leave email notifications
+// ---------------------------------------------------------------------------
+
+describe("P21 (LV-T01/LV-T02) — opt-in leave email notifications", () => {
+  it("default OFF: no outbox rows, the in-app notification stays unconditional", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(true);
+    expect(queueOutboxMailMock).not.toHaveBeenCalled();
+    expect(db.notification.createMany).toHaveBeenCalled();
+  });
+
+  it("LV-T01: knob ON queues LEAVE_PENDING to the resolved approver's email", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailLeaveNotifications: true } });
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" }); // getApproverIdsFor
+    db.user.findMany.mockResolvedValue([{ email: "ingrid@x.co" }]); // approver emails
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08", reason: "Sail",
+    });
+    expect(res.ok).toBe(true);
+    expect(queueOutboxMailMock).toHaveBeenCalledTimes(1);
+    const arg = queueOutboxMailMock.mock.calls[0][1] as {
+      kind: string; toAddress: string; subject: string; text: string;
+    };
+    expect(arg.kind).toBe("LEAVE_PENDING");
+    expect(arg.toAddress).toBe("ingrid@x.co");
+    expect(arg.subject).toBe("Leave request awaiting your approval");
+    expect(arg.text).toContain("A leave request from Theo");
+    expect(arg.text).toContain("Leave type: Annual Leave");
+    expect(arg.text).toContain("From: 2027-06-07");
+    expect(arg.text).toContain("To: 2027-06-08");
+    expect(arg.text).toContain("Duration: 2 days");
+    expect(arg.text).toContain("HR → Requests");
+    // The in-app notification still rides alongside the email.
+    expect(db.notification.createMany).toHaveBeenCalled();
+  });
+
+  it("LV-T01: an approver without an email address is skipped, not crashed", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailLeaveNotifications: true } });
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.user.findMany.mockResolvedValue([{ email: "" }]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(true);
+    expect(queueOutboxMailMock).not.toHaveBeenCalled();
+  });
+
+  it("LV-T01: a delivery failure never fails the request (best-effort, logged)", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailLeaveNotifications: true } });
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
+    db.user.findMany.mockResolvedValue([{ email: "ingrid@x.co" }]);
+    db.mailOutbox.findUnique.mockResolvedValue({ toAddress: "ingrid@x.co", subject: "s", body: "b" });
+    deliverOutboxMailMock.mockRejectedValue(new Error("provider exploded"));
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual", startDate: "2027-06-07", endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(true);
+    expect(logErrorSpy).toHaveBeenCalled();
+  });
+
+  it("LV-T02: approve with knob ON queues LEAVE_DECIDED to the requester INSIDE the transaction", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailLeaveNotifications: true } });
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr", name: "Theo", email: "theo@x.co" });
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE", note: "Enjoy" });
+    expect(res.ok).toBe(true);
+    expect(queueOutboxMailMock).toHaveBeenCalledTimes(1);
+    // The row rides the DECISION transaction (the $transaction mock passes
+    // the mocked db through as the tx client).
+    expect(queueOutboxMailMock.mock.calls[0][0]).toBe(db);
+    const arg = queueOutboxMailMock.mock.calls[0][1] as {
+      kind: string; toAddress: string; subject: string; text: string;
+    };
+    expect(arg.kind).toBe("LEAVE_DECIDED");
+    expect(arg.toAddress).toBe("theo@x.co");
+    expect(arg.subject).toBe("Your leave request has been decided");
+    expect(arg.text).toContain("has been approved by Ingrid");
+    expect(arg.text).toContain("Note: Enjoy");
+    expect(arg.text).toContain("under Leave");
+  });
+
+  it("LV-T02: reject with knob ON queues the row after the confirmed flip", async () => {
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { emailLeaveNotifications: true } });
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr", name: "Theo", email: "theo@x.co" });
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "REJECT" });
+    expect(res.ok).toBe(true);
+    expect(queueOutboxMailMock).toHaveBeenCalledTimes(1);
+    const arg = queueOutboxMailMock.mock.calls[0][1] as { kind: string; text: string };
+    expect(arg.kind).toBe("LEAVE_DECIDED");
+    expect(arg.text).toContain("has been rejected by Ingrid");
+  });
+
+  it("LV-T02: knob OFF decides without any outbox row", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.leaveRequest.findUnique.mockResolvedValue(PENDING_REQUEST);
+    db.user.findUnique.mockResolvedValue({ managerId: "u-mgr", name: "Theo", email: "theo@x.co" });
+    const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
+    expect(res.ok).toBe(true);
+    expect(queueOutboxMailMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P21 — the leave email builders (pure)
+// ---------------------------------------------------------------------------
+
+describe("P21 — the leave email builders (pure)", () => {
+  it("leavePendingEmailText renders the benchmark's table as plain text", async () => {
+    const { leavePendingEmailText } = await import("@/lib/leave-email");
+    const text = leavePendingEmailText({
+      requesterName: "Theo Jansen", typeName: "Annual Leave",
+      startDate: "2026-12-30", endDate: "2027-01-04", days: 4,
+    });
+    expect(text).toContain("A leave request from Theo Jansen is awaiting your approval.");
+    expect(text).toContain("Employee: Theo Jansen");
+    expect(text).toContain("Leave type: Annual Leave");
+    expect(text).toContain("From: 2026-12-30");
+    expect(text).toContain("To: 2027-01-04");
+    expect(text).toContain("Duration: 4 days");
+    expect(text).toContain("Review it in Fernly under HR → Requests.");
+  });
+
+  it("leaveDecidedEmailText names the decider and the note; halves stay '0.5 days'", async () => {
+    const { leaveDecidedEmailText } = await import("@/lib/leave-email");
+    const text = leaveDecidedEmailText(
+      { requesterName: "Theo", typeName: "Sick Leave", startDate: "2026-11-02", endDate: "2026-11-02", days: 0.5 },
+      "REJECT", "Ingrid", "Capacity crunch",
+    );
+    expect(text).toContain("Hi Theo,");
+    expect(text).toContain("Your 0.5 days Sick Leave request (2026-11-02 → 2026-11-02) has been rejected by Ingrid.");
+    expect(text).toContain("Note: Capacity crunch");
+  });
+
+  it("leaveJobFailureEmailText lists per-pair reasons and truncates past ten", async () => {
+    const { leaveJobFailureEmailText } = await import("@/lib/leave-email");
+    const failures = Array.from({ length: 12 }, (_, i) => ({
+      leaveTypeName: `Type ${i}`, phase: "GRANT", reason: `boom ${i}`,
+    }));
+    const text = leaveJobFailureEmailText("2026-11-10", failures);
+    expect(text).toContain("recorded 12 failure(s)");
+    expect(text).toContain("Type 0 (GRANT phase): boom 0");
+    expect(text).toContain("Type 9 (GRANT phase): boom 9");
+    expect(text).not.toContain("Type 10");
+    expect(text).toContain("and 2 more");
+    expect(text).toContain("retries every failed pair idempotently");
+  });
+
+  it("leaveEmailHtml escapes and bolds the strong lines", async () => {
+    const { leaveEmailHtml } = await import("@/lib/leave-email");
+    const html = leaveEmailHtml("Hi <b>Theo</b>,\nDuration: 4 days\n— Fernly HR");
+    expect(html).toContain("&lt;b&gt;Theo&lt;/b&gt;");
+    expect(html).toContain("<strong>Duration: 4 days</strong>");
+    expect(html).toContain("<br />");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P21 (LV-R01) — the employee leave balance report
+// ---------------------------------------------------------------------------
+
+describe("P21 (LV-R01) — the balance report", () => {
+  it("aggregates from the ledger with labels; skips zero pairs; reads all years ≤ target", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.leaveLedgerEntry.findMany.mockResolvedValue([
+      { userId: "u-theo", leaveTypeId: "lt-annual", year: 2025, entryType: "GRANT", delta: 20 },
+      { userId: "u-theo", leaveTypeId: "lt-annual", year: 2025, entryType: "CONSUME", delta: -6 },
+      { userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, entryType: "GRANT", delta: 5 },
+      { userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, entryType: "CARRY", delta: 4 },
+      { userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, entryType: "CONSUME", delta: -3.5 },
+      { userId: "u-ghost", leaveTypeId: "lt-sick", year: 2026, entryType: "GRANT", delta: 0 },
+    ]);
+    db.leaveType.findMany.mockResolvedValue([
+      { id: "lt-annual", name: "Annual Leave" },
+      { id: "lt-sick", name: "Sick Leave" },
+    ]);
+    db.user.findMany.mockResolvedValue([{ id: "u-theo", name: "Theo Jansen" }]);
+    db.employeeProfile.findMany.mockResolvedValue([{ userId: "u-theo", employeeNumber: "EMP-004" }]);
+    const res = await getLeaveBalanceReport({ year: 2026 });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.year).toBe(2026);
+      expect(res.data.rows).toHaveLength(1); // the all-zero ghost pair is skipped
+      const r = res.data.rows[0];
+      expect(r.opening).toBe(14);
+      expect(r.allocated).toBe(9);
+      expect(r.taken).toBe(3.5);
+      expect(r.expired).toBe(0);
+      expect(r.closing).toBe(19.5);
+      expect(r.userName).toBe("Theo Jansen");
+      expect(r.employeeNumber).toBe("EMP-004");
+    }
+    // The opening read spans EVERY year up to the target, not just year−1.
+    expect(db.leaveLedgerEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ year: { lte: 2026 } }) }),
+    );
+  });
+
+  it("the CSV export returns the RFC 4180 file and audits the export", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.leaveLedgerEntry.findMany.mockResolvedValue([
+      { userId: "u-theo", leaveTypeId: "lt-annual", year: 2026, entryType: "GRANT", delta: 4 },
+    ]);
+    db.leaveType.findMany.mockResolvedValue([{ id: "lt-annual", name: "Annual Leave" }]);
+    db.user.findMany.mockResolvedValue([{ id: "u-theo", name: "Theo Jansen" }]);
+    db.employeeProfile.findMany.mockResolvedValue([]);
+    const res = await exportLeaveBalanceReportCsv({ year: 2026 });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.filename).toBe("leave-balance-report-2026.csv");
+      expect(res.data.mime).toBe("text/csv; charset=utf-8");
+      expect(res.data.csv).toContain("Leave type,Employee no,Employee,Opening balance");
+      expect(res.data.csv).toContain("Annual Leave,,Theo Jansen,0,4,0,0,4");
+      expect(res.data.csv).toContain("non-statutory export");
+    }
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "leave.report_exported",
+        detail: expect.stringContaining("leave balance report for 2026"),
+      }),
+    );
   });
 });

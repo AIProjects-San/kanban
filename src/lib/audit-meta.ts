@@ -86,6 +86,8 @@ export type AuditAction =
   | "leave.type_updated"
   // LV-10 (S9) — the HR leave adjustment writer (ADJUST ledger rows).
   | "hr.leave_adjusted"
+  // P21 (LV-R01) — the balance report CSV export.
+  | "leave.report_exported"
   // F1.1 — holiday calendar lifecycle
   // (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1)
   | "hr.holiday_created"
@@ -283,6 +285,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.type_created": { icon: Plus, cls: "text-primary bg-primary/10" },
   "leave.type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.leave_adjusted": { icon: Scale, cls: "text-sky-500 bg-sky-500/10" },
+  "leave.report_exported": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
   "hr.holiday_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
   "hr.holiday_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },

@@ -530,6 +530,44 @@ export function checkLeaveRequestAgainstBalance(
   return { ok, requestedDays, available, floor };
 }
 
+// ---------------------------------------------------------------------------
+// LV-B14 — the balance-for-consumption cap
+// (benchmark: Leave Application.get_leave_balance_on for_consumption=True →
+// get_remaining_leaves caps at `date_diff(allocation.to_date, date) + 1` —
+// the days REMAINING in the allocation window, inclusive of the request's
+// own first day; Fernly's annual model = one allocation per calendar year,
+// so allocation.to_date is Dec 31 of the request's year).
+// ---------------------------------------------------------------------------
+
+export interface ConsumptionCap {
+  /** min(balance, days left in the allocation year) — the consumable days. */
+  consumable: number;
+  /** Calendar days from requestStart through Dec 31 (inclusive). */
+  daysLeftInYear: number;
+  /** True when the cap, not the balance, is the binding constraint. */
+  capped: boolean;
+}
+
+/**
+ * Cap the consumable balance at the days left in the allocation year.
+ * Mirrors the benchmark exactly: the cap applies ONLY to positive balances
+ * (a member already in an advance keeps the floor path); daysLeft counts
+ * calendar days from the request's start through Dec 31 inclusive.
+ */
+export function capBalanceForConsumption(
+  available: number,
+  requestStart: string,
+  year: number,
+): ConsumptionCap {
+  const endOfYear = `${year}-12-31`;
+  const daysLeftInYear = Math.floor(
+    (Date.parse(endOfYear) - Date.parse(requestStart)) / 86_400_000,
+  ) + 1;
+  const consumable =
+    available > 0 ? Math.min(round2(available), daysLeftInYear) : round2(available);
+  return { consumable, daysLeftInYear, capped: round2(available) > consumable };
+}
+
 /** The advance hint appended to guard rejections and balance renders. */
 export function advanceHint(policy: ResolvedLeavePolicy): string {
   if (!policy.allowNegative || policy.negativeFloor <= 0) return "";

@@ -15,6 +15,7 @@ import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT, LeaveEncashmen
 import { cn } from "@/lib/utils";
 import { getMyLeaveData, createLeaveRequest, cancelLeaveRequest } from "@/server-actions/hr-leave";
 import { holidayLookupFrom, workingDaysBetween } from "@/lib/working-days";
+import { capBalanceForConsumption } from "@/lib/leave-policy";
 import { useApp } from "@/store/app-store";
 import { getMyEncashments, requestLeaveEncashment } from "@/server-actions/leave-encashment";
 import { planLeaveEncashment, type EncashmentPolicy } from "@/lib/leave-encashment";
@@ -394,13 +395,22 @@ function RequestFormModal({
   // Leave view crashed with `ReferenceError: year is not defined`.)
   const startYear = startDate ? Number(startDate.slice(0, 4)) : balanceYear;
   const crossYear = Boolean(startDate) && startYear !== balanceYear;
+  // P21 (LV-B14) — the balance-for-consumption cap, the same pure kernel the
+  // server runs (min(available, calendar days left in the allocation year);
+  // positive balances only — an advance keeps the floor path). The preview
+  // and the client guard stay in lockstep with createLeaveRequest.
+  const consumption = useMemo(() => {
+    if (!selectedBalance || crossYear || !startDate) return null;
+    return capBalanceForConsumption(selectedBalance.available, startDate, startYear);
+  }, [selectedBalance, crossYear, startDate, startYear]);
   // F2.4 — the floor-aware client guard (mirrors checkLeaveRequestAgainstBalance:
   // reject when days > available + floor; identical to the classic guard at
-  // floor 0).
+  // floor 0). P21 (LV-B14): `available` is the capped consumable when the
+  // year-end cap binds.
   const exceedsBalance =
     Boolean(selectedBalance) &&
     !crossYear &&
-    days > (selectedBalance?.available ?? 0) + advanceFloor;
+    days > (consumption?.consumable ?? selectedBalance?.available ?? 0) + advanceFloor;
 
   return (
     <Modal open={open} onClose={onClose} title="Request leave">
@@ -518,8 +528,11 @@ function RequestFormModal({
                 "tabular-nums",
                 exceedsBalance ? "text-destructive font-medium" : "text-muted-foreground",
               )}
+              data-testid="leave-balance-preview"
             >
-              {days} of {selectedBalance.available} available{advanceFloor > 0 ? ` (advance allowed to −${advanceFloor})` : ""}
+              {consumption?.capped
+                ? `${days} of ${consumption.consumable} consumable (${selectedBalance.available} available, ${consumption.daysLeftInYear} calendar day${consumption.daysLeftInYear === 1 ? "" : "s"} left in ${startYear})`
+                : `${days} of ${selectedBalance.available} available${advanceFloor > 0 ? ` (advance allowed to −${advanceFloor})` : ""}`}
             </span>
           )}
         </div>

@@ -76,6 +76,10 @@ export async function updateWorkspaceSettings(input: Partial<{
    * the pre-P18 silence; Settings → General; lockPayrollRun queues the
    * PAYSLIP outbox rows). */
   emailPayslipsOnLock?: boolean;
+  /** P21 (LV-T01/LV-T02) — leave email notifications (default OFF = the
+   * F-R17 zero-mail posture; Settings → General; the leave chain queues
+   * LEAVE_PENDING / LEAVE_DECIDED outbox rows when on). */
+  emailLeaveNotifications?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

@@ -152,6 +152,16 @@ describe("runLeaveAllocationJob — grant phase", () => {
     expect(report.failures).toBe(1);
     expect(report.grantsWritten).toBe(2); // u2's Jan + Feb
     expect(logErrorSpy).toHaveBeenCalled();
+    // P21 (LV-B18) — the failure-reason record: phase + type + humanized
+    // reason ride the report (the route turns these into the HR alarm).
+    expect(report.failuresDetail).toHaveLength(1);
+    expect(report.failuresDetail[0]).toMatchObject({
+      userId: "u1",
+      leaveTypeId: "lt-earned",
+      leaveTypeName: "Annual (Earned)",
+      phase: "GRANT",
+      reason: "pair exploded",
+    });
   });
 });
 

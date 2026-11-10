@@ -192,20 +192,45 @@ When(
 );
 
 /**
+ * Same as above, but STAYS IN THE CURRENT YEAR or reports pending. The
+ * QA-1 pair's balance assertions read the current year's ESS card — a
+ * next-year pair (the +14d Monday already past New Year, roughly Dec 19–31)
+ * would debit a balance the card never shows and fail the drop assertion
+ * for a reason that has nothing to do with the overdraft guard. Pending is
+ * the designed year-end escape (test:e2e treats a pending-only run as
+ * green; the guard itself stays pinned by the hr-leave unit tests).
+ */
+When(
+  "I request {string} from a Monday {int} days out for {int} working days, staying in the current year, with reason {string}",
+  async function (typeName, daysOut, workingDaysCount, reason) {
+    const monday = mondayAtLeast(daysOut);
+    if (monday.getUTCFullYear() !== new Date().getUTCFullYear()) {
+      return "pending";
+    }
+    await qaRequestRange(this, typeName, monday, workingDaysCount, reason);
+  },
+);
+
+/**
  * Same as above, but GUARANTEES the request starts in the same UTC year as
  * the scenario's previous Monday-based request. F1.1's holiday-week
  * skipping can push a far-future Monday across the year boundary — and a
  * cross-year request debits the NEXT year's balance (QA-7 behavior), which
  * silently breaks the QA-1 overdraft premise of "two requests together
- * exceeding ONE year's balance". When the year jumped, try candidate
- * Mondays of the anchor year walking back from its end (a holiday-week
- * START is fine — the day-count walk skips inner holidays, and only the
- * start year matters for the balance); a candidate whose range overlaps
- * another feature's leftover active request is rejected at the form, which
- * reads as "still open" and moves on to the previous Monday. When no
- * candidate works (suite running close to year end), the scenario reports
- * pending — the overdraft guard itself stays pinned by the hr-leave unit
- * tests, and QA-7 covers the cross-year behavior.
+ * exceeding ONE year's balance". When the year jumped, walk candidate
+ * DAYS of the anchor year back from its end (a holiday-week START is fine
+ * — the day-count walk skips inner holidays, and only the start year
+ * matters for the balance). P21 (LV-B14): consumption is capped at the
+ * calendar days left in the allocation year, so candidates whose days-left
+ * cannot fit the requested working days are skipped WITHOUT opening the
+ * form (the client guard would disable the submit button and the attempt
+ * would read as a rejection); day-by-day walking finds the mid-December
+ * weekdays the old Monday-only walk missed. A candidate whose range
+ * overlaps another feature's leftover active request is rejected at the
+ * form, which reads as "still open" and moves on to the previous day. When
+ * no candidate works, the scenario reports pending — the overdraft guard
+ * itself stays pinned by the hr-leave unit tests, and QA-7 covers the
+ * cross-year behavior.
  */
 When(
   "I request {string} from a Monday {int} days out for {int} working days in the same year as my last request with reason {string}",
@@ -213,20 +238,23 @@ When(
     assert.ok(this.lastE2EYear, "no previous Monday-based request was made in this scenario");
     const anchorYear = this.lastE2EYear;
     const prevEnd = this.lastE2ERangeEnd;
+    const yearEndMs = Date.UTC(anchorYear, 11, 31);
     let monday = mondayAtLeast(daysOut);
     if (monday.getUTCFullYear() === anchorYear) {
       await qaRequestRange(this, typeName, monday, workingDaysCount, reason);
       return;
     }
-    // Year jumped — walk candidate Mondays of the anchor year, newest first.
-    let candidate = new Date(Date.UTC(anchorYear, 11, 31));
-    while (candidate.getUTCDay() !== 1) candidate.setUTCDate(candidate.getUTCDate() - 1);
-    for (let tries = 0; tries < 10; tries += 1) {
-      if (candidate.getTime() > prevEnd.getTime()) {
+    // Year jumped — walk candidate DAYS of the anchor year, newest first.
+    let candidate = new Date(yearEndMs);
+    let tries = 0;
+    while (candidate.getTime() > prevEnd.getTime() && tries < 80) {
+      tries += 1;
+      const daysLeftInYear = Math.floor((yearEndMs - candidate.getTime()) / 86_400_000) + 1;
+      if (workingDaysCount <= daysLeftInYear) {
         const submitted = await tryQARange(this, typeName, candidate, workingDaysCount, reason);
         if (submitted) return;
       }
-      candidate.setUTCDate(candidate.getUTCDate() - 7);
+      candidate.setUTCDate(candidate.getUTCDate() - 1);
     }
     return "pending";
   },

@@ -136,6 +136,11 @@ export interface WorkspaceSettingsT {
    * outbox row per slip, HTML summary — the PDF stays the download-only
    * decision §9.2). Default OFF = the pre-P18 silence. */
   emailPayslipsOnLock: boolean;
+  /** P21 (LV-T01/LV-T02) — opt-in leave email notifications: LEAVE_PENDING
+   * to the resolved approvers on request creation and LEAVE_DECIDED to the
+   * requester on decision, beside the unconditional in-app rows. Default
+   * OFF = the F-R17 zero-mail posture. */
+  emailLeaveNotifications: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -311,6 +316,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           lopBasisMode: (workspace.lopBasisMode === "LEAVE" || workspace.lopBasisMode === "ATTENDANCE" ? workspace.lopBasisMode : "HYBRID"),
           showLeaveBalancesOnSlip: workspace.showLeaveBalancesOnSlip === true,
           emailPayslipsOnLock: workspace.emailPayslipsOnLock === true,
+          emailLeaveNotifications: workspace.emailLeaveNotifications === true,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -337,6 +343,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           lopBasisMode: "HYBRID",
           showLeaveBalancesOnSlip: false,
           emailPayslipsOnLock: false,
+          emailLeaveNotifications: false,
         },
 
     taskStatuses: taskStatuses.length

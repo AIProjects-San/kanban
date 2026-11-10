@@ -58,6 +58,20 @@ export interface LeaveAllocationJobReport {
   /** EXPIRE rows written (rollover cap + carry lapse). */
   expireRowsWritten: number;
   failures: number;
+  /** P21 (LV-B18) — the failure-reason records: one per failed pair with
+   * the phase and the humanized reason (the benchmark's Earned Leave
+   * Schedule failure_reason column, journaled per pass instead of per
+   * allocation row — the next daily pass retries the pair idempotently,
+   * which IS the benchmark's retry loop minus the attempted flag). */
+  failuresDetail: LeaveAllocationFailure[];
+}
+
+export interface LeaveAllocationFailure {
+  userId: string;
+  leaveTypeId: string;
+  leaveTypeName: string;
+  phase: "GRANT" | "ROLLOVER" | "LAPSE";
+  reason: string;
 }
 
 /** Ledger rows this job writes — the writer half of the idempotency
@@ -138,6 +152,7 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
     carryRowsWritten: 0,
     expireRowsWritten: 0,
     failures: 0,
+    failuresDetail: [],
   };
 
   const types = await db.leaveType.findMany({
@@ -151,8 +166,8 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
   for (const type of types) {
     if (!type.policy) continue;
     const policy = resolveLeavePolicy(type.policy);
-    await runRolloverForType(type.id, policy, year, report);
-    await runLapseForType(type.id, policy, year, asOf, report);
+    await runRolloverForType(type.id, type.name, policy, year, report);
+    await runLapseForType(type.id, type.name, policy, year, asOf, report);
   }
 
   // GRANTS — every non-MANUAL strategy (MANUAL's only writer is the lazy
@@ -214,13 +229,21 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
         report.grantsWritten += ops.length;
       } catch (err) {
         report.failures += 1;
-        logError(`eave-allocation] grant pair failed (user ${b.userId}, type ${type.name}):`, err);
+        const reason = err instanceof Error ? err.message : String(err);
+        report.failuresDetail.push({
+          userId: b.userId,
+          leaveTypeId: type.id,
+          leaveTypeName: type.name,
+          phase: "GRANT",
+          reason,
+        });
+        logError(`[leave-allocation] grant pair failed (user ${b.userId}, type ${type.name}):`, err);
       }
     }
   }
 
   logInfo(
-    `eave-allocation] pass complete: ${report.grantsWritten} grant(s), ` +
+    `[leave-allocation] pass complete: ${report.grantsWritten} grant(s), ` +
       `${report.carryRowsWritten} carry row(s), ${report.expireRowsWritten} expire row(s), ` +
       `${report.failures} failure(s) at ${asOf}`,
   );
@@ -232,6 +255,7 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
  * new year (any source — engine or backfill) means the pair is done. */
 async function runRolloverForType(
   leaveTypeId: string,
+  leaveTypeName: string,
   policy: ReturnType<typeof resolveLeavePolicy>,
   year: number,
   report: LeaveAllocationJobReport,
@@ -308,7 +332,9 @@ async function runRolloverForType(
       report.expireRowsWritten += expire < 0 ? 1 : 0;
     } catch (err) {
       report.failures += 1;
-      logError(`eave-allocation] rollover pair failed (user ${b.userId}, type ${leaveTypeId}):`, err);
+      const reason = err instanceof Error ? err.message : String(err);
+      report.failuresDetail.push({ userId: b.userId, leaveTypeId, leaveTypeName, phase: "ROLLOVER", reason });
+      logError(`[leave-allocation] rollover pair failed (user ${b.userId}, type ${leaveTypeId}):`, err);
     }
   }
 }
@@ -318,6 +344,7 @@ async function runRolloverForType(
  * Idempotent: the "carry-lapse" EXPIRE row is written once. */
 async function runLapseForType(
   leaveTypeId: string,
+  leaveTypeName: string,
   policy: ReturnType<typeof resolveLeavePolicy>,
   year: number,
   asOf: string,
@@ -369,7 +396,9 @@ async function runLapseForType(
       report.expireRowsWritten += 1;
     } catch (err) {
       report.failures += 1;
-      logError(`eave-allocation] lapse pair failed (user ${b.userId}, type ${leaveTypeId}):`, err);
+      const reason = err instanceof Error ? err.message : String(err);
+      report.failuresDetail.push({ userId: b.userId, leaveTypeId, leaveTypeName, phase: "LAPSE", reason });
+      logError(`[leave-allocation] lapse pair failed (user ${b.userId}, type ${leaveTypeId}):`, err);
     }
   }
 }

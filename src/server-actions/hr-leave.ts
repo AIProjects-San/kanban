@@ -29,8 +29,9 @@ import {
   updateLeaveTypeSchema,
   parseOrThrow,
   adjustLeaveBalanceSchema,
+  leaveBalanceReportSchema,
 } from "@/lib/validation";
-import { logAudit } from "./shared";
+import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { workingDaysBetween } from "@/lib/working-days";
@@ -39,11 +40,26 @@ import {
   checkServiceEligibility,
   advanceHint,
   resolveLeavePolicy,
+  capBalanceForConsumption,
   type LeavePolicyRow,
 } from "@/lib/leave-policy";
 import { planLeaveAdjustment } from "@/lib/leave-ledger";
 import { checkCrossRequestConsecutive } from "@/lib/leave-policy";
+import { getWorkspaceConfig } from "@/lib/config-loader";
 import { runWindowEnd, runWindowStart } from "@/lib/payroll-windows";
+import {
+  leavePendingEmailSubject,
+  leavePendingEmailText,
+  leaveDecidedEmailSubject,
+  leaveDecidedEmailText,
+  leaveEmailHtml,
+} from "@/lib/leave-email";
+import {
+  buildLeaveBalanceReportRows,
+  leaveBalanceReportCsv,
+  type ReportLabel,
+  type LeaveBalanceReportRow,
+} from "@/lib/leave-balance-report";
 import {
   parseDay,
   daysBetween,
@@ -497,13 +513,22 @@ export async function createLeaveRequest(input: {
     // Balance — insufficient balance rejects at submission (scoping
     // decision). F2.4: floor-aware — with allowNegative the member may
     // spend into an advance down to −negativeFloor days.
+    // P21 (LV-B14) — balance-for-consumption: the consumable days are
+    // capped at the calendar days remaining in the allocation year
+    // (benchmark get_remaining_leaves — min(balance, days left)); a
+    // balance that outruns the year's remaining days can't be spent on
+    // future leave, so a range crossing into January refuses with the
+    // cap named.
     const year = start.getUTCFullYear();
     const balance = await getOrCreateBalance(auth.userId, type.id, year, type.policy);
     const available = balance.entitled + balance.carriedOver - balance.used;
-    const guard = checkLeaveRequestAgainstBalance(resolvedPolicy, days, available);
+    const cap = capBalanceForConsumption(available, data.startDate, year);
+    const guard = checkLeaveRequestAgainstBalance(resolvedPolicy, days, cap.consumable);
     if (!guard.ok) {
       throw new AuthorizationError(
-        `Insufficient balance: ${days} day(s) requested, ${available} available for ${type.name}${advanceHint(resolvedPolicy)}.`,
+        cap.capped
+          ? `Insufficient balance: ${days} day(s) requested, only ${cap.consumable} day(s) consumable for ${type.name} — ${available} day(s) are available but the ${year} allocation ends with ${cap.daysLeftInYear} calendar day(s) left${advanceHint(resolvedPolicy)}.`
+          : `Insufficient balance: ${days} day(s) requested, ${available} available for ${type.name}${advanceHint(resolvedPolicy)}.`,
       );
     }
 
@@ -520,6 +545,14 @@ export async function createLeaveRequest(input: {
     });
 
     // Notify the approver (best-effort — never blocks the request).
+    // P21 (LV-T01) — when the workspace opted into leave email, the same
+    // resolved approvers ALSO get a LEAVE_PENDING outbox row (delivered
+    // best-effort after the request exists; the P18 discipline adapted to
+    // this non-transactional path — both notifications share the
+    // best-effort posture, neither can fail the request).
+    const emailLeave =
+      (await getWorkspaceConfig()).workspace.emailLeaveNotifications === true;
+    const pendingEmailRowIds: string[] = [];
     try {
       const approverIds = await getApproverIdsFor(auth.userId);
       if (approverIds.length) {
@@ -531,10 +564,49 @@ export async function createLeaveRequest(input: {
             message: `${auth.name} requested ${days} day(s) of ${type.name} (${data.startDate} → ${data.endDate}).`,
           })),
         });
+        if (emailLeave) {
+          const approvers = await db.user.findMany({
+            where: { id: { in: approverIds }, deletedAt: null },
+            select: { email: true },
+          });
+          const facts = {
+            requesterName: auth.name,
+            typeName: type.name,
+            startDate: data.startDate,
+            endDate: data.endDate,
+            days,
+          };
+          for (const a of approvers) {
+            if (!a.email) continue;
+            const row = await queueOutboxMail(db, {
+              kind: "LEAVE_PENDING",
+              toAddress: a.email,
+              subject: leavePendingEmailSubject(),
+              text: leavePendingEmailText(facts),
+              sentById: auth.userId,
+            });
+            pendingEmailRowIds.push(row.id);
+          }
+        }
       }
     } catch (err) {
       // Notification failures must not break the request.
       logError("[hr-leave] notification createMany failed:", err);
+    }
+    // P21 (LV-T01) — deliver outside the notification block (provider I/O
+    // never rides the request path; one row at a time, best-effort).
+    for (const id of pendingEmailRowIds) {
+      const row = await db.mailOutbox.findUnique({
+        where: { id },
+        select: { toAddress: true, subject: true, body: true },
+      });
+      if (!row) continue;
+      await deliverOutboxMail(id, {
+        toAddress: row.toAddress,
+        subject: row.subject,
+        html: leaveEmailHtml(row.body),
+        text: row.body,
+      }).catch((err: unknown) => logError("[hr-leave] LEAVE_PENDING delivery failed:", err));
     }
 
     await logAudit({
@@ -575,7 +647,14 @@ export async function decideLeaveRequest(input: {
       where: { id: request.leaveTypeId },
       select: { name: true, policy: true },
     });
-    const requester = await db.user.findUnique({ where: { id: request.userId }, select: { name: true } });
+    const requester = await db.user.findUnique({ where: { id: request.userId }, select: { name: true, email: true } });
+    // P21 (LV-T02) — the decision email knob (read once, before either
+    // branch: the approve path queues its row INSIDE the transaction — no
+    // email without its decision — while reject queues right after the
+    // guarded flip; both deliver best-effort at the end).
+    const emailLeave =
+      (await getWorkspaceConfig()).workspace.emailLeaveNotifications === true;
+    const decidedEmailRowIds: string[] = [];
 
     if (data.decision === "APPROVE") {
       // F1.2 — `used` changes here and in cancel, transactionally, through
@@ -630,14 +709,23 @@ export async function decideLeaveRequest(input: {
         // about. F2.4: floor-aware — with allowNegative the approval may
         // lawfully land the member into an advance down to −negativeFloor
         // days (identical rejection at floor 0).
+        // P21 (LV-B14) — the SAME balance-for-consumption cap as
+        // submission: the projection is capped at the calendar days
+        // remaining in the allocation year, so a late-year approval can
+        // never spend days the year no longer has (a request that slipped
+        // past submission in a race with the calendar still refuses here).
         const projection = await ledgerProjectionFor(
           tx, request.userId, request.leaveTypeId, year,
         );
         const resolved = resolveLeavePolicy(type?.policy);
-        const guard = checkLeaveRequestAgainstBalance(resolved, request.days, projection.available);
+        const requestStartKey = request.startDate.toISOString().slice(0, 10);
+        const cap = capBalanceForConsumption(projection.available, requestStartKey, year);
+        const guard = checkLeaveRequestAgainstBalance(resolved, request.days, cap.consumable);
         if (!guard.ok) {
           throw new AuthorizationError(
-            `Insufficient balance: ${request.days} day(s) requested, only ${projection.available} day(s) left for ${type?.name ?? "this leave type"}${advanceHint(resolved)}.`,
+            cap.capped
+              ? `Insufficient balance: ${request.days} day(s) requested, only ${cap.consumable} day(s) consumable for ${type?.name ?? "this leave type"} — ${projection.available} day(s) are available but the ${year} allocation ends with ${cap.daysLeftInYear} calendar day(s) left${advanceHint(resolved)}.`
+              : `Insufficient balance: ${request.days} day(s) requested, only ${projection.available} day(s) left for ${type?.name ?? "this leave type"}${advanceHint(resolved)}.`,
           );
         }
 
@@ -671,6 +759,32 @@ export async function decideLeaveRequest(input: {
         // rolled-back approval never leaves phantom rows. The leave.approved
         // audit entry below is the decision's record — rows are just state.
         await deriveOnLeaveAttendance(tx, request, type?.name ?? "Leave");
+
+        // P21 (LV-T02) — queue the decision email on the SAME transaction:
+        // no email without its decision (the P18 lock discipline; a lost
+        // race throws above and this row never lands). Subjects stay
+        // neutral; the body is the plain-text audit copy.
+        if (emailLeave && requester?.email) {
+          const row = await queueOutboxMail(tx, {
+            kind: "LEAVE_DECIDED",
+            toAddress: requester.email,
+            subject: leaveDecidedEmailSubject(),
+            text: leaveDecidedEmailText(
+              {
+                requesterName: requester.name,
+                typeName: type?.name ?? "leave",
+                startDate: requestStartKey,
+                endDate: request.endDate.toISOString().slice(0, 10),
+                days: request.days,
+              },
+              data.decision,
+              auth.name,
+              data.note ?? "",
+            ),
+            sentById: auth.userId,
+          });
+          decidedEmailRowIds.push(row.id);
+        }
       });
     } else {
       // QA-16: same guarded write on the reject path — a concurrent
@@ -690,6 +804,34 @@ export async function decideLeaveRequest(input: {
           "This request is no longer pending — it was just decided or cancelled elsewhere. Refresh and try again.",
         );
       }
+      // P21 (LV-T02) — the reject path has no transaction to ride; queue
+      // right after the CONFIRMED flip (a lost race throws above and never
+      // reaches here), still best-effort.
+      if (emailLeave && requester?.email) {
+        try {
+          const row = await queueOutboxMail(db, {
+            kind: "LEAVE_DECIDED",
+            toAddress: requester.email,
+            subject: leaveDecidedEmailSubject(),
+            text: leaveDecidedEmailText(
+              {
+                requesterName: requester.name,
+                typeName: type?.name ?? "leave",
+                startDate: request.startDate.toISOString().slice(0, 10),
+                endDate: request.endDate.toISOString().slice(0, 10),
+                days: request.days,
+              },
+              data.decision,
+              auth.name,
+              data.note ?? "",
+            ),
+            sentById: auth.userId,
+          });
+          decidedEmailRowIds.push(row.id);
+        } catch (err) {
+          logError("[hr-leave] LEAVE_DECIDED queue failed:", err);
+        }
+      }
     }
 
     // Notify the requester (best-effort).
@@ -705,6 +847,21 @@ export async function decideLeaveRequest(input: {
     } catch (err) {
       // Never break the decision on a notification failure.
       logError("[hr-leave] notification create failed:", err);
+    }
+    // P21 (LV-T02) — deliver the decision email(s) after the business write
+    // (provider I/O never rides the transaction; one row at a time).
+    for (const id of decidedEmailRowIds) {
+      const row = await db.mailOutbox.findUnique({
+        where: { id },
+        select: { toAddress: true, subject: true, body: true },
+      });
+      if (!row) continue;
+      await deliverOutboxMail(id, {
+        toAddress: row.toAddress,
+        subject: row.subject,
+        html: leaveEmailHtml(row.body),
+        text: row.body,
+      }).catch((err: unknown) => logError("[hr-leave] LEAVE_DECIDED delivery failed:", err));
     }
 
     await logAudit({
@@ -1069,5 +1226,94 @@ export async function adjustLeaveBalance(input: {
     });
     revalidatePath("/");
     return { availableBefore, availableAfter };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// P21 (LV-R01) — the employee leave balance report
+// ---------------------------------------------------------------------------
+
+/**
+ * The HR-facing balance report: one row per (leave type × member) for the
+ * chosen year — opening balance, allocated, taken, expired, closing —
+ * aggregated from the append-only ledger (F1.2, the source of truth; the
+ * LeaveBalance cache is never read here). hr:view gated, the same surface
+ * as the leave queue. All-zero pairs are skipped (the benchmark's
+ * "no ledger entries, no row" filter).
+ */
+export async function getLeaveBalanceReport(input?: {
+  year?: number;
+  userId?: string;
+  leaveTypeId?: string;
+}): Promise<ActionResult<{ year: number; rows: LeaveBalanceReportRow[] }>> {
+  return toResult(async () => {
+    await requirePermission("hr:view");
+    const data = parseOrThrow(leaveBalanceReportSchema, input ?? {});
+    const year = data.year ?? todayUTC().getUTCFullYear();
+
+    // Opening balances need EVERY row before `year`, not just year−1 (a
+    // 2024 BALANCE_IMPORT never consumed still counts into 2026's opening).
+    const ledgerRows = await db.leaveLedgerEntry.findMany({
+      where: {
+        year: { lte: year },
+        ...(data.userId ? { userId: data.userId } : {}),
+        ...(data.leaveTypeId ? { leaveTypeId: data.leaveTypeId } : {}),
+      },
+      select: { userId: true, leaveTypeId: true, year: true, entryType: true, delta: true },
+    });
+    const types = await db.leaveType.findMany({
+      ...(data.leaveTypeId ? { where: { id: data.leaveTypeId } } : {}),
+      select: { id: true, name: true },
+    });
+    const userIds = [...new Set(ledgerRows.map((r) => r.userId))];
+    const [users, profiles] = await Promise.all([
+      userIds.length
+        ? db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+      userIds.length
+        ? db.employeeProfile.findMany({ where: { userId: { in: userIds } }, select: { userId: true, employeeNumber: true } })
+        : Promise.resolve([]),
+    ]);
+    const labels = new Map<string, ReportLabel>();
+    const employeeNoByUser = new Map(profiles.map((p) => [p.userId, p.employeeNumber]));
+    for (const u of users) {
+      labels.set(u.id, { userId: u.id, userName: u.name, employeeNumber: employeeNoByUser.get(u.id) ?? null });
+    }
+
+    const rows = buildLeaveBalanceReportRows({
+      year,
+      ledgerRows,
+      typeNames: new Map(types.map((t) => [t.id, t.name])),
+      labels,
+    });
+    return { year, rows };
+  });
+}
+
+/** LV-R01 — the balance report CSV (RFC 4180, the P20 payroll-csv
+ * discipline; audited like the register/bank exports). */
+export async function exportLeaveBalanceReportCsv(input?: {
+  year?: number;
+  userId?: string;
+  leaveTypeId?: string;
+}): Promise<ActionResult<{ filename: string; csv: string; mime: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hr:view");
+    const res = await getLeaveBalanceReport(input);
+    if (!res.ok) throw new AuthorizationError(res.error);
+    const csv = leaveBalanceReportCsv({ year: res.data.year, rows: res.data.rows });
+    await logAudit({
+      actor: auth,
+      action: "leave.report_exported",
+      entityType: "LEAVE_TYPE",
+      entityId: res.data.rows.length === 1 ? res.data.rows[0].leaveTypeId : "all",
+      entityLabel: `balance report ${res.data.year}`,
+      detail: `${auth.name} exported the leave balance report for ${res.data.year} (${res.data.rows.length} row(s)).`,
+    });
+    return {
+      filename: `leave-balance-report-${res.data.year}.csv`,
+      csv,
+      mime: "text/csv; charset=utf-8",
+    };
   });
 }

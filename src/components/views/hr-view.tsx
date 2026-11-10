@@ -31,6 +31,7 @@ import { OnboardingTab } from "./hr-onboarding";
 import { HolidaysTab } from "./hr-holidays";
 import { AttendanceTab } from "./hr-attendance";
 import { OffboardingTab } from "./hr-offboarding";
+import { BalancesTab } from "./hr-leave-balances";
 import { getEncashmentQueue, decideLeaveEncashment } from "@/server-actions/leave-encashment";
 import type { LeaveEncashmentT } from "@/lib/types";
 import { getDirectory } from "@/server-actions/hr-directory";
@@ -41,7 +42,7 @@ interface CurrentUser {
   role: string;
 }
 
-type Tab = "requests" | "types" | "holidays" | "attendance" | "directory" | "reviews" | "onboarding" | "offboarding";
+type Tab = "requests" | "types" | "holidays" | "attendance" | "balances" | "directory" | "reviews" | "onboarding" | "offboarding";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
@@ -120,6 +121,11 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
             <CalendarCheck size={13} /> Attendance
           </TabButton>
         )}
+        {/* P21 (LV-R01) — the balance report (hr:view, the queue's surface):
+            one row per type × member, from the ledger. */}
+        <TabButton active={tab === "balances"} onClick={() => setTab("balances")}>
+          <Scale size={13} /> Balances
+        </TabButton>
         <TabButton active={tab === "directory"} onClick={() => setTab("directory")}>
           <Briefcase size={13} /> Directory
         </TabButton>
@@ -151,6 +157,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
       )}
       {tab === "holidays" && canAdmin && <HolidaysTab />}
       {tab === "attendance" && canManageAttendance && <AttendanceTab />}
+      {tab === "balances" && <BalancesTab types={types} />}
       {tab === "directory" && <DirectoryTab />}
       {tab === "reviews" && <ReviewsTab />}
       {tab === "onboarding" && <OnboardingTab />}

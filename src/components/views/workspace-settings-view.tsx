@@ -428,6 +428,29 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               </span>
             </span>
           </label>
+          {/* P21 (LV-T01/LV-T02) — opt-in leave email notifications (the
+              benchmark's Leave Application Pending Approval / Status Update
+              notifications, on the P18 rail). One LEAVE_PENDING row per
+              resolved approver when a request is created and one
+              LEAVE_DECIDED row to the requester on decision; the in-app
+              notifications stay unconditional. Best-effort, audited in the
+              Outbox. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="leave-email-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.emailLeaveNotifications ?? false}
+              onChange={(e) => setForm({ ...form, emailLeaveNotifications: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Email leave notifications</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                New leave requests email the resolved approvers, and decisions email the requester — a summary of
+                type, dates and duration. Delivery is best-effort and audited in the Outbox; in-app notifications
+                stay on regardless. Applies to requests and decisions made while on.
+              </span>
+            </span>
+          </label>
           <div />
         </FormRow>
         <div className="flex justify-end pt-2">

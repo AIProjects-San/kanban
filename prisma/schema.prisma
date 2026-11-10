@@ -575,6 +575,12 @@ model Workspace {
   // mailer has no attachment support, so the PDF itself stays the
   // download-only decision §9.2. Default OFF = the pre-P18 silence.
   emailPayslipsOnLock  Boolean @default(false)
+  // P21 (LV-T01/LV-T02) — opt-in leave email notifications: when true, the
+  // leave chain queues LEAVE_PENDING (approvers, request created) and
+  // LEAVE_DECIDED (requester, decided) outbox rows beside the unconditional
+  // in-app notifications, delivered best-effort (the P18 discipline).
+  // Default OFF = the F-R17 zero-mail posture.
+  emailLeaveNotifications Boolean @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

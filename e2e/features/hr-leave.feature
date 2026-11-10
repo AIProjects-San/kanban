@@ -63,7 +63,7 @@ Feature: HR leave management
   Scenario: Overlapping an existing active request is rejected
     When I sign in as "member@fernly.app" with the demo password
     And I open the "Leave" view
-    And I request "Annual Leave" from a Monday 35 days out to the following day with reason "E2E overlap original"
+    And I request "Annual Leave" from a Monday 280 days out to the following day with reason "E2E overlap original"
     And I request "Annual Leave" from the same Monday to the following day with reason "E2E overlap duplicate"
     Then the rejected request form should still be open with no "E2E overlap duplicate" row created
     And a request with reason "E2E overlap original" should appear as Pending in my requests
