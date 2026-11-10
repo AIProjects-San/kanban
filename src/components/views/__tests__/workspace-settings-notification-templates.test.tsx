@@ -50,6 +50,7 @@ function baseConfig(notificationTemplates: WorkspaceConfig["notificationTemplate
       emailPayslipsOnLock: false, emailLeaveNotifications: false,
       remindBirthdays: true, remindAnniversaries: true, remindHolidays: true,
       holidayReminderDaysAhead: 7, emailEngagementReminders: false,
+      remindInterviews: true, emailInterviewReminders: false,
     },
     mail: { configured: false, provider: "none" },
     taskStatuses: [], projectStatuses: [], eventTypes: [], taskTags: [], priorities: [],

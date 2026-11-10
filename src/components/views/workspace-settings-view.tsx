@@ -544,6 +544,40 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               </span>
             </span>
           </label>
+          {/* P26 (PL-03/RJ-B18) — the interview reminder switches. The in-app
+              nudge fires from the daily scheduler's interview pass — one
+              personal notification per interviewer per same-day scheduled
+              interview; the email rail is opt-in like every routine mail. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="interview-reminders-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.remindInterviews ?? true}
+              onChange={(e) => setForm({ ...form, remindInterviews: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Interview reminders</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Interviewers get an in-app nudge on the morning of each scheduled interview (needs the scheduler&apos;s
+                daily pass; one notification per interview, never a broadcast).
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="interview-email-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.emailInterviewReminders ?? false}
+              onChange={(e) => setForm({ ...form, emailInterviewReminders: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Email interview reminders</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                The day-of interview nudges also email the interviewer (best-effort, audited in the Outbox; one email
+                per newly nudged interview). Off = in-app only.
+              </span>
+            </span>
+          </label>
         </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">

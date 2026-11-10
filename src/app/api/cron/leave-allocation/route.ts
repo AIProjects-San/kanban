@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
-import { runLeaveAllocationJob, type LeaveAllocationJobReport } from "@/lib/leave-allocation-core";
+import { runLeaveAllocationJob, sendLeaveJobFailureAlarm } from "@/lib/leave-allocation-core";
 import { captureError, logError } from "@/lib/observability";
 import { tryAcquireMaintenanceLock, LEAVE_ALLOCATION_LOCK_KEY } from "@/lib/maintenance-lock";
-import { db } from "@/lib/db";
-import { queueOutboxMail, deliverOutboxMail } from "@/server-actions/shared";
-import {
-  leaveJobFailureEmailSubject,
-  leaveJobFailureEmailText,
-  leaveEmailHtml,
-} from "@/lib/leave-email";
 
 // ---------------------------------------------------------------------------
 // F2.4 — leave-allocation cron endpoint (docs/Fernly_HR_Payroll_
@@ -90,11 +83,9 @@ async function handle(req: Request): Promise<NextResponse> {
     const report = await runLeaveAllocationJob();
     // P21 (LV-B18) — the failure alarm: when a pass recorded failures, one
     // LEAVE_JOB_FAILURE outbox row per ADMIN+HR user carries every per-pair
-    // reason (the row IS the retained failure record; delivery is
-    // best-effort — an unconfigured mailer leaves the auditable row).
-    // Unconditional by design: a failure alarm is operational telemetry,
-    // not a routine mail side effect (the F-R17 posture is scoped to the
-    // request/decision notifications). Never throws into the report.
+    // reason (moved into the core module at P26 so the daily dispatcher
+    // reaches the same alarm; behavior byte-identical). Never throws into
+    // the report.
     if (report.failures > 0) {
       await sendLeaveJobFailureAlarm(report).catch((err: unknown) => {
         logError("[leave-allocation] failure alarm failed:", err);
@@ -111,42 +102,6 @@ async function handle(req: Request): Promise<NextResponse> {
       { ok: false, error: "leave allocation pass failed" },
       { status: 500, headers: { "Cache-Control": "no-store" } },
     );
-  }
-}
-
-/** P21 (LV-B18) — queue + deliver the failure alarm (never throws; every
- * step is best-effort — the report above already told the scheduler the
- * truth, this row makes the failure durable and visible to HR). */
-async function sendLeaveJobFailureAlarm(report: LeaveAllocationJobReport): Promise<void> {
-  const recipients = await db.user.findMany({
-    where: { role: { in: ["ADMIN", "HR"] }, deletedAt: null, NOT: { email: "" } },
-    select: { email: true },
-    take: 50, // a workspace with >50 admins+HR is a config smell; bounds the fan-out
-  });
-  const text = leaveJobFailureEmailText(report.asOf, report.failuresDetail);
-  const rowIds: string[] = [];
-  for (const r of recipients) {
-    const row = await queueOutboxMail(db, {
-      kind: "LEAVE_JOB_FAILURE",
-      toAddress: r.email,
-      subject: leaveJobFailureEmailSubject(),
-      text,
-      sentById: "cron:leave-allocation",
-    });
-    rowIds.push(row.id);
-  }
-  for (const id of rowIds) {
-    const row = await db.mailOutbox.findUnique({
-      where: { id },
-      select: { toAddress: true, subject: true, body: true },
-    });
-    if (!row) continue;
-    await deliverOutboxMail(id, {
-      toAddress: row.toAddress,
-      subject: row.subject,
-      html: leaveEmailHtml(row.body),
-      text: row.body,
-    }).catch((err: unknown) => logError("[leave-allocation] alarm delivery failed:", err));
   }
 }
 

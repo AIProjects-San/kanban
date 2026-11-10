@@ -229,6 +229,10 @@ export const workspaceSettingsSchema = z.object({
   remindHolidays: z.boolean().optional(),
   holidayReminderDaysAhead: z.number().int().finite().min(1).max(30).optional(),
   emailEngagementReminders: z.boolean().optional(),
+  // P26 (PL-03/RJ-B18) — the interview nudge switch (in-app, default ON)
+  // + its opt-in email rail (default OFF).
+  remindInterviews: z.boolean().optional(),
+  emailInterviewReminders: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**

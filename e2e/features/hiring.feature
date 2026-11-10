@@ -214,3 +214,15 @@ Feature: Hiring pipeline (Recruitment R1)
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Hiring" view
     Then the mail config warning should be visible
+
+  # --- P26 (PL-03/RJ-B18): the interview reminder engine -------------------
+
+  Scenario: The interview reminder switches and template card render in Settings
+    The engine's knobs live in Settings → General (the day-of in-app nudge +
+    the opt-in email rail), and its event joins the notification template
+    registry — so the Notifications tab grows its card automatically.
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "Settings" view
+    Then the interview reminder toggles should render
+    And I open the notification templates settings tab
+    And the INTERVIEW_TODAY notification template card should render

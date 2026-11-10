@@ -36,6 +36,8 @@ import { db } from "@/lib/db";
 import { logError, logInfo } from "@/lib/observability";
 import { dayKey } from "@/lib/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
+import { queueOutboxMail, deliverOutboxMail } from "@/server-actions/shared";
+import { leaveJobFailureEmailSubject, leaveJobFailureEmailText, leaveEmailHtml } from "@/lib/leave-email";
 import {
   resolveLeavePolicy,
   dueGrantOps,
@@ -400,5 +402,55 @@ async function runLapseForType(
       report.failuresDetail.push({ userId: b.userId, leaveTypeId, leaveTypeName, phase: "LAPSE", reason });
       logError(`[leave-allocation] lapse pair failed (user ${b.userId}, type ${leaveTypeId}):`, err);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// P21 (LV-B18) — the failure alarm, lifted here from the standalone route
+// (P26: the daily dispatcher carries the leave pass beside its own route,
+// so both callers must reach the same alarm; route files may not export
+// non-handler functions under Next.js's strict route typing).
+//
+// When a pass recorded failures, ONE LEAVE_JOB_FAILURE outbox row per
+// ADMIN+HR user carries every per-pair reason (the row IS the retained
+// failure record; delivery is best-effort — an unconfigured mailer leaves
+// the auditable row). Unconditional by design: a failure alarm is
+// operational telemetry, not a routine mail side effect (the F-R17 posture
+// is scoped to the request/decision notifications). NEVER throws into the
+// caller — every step is best-effort, the report already told the
+// scheduler the truth and this row makes the failure durable and visible
+// to HR.
+// ---------------------------------------------------------------------------
+
+export async function sendLeaveJobFailureAlarm(report: LeaveAllocationJobReport): Promise<void> {
+  const recipients = await db.user.findMany({
+    where: { role: { in: ["ADMIN", "HR"] }, deletedAt: null, NOT: { email: "" } },
+    select: { email: true },
+    take: 50, // a workspace with >50 admins+HR is a config smell; bounds the fan-out
+  });
+  const text = leaveJobFailureEmailText(report.asOf, report.failuresDetail);
+  const rowIds: string[] = [];
+  for (const r of recipients) {
+    const row = await queueOutboxMail(db, {
+      kind: "LEAVE_JOB_FAILURE",
+      toAddress: r.email,
+      subject: leaveJobFailureEmailSubject(),
+      text,
+      sentById: "cron:leave-allocation",
+    });
+    rowIds.push(row.id);
+  }
+  for (const id of rowIds) {
+    const row = await db.mailOutbox.findUnique({
+      where: { id },
+      select: { toAddress: true, subject: true, body: true },
+    });
+    if (!row) continue;
+    await deliverOutboxMail(id, {
+      toAddress: row.toAddress,
+      subject: row.subject,
+      html: leaveEmailHtml(row.body),
+      text: row.body,
+    }).catch((err: unknown) => logError("[leave-allocation] alarm delivery failed:", err));
   }
 }

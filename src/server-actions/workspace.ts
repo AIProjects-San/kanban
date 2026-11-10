@@ -88,6 +88,10 @@ export async function updateWorkspaceSettings(input: Partial<{
   holidayReminderDaysAhead?: number;
   /** P25 — the opt-in email half of the engagement engine. */
   emailEngagementReminders?: boolean;
+  /** P26 (PL-03/RJ-B18) — the interview nudge switch + its opt-in email
+   * rail (Settings → General; the daily cron route's interview pass). */
+  remindInterviews?: boolean;
+  emailInterviewReminders?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

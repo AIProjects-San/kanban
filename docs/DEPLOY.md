@@ -287,11 +287,23 @@ staging deploy → smoke test → production deploy`.
   forward automatically.
 - **Maintenance cron:** the `audit-cron` service calls
   `/api/cron/prune-audit` daily at 03:00 UTC (audit retention + the PR-17
-  purges); check its logs with `docker compose logs audit-cron`. Since
+  purges), then the **HR daily dispatcher** `/api/cron/daily`
+  (P26/PL-03) — one route carrying every HR job in a fixed order: the
+  leave-allocation ledger pass (earned-leave grants, year-end rollover,
+  carry lapse), the engagement-reminders digests (P25) and the
+  interview-reminders nudges (P26); new HR jobs register inside that
+  route, not in compose. Each job keeps its own maintenance-lock identity
+  and its own idempotency (deterministic sourceKeys), so a doubled
+  trigger runs each pass exactly once, and one job failing never aborts
+  the others (the response's `jobs[]` array carries each outcome). Check
+  logs with `docker compose logs audit-cron`. Since
   PR-30 the overlap guard is a Redis `SET NX PX` lock shared by both
   replicas, so a doubled cron trigger runs the pass exactly once; the
   response's `lockBackend` field says which backend guarded the run
-  (`redis` / `memory`).
+  (`redis` / `memory`). The standalone per-job routes
+  (`/api/cron/leave-allocation`, `/api/cron/employee-reminders`,
+  `/api/cron/interview-reminders`) stay available for deployments that
+  schedule jobs individually.
 - **Prometheus metrics (PR-32):** `GET /api/metrics` serves the standard
   text exposition format — per-instance gauges for app/DB/Redis up-ness,
   process uptime + memory, event-loop lag, and the last successful

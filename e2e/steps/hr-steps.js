@@ -687,6 +687,24 @@ Then("the engagement reminder toggles should render", async function () {
   }
 });
 
+// ---------------------------------------------------------------------------
+// P26 (PL-03/RJ-B18) — the interview reminder engine's settings surfaces.
+// ---------------------------------------------------------------------------
+
+Then("the interview reminder toggles should render", async function () {
+  const driver = await this.getDriver();
+  for (const testId of [
+    "interview-reminders-toggle",
+    "interview-email-toggle",
+  ]) {
+    await driver.wait(
+      until.elementLocated(By.css(`[data-testid='${testId}']`)),
+      10_000,
+      `${testId} did not render`,
+    );
+  }
+});
+
 Then("the {string} notification template card should render", async function (eventKey) {
   const driver = await this.getDriver();
   await driver.wait(

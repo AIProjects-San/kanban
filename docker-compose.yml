@@ -1,7 +1,8 @@
 # L-P1-21 — docker-compose for multi-instance deployment.
 # 2 Fernly replicas behind nginx (probing /api/health) + shared Redis
 # (for the L-P0-10 rate limiter) + a one-shot migration gate + the
-# daily maintenance scheduler (launch gate 12: /api/cron/prune-audit).
+# daily maintenance scheduler (launch gate 12: /api/cron/prune-audit,
+# then the P26 HR daily dispatcher /api/cron/daily).
 #
 # PR-24 (production-readiness audit) changes:
 #   • `migrate` service — the app image ships no prisma CLI/migrations, so
@@ -174,23 +175,20 @@ services:
             --header="Authorization: Bearer $${CRON_SECRET}" \
             http://nginx/api/cron/prune-audit 2>&1 | tail -n 4
           echo "[audit-cron] $$(date -u +%FT%TZ) maintenance call finished"
-          # F2.4 — leave policy engine pass (earned-leave accrual, year-end
-          # rollover, carry lapse). Separate maintenance-lock identity, so it
-          # runs even though the audit purge just did; idempotent on its own.
-          echo "[audit-cron] $$(date -u +%FT%TZ) calling /api/cron/leave-allocation"
+          # P26 (PL-03) — the HR daily dispatcher: ONE route carrying every
+          # HR job (the platform audit purge above stays its own launch-gate
+          # endpoint; the two passes are separate contracts). Each job keeps
+          # its own maintenance-lock identity and its own idempotency, so a
+          # doubled trigger runs each pass exactly once. Jobs carried: the
+          # leave-allocation ledger pass (earned-leave grants, year-end
+          # rollover, carry lapse), the engagement-reminders digests (P25),
+          # and the interview-reminders nudges (P26); new HR jobs register
+          # in this route, not here (P31's encashment auto-draft joins it).
+          echo "[audit-cron] $$(date -u +%FT%TZ) calling /api/cron/daily"
           wget -q -O- --server-response \
             --header="Authorization: Bearer $${CRON_SECRET}" \
-            http://nginx/api/cron/leave-allocation 2>&1 | tail -n 4
-          echo "[audit-cron] $$(date -u +%FT%TZ) leave-allocation call finished"
-          # P25 (F3.10) — the engagement-reminders pass (birthday, work
-          # anniversary, advance-holiday digests). Own maintenance-lock
-          # identity; idempotent on its own (unique Notification.sourceKey);
-          # the workspace switches gate every digest.
-          echo "[audit-cron] $$(date -u +%FT%TZ) calling /api/cron/employee-reminders"
-          wget -q -O- --server-response \
-            --header="Authorization: Bearer $${CRON_SECRET}" \
-            http://nginx/api/cron/employee-reminders 2>&1 | tail -n 4
-          echo "[audit-cron] $$(date -u +%FT%TZ) employee-reminders call finished"
+            http://nginx/api/cron/daily 2>&1 | tail -n 4
+          echo "[audit-cron] $$(date -u +%FT%TZ) daily dispatcher call finished"
         done
 
 volumes:

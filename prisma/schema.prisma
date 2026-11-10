@@ -606,6 +606,16 @@ model Workspace {
   // Default OFF = the F-R17 zero-mail posture; the outbox honesty records
   // SKIPPED rows when no provider is configured.
   emailEngagementReminders Boolean @default(false)
+  // P26 (PL-03/RJ-B18) — the interview reminder switches. The in-app nudge
+  // defaults ON (the benchmark ships interview reminders on): the daily
+  // scheduler's interview pass writes ONE notification per interviewer per
+  // same-day scheduled interview — a personal row, never a broadcast. Only
+  // fires when the daily cron route runs: no scheduler, no rows.
+  remindInterviews        Boolean @default(true)
+  // P26 — the EMAIL half of the interview pass (one outbox row per newly
+  // nudged interview, rendered through the P24 template registry). Default
+  // OFF = the F-R17 zero-mail posture.
+  emailInterviewReminders Boolean @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

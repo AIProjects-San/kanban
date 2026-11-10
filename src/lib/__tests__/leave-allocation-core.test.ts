@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["leaveType", "leaveBalance", "leaveLedgerEntry", "employeeProfile"];
+  const models = ["leaveType", "leaveBalance", "leaveLedgerEntry", "employeeProfile", "user", "mailOutbox"];
   const methods = ["findMany", "findUnique", "findFirst", "create", "createMany", "update", "upsert", "groupBy"];
   const obj: Record<string, Record<string, ReturnType<typeof vi.fn>>> = {};
   for (const m of models) {
@@ -24,6 +24,17 @@ const db = vi.hoisted(() => {
 
 vi.mock("@/lib/db", () => ({ db }));
 
+// P26 — the failure alarm (moved into the core module so the daily
+// dispatcher reaches it) rides the outbox helpers; mock them at the
+// client boundary like employee-reminders.test.ts does (the real module
+// transitively constructs the auth stack, which a unit test must not).
+const queueOutboxMailMock = vi.fn();
+const deliverOutboxMailMock = vi.fn();
+vi.mock("@/server-actions/shared", () => ({
+  queueOutboxMail: (...a: unknown[]) => queueOutboxMailMock(...a),
+  deliverOutboxMail: (...a: unknown[]) => deliverOutboxMailMock(...a),
+}));
+
 const logErrorSpy = vi.fn();
 const logInfoSpy = vi.fn();
 vi.mock("@/lib/observability", () => ({
@@ -32,7 +43,7 @@ vi.mock("@/lib/observability", () => ({
   captureError: vi.fn(),
 }));
 
-import { runLeaveAllocationJob } from "@/lib/leave-allocation-core";
+import { runLeaveAllocationJob, sendLeaveJobFailureAlarm } from "@/lib/leave-allocation-core";
 
 const EARNED_TYPE = {
   id: "lt-earned",
@@ -245,5 +256,70 @@ describe("runLeaveAllocationJob — carry lapse phase", () => {
     groupsBy({ CARRY: 5 });
     const report = await runLeaveAllocationJob(new Date("2026-12-31T00:00:00Z"));
     expect(report.expireRowsWritten).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P26 — sendLeaveJobFailureAlarm (moved from the standalone route so the
+// daily dispatcher reaches the same alarm; behavior byte-identical).
+// ---------------------------------------------------------------------------
+
+describe("P26 — sendLeaveJobFailureAlarm", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("queues one LEAVE_JOB_FAILURE outbox row per ADMIN/HR user with an email", async () => {
+    db.user.findMany.mockResolvedValue([
+      { email: "admin@fernly.app" },
+      { email: "hr@fernly.app" },
+    ]);
+    queueOutboxMailMock.mockImplementation(async (_tx: unknown, input: { toAddress: string }) => ({
+      id: `row-${input.toAddress}`,
+    }));
+    db.mailOutbox.findUnique.mockImplementation(async (args: { where: { id: string } }) => ({
+      toAddress: args.where.id.replace("row-", ""),
+      subject: "Leave policy job — failures need attention",
+      body: "detail",
+    }));
+    deliverOutboxMailMock.mockResolvedValue({ status: "SENT", providerMessageId: "x", error: "" });
+
+    const report = {
+      asOf: "2026-11-10",
+      typesConsidered: 2,
+      manualTypesSkipped: 1,
+      grantPairsConsidered: 1,
+      grantsWritten: 1,
+      carryRowsWritten: 0,
+      expireRowsWritten: 0,
+      failures: 1,
+      failuresDetail: [{ userId: "u1", leaveTypeId: "lt-x", leaveTypeName: "X", phase: "GRANT", reason: "boom" }],
+    };
+    await sendLeaveJobFailureAlarm(report as never);
+
+    // Recipients: exactly the ADMIN+HR users the query asked for.
+    expect(db.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ role: { in: ["ADMIN", "HR"] } }),
+      }),
+    );
+    expect(queueOutboxMailMock).toHaveBeenCalledTimes(2);
+    expect(queueOutboxMailMock).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ kind: "LEAVE_JOB_FAILURE", toAddress: "admin@fernly.app", sentById: "cron:leave-allocation" }),
+    );
+    expect(deliverOutboxMailMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a delivery failure never throws — the outbox row is the durable record", async () => {
+    db.user.findMany.mockResolvedValue([{ email: "admin@fernly.app" }]);
+    queueOutboxMailMock.mockResolvedValue({ id: "row-1" });
+    db.mailOutbox.findUnique.mockResolvedValue({ toAddress: "admin@fernly.app", subject: "s", body: "b" });
+    deliverOutboxMailMock.mockRejectedValue(new Error("provider down"));
+
+    await expect(
+      sendLeaveJobFailureAlarm({ asOf: "2026-11-10", failures: 2, failuresDetail: [] } as never),
+    ).resolves.toBeUndefined();
+    expect(logErrorSpy).toHaveBeenCalled();
   });
 });

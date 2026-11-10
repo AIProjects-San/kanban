@@ -47,6 +47,10 @@ export const LEAVE_ALLOCATION_LOCK_KEY = `${redisKeyPrefix()}maintenance:leave_a
  * birthday/anniversary/holiday digests run beside the two above in the
  * scheduler's daily pass). */
 export const EMPLOYEE_REMINDERS_LOCK_KEY = `${redisKeyPrefix()}maintenance:employee_reminders`;
+/** P26 (PL-03/RJ-B18) — the interview-reminders job's own lock identity
+ * (the day-of interviewer nudges; the fourth job the daily dispatcher
+ * carries). Same discipline: one job's run never suppresses another's. */
+export const INTERVIEW_REMINDERS_LOCK_KEY = `${redisKeyPrefix()}maintenance:interview_reminders`;
 
 export interface MaintenanceLockResult {
   acquired: boolean;

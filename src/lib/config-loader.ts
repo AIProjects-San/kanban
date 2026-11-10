@@ -166,6 +166,15 @@ export interface WorkspaceSettingsT {
    * per live member per due event, via the P24 template registry).
    * Default OFF = the F-R17 zero-mail posture. */
   emailEngagementReminders: boolean;
+  /** P26 (PL-03/RJ-B18) — the in-app interview nudge switch: one personal
+   * notification per interviewer per same-day scheduled interview, from
+   * the daily cron route. Default ON (the benchmark ships interview
+   * reminders on); no scheduler, no rows. */
+  remindInterviews: boolean;
+  /** P26 — the EMAIL half of the interview pass (one outbox row per newly
+   * nudged interview, via the P24 template registry). Default OFF = the
+   * F-R17 zero-mail posture. */
+  emailInterviewReminders: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -351,6 +360,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           remindHolidays: workspace.remindHolidays !== false,
           holidayReminderDaysAhead: Math.min(Math.max(Math.round(workspace.holidayReminderDaysAhead) || 7, 1), 30),
           emailEngagementReminders: workspace.emailEngagementReminders === true,
+          remindInterviews: workspace.remindInterviews !== false,
+          emailInterviewReminders: workspace.emailInterviewReminders === true,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -383,6 +394,8 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           remindHolidays: true,
           holidayReminderDaysAhead: 7,
           emailEngagementReminders: false,
+          remindInterviews: true,
+          emailInterviewReminders: false,
         },
 
     taskStatuses: taskStatuses.length

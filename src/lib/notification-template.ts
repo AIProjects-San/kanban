@@ -181,6 +181,19 @@ const HOLIDAY_VARIABLES: NotificationTemplateVariable[] = [
   { name: "date", description: "Today's date (YYYY-MM-DD).", sample: "2026-12-18" },
 ];
 
+// P26 (PL-03/RJ-B18) — the interview nudge variables. Per-interview (never
+// a digest): one event instance per same-day scheduled interview, received
+// by its interviewer. `timeLabel` is the wall-clock the HR user picked
+// (the F-R18 display truth, "HH:MM" 24-hour).
+const INTERVIEW_TODAY_VARIABLES: NotificationTemplateVariable[] = [
+  { name: "interviewerName", description: "The interviewer being nudged.", sample: "Ingrid Solberg" },
+  { name: "candidateName", description: "The candidate the interview is with.", sample: "Rafael Costa" },
+  { name: "position", description: "The candidate's position, or “Position n/a”.", sample: "Senior Frontend Engineer" },
+  { name: "stageLabel", description: "The interview stage's label.", sample: "Technical screen" },
+  { name: "timeLabel", description: "The picked interview time (HH:MM, 24-hour).", sample: "14:00" },
+  { name: "date", description: "Today's date (YYYY-MM-DD).", sample: "2026-11-10" },
+];
+
 /**
  * The registry itself. Order is the editor's order. First consumers: the
  * leave pair (LV-T01/LV-T02 rode P21 for the opt-in email half; P24 makes
@@ -295,6 +308,33 @@ export const NOTIFICATION_TEMPLATE_EVENTS: NotificationTemplateEventDef[] = [
         "Holiday: {{holidayName}}",
         "Date: {{holidayDate}}",
         "Days ahead: {{daysAhead}}",
+        "",
+        "— Fernly HR",
+      ].join("\n"),
+    },
+  },
+  {
+    eventKey: "INTERVIEW_TODAY",
+    label: "Interview today (interviewer nudge)",
+    description:
+      "Fires daily (the scheduler's interview pass) for every interview scheduled for today. One personal in-app notification per interview to its interviewer; the email rides the workspace's interview-email toggle (default off).",
+    channels: "In-app, personal (scheduler) + email (opt-in)",
+    variables: INTERVIEW_TODAY_VARIABLES,
+    defaults: {
+      subject: "Interview today",
+      title: "Interview today: {{candidateName}}",
+      message: "{{stageLabel}} with {{candidateName}} at {{timeLabel}} — {{position}}.",
+      body: [
+        "Hi {{interviewerName}},",
+        "",
+        "You have an interview today at {{timeLabel}}.",
+        "",
+        "Candidate: {{candidateName}}",
+        "Position: {{position}}",
+        "Stage: {{stageLabel}}",
+        "Date: {{date}}",
+        "",
+        "The scorecard is in Fernly under Hiring.",
         "",
         "— Fernly HR",
       ].join("\n"),
