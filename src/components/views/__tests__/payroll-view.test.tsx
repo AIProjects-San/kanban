@@ -11,7 +11,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const {
   getPayrollData, getPayrollRun, createPayrollRun, lockPayrollRun, getDirectory,
-  exportPayrollRunCsv,
+  exportPayrollRunCsv, getPayrollAnalytics,
 } = vi.hoisted(() => ({
   getPayrollData: vi.fn(),
   getPayrollRun: vi.fn(),
@@ -19,6 +19,7 @@ const {
   lockPayrollRun: vi.fn(),
   getDirectory: vi.fn(),
   exportPayrollRunCsv: vi.fn(),
+  getPayrollAnalytics: vi.fn(),
 }));
 
 vi.mock("@/server-actions/payroll", () => ({
@@ -27,6 +28,7 @@ vi.mock("@/server-actions/payroll", () => ({
   createPayrollRun,
   lockPayrollRun,
   exportPayrollRunCsv,
+  getPayrollAnalytics,
 }));
 
 vi.mock("@/server-actions/hr-directory", () => ({ getDirectory }));
@@ -91,6 +93,27 @@ beforeEach(() => {
   getPayrollRun.mockResolvedValue({
     ok: true,
     data: { run: RUNS[0], payslips: PAYSLIPS },
+  });
+  // P22 — the analytics panel's default payload (empty shape: no locked
+  // money, honest empty states; the dedicated tests below override it).
+  getPayrollAnalytics.mockResolvedValue({
+    ok: true,
+    data: {
+      outgoing: [],
+      departmentSalary: { anchorMonth: null, rows: [], total: 0 },
+      designationSalary: { anchorMonth: null, rows: [], total: 0 },
+      benefitClaims: [],
+      cards: {
+        totalOutgoingSalary: 0,
+        outgoingSalaryMonths: 0,
+        totalSalaryStructures: 1,
+        benefitClaimsTotal: 0,
+        benefitClaimsCount: 0,
+        incentiveTotal: 0,
+        incentiveCount: 0,
+        statutoryDeclined: true,
+      },
+    },
   });
 });
 
@@ -215,5 +238,94 @@ describe("P20 (PR-R01/PR-R02) — the per-run CSV export buttons", () => {
       expect(exportPayrollRunCsv).toHaveBeenCalledWith({ runId: "run-0", kind: "BANK_REMITTANCE" });
       expect(toast.error).toHaveBeenCalledWith("Only paid (locked) runs export.");
     });
+  });
+});
+
+describe("P22 (PR-C01–04, PR-N01–06) — the analytics panel", () => {
+  const fullPayload = {
+    outgoing: [
+      { monthKey: "2026-10", label: "Oct 2026", net: 19_600, gross: 19_600 },
+      { monthKey: "2026-11", label: "Nov 2026", net: 19_600, gross: 20_100 },
+    ],
+    departmentSalary: {
+      anchorMonth: "2026-11",
+      rows: [
+        { label: "ENGINEERING", amount: 20_100, slipCount: 3 },
+        { label: "No department", amount: 2_000, slipCount: 1 },
+      ],
+      total: 22_100,
+    },
+    designationSalary: {
+      anchorMonth: "2026-11",
+      rows: [{ label: "Data Engineer", amount: 20_100, slipCount: 3 }],
+      total: 20_100,
+    },
+    benefitClaims: [
+      { monthKey: "2026-11", label: "Nov 2026", amount: 250, count: 1 },
+    ],
+    cards: {
+      totalOutgoingSalary: 39_200,
+      outgoingSalaryMonths: 2,
+      totalSalaryStructures: 1,
+      benefitClaimsTotal: 250,
+      benefitClaimsCount: 1,
+      incentiveTotal: 500,
+      incentiveCount: 1,
+      statutoryDeclined: true,
+    },
+  };
+
+  it("renders the six cards + four charts off one payload", async () => {
+    getPayrollAnalytics.mockResolvedValue({ ok: true, data: fullPayload });
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const panel = await screen.findByTestId("payroll-analytics");
+    const text = panel.textContent ?? "";
+    // The cards.
+    expect(text).toContain("$39,200.00"); // outgoing salary total
+    expect(text).toContain("Outgoing salary · 2 months");
+    expect(text).toContain("Active salary structures");
+    expect(text).toContain("$250.00"); // benefit claims total
+    expect(text).toContain("1 claim");
+    expect(text).toContain("$500.00"); // incentives
+    // The window note names the basis.
+    expect(screen.getByTestId("analytics-window-note").textContent).toContain("last 2 paid months");
+    // The charts (testids + their data).
+    expect(screen.getByTestId("chart-outgoing-salary")).toBeTruthy();
+    expect(screen.getByTestId("chart-benefit-claims")).toBeTruthy();
+    const dept = screen.getByTestId("chart-department-salary");
+    expect(dept.textContent).toContain("ENGINEERING");
+    expect(dept.textContent).toContain("No department");
+    expect(screen.getByTestId("chart-designation-salary").textContent).toContain("Data Engineer");
+    // The anchor month rides the slice headers.
+    expect(screen.getByTestId("dept-salary-header").textContent).toContain("2026-11");
+    expect(screen.getByTestId("designation-salary-header").textContent).toContain("2026-11");
+  });
+
+  it("the two statutory cards render '—' with the ADR-014 note, never a fake zero", async () => {
+    getPayrollAnalytics.mockResolvedValue({ ok: true, data: fullPayload });
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const cards = await screen.findByTestId("payroll-analytics-cards");
+    const text = cards.textContent ?? "";
+    expect(text).toContain("Tax exemption proofs · statutory, declined (ADR-014)");
+    expect(text).toContain("Declarations submitted · statutory, declined (ADR-014)");
+    expect(text).toContain("—");
+  });
+
+  it("an empty workspace renders the honest empty states, not zeros", async () => {
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    const panel = await screen.findByTestId("payroll-analytics");
+    const text = panel.textContent ?? "";
+    expect(screen.getByTestId("analytics-window-note").textContent).toContain("no locked runs yet");
+    expect(screen.getByTestId("chart-outgoing-salary").textContent).toContain("No locked runs yet");
+    expect(screen.getByTestId("chart-department-salary").textContent).toContain("No locked runs yet");
+    expect(text).toContain("$0.00"); // the honest zero cards
+    expect(text).toContain("0 months");
+  });
+
+  it("a failed analytics fetch leaves the view standing (no panel, no crash)", async () => {
+    getPayrollAnalytics.mockResolvedValue({ ok: false, error: "boom" });
+    render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
+    expect(await screen.findByTestId("run-row-2026-11")).toBeTruthy();
+    expect(screen.queryByTestId("payroll-analytics")).toBeNull();
   });
 });

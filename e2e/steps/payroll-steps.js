@@ -247,3 +247,56 @@ Then("the payslip provenance note should say the LOP was auto-derived", async fu
     `provenance note should say Auto-derived, got: ${text}`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// P22 (PR-C01–04, PR-N01–06) — the analytics panel on the Payroll view.
+// ---------------------------------------------------------------------------
+
+Then("the payroll analytics panel should render the six number cards", async function () {
+  const driver = await this.getDriver();
+  const panel = await driver.wait(
+    until.elementLocated(By.css('[data-testid="payroll-analytics"]')),
+    15_000,
+    "no analytics panel rendered",
+  );
+  const cards = await panel.findElements(
+    By.css('[data-testid="payroll-analytics-cards"] > *'),
+  );
+  assert.ok(
+    cards.length === 6,
+    `expected 6 analytics cards, got ${cards.length}`,
+  );
+});
+
+Then("the outgoing salary chart should show paid months", async function () {
+  const driver = await this.getDriver();
+  const chart = await driver.wait(
+    until.elementLocated(By.css('[data-testid="chart-outgoing-salary"]')),
+    15_000,
+    "no outgoing-salary chart rendered",
+  );
+  const text = await chart.getText();
+  // Seeded LOCKED runs exist (the runs scenario pins that), so the trend has
+  // real buckets: a max callout and a month label must render.
+  assert.ok(/max \$/.test(text), `outgoing chart should show the max callout, got: ${text}`);
+  assert.ok(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}/.test(text),
+    `outgoing chart should show month labels, got: ${text}`);
+});
+
+Then("the statutory cards should render the ADR-014 note", async function () {
+  const driver = await this.getDriver();
+  const cards = await driver.wait(
+    until.elementLocated(By.css('[data-testid="payroll-analytics-cards"]')),
+    15_000,
+    "no analytics cards rendered",
+  );
+  const text = await cards.getText();
+  assert.ok(
+    text.includes("statutory, declined (ADR-014)"),
+    `the statutory cards should name the ADR-014 decline, got: ${text}`,
+  );
+  assert.ok(
+    text.includes("—"),
+    `the statutory cards should render an em dash, never a fake zero, got: ${text}`,
+  );
+});

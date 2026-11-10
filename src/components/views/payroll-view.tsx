@@ -10,12 +10,13 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { Award, BookOpen, CalendarPlus, CircleDollarSign, Download, HeartPulse, Landmark, Loader2, Lock, Pause, Plus, RotateCcw, Scale, Undo2, Users, Wallet } from "lucide-react";
+import { Award, Banknote, BarChart3, BookOpen, CalendarPlus, CircleDollarSign, Download, FileText, HeartPulse, Landmark, Layers, Loader2, Lock, Pause, Plus, RotateCcw, Scale, ShieldAlert, Undo2, Users, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
 import {
   createPayrollRun,
+  getPayrollAnalytics,
   getPayrollData,
   getPayrollRun,
   lockPayrollRun,
@@ -44,6 +45,12 @@ import { GratuityRuleModal } from "../ui/gratuity-rule-modal";
 import { WithholdingModal } from "../ui/withholding-modal";
 import { BulkStructureModal } from "../ui/bulk-structure-modal";
 import { getDirectory } from "@/server-actions/hr-directory";
+// P22 (PR-C01–04, PR-N01–06) — the analytics payload type + the shared
+// dependency-free SVG chart pair (recharts stays in the lazy Analytics chunk —
+// L-P1-17 bundle budget) + the StatCard the six number cards ride.
+import type { PayrollAnalytics } from "@/lib/payroll-analytics";
+import { TrendChart, BarListChart } from "../ui/svg-charts";
+import { StatCard } from "../ui/stat-card";
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -93,6 +100,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [lockConfirmId, setLockConfirmId] = useState<string | null>(null);
   // The employee picker lists every account (not just those with structures).
   const [employees, setEmployees] = useState<{ userId: string; name: string }[]>([]);
+  // P22 (PR-C01–04, PR-N01–06) — the read-time analytics payload (four charts
+  // + six cards; LOCKED-run basis, refreshed on every load()).
+  const [analytics, setAnalytics] = useState<PayrollAnalytics | null>(null);
 
   const load = useCallback(async () => {
     const res = await getPayrollData();
@@ -107,6 +117,10 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     } else {
       toast.error(res.error);
     }
+    // P22 — the analytics panel refreshes with the same reload (read-time,
+    // locked-run basis; a failed fetch leaves the last good panel up).
+    const an = await getPayrollAnalytics();
+    if (an.ok) setAnalytics(an.data);
     const dir = await getDirectory();
     if (dir.ok) setEmployees(dir.data.profiles.map((p) => ({ userId: p.userId, name: p.name })));
     setLoaded(true);
@@ -278,6 +292,132 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           them through your compliance provider. Decision record: <span className="font-mono text-xs">docs/DECISIONS.md</span> (ADR-014).
         </span>
       </div>
+
+      {/* P22 (PR-C01–04, PR-N01–06) — the analytics panel: the four benchmark
+          payroll charts + the six number cards, read-time over LOCKED runs only
+          (draft money never reaches an analytics surface — the same
+          published-only basis as payslip self-service). The two statutory cards
+          render "—" with the ADR-014 note instead of a misleading zero. */}
+      {analytics && (
+        <div className="rounded-lg border border-border" data-testid="payroll-analytics">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border flex-wrap">
+            <BarChart3 size={14} className="text-sky-500" />
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Analytics</div>
+            <span className="text-xs text-muted-foreground ml-auto" data-testid="analytics-window-note">
+              {analytics.cards.outgoingSalaryMonths > 0
+                ? `last ${analytics.cards.outgoingSalaryMonths} paid month${analytics.cards.outgoingSalaryMonths === 1 ? "" : "s"} · disbursed net (held money excluded)`
+                : "no locked runs yet — analytics appear once a run is paid"}
+            </span>
+          </div>
+          <div className="p-4 space-y-5">
+            {/* PR-N01–06 — the six number cards. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3" data-testid="payroll-analytics-cards">
+              <StatCard
+                icon={Banknote}
+                value={money(analytics.cards.totalOutgoingSalary)}
+                label={`Outgoing salary · ${analytics.cards.outgoingSalaryMonths} month${analytics.cards.outgoingSalaryMonths === 1 ? "" : "s"}`}
+                iconColor="text-emerald-600"
+                iconBg="bg-emerald-500/10"
+              />
+              <StatCard
+                icon={Layers}
+                value={analytics.cards.totalSalaryStructures}
+                label="Active salary structures"
+                iconColor="text-sky-600"
+                iconBg="bg-sky-500/10"
+              />
+              <StatCard
+                icon={HeartPulse}
+                value={money(analytics.cards.benefitClaimsTotal)}
+                label={`Benefit claims · ${analytics.cards.benefitClaimsCount} claim${analytics.cards.benefitClaimsCount === 1 ? "" : "s"}`}
+                iconColor="text-violet-600"
+                iconBg="bg-violet-500/10"
+              />
+              <StatCard
+                icon={ShieldAlert}
+                value="—"
+                label="Tax exemption proofs · statutory, declined (ADR-014)"
+                iconColor="text-amber-600"
+                iconBg="bg-amber-500/10"
+              />
+              <StatCard
+                icon={FileText}
+                value="—"
+                label="Declarations submitted · statutory, declined (ADR-014)"
+                iconColor="text-amber-600"
+                iconBg="bg-amber-500/10"
+              />
+              <StatCard
+                icon={Award}
+                value={money(analytics.cards.incentiveTotal)}
+                label={`Incentives given · ${analytics.cards.incentiveCount} row${analytics.cards.incentiveCount === 1 ? "" : "s"}`}
+                iconColor="text-orange-600"
+                iconBg="bg-orange-500/10"
+              />
+            </div>
+            {/* PR-C01 / PR-C04 — the two month trends. */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <div className="rounded-lg border border-border p-4">
+                <div className="text-xs font-semibold mb-2">Outgoing salary (disbursed net / month)</div>
+                <TrendChart
+                  title="Outgoing salary — disbursed net per month"
+                  points={analytics.outgoing.map((m) => ({ label: m.label, value: m.net }))}
+                  formatValue={(n) => money(n)}
+                  emptyHint="No locked runs yet — the trend appears once a run is paid."
+                  testId="chart-outgoing-salary"
+                />
+              </div>
+              <div className="rounded-lg border border-border p-4">
+                <div className="text-xs font-semibold mb-2">Benefit claims ($ / month)</div>
+                <TrendChart
+                  title="Benefit claims — claimed amount per month"
+                  points={analytics.benefitClaims.map((m) => ({ label: m.label, value: m.amount }))}
+                  formatValue={(n) => money(n)}
+                  color="#8b5cf6"
+                  fill="rgba(139,92,246,0.12)"
+                  emptyHint="No benefit claims yet — elect benefits and file a claim to see the trend."
+                  testId="chart-benefit-claims"
+                />
+              </div>
+            </div>
+            {/* PR-C02 / PR-C03 — the latest-paid-month slices (the anchor rides
+                each panel's header so the window is always stated). */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <div className="rounded-lg border border-border p-4">
+                <div className="text-xs font-semibold mb-2" data-testid="dept-salary-header">
+                  Salary by department
+                  {analytics.departmentSalary.anchorMonth && (
+                    <span className="ml-2 font-normal text-muted-foreground">{analytics.departmentSalary.anchorMonth}</span>
+                  )}
+                </div>
+                <BarListChart
+                  title="Salary by department — gross in the latest paid month"
+                  rows={analytics.departmentSalary.rows.map((r) => ({ label: r.label, value: r.amount }))}
+                  formatValue={(n) => money(n)}
+                  emptyHint="No locked runs yet — the slice appears once a run is paid."
+                  testId="chart-department-salary"
+                />
+              </div>
+              <div className="rounded-lg border border-border p-4">
+                <div className="text-xs font-semibold mb-2" data-testid="designation-salary-header">
+                  Salary by job title
+                  {analytics.designationSalary.anchorMonth && (
+                    <span className="ml-2 font-normal text-muted-foreground">{analytics.designationSalary.anchorMonth}</span>
+                  )}
+                </div>
+                <BarListChart
+                  title="Salary by job title — gross in the latest paid month"
+                  rows={analytics.designationSalary.rows.map((r) => ({ label: r.label, value: r.amount }))}
+                  formatValue={(n) => money(n)}
+                  color="#38bdf8"
+                  emptyHint="No locked runs yet — the slice appears once a run is paid."
+                  testId="chart-designation-salary"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* New run — P10: any cadence, resolved live through the windows kernel.
           P14 (PR-04): an optional employee filter scopes the snapshot. */}

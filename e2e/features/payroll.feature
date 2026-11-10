@@ -15,6 +15,16 @@ Feature: Payroll (Recruitment R7)
     And the payroll view should show a LOCKED run and an OPEN run
     And the payroll view should list salary structures
 
+  Scenario: HR sees the payroll analytics panel (P22)
+    The four charts and six number cards render read-time off the LOCKED
+    runs (the same published-only basis as payslip self-service); the two
+    statutory cards state the ADR-014 decline instead of a fake zero.
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Payroll" view
+    Then the payroll analytics panel should render the six number cards
+    And the outgoing salary chart should show paid months
+    And the statutory cards should render the ADR-014 note
+
   Scenario: HR opens a payslip with the seeded LOP deduction
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Payroll" view

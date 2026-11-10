@@ -95,6 +95,9 @@ import {
   computeRunningAggregates,
   type OpeningYtdEntry,
 } from "@/lib/payslip-aggregates";
+// P22 (PR-C01–04, PR-N01–06) — the pure analytics kernel behind the Payroll
+// view's charts + cards panel.
+import { buildPayrollAnalytics, type PayrollAnalytics } from "@/lib/payroll-analytics";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -1943,6 +1946,83 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         ...(showLeaveBalances ? { leaveBalances: myBalances } : {}),
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
       }));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// P22 (PR-C01–04, PR-N01–06) — read-time payroll analytics
+// ---------------------------------------------------------------------------
+
+/** The Payroll view's analytics panel: the four charts (outgoing salary,
+ * department-wise salary, designation-wise salary, benefit claims) and the
+ * six number cards, over LOCKED runs only — draft money never reaches an
+ * analytics surface (the same published-only basis as self-service).
+ *
+ * RBAC: payroll:manage (the view itself already requires it — this keeps the
+ * action independently safe). Read-only: no audit row (the export gate audits
+ * file downloads; reads are not side effects). */
+export async function getPayrollAnalytics(): Promise<ActionResult<PayrollAnalytics>> {
+  return toResult(async () => {
+    await requirePermission("payroll:manage");
+
+    const [slipRows, structureCount, claimRows, incentiveRows] = await Promise.all([
+      db.payslip.findMany({
+        where: { run: { status: "LOCKED" } },
+        select: {
+          userId: true,
+          gross: true,
+          net: true,
+          withholdStatus: true,
+          run: { select: { period: true, endDate: true } },
+        },
+      }),
+      db.salaryStructure.count({ where: { isActive: true } }),
+      db.benefitAccrual.findMany({
+        where: { entryType: "CLAIM" },
+        select: { delta: true, period: true, createdAt: true },
+      }),
+      db.payAdjustment.findMany({
+        where: { sourceType: "INCENTIVE" },
+        select: { amount: true },
+      }),
+    ]);
+
+    // The claims ledger stores negative deltas (the append-only discipline);
+    // the kernel consumes magnitudes.
+    const claims = claimRows.map((c) => ({
+      amount: Math.abs(c.delta),
+      // windowEndMs: the claim's consuming month — the stored period when
+      // present (the locking run's period), else createdAt's month.
+      windowEndMs: c.period
+        ? runWindowEnd(c.period)?.getTime() ?? c.createdAt.getTime()
+        : c.createdAt.getTime(),
+    }));
+
+    // Join the profile dimensions for the dimension charts (one read; users
+    // without a profile keep the honest "No department" bucket).
+    const profileRows = await db.employeeProfile.findMany({
+      select: { userId: true, department: true, jobTitle: true },
+    });
+    const profileByUser = new Map(profileRows.map((p) => [p.userId, p]));
+    const dimensionedSlips = slipRows.map((s) => {
+      const profile = profileByUser.get(s.userId);
+      return {
+        userId: s.userId,
+        gross: s.gross,
+        net: s.net,
+        withholdStatus: s.withholdStatus,
+        department: profile?.department ?? "",
+        jobTitle: profile?.jobTitle ?? "",
+        windowEndMs: runWindowEnd(s.run.period, s.run.endDate)?.getTime() ?? 0,
+      };
+    });
+
+    return buildPayrollAnalytics({
+      slips: dimensionedSlips,
+      claims,
+      incentives: incentiveRows.map((i) => ({ amount: i.amount })),
+      activeStructures: structureCount,
+    });
   });
 }
 
