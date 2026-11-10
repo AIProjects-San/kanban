@@ -175,12 +175,12 @@ Feature: HR leave management
 
   @hr-e
   Scenario: A customized notification template flows into the leave notifications
-    The admin customizes the "leave decided" template in Settings →
+    The admin customizes the "leave decided" template in Workspace Config →
     Notifications; the decision notification the member then receives is
     rendered from the customized template, and resetting restores the
     system default without touching the already-delivered notification.
     When I sign in as "demo@fernly.app" with the demo password
-    And I open the "Settings" view
+    And I open the "Workspace Config" view
     And I open the notification templates settings tab
     Then the leave decided template shows the system default
     When I customize the leave decided notification to title "SIGNED OFF: {{typeName}}" and message "{{deciderName}} signed off on your {{daysCount}}-day {{typeName}}{{noteClose}}"
@@ -192,7 +192,7 @@ Feature: HR leave management
     And I sign in as "demo@fernly.app" with the demo password
     And I open the "HR" view
     And I approve the request with reason "Template flow e2e"
-    And I open the "Settings" view
+    And I open the "Workspace Config" view
     And I open the notification templates settings tab
     And I reset the leave decided notification template
     Then the leave decided template shows the system default
@@ -205,15 +205,15 @@ Feature: HR leave management
   # --- P25 (PL-02): the engagement reminder engine ------------------------
 
   @hr-e
-  Scenario: The engagement reminder switches and template cards render in Settings
-    The engine's knobs live in Settings → General (birthday, anniversary and
+  Scenario: The engagement reminder switches and template cards render in Workspace Config
+    The engine's knobs live in Workspace Config → General (birthday, anniversary and
     holiday digests + the days-ahead window + the opt-in email rail), and
     its three events join the notification template registry — so the
     Notifications tab grows their cards automatically.
     When I sign in as "demo@fernly.app" with the demo password
-    And I open the "Settings" view
+    And I open the "Workspace Config" view
     Then the engagement reminder toggles should render
     And I open the notification templates settings tab
-    And the EMPLOYEE_BIRTHDAY notification template card should render
-    And the EMPLOYEE_ANNIVERSARY notification template card should render
-    And the HOLIDAY_UPCOMING notification template card should render
+    And the "EMPLOYEE_BIRTHDAY" notification template card should render
+    And the "EMPLOYEE_ANNIVERSARY" notification template card should render
+    And the "HOLIDAY_UPCOMING" notification template card should render
