@@ -581,16 +581,36 @@ Then("the leave balance for {string} should show the accrued advance balance", a
 // ---------------------------------------------------------------------------
 
 async function openNotificationsSettingsTab(driver) {
-  const tab = await driver.wait(
-    until.elementLocated(By.css("[data-testid='settings-tab-notification-templates']")),
-    10_000,
-    "notification templates tab button not found",
-  );
-  await driver.executeScript("arguments[0].click();", tab);
-  await driver.wait(
-    until.elementsLocated(By.css("[data-testid='notification-template-card-LEAVE_PENDING']")),
-    10_000,
-    "notification template cards did not render",
+  // The tab button's DOM click can be SWALLOWED while the settings view is
+  // still hydrating (dev-server compile + HMR reconnect cycles): the click
+  // lands on a not-yet-listening button, activeTab never moves, and the
+  // card wait times out with the General tab still on screen — exactly how
+  // CI run 42887716370 lost an attempt (the After-hook screenshot showed
+  // the General tab, no toast). So poll the CARD (the button alone proves
+  // nothing) and RE-CLICK until the panel actually mounts; the loop also
+  // survives a mid-scenario HMR reload that resets activeTab to General.
+  const tabSelector = "[data-testid='settings-tab-notification-templates']";
+  const cardSelector = "[data-testid='notification-template-card-LEAVE_PENDING']";
+  const deadline = Date.now() + 20_000;
+  let lastErr = null;
+  while (Date.now() < deadline) {
+    const tab = await driver.wait(
+      until.elementLocated(By.css(tabSelector)),
+      10_000,
+      "notification templates tab button not found",
+    );
+    await driver.executeScript("arguments[0].click();", tab);
+    try {
+      await driver.wait(until.elementsLocated(By.css(cardSelector)), 3_000);
+      return; // the panel mounted — the cards are on the DOM
+    } catch (err) {
+      lastErr = err; // the click was swallowed (hydration) — click again
+    }
+  }
+  throw new Error(
+    `notification template cards did not render after repeated tab clicks (${
+      lastErr ? String(lastErr.message ?? lastErr) : "unknown cause"
+    })`,
   );
 }
 

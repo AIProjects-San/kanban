@@ -182,6 +182,12 @@ Feature: HR leave management
     When I sign in as "demo@fernly.app" with the demo password
     And I open the "Workspace Config" view
     And I open the notification templates settings tab
+    # Retry self-heal: a first attempt that dies after the customize step
+    # leaves the LEAVE_DECIDED override behind (cucumber retry rolls back
+    # nothing) — resetting here is a no-op on a clean run (the button is
+    # disabled without a row) and deletes the leftover on a retry, so the
+    # "System default" assertion below can pass either way.
+    And I reset the leave decided notification template
     Then the leave decided template shows the system default
     When I customize the leave decided notification to title "SIGNED OFF: {{typeName}}" and message "{{deciderName}} signed off on your {{daysCount}}-day {{typeName}}{{noteClose}}"
     And I sign out
