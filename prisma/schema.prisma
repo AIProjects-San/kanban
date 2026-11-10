@@ -317,6 +317,14 @@ model Notification {
   // createdAt DESC; the composite with recipientUserId serves the common
   // `recipient = me OR null` + newest-first query.
   @@index([recipientUserId, createdAt])
+  // P25 (PL-02) — deterministic dedup key for SCHEDULED notifications
+  // (the engagement digests: `ENGAGEMENT:BIRTHDAY:2026-11-10` etc). Unique
+  // across the table, so a createMany({ skipDuplicates }) re-run of the
+  // daily job writes nothing — the same discipline the leave-allocation
+  // job gets from its ledger sourceIds, lifted into the notification
+  // surface. Null (the default) = an ordinary interactive notification;
+  // both SQLite and Postgres allow many nulls under a UNIQUE index.
+  sourceKey String? @unique
 }
 
 // ---------------------------------------------------------------------------
@@ -581,6 +589,23 @@ model Workspace {
   // in-app notifications, delivered best-effort (the P18 discipline).
   // Default OFF = the F-R17 zero-mail posture.
   emailLeaveNotifications Boolean @default(false)
+  // P25 (PL-02/EM-23/EM-J01–03) — the engagement reminder switches (the
+  // benchmark HR Settings' reminders block, incl. its
+  // stop-birthday-reminders field). The three in-app digests default ON
+  // (the benchmark ships them on; they are single broadcast rows per day
+  // and only fire when the daily cron route runs — no scheduler, no rows).
+  remindBirthdays          Boolean @default(true)
+  remindAnniversaries      Boolean @default(true)
+  remindHolidays           Boolean @default(true)
+  // EM-J03 — how many days ahead of each holiday the reminder fires (the
+  // daily job matches `holidayDate - today == daysAhead` exactly, so each
+  // holiday reminds exactly once; clamped 1-30 at read time).
+  holidayReminderDaysAhead Int    @default(7)
+  // P25 — the EMAIL half of the engine (one digest outbox row per live
+  // member per due event, rendered through the P24 template registry).
+  // Default OFF = the F-R17 zero-mail posture; the outbox honesty records
+  // SKIPPED rows when no provider is configured.
+  emailEngagementReminders Boolean @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -1193,6 +1218,12 @@ model EmployeeProfile {
   probationEndsAt      DateTime?
   noticePeriodWeeks    Int?
   lastWorkingDay       DateTime?
+  // P25 (PL-02/EM-J01) — the birthday reminder engine's input. Nullable
+  // and date-only semantics (stored at UTC midnight): a member may omit it
+  // entirely (privacy-friendly — no birthday, no reminder), and the year
+  // is HONEST data (the engine only ever compares month+day; the roster
+  // never displays the year). HR-owned like hireDate, never self-service.
+  birthDate            DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

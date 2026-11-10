@@ -80,6 +80,14 @@ export async function updateWorkspaceSettings(input: Partial<{
    * F-R17 zero-mail posture; Settings → General; the leave chain queues
    * LEAVE_PENDING / LEAVE_DECIDED outbox rows when on). */
   emailLeaveNotifications?: boolean;
+  /** P25 (PL-02/EM-23) — the engagement digest switches + the holiday
+   * days-ahead knob (Settings → General; the daily cron route reads them). */
+  remindBirthdays?: boolean;
+  remindAnniversaries?: boolean;
+  remindHolidays?: boolean;
+  holidayReminderDaysAhead?: number;
+  /** P25 — the opt-in email half of the engagement engine. */
+  emailEngagementReminders?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

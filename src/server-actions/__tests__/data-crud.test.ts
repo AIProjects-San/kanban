@@ -1330,6 +1330,35 @@ describe("workspace config mutations", () => {
     );
   });
 
+  it("P25: updateWorkspaceSettings persists the engagement reminder switches", async () => {
+    db.workspace.upsert.mockResolvedValue({});
+    await updateWorkspaceSettings({
+      remindBirthdays: false,
+      remindAnniversaries: true,
+      remindHolidays: true,
+      holidayReminderDaysAhead: 14,
+      emailEngagementReminders: true,
+    });
+    expect(db.workspace.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          remindBirthdays: false,
+          remindAnniversaries: true,
+          remindHolidays: true,
+          holidayReminderDaysAhead: 14,
+          emailEngagementReminders: true,
+        }),
+      }),
+    );
+  });
+
+  it("P25: the days-ahead knob is bounded at the schema gate (1–30)", async () => {
+    db.workspace.upsert.mockResolvedValue({});
+    const res = await updateWorkspaceSettings({ holidayReminderDaysAhead: 45 });
+    expect(res.ok).toBe(false);
+    expect(db.workspace.upsert).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["createConfigItem", "create"],
     ["updateConfigItem", "update"],

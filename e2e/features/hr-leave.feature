@@ -201,3 +201,19 @@ Feature: HR leave management
     And I open the notifications bell
     Then the notification feed should mention "SIGNED OFF: Annual Leave"
     And the notification feed should mention "signed off on your 2-day Annual Leave"
+
+  # --- P25 (PL-02): the engagement reminder engine ------------------------
+
+  @hr-e
+  Scenario: The engagement reminder switches and template cards render in Settings
+    The engine's knobs live in Settings → General (birthday, anniversary and
+    holiday digests + the days-ahead window + the opt-in email rail), and
+    its three events join the notification template registry — so the
+    Notifications tab grows their cards automatically.
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "Settings" view
+    Then the engagement reminder toggles should render
+    And I open the notification templates settings tab
+    And the EMPLOYEE_BIRTHDAY notification template card should render
+    And the EMPLOYEE_ANNIVERSARY notification template card should render
+    And the HOLIDAY_UPCOMING notification template card should render

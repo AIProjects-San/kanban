@@ -343,6 +343,8 @@ export interface EmployeeProfileT {
   /** QA-19: "" means "not classified yet" — rendered as "—" until HR sets it. */
   department: "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT" | "";
   hireDate: string | null;
+  /** P25 (PL-02) — the birthday engine's input; null = not on file. */
+  birthDate: string | null;
   phone: string;
   location: string;
   emergencyContactName: string;

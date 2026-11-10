@@ -665,3 +665,33 @@ Then("the notification feed should mention {string}", async function (text) {
     `notification feed never mentioned "${text}"`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// P25 (PL-02) — the engagement reminder engine's settings surfaces.
+// ---------------------------------------------------------------------------
+
+Then("the engagement reminder toggles should render", async function () {
+  const driver = await this.getDriver();
+  for (const testId of [
+    "birthday-reminders-toggle",
+    "anniversary-reminders-toggle",
+    "holiday-reminders-toggle",
+    "engagement-email-toggle",
+    "holiday-days-ahead-input",
+  ]) {
+    await driver.wait(
+      until.elementLocated(By.css(`[data-testid='${testId}']`)),
+      10_000,
+      `${testId} did not render`,
+    );
+  }
+});
+
+Then("the {string} notification template card should render", async function (eventKey) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css(`[data-testid='notification-template-card-${eventKey}']`)),
+    10_000,
+    `${eventKey} template card did not render`,
+  );
+});

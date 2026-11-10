@@ -43,6 +43,10 @@ export const MAINTENANCE_LAST_RUN_KEY = `${redisKeyPrefix()}maintenance:last_run
 /** F2.4 — the leave-allocation job's OWN lock key (separate identity from
  * the audit purge's: one job's run must never suppress the other's). */
 export const LEAVE_ALLOCATION_LOCK_KEY = `${redisKeyPrefix()}maintenance:leave_allocation`;
+/** P25 (PL-02) — the engagement-reminders job's own lock identity (the
+ * birthday/anniversary/holiday digests run beside the two above in the
+ * scheduler's daily pass). */
+export const EMPLOYEE_REMINDERS_LOCK_KEY = `${redisKeyPrefix()}maintenance:employee_reminders`;
 
 export interface MaintenanceLockResult {
   acquired: boolean;

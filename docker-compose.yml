@@ -182,6 +182,15 @@ services:
             --header="Authorization: Bearer $${CRON_SECRET}" \
             http://nginx/api/cron/leave-allocation 2>&1 | tail -n 4
           echo "[audit-cron] $$(date -u +%FT%TZ) leave-allocation call finished"
+          # P25 (F3.10) — the engagement-reminders pass (birthday, work
+          # anniversary, advance-holiday digests). Own maintenance-lock
+          # identity; idempotent on its own (unique Notification.sourceKey);
+          # the workspace switches gate every digest.
+          echo "[audit-cron] $$(date -u +%FT%TZ) calling /api/cron/employee-reminders"
+          wget -q -O- --server-response \
+            --header="Authorization: Bearer $${CRON_SECRET}" \
+            http://nginx/api/cron/employee-reminders 2>&1 | tail -n 4
+          echo "[audit-cron] $$(date -u +%FT%TZ) employee-reminders call finished"
         done
 
 volumes:

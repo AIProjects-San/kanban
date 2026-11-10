@@ -153,6 +153,19 @@ export interface WorkspaceSettingsT {
    * requester on decision, beside the unconditional in-app rows. Default
    * OFF = the F-R17 zero-mail posture. */
   emailLeaveNotifications: boolean;
+  /** P25 (PL-02/EM-23) — the three engagement digest switches (birthday,
+   * work anniversary, advance-holiday in-app broadcasts). Default ON (the
+   * benchmark's own default); they only fire via the daily cron route. */
+  remindBirthdays: boolean;
+  remindAnniversaries: boolean;
+  remindHolidays: boolean;
+  /** P25 (EM-J03) — days ahead of each holiday the reminder fires
+   * (exact-day match, clamped 1–30). Default 7. */
+  holidayReminderDaysAhead: number;
+  /** P25 — the EMAIL half of the engagement engine (one digest outbox row
+   * per live member per due event, via the P24 template registry).
+   * Default OFF = the F-R17 zero-mail posture. */
+  emailEngagementReminders: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -333,6 +346,11 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           showLeaveBalancesOnSlip: workspace.showLeaveBalancesOnSlip === true,
           emailPayslipsOnLock: workspace.emailPayslipsOnLock === true,
           emailLeaveNotifications: workspace.emailLeaveNotifications === true,
+          remindBirthdays: workspace.remindBirthdays !== false,
+          remindAnniversaries: workspace.remindAnniversaries !== false,
+          remindHolidays: workspace.remindHolidays !== false,
+          holidayReminderDaysAhead: Math.min(Math.max(Math.round(workspace.holidayReminderDaysAhead) || 7, 1), 30),
+          emailEngagementReminders: workspace.emailEngagementReminders === true,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -360,6 +378,11 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           showLeaveBalancesOnSlip: false,
           emailPayslipsOnLock: false,
           emailLeaveNotifications: false,
+          remindBirthdays: true,
+          remindAnniversaries: true,
+          remindHolidays: true,
+          holidayReminderDaysAhead: 7,
+          emailEngagementReminders: false,
         },
 
     taskStatuses: taskStatuses.length

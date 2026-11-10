@@ -33,7 +33,7 @@ const VALID_DEPARTMENTS = new Set<string>(DEPARTMENT_LABELS.map((d) => d.key));
 function serialize(
   row: {
     id: string; userId: string; employeeNumber: string | null; leaveApproverId: string | null; jobTitle: string; department: string;
-    hireDate: Date | null; phone: string; location: string;
+    hireDate: Date | null; birthDate: Date | null; phone: string; location: string;
     emergencyContactName: string; emergencyContactPhone: string;
     skills: string; notes: string; createdAt: Date; updatedAt: Date;
     employmentStatus: string; probationEndsAt: Date | null;
@@ -53,6 +53,7 @@ function serialize(
     jobTitle: row.jobTitle,
     department: row.department as EmployeeProfileT["department"],
     hireDate: row.hireDate ? row.hireDate.toISOString().slice(0, 10) : null,
+    birthDate: row.birthDate ? row.birthDate.toISOString().slice(0, 10) : null,
     phone: row.phone,
     location: row.location,
     emergencyContactName: row.emergencyContactName,
@@ -185,6 +186,8 @@ export async function updateProfileAsAdmin(userId: string, input: {
   jobTitle?: string;
   department?: string;
   hireDate?: string | null;
+  /** P25 (PL-02) — the birthday engine's input (null clears it). */
+  birthDate?: string | null;
   phone?: string;
   location?: string;
   emergencyContactName?: string;
@@ -229,6 +232,9 @@ export async function updateProfileAsAdmin(userId: string, input: {
     const hireDate = data.hireDate !== undefined
       ? data.hireDate ? new Date(`${data.hireDate}T00:00:00.000Z`) : null
       : undefined;
+    const birthDate = data.birthDate !== undefined
+      ? data.birthDate ? new Date(`${data.birthDate}T00:00:00.000Z`) : null
+      : undefined;
     const probationEndsAt = data.probationEndsAt !== undefined
       ? data.probationEndsAt ? new Date(`${data.probationEndsAt}T00:00:00.000Z`) : null
       : undefined;
@@ -246,6 +252,7 @@ export async function updateProfileAsAdmin(userId: string, input: {
         // "ENGINEERING".
         department: data.department ?? "",
         hireDate: hireDate ?? null,
+        birthDate: birthDate ?? null,
         phone: data.phone ?? "",
         location: data.location ?? "",
         emergencyContactName: data.emergencyContactName ?? "",
@@ -261,6 +268,7 @@ export async function updateProfileAsAdmin(userId: string, input: {
         ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
         ...(data.department !== undefined ? { department: data.department } : {}),
         ...(hireDate !== undefined ? { hireDate } : {}),
+        ...(birthDate !== undefined ? { birthDate } : {}),
         ...(data.phone !== undefined ? { phone: data.phone } : {}),
         ...(data.location !== undefined ? { location: data.location } : {}),
         ...(data.emergencyContactName !== undefined ? { emergencyContactName: data.emergencyContactName } : {}),

@@ -158,6 +158,29 @@ const LEAVE_DECIDED_VARIABLES: NotificationTemplateVariable[] = [
   },
 ];
 
+// P25 (PL-02) — the engagement digest variables. `names` is pre-composed by
+// the job (the birthday/anniversary list, anniversaries carrying their
+// "(N years)" suffix) — the digest lists people, so the writer composes the
+// list and the template places it.
+const BIRTHDAY_VARIABLES: NotificationTemplateVariable[] = [
+  { name: "names", description: "The employees whose birthday it is, comma-separated.", sample: "Rafael Costa, Hana Park" },
+  { name: "count", description: "How many birthdays today.", sample: "2" },
+  { name: "date", description: "Today's date (YYYY-MM-DD).", sample: "2026-11-10" },
+];
+
+const ANNIVERSARY_VARIABLES: NotificationTemplateVariable[] = [
+  { name: "names", description: "The employees marking a work anniversary, with “(N years)” each.", sample: "Ingrid Solberg (3 years)" },
+  { name: "count", description: "How many anniversaries today.", sample: "1" },
+  { name: "date", description: "Today's date (YYYY-MM-DD).", sample: "2026-11-10" },
+];
+
+const HOLIDAY_VARIABLES: NotificationTemplateVariable[] = [
+  { name: "holidayName", description: "The upcoming holiday's name.", sample: "Christmas Day" },
+  { name: "holidayDate", description: "The holiday's date (YYYY-MM-DD).", sample: "2026-12-25" },
+  { name: "daysAhead", description: "Days between today and the holiday (the workspace knob).", sample: "7" },
+  { name: "date", description: "Today's date (YYYY-MM-DD).", sample: "2026-12-18" },
+];
+
 /**
  * The registry itself. Order is the editor's order. First consumers: the
  * leave pair (LV-T01/LV-T02 rode P21 for the opt-in email half; P24 makes
@@ -210,6 +233,68 @@ export const NOTIFICATION_TEMPLATE_EVENTS: NotificationTemplateEventDef[] = [
         "Your {{days}} {{typeName}} request ({{startDate}} → {{endDate}}) has been {{decision}} by {{deciderName}}.{{noteSuffix}}",
         "",
         "The request is in Fernly under Leave.",
+        "",
+        "— Fernly HR",
+      ].join("\n"),
+    },
+  },
+  {
+    eventKey: "EMPLOYEE_BIRTHDAY",
+    label: "Birthday digest",
+    description:
+      "Fires daily (the scheduler's engagement pass) when one or more employees have a birthday. One workspace-wide in-app broadcast lists them; the email rides the workspace's engagement-email toggle (default off).",
+    channels: "In-app broadcast (scheduler) + email (opt-in)",
+    variables: BIRTHDAY_VARIABLES,
+    defaults: {
+      subject: "Birthdays today",
+      title: "Birthdays today",
+      message: "{{names}}",
+      body: [
+        "Birthdays today ({{date}}):",
+        "",
+        "{{names}}",
+        "",
+        "— Fernly HR",
+      ].join("\n"),
+    },
+  },
+  {
+    eventKey: "EMPLOYEE_ANNIVERSARY",
+    label: "Work-anniversary digest",
+    description:
+      "Fires daily when one or more employees mark a work anniversary (whole years since their hire date). One workspace-wide in-app broadcast lists them with their years; the email rides the workspace's engagement-email toggle (default off).",
+    channels: "In-app broadcast (scheduler) + email (opt-in)",
+    variables: ANNIVERSARY_VARIABLES,
+    defaults: {
+      subject: "Work anniversaries today",
+      title: "Work anniversaries today",
+      message: "{{names}}",
+      body: [
+        "Work anniversaries today ({{date}}):",
+        "",
+        "{{names}}",
+        "",
+        "— Fernly HR",
+      ].join("\n"),
+    },
+  },
+  {
+    eventKey: "HOLIDAY_UPCOMING",
+    label: "Upcoming-holiday notice",
+    description:
+      "Fires on the day exactly N days before each public holiday (the workspace's days-ahead knob, default 7). One workspace-wide in-app broadcast per holiday; the email rides the workspace's engagement-email toggle (default off).",
+    channels: "In-app broadcast (scheduler) + email (opt-in)",
+    variables: HOLIDAY_VARIABLES,
+    defaults: {
+      subject: "Upcoming holiday",
+      title: "Upcoming holiday: {{holidayName}}",
+      message: "{{holidayName}} on {{holidayDate}} — {{daysAhead}} day(s) away.",
+      body: [
+        "A public holiday is coming up.",
+        "",
+        "Holiday: {{holidayName}}",
+        "Date: {{holidayDate}}",
+        "Days ahead: {{daysAhead}}",
         "",
         "— Fernly HR",
       ].join("\n"),

@@ -271,6 +271,8 @@ function EditProfileModal({
 }) {
   const [jobTitle, setJobTitle] = useState("");
   const [department, setDepartment] = useState("ENGINEERING");
+  // P25 (PL-02) — the birthday engine's input ("" = not on file).
+  const [birthDate, setBirthDate] = useState("");
   const [phone, setPhone] = useState("");
   const [location, setLocation] = useState("");
   const [ecName, setEcName] = useState("");
@@ -294,6 +296,7 @@ function EditProfileModal({
     if (profile) {
       setJobTitle(profile.jobTitle);
       setDepartment(profile.department);
+      setBirthDate(profile.birthDate ?? "");
       setPhone(profile.phone);
       setLocation(profile.location);
       setEcName(profile.emergencyContactName);
@@ -344,6 +347,7 @@ function EditProfileModal({
           }
           const res = await updateProfileAsAdmin(profile.userId, {
             jobTitle, department, phone, location,
+            birthDate: birthDate || null,
             emergencyContactName: ecName, emergencyContactPhone: ecPhone, skills, notes,
             probationEndsAt: probationEndsAt || null,
             noticePeriodWeeks: noticeWeeks === "" ? null : Number(noticeWeeks),
@@ -375,6 +379,17 @@ function EditProfileModal({
           </Field>
           <Field label="Phone">
             <input className="f-input" value={phone} maxLength={40} onChange={(e) => setPhone(e.target.value)} />
+          </Field>
+          {/* P25 (PL-02) — the birthday reminder engine's input (date-only;
+            the roster never displays the year, the engine compares month+day). */}
+          <Field label="Birthday">
+            <input
+              className="f-input"
+              type="date"
+              value={birthDate}
+              data-testid="birth-date-input"
+              onChange={(e) => setBirthDate(e.target.value)}
+            />
           </Field>
           <Field label="Location">
             <input className="f-input" value={location} maxLength={100} onChange={(e) => setLocation(e.target.value)} />

@@ -48,6 +48,8 @@ function baseConfig(notificationTemplates: WorkspaceConfig["notificationTemplate
       unmarkedAttendanceMode: "IGNORED", payrollRoundingMode: "ROUND_2DP", overtimePayEnabled: false,
       fiscalYearStartMonth: 1, lopBasisMode: "HYBRID", showLeaveBalancesOnSlip: false,
       emailPayslipsOnLock: false, emailLeaveNotifications: false,
+      remindBirthdays: true, remindAnniversaries: true, remindHolidays: true,
+      holidayReminderDaysAhead: 7, emailEngagementReminders: false,
     },
     mail: { configured: false, provider: "none" },
     taskStatuses: [], projectStatuses: [], eventTypes: [], taskTags: [], priorities: [],

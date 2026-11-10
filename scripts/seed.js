@@ -1688,27 +1688,31 @@ async function main() {
     sorenLwd.setUTCDate(sorenLwd.getUTCDate() - 1);
   }
   const exitSeed = new Map([["Soren Lindqvist", sorenLwd]]);
+  // P25 (PL-02) — the 8th column is birthDate (fixed, honest dates; the
+  // engine compares month+day only). Most members carry one; the demo RBAC
+  // accounts (member@/manager@ are Theo/Ingrid rows) inherit their namesake
+  // profiles' dates through the userId map below.
   const profileSeed = [
-    ["Mira Hale", "Founder & Workspace Admin", "MANAGEMENT", "2024-01-15", "Auckland, NZ", "+64 21 555 0001", "Strategy, hiring, coffee sourcing"],
-    ["Ingrid Solberg", "Engineering Manager", "MANAGEMENT", "2024-03-04", "Oslo, Norway", "+47 405 55 002", "Team leadership, delivery, mentoring"],
-    ["Theo Vance", "Senior Frontend Engineer", "ENGINEERING", "2024-06-10", "Auckland, NZ", "+64 21 555 0003", "React, TypeScript, accessibility"],
-    ["Lena Okafor", "Backend Engineer", "ENGINEERING", "2024-08-19", "London, UK", "+44 7700 900004", "APIs, Postgres, performance tuning"],
-    ["Rafael Costa", "DevOps Engineer", "ENGINEERING", "2025-01-27", "São Paulo, Brazil", "+55 11 95555 0005", "Kubernetes, Terraform, observability"],
-    ["Yuki Tanaka", "Product Designer", "DESIGN", "2024-05-06", "Tokyo, Japan", "+81 90 5555 0006", "Design systems, prototyping, motion"],
-    ["Amara Diallo", "UX Researcher", "DESIGN", "2024-10-14", "Dakar, Senegal", "+221 77 555 0007", "Interviews, usability testing, insights"],
-    ["Soren Lindqvist", "QA Engineer", "ENGINEERING", "2025-02-03", "Stockholm, Sweden", "+46 70 555 0008", "Test automation, exploratory testing"],
-    ["Priya Nair", "Marketing Lead", "MARKETING", "2024-04-22", "Kolkata, India", "+91 98xxxxxxx9", "Brand, storytelling, campaigns"],
-    ["Marcus Bell", "Content Strategist", "MARKETING", "2025-03-17", "New York, USA", "+1 555 010 0010", "Copywriting, editorial planning"],
-    ["Hana Park", "Visual Designer", "DESIGN", "2024-11-11", "Seoul, South Korea", "+82 10 5550 0011", "Illustration, brand identity, typography"],
-    ["Diego Morales", "Mobile Engineer", "ENGINEERING", "2025-04-08", "Mexico City, Mexico", "+52 55 5555 0012", "React Native, offline-first, push"],
-    ["Remy Laurent", "People Operations Lead", "MANAGEMENT", "2025-05-20", "Paris, France", "+33 6 55 55 01 13", "People ops, onboarding design, coaching"],
-    ["Kofi Mensah", "Support Engineer", "ENGINEERING", "2025-06-02", "Accra, Ghana", "+233 20 555 0014", "Customer support, escalations, triage"],
+    ["Mira Hale", "Founder & Workspace Admin", "MANAGEMENT", "2024-01-15", "Auckland, NZ", "+64 21 555 0001", "Strategy, hiring, coffee sourcing", "1988-03-12"],
+    ["Ingrid Solberg", "Engineering Manager", "MANAGEMENT", "2024-03-04", "Oslo, Norway", "+47 405 55 002", "Team leadership, delivery, mentoring", "1990-09-08"],
+    ["Theo Vance", "Senior Frontend Engineer", "ENGINEERING", "2024-06-10", "Auckland, NZ", "+64 21 555 0003", "React, TypeScript, accessibility", "1992-06-14"],
+    ["Lena Okafor", "Backend Engineer", "ENGINEERING", "2024-08-19", "London, UK", "+44 7700 900004", "APIs, Postgres, performance tuning", "1994-12-02"],
+    ["Rafael Costa", "DevOps Engineer", "ENGINEERING", "2025-01-27", "São Paulo, Brazil", "+55 11 95555 0005", "Kubernetes, Terraform, observability", "1989-11-28"],
+    ["Yuki Tanaka", "Product Designer", "DESIGN", "2024-05-06", "Tokyo, Japan", "+81 90 5555 0006", "Design systems, prototyping, motion", "1993-04-21"],
+    ["Amara Diallo", "UX Researcher", "DESIGN", "2024-10-14", "Dakar, Senegal", "+221 77 555 0007", "Interviews, usability testing, insights", "1991-08-30"],
+    ["Soren Lindqvist", "QA Engineer", "ENGINEERING", "2025-02-03", "Stockholm, Sweden", "+46 70 555 0008", "Test automation, exploratory testing", "1990-02-14"],
+    ["Priya Nair", "Marketing Lead", "MARKETING", "2024-04-22", "Kolkata, India", "+91 98xxxxxxx9", "Brand, storytelling, campaigns", "1987-07-19"],
+    ["Marcus Bell", "Content Strategist", "MARKETING", "2025-03-17", "New York, USA", "+1 555 010 0010", "Copywriting, editorial planning", null],
+    ["Hana Park", "Visual Designer", "DESIGN", "2024-11-11", "Seoul, South Korea", "+82 10 5550 0011", "Illustration, brand identity, typography", "1995-01-26"],
+    ["Diego Morales", "Mobile Engineer", "ENGINEERING", "2025-04-08", "Mexico City, Mexico", "+52 55 5555 0012", "React Native, offline-first, push", "1993-10-05"],
+    ["Remy Laurent", "People Operations Lead", "MANAGEMENT", "2025-05-20", "Paris, France", "+33 6 55 55 01 13", "People ops, onboarding design, coaching", "1986-05-11"],
+    ["Kofi Mensah", "Support Engineer", "ENGINEERING", "2025-06-02", "Accra, Ghana", "+233 20 555 0014", "Customer support, escalations, triage", null],
   ];
   let profileCount = 0;
   // EM-B01 (S13) — the employee-number series mirrors the migration's
   // deterministic backfill: EMP-0001… in profileSeed (createdAt) order.
   let empSeq = 0;
-  for (const [name, jobTitle, department, hireDate, location, phone, skills] of profileSeed) {
+  for (const [name, jobTitle, department, hireDate, location, phone, skills, birthDate] of profileSeed) {
     const uid = userByName.get(name);
     if (!uid) continue;
     empSeq += 1;
@@ -1719,6 +1723,7 @@ async function main() {
         jobTitle,
         department,
         hireDate: new Date(`${hireDate}T00:00:00.000Z`),
+        birthDate: birthDate ? new Date(`${birthDate}T00:00:00.000Z`) : null,
         employmentStatus: exitSeed.has(name) ? "EXITED" : probationSeed.has(name) ? "PROBATION" : "ACTIVE",
         ...(probationSeed.has(name) ? { probationEndsAt: probationSeed.get(name) } : {}),
         ...(exitSeed.has(name) ? { lastWorkingDay: exitSeed.get(name) } : {}),

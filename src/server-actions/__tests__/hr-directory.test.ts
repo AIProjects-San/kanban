@@ -231,6 +231,37 @@ describe("updateProfileAsAdmin", () => {
     );
   });
 
+  // P25 (PL-02) — the birthday engine's input: HR sets and clears it like
+  // hireDate (date-only semantics, UTC midnight; null = no reminder).
+  it("P25: HR sets and clears the birthDate (the birthday engine's input)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { birthDate: "1992-06-14" });
+    expect(res.ok).toBe(true);
+    expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "u-theo" },
+        update: expect.objectContaining({ birthDate: new Date("1992-06-14T00:00:00.000Z") }),
+      }),
+    );
+    const cleared = await updateProfileAsAdmin("u-theo", { birthDate: null });
+    expect(cleared.ok).toBe(true);
+    expect(db.employeeProfile.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { userId: "u-theo" },
+        update: expect.objectContaining({ birthDate: null }),
+      }),
+    );
+  });
+
+  it("P25: a malformed birthDate is rejected at the schema gate", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { birthDate: "not-a-date" });
+    expect(res.ok).toBe(false);
+    expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
+  });
+
   // QA-19 (admin side) — the admin upsert create-branch also defaulted
   // the department to "ENGINEERING" when HR saved a profile without
   // picking one. "" must mean "not classified yet", rendered as "—".

@@ -465,7 +465,85 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               </span>
             </span>
           </label>
-          <div />
+          {/* P25 (PL-02/EM-23) — the engagement reminder switches (the
+              benchmark HR Settings' reminders block, incl. its
+              stop-birthday-reminders field). The three in-app digests fire
+              from the daily scheduler's engagement pass — no scheduler, no
+              rows; the email rail is opt-in like every routine mail. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="birthday-reminders-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.remindBirthdays ?? true}
+              onChange={(e) => setForm({ ...form, remindBirthdays: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Birthday reminders</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                A daily in-app digest lists the members whose birthday it is (needs the scheduler&apos;s engagement
+                pass; switch it off for nobody&apos;s birthday to be broadcast).
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="anniversary-reminders-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.remindAnniversaries ?? true}
+              onChange={(e) => setForm({ ...form, remindAnniversaries: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Work-anniversary reminders</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                A daily in-app digest lists the members marking whole years since their hire date.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="holiday-reminders-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.remindHolidays ?? true}
+              onChange={(e) => setForm({ ...form, remindHolidays: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Upcoming-holiday reminders</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                An in-app digest fires exactly N days before each public holiday — one notice per holiday, never a
+                daily countdown.
+              </span>
+            </span>
+          </label>
+          <Field label="Holiday reminder — days ahead" className="max-w-xs">
+            <input
+              type="number"
+              min={1}
+              max={30}
+              className="f-input"
+              value={form.holidayReminderDaysAhead ?? 7}
+              data-testid="holiday-days-ahead-input"
+              onChange={(e) => setForm({ ...form, holidayReminderDaysAhead: Number(e.target.value) })}
+            />
+          </Field>
+          {/* P25 — the EMAIL half of the engagement engine: one digest outbox
+              row per live member per due event, rendered through the
+              notification template registry (Settings → Notifications).
+              Default OFF = the zero-mail posture. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="engagement-email-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.emailEngagementReminders ?? false}
+              onChange={(e) => setForm({ ...form, emailEngagementReminders: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Email engagement reminders</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Birthday, work-anniversary and upcoming-holiday digests also email every member (best-effort,
+                audited in the Outbox; one email per member per digest). Off = in-app only.
+              </span>
+            </span>
+          </label>
         </FormRow>
         <div className="flex justify-end pt-2">
           <button onClick={save} disabled={saving} className="f-btn f-btn-primary f-btn-sm">

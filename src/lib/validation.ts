@@ -221,6 +221,14 @@ export const workspaceSettingsSchema = z.object({
   // F-R17 zero-mail posture; LEAVE_PENDING to approvers on request,
   // LEAVE_DECIDED to the requester on decision).
   emailLeaveNotifications: z.boolean().optional(),
+  // P25 (PL-02/EM-23) — the engagement digest switches (in-app broadcasts,
+  // default ON) + the holiday days-ahead knob (1–30, default 7) + the
+  // opt-in email rail (default OFF).
+  remindBirthdays: z.boolean().optional(),
+  remindAnniversaries: z.boolean().optional(),
+  remindHolidays: z.boolean().optional(),
+  holidayReminderDaysAhead: z.number().int().finite().min(1).max(30).optional(),
+  emailEngagementReminders: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**
@@ -489,6 +497,9 @@ export const employeeProfileSchema = z.object({
   // unknown string stays rejected.
   department: z.enum(["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"]).or(z.literal("")).optional(),
   hireDate: isoDateish,
+  // P25 (PL-02/EM-J01) — the birthday engine's input (date-only semantics,
+  // HR-owned like hireDate; null clears it — no birthday, no reminder).
+  birthDate: isoDateish,
   phone: z.string().trim().max(40).optional(),
   location: z.string().trim().max(100).optional(),
   emergencyContactName: z.string().trim().max(100).optional(),
