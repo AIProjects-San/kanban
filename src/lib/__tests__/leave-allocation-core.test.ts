@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["leaveType", "leaveBalance", "leaveLedgerEntry", "employeeProfile", "user", "mailOutbox", "leavePeriod"];
+  const models = ["leaveType", "leaveBalance", "leaveLedgerEntry", "employeeProfile", "user", "mailOutbox", "leavePeriod", "leavePolicySet", "leavePolicySetItem", "leavePolicyAssignment"];
   const methods = ["findMany", "findUnique", "findFirst", "create", "createMany", "update", "upsert", "groupBy"];
   const obj: Record<string, Record<string, ReturnType<typeof vi.fn>>> = {};
   for (const m of models) {
@@ -33,6 +33,16 @@ const deliverOutboxMailMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({
   queueOutboxMail: (...a: unknown[]) => queueOutboxMailMock(...a),
   deliverOutboxMail: (...a: unknown[]) => deliverOutboxMailMock(...a),
+}));
+
+// P28 (LV-03) — the assignment override resolver, mocked at the same
+// boundary (the real hr-shared transitively constructs the auth stack).
+// The RESOLVER's own matrix (row-level override, orphan degradation) is
+// pinned in hr-leave.test.ts, which runs the real helper against the db
+// mock.
+const assignmentOverridesForUsersMock = vi.fn();
+vi.mock("@/server-actions/hr-shared", () => ({
+  assignmentOverridesForUsers: (...a: unknown[]) => assignmentOverridesForUsersMock(...a),
 }));
 
 const logErrorSpy = vi.fn();
@@ -96,6 +106,13 @@ beforeEach(() => {
   // calendar-year windows; every pre-P27 expectation below stays the
   // byte-identical pin).
   db.leavePeriod.findMany.mockResolvedValue([]);
+  // P28 (LV-02/LV-03) — the assignment table defaults EMPTY (no policy
+  // sets, no overrides: every pre-P28 grant expectation stays pinned;
+  // the P28 describe blocks below seed overrides explicitly).
+  db.leavePolicyAssignment.findMany.mockResolvedValue([]);
+  db.leavePolicySet.findMany.mockResolvedValue([]);
+  db.leavePolicySetItem.findMany.mockResolvedValue([]);
+  assignmentOverridesForUsersMock.mockResolvedValue(new Map());
 });
 
 describe("runLeaveAllocationJob — grant phase", () => {
@@ -177,6 +194,81 @@ describe("runLeaveAllocationJob — grant phase", () => {
       phase: "GRANT",
       reason: "pair exploded",
     });
+  });
+});
+
+describe("runLeaveAllocationJob — P28 (LV-03): assignment-driven grants", () => {
+  /** The resolver's output shape for one assigned user. */
+  const overridesFor = (userId: string, byType: Record<string, number>) =>
+    new Map([
+      [userId, { setId: "s-1", setName: "Standard 2027", annualDaysByType: new Map(Object.entries(byType)) }],
+    ]);
+
+  it("an assigned user WITHOUT a balance row joins the pairs and accrues at the SET's allocation (the assignment is the trigger)", async () => {
+    db.leaveType.findMany.mockResolvedValue([EARNED_TYPE]); // global: 24 days → 2/day monthly
+    db.leaveBalance.findMany.mockResolvedValue([]); // nobody has rows
+    assignmentOverridesForUsersMock.mockResolvedValue(overridesFor("u-a", { "lt-earned": 12 })); // the set: 12 → 1/day
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-a", hireDate: new Date("2023-03-15T00:00:00Z"), employmentStatus: "ACTIVE", probationEndsAt: null },
+    ]);
+    groupsBy({ GRANT: 0 });
+
+    const report = await runLeaveAllocationJob(new Date("2026-03-05T00:00:00Z"));
+
+    // Three monthly periods at the SET's 1/day each — the same deterministic
+    // period keys, the overridden number.
+    expect(report.grantsWritten).toBe(3);
+    expect(db.leaveBalance.upsert).toHaveBeenCalled(); // the row the assignment created
+    const rows = db.leaveLedgerEntry.createMany.mock.calls[0][0].data;
+    expect(rows.map((r: { sourceId: string; delta: number }) => [r.sourceId, r.delta])).toEqual([
+      ["2026-01", 1],
+      ["2026-02", 1],
+      ["2026-03", 1],
+    ]);
+    expect(report.grantPairsConsidered).toBe(1);
+  });
+
+  it("an assigned user and a global-policy user advance side by side — each at their own number", async () => {
+    db.leaveType.findMany.mockResolvedValue([EARNED_TYPE]);
+    db.leaveBalance.findMany.mockImplementation(async (args: { where?: { year?: number } }) =>
+      args?.where?.year === 2026 ? [{ userId: "u-plain" }] : [],
+    );
+    assignmentOverridesForUsersMock.mockResolvedValue(overridesFor("u-a", { "lt-earned": 12 }));
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-plain", hireDate: new Date("2023-03-15T00:00:00Z"), employmentStatus: "ACTIVE", probationEndsAt: null },
+      { userId: "u-a", hireDate: new Date("2023-03-15T00:00:00Z"), employmentStatus: "ACTIVE", probationEndsAt: null },
+    ]);
+    groupsBy({ GRANT: 0 });
+
+    const report = await runLeaveAllocationJob(new Date("2026-02-01T00:00:00Z"));
+
+    expect(report.grantPairsConsidered).toBe(2);
+    expect(report.grantsWritten).toBe(4); // u-plain: Jan+Feb at 2; u-a: Jan+Feb at 1
+    // The balance-row holder's transaction never upserts (the row exists);
+    // the assigned user's does (their first advance creates it).
+    const upsertWhere = db.leaveBalance.upsert.mock.calls.map(
+      (c: unknown[]) => (c[0] as { where: { userId_leaveTypeId_year: { userId: string } } }).where.userId_leaveTypeId_year.userId,
+    );
+    expect(upsertWhere).toEqual(["u-a"]);
+    // First createMany call = u-plain (2/day), second = u-a (1/day).
+    const plainRows = db.leaveLedgerEntry.createMany.mock.calls[0][0].data;
+    const assignedRows = db.leaveLedgerEntry.createMany.mock.calls[1][0].data;
+    expect(plainRows.every((r: { delta: number }) => r.delta === 2)).toBe(true);
+    expect(assignedRows.every((r: { delta: number }) => r.delta === 1)).toBe(true);
+  });
+
+  it("a set NOT covering the type never pulls the user into the pair set", async () => {
+    db.leaveType.findMany.mockResolvedValue([EARNED_TYPE]);
+    db.leaveBalance.findMany.mockResolvedValue([]); // no balance rows either
+    assignmentOverridesForUsersMock.mockResolvedValue(
+      overridesFor("u-a", { "lt-other": 12 }), // the set covers a DIFFERENT type
+    );
+    groupsBy({ GRANT: 0 });
+
+    const report = await runLeaveAllocationJob(new Date("2026-02-01T00:00:00Z"));
+    expect(report.grantPairsConsidered).toBe(0);
+    expect(report.grantsWritten).toBe(0);
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
   });
 });
 

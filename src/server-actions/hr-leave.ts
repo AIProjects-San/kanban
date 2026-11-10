@@ -86,6 +86,7 @@ import {
   materializeLeaveBalanceTx,
   deriveOnLeaveAttendance,
   removeDerivedOnLeaveAttendance,
+  assignmentOverridesFor,
 } from "./hr-shared";
 
 // ---------------------------------------------------------------------------
@@ -137,12 +138,16 @@ export async function getMyLeaveData(): Promise<
     // lazy materialize write for missing rows). The previous per-type loop
     // ran 3 queries per leave type — a genuine N+1 with a write on the read
     // path — on every Leave-view load. F2.4: the policy ROW rides along so
-    // materialization is strategy-aware.
+    // materialization is strategy-aware. P28 (LV-03): the assigned set's
+    // allocations ride along too — one read; an unassigned member's load is
+    // byte-identical to the pre-P28 path.
+    const overrides = await assignmentOverridesFor(auth.userId, year);
     const balancesByType = await getOrCreateBalancesBatch(
       auth.userId,
       types.map((t) => ({ id: t.id, policy: t.policy })),
       year,
       windowArgFor(periods, active),
+      overrides?.annualDaysByType,
     );
     const balances: LeaveBalanceT[] = types.map((t) => {
       const b = balancesByType.get(t.id) ?? { entitled: t.policy?.annualDays ?? 0, carriedOver: 0, used: 0 };
@@ -543,12 +548,16 @@ export async function createLeaveRequest(input: {
     const periods = await loadLeavePeriods();
     const requestWindow = windowForDate(periods, data.startDate);
     const year = requestWindow.bucketYear;
+    // P28 (LV-03) — the assigned set's allocation for this type in the
+    // request's bucket (undefined when unassigned — byte-identical guard).
+    const requestOverride = (await assignmentOverridesFor(auth.userId, year))?.annualDaysByType.get(type.id);
     const balance = await getOrCreateBalance(
       auth.userId,
       type.id,
       year,
       type.policy,
       windowArgFor(periods, requestWindow),
+      requestOverride,
     );
     const available = balance.entitled + balance.carriedOver - balance.used;
     const cap = capBalanceForConsumption(available, data.startDate, year, requestWindow.end);
@@ -764,9 +773,13 @@ export async function decideLeaveRequest(input: {
         // try/catch-re-read, which silently swallowed into a Postgres
         // aborted-transaction state; a materialized row without its ledger
         // explanation can never exist).
+        // P28 (LV-03) — the assigned set's allocation for this type in the
+        // request's bucket rides the materialization (the decide-side twin
+        // of the submission's override).
         await materializeLeaveBalanceTx(
           tx, request.userId, request.leaveTypeId, year,
           windowArgFor(periods, requestWindow),
+          (await assignmentOverridesFor(request.userId, year))?.annualDaysByType.get(request.leaveTypeId),
         );
 
         // QA-1: the guard reads the LEDGER projection (one groupBy
@@ -1229,8 +1242,11 @@ export async function adjustLeaveBalance(input: {
     // Materialize-if-missing + append the ADJUST row + re-sync the cache,
     // all in ONE transaction; the floor check reads the POST-materialization
     // truth (the ledger), so a first-ever adjustment lands on real numbers.
+    // P28 (LV-03) — the assigned set's allocation rides the materialization
+    // (the balance the admin adjusts must be the one the engine grants).
+    const adjustOverride = (await assignmentOverridesFor(data.userId, data.year))?.annualDaysByType.get(data.leaveTypeId);
     const { availableBefore, availableAfter } = await db.$transaction(async (tx) => {
-      await materializeLeaveBalanceTx(tx, data.userId, data.leaveTypeId, data.year);
+      await materializeLeaveBalanceTx(tx, data.userId, data.leaveTypeId, data.year, undefined, adjustOverride);
       const before = await ledgerProjectionFor(tx, data.userId, data.leaveTypeId, data.year);
       const plan = planLeaveAdjustment({ available: before.available, delta: data.delta, negativeFloor: floor });
       if (!plan.withinFloor) {

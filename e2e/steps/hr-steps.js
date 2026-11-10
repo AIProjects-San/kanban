@@ -834,3 +834,222 @@ When("I delete the leave period {string}", async function (name) {
     "the deleted period's row never cleared back to the empty notice",
   );
 });
+
+// ---------------------------------------------------------------------------
+// P28 (LV-02/LV-03) — the policy set master + the bulk assignment tool's
+// e2e surface (the Types & Policies tab's "Policy sets" section). The
+// scenario walks create → assign → overlap-refuse → delete so the fixture
+// returns to the per-type-policy default with ZERO ledger writes (the
+// target window is a future one: the doc alone, nothing materializes).
+// ---------------------------------------------------------------------------
+
+async function openPolicySetEditor(driver) {
+  const btn = await driver.wait(
+    until.elementLocated(By.css("[data-testid='policy-set-new-button']")),
+    10_000,
+    "the policy sets New set button did not render",
+  );
+  await driver.executeScript("arguments[0].click();", btn);
+  return driver.wait(
+    until.elementLocated(By.css("[data-testid='policy-set-modal']")),
+    10_000,
+    "the policy set editor modal did not open",
+  );
+}
+
+When("I create a policy set {string} with items {string}", async function (name, itemsSpec) {
+  const driver = await this.getDriver();
+  await openPolicySetEditor(driver);
+  await setInputValue(driver, await driver.findElement(By.css("[data-testid='policy-set-name-input']")), name);
+  // itemsSpec: "Annual Leave=25, Sick Leave=8" — one editor row each.
+  const specs = itemsSpec.split(",").map((s) => s.trim()).map((s) => {
+    const [typeName, days] = s.split("=");
+    return { typeName: typeName.trim(), days: days.trim() };
+  });
+  for (let i = 0; i < specs.length; i++) {
+    if (i > 0) {
+      await driver.executeScript(
+        "arguments[0].click();",
+        await driver.findElement(By.css("[data-testid='policy-set-row-add']")),
+      );
+    }
+    const typeSelect = await driver.findElement(By.css(`[data-testid='policy-set-row-type-${i}']`));
+    // House pattern: click the <option> directly so React's onChange fires.
+    const option = await typeSelect.findElement(
+      By.xpath(`./option[normalize-space(.) = "${specs[i].typeName}"]`),
+    );
+    await option.click();
+    await setInputValue(
+      driver,
+      await driver.findElement(By.css(`[data-testid='policy-set-row-days-${i}']`)),
+      specs[i].days,
+    );
+  }
+  await driver.executeScript(
+    "arguments[0].click();",
+    await driver.findElement(By.css("[data-testid='policy-set-submit']")),
+  );
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid^='policy-set-row-']")),
+    10_000,
+    "the created policy set row did not render",
+  );
+});
+
+Then("the policy sets list should show {string} with {string} and {string}", async function (name, chipA, chipB) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    async () => {
+      try {
+        const rows = await driver.findElements(By.css("[data-testid^='policy-set-row-']"));
+        for (const row of rows) {
+          const text = await row.getText();
+          if (text.includes(name) && text.includes(chipA) && text.includes(chipB)) return true;
+        }
+        return false;
+      } catch (e) {
+        if (e && /stale/i.test(String(e.name || e.message))) return false;
+        throw e;
+      }
+    },
+    10_000,
+    `no policy set row showed "${name}" with "${chipA}" and "${chipB}"`,
+  );
+});
+
+async function openBulkAssignModal(driver, setName) {
+  const rows = await driver.findElements(By.css("[data-testid^='policy-set-row-']"));
+  let target = null;
+  for (const row of rows) {
+    if ((await row.getText()).includes(setName)) {
+      const idx = (await row.getAttribute("data-testid")).split("-").pop();
+      target = await driver.findElement(By.css(`[data-testid='policy-set-assign-${idx}']`));
+      break;
+    }
+  }
+  assert.ok(target, `no policy set row named "${setName}" with an Assign button`);
+  await driver.executeScript("arguments[0].click();", target);
+  return driver.wait(
+    until.elementLocated(By.css("[data-testid='bulk-policy-modal']")),
+    10_000,
+    "the bulk policy assignment modal did not open",
+  );
+}
+
+async function submitBulkAssignment(driver, setName, employeeName, yearsAhead) {
+  await openBulkAssignModal(driver, setName);
+  const bucketYear = new Date().getFullYear() + yearsAhead;
+  const bucketSelect = await driver.findElement(By.css("[data-testid='bulk-policy-bucket']"));
+  await bucketSelect.findElement(By.xpath(`./option[@value="${bucketYear}"]`)).click();
+  // The employee checkbox rides inside a label that carries the name.
+  const labels = await driver.findElements(By.css("[data-testid='bulk-policy-employees'] label"));
+  let picked = null;
+  for (const label of labels) {
+    if ((await label.getText()).includes(employeeName)) {
+      picked = await label.findElement(By.css("input[type='checkbox']"));
+      break;
+    }
+  }
+  assert.ok(picked, `no employee row named "${employeeName}" in the bulk assign modal`);
+  await driver.executeScript("arguments[0].click();", picked);
+  await driver.executeScript(
+    "arguments[0].click();",
+    await driver.findElement(By.css("[data-testid='bulk-policy-submit']")),
+  );
+}
+
+When("I bulk-assign the policy set {string} to {string} for the window {int} year(s) ahead", async function (setName, employeeName, yearsAhead) {
+  const driver = await this.getDriver();
+  await submitBulkAssignment(driver, setName, employeeName, yearsAhead);
+  // The assignment row appears after the assign → reload round-trip.
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid^='policy-assignment-row-']")),
+    10_000,
+    "the created policy assignment row did not render",
+  );
+});
+
+When("I try to bulk-assign the policy set {string} to {string} for the window {int} year(s) ahead again", async function (setName, employeeName, yearsAhead) {
+  // The refusal lands as a toast; the assertion step owns the wait.
+  await submitBulkAssignment(await this.getDriver(), setName, employeeName, yearsAhead);
+});
+
+Then("the policy assignments list should show {string} on {string} as pending", async function (employeeName, setName) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    async () => {
+      try {
+        const rows = await driver.findElements(By.css("[data-testid^='policy-assignment-row-']"));
+        for (const row of rows) {
+          const text = await row.getText();
+          if (text.includes(employeeName) && text.includes(setName) && text.includes("pending window")) return true;
+        }
+        return false;
+      } catch (e) {
+        if (e && /stale/i.test(String(e.name || e.message))) return false;
+        throw e;
+      }
+    },
+    10_000,
+    `no assignment row showed "${employeeName}" on "${setName}" as pending`,
+  );
+});
+
+Then("a toast should mention the assignment refusal {string}", async function (keyword) {
+  await waitForToast(await this.getDriver(), keyword);
+});
+
+When("I delete the policy assignment for {string}", async function (employeeName) {
+  const driver = await this.getDriver();
+  const rows = await driver.findElements(By.css("[data-testid^='policy-assignment-row-']"));
+  let target = null;
+  for (const row of rows) {
+    if ((await row.getText()).includes(employeeName)) {
+      const idx = (await row.getAttribute("data-testid")).split("-").pop();
+      target = await driver.findElement(By.css(`[data-testid='policy-assignment-delete-${idx}']`));
+      break;
+    }
+  }
+  assert.ok(target, `no assignment row for "${employeeName}" with a Delete button`);
+  await driver.executeScript("arguments[0].click();", target);
+  await driver.wait(
+    async () => (await driver.findElements(By.css("[data-testid^='policy-assignment-row-']"))).length === 0,
+    10_000,
+    `the deleted assignment row for "${employeeName}" never cleared`,
+  );
+});
+
+Then("the policy assignments list should be empty", async function () {
+  const driver = await this.getDriver();
+  const remaining = await driver.findElements(By.css("[data-testid^='policy-assignment-row-']"));
+  assert.strictEqual(remaining.length, 0, "policy assignment rows still render");
+});
+
+When("I delete the policy set {string}", async function (name) {
+  const driver = await this.getDriver();
+  const rows = await driver.findElements(By.css("[data-testid^='policy-set-row-']"));
+  let target = null;
+  for (const row of rows) {
+    if ((await row.getText()).includes(name)) {
+      const idx = (await row.getAttribute("data-testid")).split("-").pop();
+      target = await driver.findElement(By.css(`[data-testid='policy-set-delete-${idx}']`));
+      break;
+    }
+  }
+  assert.ok(target, `no policy set row named "${name}" with a Delete button`);
+  await driver.executeScript("arguments[0].click();", target);
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid='policy-sets-empty']")),
+    10_000,
+    "the deleted policy set never cleared back to the empty notice",
+  );
+});
+
+Then("the policy sets empty notice should render", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid='policy-sets-empty']")),
+    10_000,
+    "the policy-sets empty (per-type policies are the world) notice did not render",
+  );
+});

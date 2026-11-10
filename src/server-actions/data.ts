@@ -159,4 +159,17 @@ export {
   deleteLeavePeriod,
   type LeavePeriodT,
 } from "./leave-periods";
+// P28 (LV-02/LV-03) — the leave policy set master + the bulk assignment
+// tool (HR console → Types & Policies).
+export {
+  listLeavePolicyState,
+  createLeavePolicySet,
+  updateLeavePolicySet,
+  deleteLeavePolicySet,
+  bulkAssignLeavePolicySet,
+  deleteLeavePolicyAssignment,
+  type BulkAssignLeavePolicySetResult,
+  type LeavePolicyStateT,
+  type PolicySetEmployeeT,
+} from "./leave-policy-sets";
 export { getAuditLogs, getAuditLogsForEntity } from "./audit";

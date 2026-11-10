@@ -91,6 +91,12 @@ export type AuditAction =
   // P27 (LV-08) — the leave period master lifecycle.
   | "leave.period_created"
   | "leave.period_deleted"
+  // P28 (LV-02/LV-03) — the policy set master + the bulk assignment tool.
+  | "leave.policy_set_created"
+  | "leave.policy_set_updated"
+  | "leave.policy_set_deleted"
+  | "leave.policy_set_bulk_assigned"
+  | "leave.policy_assignment_deleted"
   // F1.1 — holiday calendar lifecycle
   // (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1)
   | "hr.holiday_created"
@@ -295,6 +301,11 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.report_exported": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
   "leave.period_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
   "leave.period_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "leave.policy_set_created": { icon: CalendarPlus, cls: "text-violet-500 bg-violet-500/10" },
+  "leave.policy_set_updated": { icon: Pencil, cls: "text-violet-500 bg-violet-500/10" },
+  "leave.policy_set_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "leave.policy_set_bulk_assigned": { icon: Users, cls: "text-violet-500 bg-violet-500/10" },
+  "leave.policy_assignment_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hr.holiday_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
   "hr.holiday_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },

@@ -245,3 +245,31 @@ Feature: HR leave management
     Then a toast should mention the period refusal "one allocation window per start year"
     When I delete the leave period "FY 2031/32 (Apr → Mar)"
     Then the leave periods empty notice should render
+
+  # --- P28 (LV-02/LV-03): policy sets + bulk assignment ---------------------
+
+  @hr-e @hr-p28
+  Scenario: The leave policy set master with the HR bulk assignment tool
+    The Types & Policies tab carries the set master: with no rows the
+    per-type-policy default notice renders (the zero-change default); a
+    set with two type allocations lists with its chips; the bulk-assign
+    tool assigns it to one employee for a future calendar window (the doc
+    alone — a future window grants on schedule, nothing lands early);
+    re-assigning the same employee to the same window is refused with the
+    overlap law's sentence; deleting the ungranted assignment (and then
+    the set) returns the master to the default — create-then-delete, zero
+    fixture drift (no ledger rows are ever written).
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Types & Policies" tab
+    Then the policy sets empty notice should render
+    When I create a policy set "Standard 2027" with items "Annual Leave=25, Sick Leave=8"
+    Then the policy sets list should show "Standard 2027" with "Annual Leave 25d" and "Sick Leave 8d"
+    When I bulk-assign the policy set "Standard 2027" to "Yuki Tanaka" for the window 1 year ahead
+    Then the policy assignments list should show "Yuki Tanaka" on "Standard 2027" as pending
+    When I try to bulk-assign the policy set "Standard 2027" to "Yuki Tanaka" for the window 1 year ahead again
+    Then a toast should mention the assignment refusal "already has an assignment"
+    When I delete the policy assignment for "Yuki Tanaka"
+    Then the policy assignments list should be empty
+    When I delete the policy set "Standard 2027"
+    Then the policy sets empty notice should render

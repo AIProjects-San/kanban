@@ -227,6 +227,24 @@ function roundDays(n: number, mode: LeaveAccrualRounding): number {
   return mode === "NEAREST" ? Math.round(n * 4) / 4 : Math.floor(n * 4) / 4;
 }
 
+/** F2.4's DOJ pro-rata (ANNUAL_LUMP_SUM + PERIOD_START + prorateForJoiners):
+ * the calendar days of the window remaining from the hire day (the hire day
+ * counts — the employee works it) as a share of the whole window, rounded
+ * per the policy. P28 (LV-03) reuses the SAME rule for policy-set
+ * assignments' MANUAL materialization — one formula, both callers, so an
+ * assigned joiner and a lump-sum joiner pro-rate identically. */
+export function proRateAnnualDays(
+  annualDays: number,
+  hireDate: string,
+  windowStart: string,
+  windowEnd: string,
+  mode: LeaveAccrualRounding,
+): number {
+  const remaining = daysBetween(hireDate, windowEnd) + 1;
+  const windowLen = daysBetween(windowStart, windowEnd) + 1;
+  return roundDays((annualDays * remaining) / windowLen, mode);
+}
+
 // ---------------------------------------------------------------------------
 // Employment facts — the (only) employee inputs the engine needs
 // ---------------------------------------------------------------------------
@@ -347,9 +365,7 @@ function planPeriods(input: DueGrantsInput): PeriodPlan[] {
         if (policy.prorateForJoiners) {
           // Calendar days remaining in the window (the hire day counts — the
           // employee works it), rounded per accrualRounding.
-          const remaining = daysBetween(hire, winEnd) + 1;
-          const windowLen = daysBetween(winStart, winEnd) + 1;
-          nominal = roundDays((policy.annualDays * remaining) / windowLen, policy.accrualRounding);
+          nominal = proRateAnnualDays(policy.annualDays, hire, winStart, winEnd, policy.accrualRounding);
         }
       }
     }

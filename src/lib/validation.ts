@@ -268,6 +268,46 @@ export const leavePeriodDeleteSchema = z.object({
   id: z.string().trim().min(1).max(64),
 }).strict();
 
+/** P28 (LV-02/LV-03) — the leave policy set master + assignment payloads.
+ * The set's SEMANTICS (item count bounds, per-item dedupe, the 0–365
+ * allocation bound) are the pure kernel's own refusals
+ * (lib/leave-policy-set.ts validatePolicySet); zod carries the structural
+ * pass only. */
+export const leavePolicySetItemSchema = z.object({
+  leaveTypeId: z.string().trim().min(1).max(64),
+  annualDays: z.number().min(0).max(365),
+}).strict();
+
+export const leavePolicySetCreateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(200).default(""),
+  items: z.array(leavePolicySetItemSchema).min(1).max(40),
+}).strict(); // reject unknown keys
+
+export const leavePolicySetUpdateSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(200).default(""),
+  active: z.boolean(),
+  items: z.array(leavePolicySetItemSchema).min(1).max(40),
+}).strict(); // reject unknown keys
+
+export const leavePolicySetDeleteSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+}).strict();
+
+export const leavePolicyAssignmentDeleteSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+}).strict();
+
+/** The bulk tool (P14's shape): one set, one target bucket, 1–200
+ * employees, each in their own transaction (per-employee isolation). */
+export const bulkAssignLeavePolicySetSchema = z.object({
+  setId: z.string().trim().min(1).max(64),
+  bucketYear: z.number().int().min(2020).max(2100),
+  userIds: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
+}).strict(); // reject unknown keys
+
 /**
  * Schema for the config-item tables (taskStatusConfig, projectStatusConfig,
  * eventTypeConfig, taskTagConfig, priorityConfig, departmentConfig). All

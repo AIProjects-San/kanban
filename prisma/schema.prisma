@@ -964,6 +964,67 @@ model LeavePeriod {
   updatedAt DateTime @updatedAt
 }
 
+// P28 (LV-02) — leave policy set master: the benchmark's multi-type
+// allocation template (`Leave Policy` + `Leave Policy Detail`). One row per
+// set; the ITEMS (below) carry one allocation per leave type — the
+// benchmark's own child shape (leave_type + annual_allocation, nothing
+// more; every other knob stays on the per-type LeavePolicy row, exactly as
+// the benchmark keeps them on the Leave Type). ZERO-CHANGE DEFAULT: the
+// table starts EMPTY; with no sets and no assignments every materializer
+// resolves the pre-P28 per-type policy byte-identically (the override is
+// undefined → the row passes through).
+model LeavePolicySet {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String   @default("")
+  // Retiring a set hides it from the assign picker only — existing
+  // assignments keep resolving (the assignment row is the live doc).
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// One set row: the type's annual allocation inside THIS set (working days
+// per allocation window). Plain-string FKs (the LeaveLedgerEntry
+// convention — referential guards live in the actions; leave types are
+// soft-deactivated, never hard-deleted).
+model LeavePolicySetItem {
+  id          String   @id @default(cuid())
+  setId       String
+  leaveTypeId String
+  annualDays  Float    @default(20)
+  createdAt   DateTime @default(now())
+
+  @@unique([setId, leaveTypeId])
+  @@index([setId])
+}
+
+// P28 (LV-03) — the assignment doc: ONE set governing ONE employee's
+// entitlement for ONE ledger bucket (the benchmark's `Leave Policy
+// Assignment` — employee × leave period, overlap-forbidden). The unique
+// (userId, bucketYear) IS the overlap rule; reassigning a granted bucket is
+// refused in the action (history is immutable — the P27 delete discipline).
+// periodId is the named period's id when the bucket maps to one, "" for the
+// implicit calendar year. The engine reads the assignment as a row-level
+// annualDays override on the type's own policy row (lib/leave-policy-set.ts
+// — policyRowWithAnnualDays): every strategy flows through the SAME F2.4
+// kernel with the set's number.
+model LeavePolicyAssignment {
+  id           String   @id @default(cuid())
+  userId       String
+  setId        String
+  // The ledger bucket this assignment governs (the target window's bucket).
+  bucketYear   Int
+  // The named LeavePeriod row backing the bucket, "" when implicit.
+  periodId     String   @default("")
+  assignedAt   DateTime @default(now())
+  assignedById String
+
+  @@unique([userId, bucketYear])
+  @@index([setId])
+  @@index([bucketYear])
+}
+
 // P2 (LV-09, F2.2) — one encashment request: days sold back from a leave
 // balance, paying through the P1 PayAdjustment adapter. The member requests
 // (against the LEDGER projection), the leave-approver chain decides

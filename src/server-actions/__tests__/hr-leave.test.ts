@@ -12,6 +12,9 @@ const db = vi.hoisted(() => {
     "leaveLedgerEntry", "payslip", "payrollRun",
     "user", "auditLog", "notification", "holidayCalendarEntry",
     "attendanceRecord", "employeeProfile", "mailOutbox", "leavePeriod",
+    // P28 (LV-02/LV-03) — the policy set master + assignments (the
+    // request/decide/adjust materializers resolve their overrides).
+    "leavePolicySet", "leavePolicySetItem", "leavePolicyAssignment",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -137,6 +140,13 @@ beforeEach(() => {
   // P27 (LV-08) — the period table defaults EMPTY (implicit calendar
   // windows; the pre-P27 request/decide/cancel expectations stay pinned).
   db.leavePeriod.findMany.mockResolvedValue([]);
+  // P28 (LV-02/LV-03) — the assignment table defaults EMPTY (the global
+  // per-type policy world; every pre-P28 expectation stays pinned).
+  db.leavePolicyAssignment.findUnique.mockResolvedValue(null);
+  db.leavePolicyAssignment.findMany.mockResolvedValue([]);
+  db.leavePolicySet.findUnique.mockResolvedValue(null);
+  db.leavePolicySet.findMany.mockResolvedValue([]);
+  db.leavePolicySetItem.findMany.mockResolvedValue([]);
   db.leavePolicy.findUnique.mockResolvedValue(ANNUAL_TYPE.policy);
   db.leaveRequest.findMany.mockResolvedValue([]);
   db.leaveRequest.findFirst.mockResolvedValue(null);
@@ -1429,6 +1439,67 @@ describe("getMyLeaveData", () => {
       const decided = res.data.requests.find((r) => r.status === "APPROVED");
       expect(pending?.decidedBy).toBeNull();
       expect(decided?.decidedBy).toBe("Ingrid");
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // P28 (LV-02/LV-03) — the assignment override riding the Leave view's
+  // batched materializer (the REAL resolver runs here: the db mock carries
+  // the assignment + set + items rows; the cron-side resolver boundary is
+  // mocked in leave-allocation-core.test.ts).
+  // -----------------------------------------------------------------------
+
+  it("P28: an assigned member's Leave view materializes the SET's allocation, not the type policy's", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findMany.mockResolvedValue([ANNUAL_TYPE]); // policy: 20 days
+    db.leaveRequest.findMany.mockResolvedValue([]);
+    db.leaveBalance.findMany.mockResolvedValue([]); // no rows — materialize
+    // The assignment for the ACTIVE bucket (the current calendar year —
+    // no periods) pointing at a 12-day set.
+    const currentYear = Number(new Date().toISOString().slice(0, 4));
+    db.leavePolicyAssignment.findUnique.mockImplementation(
+      async (args: { where: { userId_bucketYear: { userId: string; bucketYear: number } } }) =>
+        args.where.userId_bucketYear.userId === "u-theo" && args.where.userId_bucketYear.bucketYear === currentYear
+          ? { setId: "s-1" }
+          : null,
+    );
+    db.leavePolicySet.findUnique.mockResolvedValue({ name: "Standard 2027" });
+    db.leavePolicySetItem.findMany.mockResolvedValue([
+      { leaveTypeId: "lt-annual", annualDays: 12 },
+    ]);
+
+    const res = await getMyLeaveData();
+    expect(res.ok).toBe(true);
+    // The materialized entitlement carries the SET's number (12), and the
+    // render's fallback (the re-read still returns nothing) honors the
+    // override too — never contradicting what the engine would grant.
+    expect(db.leaveBalance.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ leaveTypeId: "lt-annual", entitled: 12 })],
+      }),
+    );
+    if (res.ok) {
+      expect(res.data.balances[0]).toMatchObject({ typeName: "Annual Leave", entitled: 12, available: 12 });
+    }
+  });
+
+  it("P28: an ORPHANED set id degrades to the global per-type policy (no override is invented)", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findMany.mockResolvedValue([ANNUAL_TYPE]);
+    db.leaveRequest.findMany.mockResolvedValue([]);
+    db.leaveBalance.findMany.mockResolvedValue([]);
+    db.leavePolicyAssignment.findUnique.mockResolvedValue({ setId: "s-gone" });
+    db.leavePolicySet.findUnique.mockResolvedValue(null); // the set was deleted behind the assignment
+
+    const res = await getMyLeaveData();
+    expect(res.ok).toBe(true);
+    expect(db.leaveBalance.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ leaveTypeId: "lt-annual", entitled: 20 })],
+      }),
+    );
+    if (res.ok) {
+      expect(res.data.balances[0]).toMatchObject({ entitled: 20, available: 20 });
     }
   });
 });

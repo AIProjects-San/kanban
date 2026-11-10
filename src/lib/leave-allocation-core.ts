@@ -55,6 +55,10 @@ import {
   type LeavePeriodInput,
   type LeaveWindow,
 } from "@/lib/leave-period";
+// P28 (LV-02/LV-03) — the policy-set assignments' entitlement override (the
+// row-level rule + the batched resolver shared with the action layer).
+import { policyRowWithAnnualDays } from "@/lib/leave-policy-set";
+import { assignmentOverridesForUsers } from "@/server-actions/hr-shared";
 
 /** DB row → the kernel's plain-data shape (day keys). */
 function toPeriodInput(row: { id: string; name: string; startDate: Date; endDate: Date }): LeavePeriodInput {
@@ -171,6 +175,16 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
   const namedWindow = active.periodId !== null ? { start: active.start, end: active.end } : undefined;
   const year = active.bucketYear;
 
+  // P28 (LV-03) — the policy-set assignments governing the ACTIVE bucket
+  // (one batched read; empty map = the pre-P28 pass, byte-identical). The
+  // grant phase below advances assigned users even before their balance
+  // rows exist — the assignment is the pair's trigger (the benchmark's
+  // assignment-created allocations; the upsert mirrors the rollover
+  // phase's own row-creation pattern, keeping the no-race contract's
+  // spirit: the lazy writer still owns the MISSING-row state, and both
+  // writers produce the same deterministic period keys).
+  const overridesByUser = await assignmentOverridesForUsers(year);
+
   const report: LeaveAllocationJobReport = {
     asOf,
     typesConsidered: 0,
@@ -220,15 +234,24 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
     }
     // Only pairs whose CURRENT-bucket balance row exists (the no-race
     // contract above). Profile-less users stay on the lazy path.
+    // P28 (LV-03): users ASSIGNED a policy set covering this type join the
+    // pair set even without a balance row — the assignment is their
+    // trigger, and their entitlement comes from the set's allocation
+    // (row-level override; the same F2.4 kernel, the set's number).
     const balances = await db.leaveBalance.findMany({
       where: { leaveTypeId: type.id, year },
       select: { userId: true },
     });
-    if (balances.length === 0) continue;
-    report.grantPairsConsidered += balances.length;
+    const balanceUsers = new Set(balances.map((b) => b.userId));
+    const assignedUsers = [...overridesByUser.entries()]
+      .filter(([, o]) => o.annualDaysByType.has(type.id))
+      .map(([userId]) => userId);
+    const pairs = [...new Set([...balanceUsers, ...assignedUsers])];
+    if (pairs.length === 0) continue;
+    report.grantPairsConsidered += pairs.length;
 
     const profiles = await db.employeeProfile.findMany({
-      where: { userId: { in: balances.map((b) => b.userId) } },
+      where: { userId: { in: pairs } },
       select: { userId: true, hireDate: true, employmentStatus: true, probationEndsAt: true },
     });
     const factsByUser = new Map<string, EmploymentFacts>(
@@ -242,18 +265,24 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
       ]),
     );
 
-    for (const b of balances) {
+    for (const userId of pairs) {
       try {
+        // P28 — the assigned set's allocation for this type (undefined
+        // when unassigned: the global policy, byte-identical).
+        const overrideAnnualDays = overridesByUser.get(userId)?.annualDaysByType.get(type.id);
+        const pairPolicy = resolveLeavePolicy(
+          policyRowWithAnnualDays(type.policy, overrideAnnualDays),
+        );
         // Idempotency input: the POLICY-sourced keys already on the ledger.
         const existing = await db.leaveLedgerEntry.findMany({
-          where: { userId: b.userId, leaveTypeId: type.id, year, sourceType: "POLICY" },
+          where: { userId, leaveTypeId: type.id, year, sourceType: "POLICY" },
           select: { sourceId: true },
         });
         const existingKeys = new Set(existing.map((r) => r.sourceId));
-        const projection = await ledgerProjection(db, b.userId, type.id, year);
+        const projection = await ledgerProjection(db, userId, type.id, year);
         const ops = dueGrantOps({
-          policy,
-          employment: factsByUser.get(b.userId) ?? null,
+          policy: pairPolicy,
+          employment: factsByUser.get(userId) ?? null,
           year,
           asOf,
           window: namedWindow,
@@ -263,20 +292,31 @@ export async function runLeaveAllocationJob(asOfDate?: Date): Promise<LeaveAlloc
         });
         if (ops.length === 0) continue;
         await db.$transaction(async (tx) => {
-          await appendGrantsTx(tx, b.userId, type.id, year, ops);
+          // P28 — an assigned user's first advance creates the balance row
+          // (the assignment is the trigger; the rollover phase's own
+          // upsert pattern — a unique-trio race with a concurrent lazy
+          // materialization loses loudly and retries next pass).
+          if (!balanceUsers.has(userId)) {
+            await tx.leaveBalance.upsert({
+              where: { userId_leaveTypeId_year: { userId, leaveTypeId: type.id, year } },
+              create: { userId, leaveTypeId: type.id, year, entitled: 0, carriedOver: 0, used: 0 },
+              update: {},
+            });
+          }
+          await appendGrantsTx(tx, userId, type.id, year, ops);
         });
         report.grantsWritten += ops.length;
       } catch (err) {
         report.failures += 1;
         const reason = err instanceof Error ? err.message : String(err);
         report.failuresDetail.push({
-          userId: b.userId,
+          userId,
           leaveTypeId: type.id,
           leaveTypeName: type.name,
           phase: "GRANT",
           reason,
         });
-        logError(`[leave-allocation] grant pair failed (user ${b.userId}, type ${type.name}):`, err);
+        logError(`[leave-allocation] grant pair failed (user ${userId}, type ${type.name}):`, err);
       }
     }
   }

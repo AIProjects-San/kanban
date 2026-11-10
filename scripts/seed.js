@@ -85,6 +85,11 @@ async function main() {
   await db.leaveRequest.deleteMany();
   await db.leaveBalance.deleteMany();
   await db.leaveLedgerEntry.deleteMany();
+  // P28 (LV-02/LV-03) — the policy set master + assignments: wiped clean
+  // (the seed ships none — the per-type policies are the default world).
+  await db.leavePolicyAssignment.deleteMany();
+  await db.leavePolicySetItem.deleteMany();
+  await db.leavePolicySet.deleteMany();
   await db.leavePolicy.deleteMany();
   await db.leaveType.deleteMany();
   await db.calendarEvent.deleteMany();

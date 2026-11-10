@@ -18,13 +18,8 @@ import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-led
 import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/employment";
 import { resolveLeaveApprover } from "@/lib/hierarchy";
 import type { LeavePeriodInput, LeaveWindow } from "@/lib/leave-period";
-import {
-  resolveLeavePolicy,
-  dueGrantOps,
-  type EmploymentFacts,
-  type GrantOp,
-  type LeavePolicyRow,
-} from "@/lib/leave-policy";
+import { resolveLeavePolicy, dueGrantOps, type EmploymentFacts, type GrantOp, type LeavePolicyRow } from "@/lib/leave-policy";
+import { assignedManualGrantDays, policyRowWithAnnualDays } from "@/lib/leave-policy-set";
 import { AuthorizationError } from "./auth-guard";
 
 // ---------------------------------------------------------------------------
@@ -156,6 +151,99 @@ export async function assertLeaveDecider(
 }
 
 // ---------------------------------------------------------------------------
+// P28 (LV-02/LV-03) — the policy-set assignment's entitlement override.
+//
+// An assignment (employee × ledger bucket → set) is read by EVERY
+// materializer as a row-level annualDays override on the type's own policy
+// row: the strategy math (lump amount, earned rate, true-up, null-cap
+// resolution) then flows through the SAME F2.4 kernel with the set's
+// number — no parallel engine. MANUAL types additionally pro-rate for
+// mid-window joiners via F2.4's own rule (assignedManualGrantDays).
+// No assignment → undefined override → the row passes through untouched
+// (byte-identical pre-P28 behavior; the empty-table default the suites pin).
+// ---------------------------------------------------------------------------
+
+/** One assignment's resolved overrides for a bucket. */
+export interface BucketPolicyOverrides {
+  setId: string;
+  setName: string;
+  annualDaysByType: Map<string, number>;
+}
+
+/** The override for ONE user's bucket (null = no assignment — the global
+ * per-type policy world). Two reads when an assignment exists (the doc +
+ * its items), zero when it does not — the common case stays a single read. */
+export async function assignmentOverridesFor(
+  userId: string,
+  bucketYear: number,
+): Promise<BucketPolicyOverrides | null> {
+  const assignment = await db.leavePolicyAssignment.findUnique({
+    where: { userId_bucketYear: { userId, bucketYear } },
+    select: { setId: true },
+  });
+  if (!assignment) return null;
+  const [set, items] = await Promise.all([
+    db.leavePolicySet.findUnique({
+      where: { id: assignment.setId },
+      select: { name: true },
+    }),
+    db.leavePolicySetItem.findMany({
+      where: { setId: assignment.setId },
+      select: { leaveTypeId: true, annualDays: true },
+    }),
+  ]);
+  // An orphaned setId (set hard-deleted behind an assignment — the delete
+  // action refuses exactly this) degrades to NO override, loudly honest:
+  // the engine falls back to the global policy rather than inventing days.
+  if (!set) return null;
+  return {
+    setId: assignment.setId,
+    setName: set.name,
+    annualDaysByType: new Map(items.map((i) => [i.leaveTypeId, i.annualDays])),
+  };
+}
+
+/** The overrides for EVERY user assigned to a bucket (the cron job's
+ * batched read: one query per table, never per user). */
+export async function assignmentOverridesForUsers(
+  bucketYear: number,
+): Promise<Map<string, BucketPolicyOverrides>> {
+  const assignments = await db.leavePolicyAssignment.findMany({
+    where: { bucketYear },
+    select: { userId: true, setId: true },
+  });
+  if (assignments.length === 0) return new Map();
+  const setIds = [...new Set(assignments.map((a) => a.setId))];
+  const [sets, items] = await Promise.all([
+    db.leavePolicySet.findMany({ where: { id: { in: setIds } }, select: { id: true, name: true } }),
+    db.leavePolicySetItem.findMany({
+      where: { setId: { in: setIds } },
+      select: { setId: true, leaveTypeId: true, annualDays: true },
+    }),
+  ]);
+  const nameById = new Map(sets.map((s) => [s.id, s.name]));
+  const itemsBySet = new Map<string, Map<string, number>>();
+  for (const item of items) {
+    let byType = itemsBySet.get(item.setId);
+    if (!byType) {
+      byType = new Map<string, number>();
+      itemsBySet.set(item.setId, byType);
+    }
+    byType.set(item.leaveTypeId, item.annualDays);
+  }
+  const result = new Map<string, BucketPolicyOverrides>();
+  for (const a of assignments) {
+    if (!nameById.has(a.setId)) continue; // orphaned set — no override
+    result.set(a.userId, {
+      setId: a.setId,
+      setName: nameById.get(a.setId)!,
+      annualDaysByType: itemsBySet.get(a.setId) ?? new Map<string, number>(),
+    });
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Balance access — lazily materialized from the type's policy so a user who
 // has never taken leave still sees their entitlement. F2.4: for strategy
 // types (ANNUAL_LUMP_SUM / EARNED / AFTER_SERVICE) the materialization
@@ -195,24 +283,45 @@ async function employmentFactsFor(
  *   null      — periods EXIST but no window covers the bucket (the
  *               migration gap before the first period): NO grants —
  *               implicit materialization stops the moment the period
- *               table is non-empty (the no-double-grant law). */
+ *               table is non-empty (the no-double-grant law).
+ * P28 (LV-03): `overrideAnnualDays` — the assigned set's allocation for
+ * the type, applied at the ROW level so every strategy flows through the
+ * same kernel with the set's number; MANUAL + assignment additionally
+ * pro-rates for mid-window joiners (F2.4's own rule, via the TYPE's
+ * prorateForJoiners knob). */
 async function materializationGrantOps(
   userId: string,
   policyRow: LeavePolicyInput,
   year: number,
   window?: { start: string; end: string } | null,
+  overrideAnnualDays?: number,
 ): Promise<GrantOp[]> {
-  const policy = resolveLeavePolicy(policyRow);
+  const row = policyRowWithAnnualDays(policyRow, overrideAnnualDays);
+  const policy = resolveLeavePolicy(row);
   if (window === null) return []; // periods exist, no window here — no grants
   if (policy.allocationStrategy === "MANUAL") {
     // Legacy path, unchanged: one GRANT of annualDays, sourceId = the type
     // id (the F1.2 convention existing rows and tests pin).
-    if (policy.annualDays === 0) return [];
+    // P28 — under an assignment the amount is the assignedManualGrantDays
+    // rule (the set's days, DOJ-pro-rated for mid-window joiners when the
+    // type's knob is on).
+    let days = policy.annualDays;
+    if (overrideAnnualDays !== undefined) {
+      const winStart = window?.start ?? `${year}-01-01`;
+      const winEnd = window?.end ?? `${year}-12-31`;
+      days = assignedManualGrantDays(
+        policy,
+        (await employmentFactsFor(userId))?.hireDate ?? null,
+        winStart,
+        winEnd,
+      );
+    }
+    if (days === 0) return [];
     return [{
       periodKey: "", // caller writes the legacy sourceId (leaveTypeId)
-      delta: policy.annualDays,
+      delta: days,
       dueDate: window?.start ?? `${year}-01-01`,
-      note: `Entitlement materialized (${policy.annualDays} days)`,
+      note: `Entitlement materialized (${days} days${overrideAnnualDays !== undefined ? `, policy set` : ""})`,
     }];
   }
   return dueGrantOps({
@@ -261,6 +370,7 @@ export async function getOrCreateBalance(
   year: number,
   policyRow: LeavePolicyInput,
   window?: { start: string; end: string } | null,
+  overrideAnnualDays?: number,
 ): Promise<{ entitled: number; carriedOver: number; used: number }> {
   const existing = await db.leaveBalance.findUnique({
     where: { userId_leaveTypeId_year: { userId, leaveTypeId, year } },
@@ -274,9 +384,9 @@ export async function getOrCreateBalance(
   // No row yet — materialize the entitlement from the policy AND its
   // ledger GRANT row(s) that explain it, in ONE transaction (F1.2: a
   // balance row must never exist without its ledger rows).
-  const ops = await materializationGrantOps(userId, policyRow, year, window);
+  const ops = await materializationGrantOps(userId, policyRow, year, window, overrideAnnualDays);
   const entitled = ops.reduce((s, o) => s + o.delta, 0);
-  const legacySourceId = resolveLeavePolicy(policyRow).allocationStrategy === "MANUAL";
+  const legacySourceId = resolveLeavePolicy(policyRowWithAnnualDays(policyRow, overrideAnnualDays)).allocationStrategy === "MANUAL";
   await db
     .$transaction(async (tx) => {
       await tx.leaveBalance.create({
@@ -348,6 +458,9 @@ export async function getOrCreateBalancesBatch(
   types: Array<{ id: string; policy: LeavePolicyInput }>,
   year: number,
   window?: { start: string; end: string } | null,
+  /** P28 (LV-03) — the assigned set's allocations per type id (absent = no
+   * assignment: every type materializes its own policy, byte-identical). */
+  overrides?: Map<string, number>,
 ): Promise<Map<string, { entitled: number; carriedOver: number; used: number }>> {
   const result = new Map<string, { entitled: number; carriedOver: number; used: number }>();
   if (types.length === 0) return result;
@@ -365,12 +478,19 @@ export async function getOrCreateBalancesBatch(
   const missing = types.filter((t) => !byType.has(t.id));
   if (missing.length > 0) {
     // Employment facts for the strategy types among the missing rows (one
-    // read — MANUAL missing rows never need it).
+    // read — MANUAL missing rows never need it). P28: an assigned MANUAL
+    // type needs the hire date too (the DOJ pro-rata), so the facts read
+    // fires for those as well.
     const anyStrategy = missing.some(
       (t) => resolveLeavePolicy(t.policy).allocationStrategy !== "MANUAL",
     );
+    const anyAssignedManual = missing.some(
+      (t) =>
+        overrides?.has(t.id) &&
+        resolveLeavePolicy(t.policy).allocationStrategy === "MANUAL",
+    );
     let facts: EmploymentFacts | null = null;
-    if (anyStrategy) {
+    if (anyStrategy || anyAssignedManual) {
       const profile = await db.employeeProfile.findUnique({
         where: { userId },
         select: { hireDate: true, employmentStatus: true, probationEndsAt: true },
@@ -385,15 +505,28 @@ export async function getOrCreateBalancesBatch(
     }
     const asOf = dayKey(new Date());
     const opsByType = missing.map((t) => {
-      const policy = resolveLeavePolicy(t.policy);
+      const row = policyRowWithAnnualDays(t.policy, overrides?.get(t.id));
+      const policy = resolveLeavePolicy(row);
       if (policy.allocationStrategy === "MANUAL") {
-        return policy.annualDays === 0
+        // P28 — under an assignment the amount is the assignedManualGrantDays
+        // rule (the set's days, DOJ-pro-rated for mid-window joiners when
+        // the type's knob is on).
+        let days = policy.annualDays;
+        if (overrides?.has(t.id)) {
+          days = assignedManualGrantDays(
+            policy,
+            facts?.hireDate ?? null,
+            window?.start ?? `${year}-01-01`,
+            window?.end ?? `${year}-12-31`,
+          );
+        }
+        return days === 0
           ? []
           : [{
               periodKey: "", // legacy sourceId (the type id) — see below
-              delta: policy.annualDays,
+              delta: days,
               dueDate: window?.start ?? `${year}-01-01`,
-              note: `Entitlement materialized (${policy.annualDays} days)`,
+              note: `Entitlement materialized (${days} days${overrides?.has(t.id) ? ", policy set" : ""})`,
             }];
       }
       return dueGrantOps({
@@ -423,7 +556,7 @@ export async function getOrCreateBalancesBatch(
           })),
         });
         const ledgerRows = missing.flatMap((t, i) => {
-          const legacy = resolveLeavePolicy(t.policy).allocationStrategy === "MANUAL";
+          const legacy = resolveLeavePolicy(policyRowWithAnnualDays(t.policy, overrides?.get(t.id))).allocationStrategy === "MANUAL";
           return opsByType[i].map((op) => ({
             userId,
             leaveTypeId: t.id,
@@ -454,9 +587,11 @@ export async function getOrCreateBalancesBatch(
     const row = byType.get(t.id);
     // The facts-free fallback is the legacy flat entitlement (what the
     // pre-F2.4 code fell back to when the re-read still lost the race).
+    // P28 — the fallback honors the assignment's allocation too (the
+    // read must never contradict what the engine would grant).
     result.set(
       t.id,
-      row ?? { entitled: resolveLeavePolicy(t.policy).annualDays, carriedOver: 0, used: 0 },
+      row ?? { entitled: resolveLeavePolicy(policyRowWithAnnualDays(t.policy, overrides?.get(t.id))).annualDays, carriedOver: 0, used: 0 },
     );
   }
   return result;
@@ -513,6 +648,10 @@ type BalanceWriteTx = Pick<
  * Postgres transaction an INSERT unique-violation aborts the transaction,
  * so a lost race must fail loudly (a retryable error to the decider)
  * instead of swallowing into an aborted transaction state.
+ * P28 (LV-03): `overrideAnnualDays` — the assigned set's allocation for the
+ * type (row-level override; MANUAL + assignment DOJ-pro-rates via F2.4's
+ * own rule). Returns whether a row was materialized (the bulk tool counts
+ * its honest "pairs materialized"; the decide/cancel callers ignore it).
  */
 export async function materializeLeaveBalanceTx(
   tx: BalanceWriteTx,
@@ -520,32 +659,50 @@ export async function materializeLeaveBalanceTx(
   leaveTypeId: string,
   year: number,
   window?: { start: string; end: string } | null,
-): Promise<void> {
+  overrideAnnualDays?: number,
+): Promise<{ materialized: boolean }> {
   const existing = await tx.leaveBalance.findUnique({
     where: { userId_leaveTypeId_year: { userId, leaveTypeId, year } },
     select: { id: true },
   });
-  if (existing) return;
+  if (existing) return { materialized: false };
   // P27 null — periods exist but no window covers this bucket: no
   // materialization inside the decision either (the QA-1 projection
   // below then reads the honest empty ledger — an approval can only pass
   // a policy that allows an advance).
-  if (window === null) return;
+  if (window === null) return { materialized: false };
   const policyRow = await tx.leavePolicy.findUnique({ where: { leaveTypeId } });
-  const policy = resolveLeavePolicy(policyRow);
+  const policy = resolveLeavePolicy(policyRowWithAnnualDays(policyRow, overrideAnnualDays));
 
   let ops: GrantOp[];
   let legacySourceId: boolean;
   if (policy.allocationStrategy === "MANUAL") {
     legacySourceId = true;
+    // P28 — under an assignment the amount is the assignedManualGrantDays
+    // rule (the set's days, DOJ-pro-rated for mid-window joiners when the
+    // type's knob is on).
+    let days = policy.annualDays;
+    if (overrideAnnualDays !== undefined) {
+      const profile = await tx.employeeProfile.findUnique({
+        where: { userId },
+        select: { hireDate: true, employmentStatus: true, probationEndsAt: true },
+      });
+      const hireDate = profile?.hireDate ? dayKey(profile.hireDate) : null;
+      days = assignedManualGrantDays(
+        policy,
+        hireDate,
+        window?.start ?? `${year}-01-01`,
+        window?.end ?? `${year}-12-31`,
+      );
+    }
     ops =
-      policy.annualDays === 0
+      days === 0
         ? []
         : [{
             periodKey: "",
-            delta: policy.annualDays,
+            delta: days,
             dueDate: window?.start ?? `${year}-01-01`,
-            note: `Entitlement materialized (${policy.annualDays} days)`,
+            note: `Entitlement materialized (${days} days${overrideAnnualDays !== undefined ? ", policy set" : ""})`,
           }];
   } else {
     legacySourceId = false;
@@ -611,6 +768,7 @@ export async function materializeLeaveBalanceTx(
       })),
     });
   }
+  return { materialized: true };
 }
 
 // ---------------------------------------------------------------------------
