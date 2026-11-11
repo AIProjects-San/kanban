@@ -32,8 +32,8 @@ import { DocumentTypeModal } from "@/components/ui/document-type-modal";
 import type { DocumentTypeConfigT } from "@/lib/types";
 
 const TYPES: DocumentTypeConfigT[] = [
-  { id: "dt-1", key: "id_proof", label: "ID Document", description: "Passport or ID", isMandatory: true, sortOrder: 10, isActive: true },
-  { id: "dt-2", key: "bank_details", label: "Bank Details", description: "", isMandatory: false, sortOrder: 20, isActive: true },
+  { id: "dt-1", key: "id_proof", label: "ID Document", description: "Passport or ID", isMandatory: true, scope: "CANDIDATE", sortOrder: 10, isActive: true },
+  { id: "dt-2", key: "bank_details", label: "Bank Details", description: "", isMandatory: false, scope: "CANDIDATE", sortOrder: 20, isActive: true },
 ];
 
 const onChanged = vi.fn();

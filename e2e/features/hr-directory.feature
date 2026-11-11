@@ -110,3 +110,36 @@ Feature: HR employee directory
     When I filter the directory by grade to "L4"
     Then the directory should show 3 profiles
     And the directory card for "Theo Vance" should show grade "L4"
+
+  # P36 (EM-21) — employee identification documents: the scope-gated master
+  # and the lifecycle (request → submit → verify), plus the member
+  # self-service submission surface.
+
+  Scenario: HR requests an identification document and the member submits it
+    Diego is the profile-with-login showcase (the seeded passport REQUESTED
+    rides the same panel).
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Directory" tab
+    And I open the identification documents panel for "Diego Morales"
+    And I request the "Visa / Work Permit" identification document
+    Then the identification panel shows "Visa / Work Permit" as "Requested"
+    And I sign out and back in as "diego@fernly.app"
+    And I open the "Settings" view
+    And I submit my identification document "Visa / Work Permit" with reference "visa_diego.pdf"
+    Then my identification documents show "Visa / Work Permit" as "Received"
+
+  Scenario: HR verifies the submitted identification document
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Directory" tab
+    And I open the identification documents panel for "Diego Morales"
+    And I verify the identification document "Visa / Work Permit"
+    Then the identification panel shows "Visa / Work Permit" as "Verified"
+
+  Scenario: Hana's seeded identification document shows verified
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Directory" tab
+    And I open the identification documents panel for "Hana Park"
+    Then the identification panel shows "Tax Number (IRD)" as "Verified"

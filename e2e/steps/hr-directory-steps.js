@@ -381,10 +381,26 @@ async function pickFilterChip(world, testId, value) {
     "directory roster did not render",
   );
   const chip = await driver.findElement(By.css(`[data-testid='${testId}']`));
+  // Two-part fix (P36 verification round): (1) resolve the option by its
+  // visible TEXT — the employment-type chip keys its option values
+  // (INTERN / FULL_TIME) while the steps say "Intern" / "Full-time", and a
+  // raw value assignment that matches nothing leaves the filter empty;
+  // (2) drive the NATIVE value setter (the suite-wide discipline) so
+  // React's tracker registers the change.
+  const resolved = await driver.executeScript(
+    `const el = arguments[0], label = arguments[1];
+     const opt = Array.from(el.options).find(o => o.textContent.trim() === label || o.value === label);
+     return opt ? opt.value : "";`,
+    chip, value,
+  );
+  assert.ok(resolved, `filter chip option "${value}" not found`);
   await driver.executeScript(
-    "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
     chip,
-    value,
+    resolved,
   );
   await driver.sleep(600);
 }
@@ -433,4 +449,96 @@ Then("the directory card for {string} should show branch {string}", async functi
     text.includes(branch),
     `card for ${name} shows branch "${text}", expected it to mention "${branch}"`,
   );
+});
+
+// P36 (EM-21) — employee identification documents: the panel, the
+// lifecycle (request / submit / verify) and the member self-service mount.
+
+async function openIdPanel(world, name) {
+  const driver = await world.getDriver();
+  await openDirectoryTab(world);
+  const btn = await driver.wait(
+    until.elementLocated(By.xpath(`//button[@data-testid='directory-docs-${name}']`)),
+    10_000,
+    `identification-documents button for ${name} not found`,
+  );
+  await driver.executeScript("arguments[0].click();", btn);
+  return driver.wait(
+    until.elementLocated(By.css("[data-testid='employee-documents-panel']")),
+    10_000,
+    "identification-documents panel did not render",
+  );
+}
+
+When("I open the identification documents panel for {string}", async function (name) {
+  await openIdPanel(this, name);
+});
+
+When("I request the {string} identification document", async function (label) {
+  const driver = await this.getDriver();
+  const select = await driver.wait(
+    until.elementLocated(By.css("[data-testid='employee-doc-type-select']")),
+    10_000,
+    "identification type select not found",
+  );
+  const value = await driver.executeScript(
+    `const el = arguments[0];
+     return Array.from(el.options).find(o => o.textContent.includes(arguments[1]))?.value ?? "";`,
+    select, label,
+  );
+  await driver.executeScript(
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    select, value,
+  );
+  await driver.findElement(By.xpath(`//form[@data-testid='employee-doc-request-form']//button[contains(., "Request")]`)).click();
+  await driver.sleep(1_200);
+});
+
+Then("the identification panel shows {string} as {string}", async function (label, status) {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(By.xpath(`//div[@data-testid='employee-doc-${label}']`)),
+    10_000,
+    `identification row "${label}" not found`,
+  );
+  const text = await row.getText();
+  assert.ok(text.includes(status), `"${label}" row does not show ${status} (got: ${text})`);
+});
+
+When("I submit my identification document {string} with reference {string}", async function (label, fileRef) {
+  const driver = await this.getDriver();
+  const input = await driver.wait(
+    until.elementLocated(By.css(`[data-testid='doc-fileref-${label}']`)),
+    10_000,
+    `file-reference input for "${label}" not found`,
+  );
+  await input.clear();
+  await input.sendKeys(fileRef);
+  await driver.findElement(By.css(`[data-testid='doc-submit-${label}']`)).click();
+  await driver.sleep(1_200);
+});
+
+Then("my identification documents show {string} as {string}", async function (label, status) {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(By.xpath(`//div[@data-testid='employee-doc-${label}']`)),
+    10_000,
+    `identification row "${label}" not found in settings`,
+  );
+  const text = await row.getText();
+  assert.ok(text.includes(status), `"${label}" does not show ${status} (got: ${text})`);
+});
+
+When("I verify the identification document {string}", async function (label) {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css(`[data-testid='doc-verify-${label}']`)),
+    10_000,
+    `verify button for "${label}" not found`,
+  );
+  await driver.executeScript("arguments[0].click();", btn);
+  await driver.sleep(1_200);
 });

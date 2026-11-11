@@ -10,6 +10,7 @@ import { ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
+import { cn } from "@/lib/utils";
 import type { DocumentTypeConfigT } from "@/lib/types";
 import { getDocumentTypes, saveDocumentType, deleteDocumentType } from "@/server-actions/hiring";
 
@@ -19,6 +20,9 @@ interface Draft {
   label: string;
   description: string;
   isMandatory: boolean;
+  // P36 (EM-21) — CANDIDATE (joining formalities) | EMPLOYEE
+  // (identification types — never gate a join).
+  scope: "CANDIDATE" | "EMPLOYEE";
   sortOrder: number;
   isActive: boolean;
 }
@@ -109,6 +113,16 @@ export function DocumentTypeModal({
                       mandatory
                     </span>
                   )}
+                  {/* P36 — the scope chip: which flow the type belongs to. */}
+                  <span
+                    className={cn(
+                      "text-[0.625rem] px-1.5 py-0.5 rounded uppercase tracking-wide",
+                      t.scope === "EMPLOYEE" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+                    )}
+                    data-testid={`doc-type-scope-${t.key}`}
+                  >
+                    {t.scope === "EMPLOYEE" ? "employee id" : "candidate"}
+                  </span>
                   {!t.isActive && <span className="text-[0.625rem] text-amber-500">inactive</span>}
                 </div>
                 {t.description && <div className="text-xs text-muted-foreground mt-0.5">{t.description}</div>}
@@ -156,6 +170,16 @@ export function DocumentTypeModal({
           <Field label="Description">
             <input className="f-input" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={500} />
           </Field>
+          <Field label="Scope (P36: which flow collects it)">
+            <select
+              className="f-input" value={draft.scope}
+              onChange={(e) => setDraft({ ...draft, scope: e.target.value as Draft["scope"] })}
+              data-testid="doc-type-scope-select"
+            >
+              <option value="CANDIDATE">Candidate — joining formalities (gates the join when mandatory)</option>
+              <option value="EMPLOYEE">Employee — identification documents</option>
+            </select>
+          </Field>
           <label className="flex items-center gap-2 text-sm" data-testid="doc-type-mandatory">
             <input type="checkbox" checked={draft.isMandatory} onChange={(e) => setDraft({ ...draft, isMandatory: e.target.checked })} />
             Mandatory (flagged in the joining checklist)
@@ -175,7 +199,7 @@ export function DocumentTypeModal({
         <button
           className="f-btn f-btn-secondary mt-4"
           disabled={busy}
-          onClick={() => setDraft({ key: "", label: "", description: "", isMandatory: false, sortOrder: (types.length + 1) * 10, isActive: true })}
+          onClick={() => setDraft({ key: "", label: "", description: "", isMandatory: false, scope: "CANDIDATE", sortOrder: (types.length + 1) * 10, isActive: true })}
           data-testid="add-doc-type-btn"
         >
           <Plus size={15} /> Add document type

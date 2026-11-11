@@ -14,6 +14,8 @@ import { Section } from "../ui/section";
 import { EmployeeProfileSection } from "./hr-directory";
 import { MyReviewsSection } from "./hr-reviews";
 import { MyOnboardingSection } from "./hr-onboarding";
+// P36 (EM-21) — my identification documents (the self-service submission).
+import { MyDocumentsSection } from "../ui/employee-documents-panel";
 import { Field } from "../ui/field";
 import { PasswordInput } from "../ui/password-input";
 import { AvatarColorPicker } from "../ui/avatar-color-picker";
@@ -168,6 +170,10 @@ export function SettingsView({ user }: SettingsViewProps) {
 
       {/* HR module — my onboarding tasks (docs/HR_MODULE_PLAN.md §7) */}
       <MyOnboardingSection />
+
+      {/* P36 (EM-21) — my identification documents: the member submits,
+          HR verifies. */}
+      <MyDocumentsSection />
 
       {/* Security — change password */}
       <SecuritySection userId={user.id} email={user.email} />

@@ -1196,11 +1196,14 @@ export async function getDocumentTypes(): Promise<ActionResult<DocumentTypeConfi
 
 function serializeDocType(t: {
   id: string; key: string; label: string; description: string;
-  isMandatory: boolean; sortOrder: number; isActive: boolean;
+  isMandatory: boolean; scope: string; sortOrder: number; isActive: boolean;
 }): DocumentTypeConfigT {
   return {
     id: t.id, key: t.key, label: t.label, description: t.description,
-    isMandatory: t.isMandatory, sortOrder: t.sortOrder, isActive: t.isActive,
+    isMandatory: t.isMandatory,
+    // P36 — the scope axis (pre-P36 rows read CANDIDATE, their meaning).
+    scope: t.scope === "EMPLOYEE" ? "EMPLOYEE" : "CANDIDATE",
+    sortOrder: t.sortOrder, isActive: t.isActive,
   };
 }
 
@@ -1259,7 +1262,9 @@ export async function getJoiningFormalities(
     const candidate = await db.candidate.findUnique({ where: { id: candidateId } });
     if (!candidate) throw new AuthorizationError("Candidate not found.");
     const [docTypes, documents, bgChecks, config] = await Promise.all([
-      db.documentTypeConfig.findMany({ orderBy: [{ sortOrder: "asc" }, { key: "asc" }] }),
+      // P36 — the gate applies CANDIDATE-scope mandatory types only: an
+      // EMPLOYEE-scope identification type never blocks a join.
+      db.documentTypeConfig.findMany({ where: { scope: "CANDIDATE" }, orderBy: [{ sortOrder: "asc" }, { key: "asc" }] }),
       db.candidateDocument.findMany({
         where: { candidateId },
         orderBy: { requestedAt: "asc" },
@@ -2224,7 +2229,9 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
     // panel renders, enforced here where it actually bites.
     if (config.workspace.joiningGateEnabled) {
       const [docTypes, documents, bgChecks] = await Promise.all([
-        db.documentTypeConfig.findMany({ orderBy: { sortOrder: "asc" } }),
+        // P36 — CANDIDATE-scope only (employee identification types never
+        // gate a join).
+        db.documentTypeConfig.findMany({ where: { scope: "CANDIDATE" }, orderBy: { sortOrder: "asc" } }),
         db.candidateDocument.findMany({ where: { candidateId: candidate.id } }),
         db.backgroundCheck.findMany({ where: { candidateId: candidate.id } }),
       ]);

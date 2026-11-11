@@ -15,7 +15,7 @@ import {
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
-  ArrowUpRight,
+  ArrowUpRight, Upload, FileX,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -144,6 +144,12 @@ export type AuditAction =
   | "hr.exit_interview_cancelled"
   | "hr.fnf_generated"
   | "hr.fnf_settled"
+  // P36 (EM-21) — employee identification documents: the lifecycle
+  // writers (request / submit / verify / reject).
+  | "hr.employee_document_requested"
+  | "hr.employee_document_submitted"
+  | "hr.employee_document_verified"
+  | "hr.employee_document_rejected"
   // Recruitment module lifecycle (docs/RECRUITMENT_MODULE_PLAN.md)
   | "hiring.candidate_created"
   | "hiring.candidate_updated"
@@ -348,6 +354,10 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.exit_interview_cancelled": { icon: CalendarX, cls: "text-zinc-500 bg-zinc-500/10" },
   "hr.fnf_generated": { icon: FileText, cls: "text-blue-500 bg-blue-500/10" },
   "hr.fnf_settled": { icon: BadgeCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.employee_document_requested": { icon: FileText, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.employee_document_submitted": { icon: Upload, cls: "text-amber-500 bg-amber-500/10" },
+  "hr.employee_document_verified": { icon: BadgeCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.employee_document_rejected": { icon: FileX, cls: "text-red-500 bg-red-500/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "onboarding.template_task_saved": { icon: Plus, cls: "text-primary bg-primary/10" },

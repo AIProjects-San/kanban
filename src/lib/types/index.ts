@@ -701,8 +701,29 @@ export interface DocumentTypeConfigT {
   label: string;
   description: string;
   isMandatory: boolean;
+  /** P36 (EM-21) — CANDIDATE (joining formalities) | EMPLOYEE
+   * (identification). */
+  scope: "CANDIDATE" | "EMPLOYEE";
   sortOrder: number;
   isActive: boolean;
+}
+
+/** P36 (EM-21) — one identification document being collected from one
+ * employee; the CandidateDocument twin. */
+export interface EmployeeDocumentT {
+  id: string;
+  userId: string;
+  userName: string;
+  docTypeKey: string;
+  label: string;
+  status: "REQUESTED" | "RECEIVED" | "VERIFIED" | "REJECTED";
+  fileRef: string;
+  remarks: string;
+  requestedAt: string;
+  receivedAt: string | null;
+  verifiedBy: string | null;
+  verifiedAt: string | null;
+  isMandatory: boolean;
 }
 
 /** R4 — one document being collected from one candidate.

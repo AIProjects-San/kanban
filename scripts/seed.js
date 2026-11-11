@@ -118,6 +118,8 @@ async function main() {
   await db.mailOutbox.deleteMany();
   await db.hiringStageConfig.deleteMany();
   await db.documentTypeConfig.deleteMany();
+  // P36 — the employee identification-document rows (seeded below).
+  await db.employeeDocument.deleteMany();
   await db.onboardingTemplateTask.deleteMany();
   await db.offerTemplate.deleteMany();
   await db.offerRecord.deleteMany();
@@ -2378,11 +2380,18 @@ async function main() {
   // checklist (SELECTED → offer accepted story) + a BGV in review.
   // -----------------------------------------------------------------
   const DOC_TYPES = [
-    { key: "id_proof", label: "ID Document", description: "Passport or national ID (photo page)", isMandatory: true, sortOrder: 10 },
-    { key: "bank_details", label: "Bank Details", description: "Account for salary deposits", isMandatory: true, sortOrder: 20 },
-    { key: "right_to_work", label: "Right to Work", description: "Visa / citizenship evidence", isMandatory: true, sortOrder: 30 },
-    { key: "education_certificates", label: "Education Certificates", description: "Highest qualification transcripts", isMandatory: false, sortOrder: 40 },
-    { key: "previous_employment_proof", label: "Previous Employment Proof", description: "Relieving / service letters", isMandatory: false, sortOrder: 50 },
+    // P36 — the scope axis rides every row: the joining-formalities types
+    // stay CANDIDATE, the identification types below are EMPLOYEE.
+    { key: "id_proof", label: "ID Document", description: "Passport or national ID (photo page)", isMandatory: true, scope: "CANDIDATE", sortOrder: 10 },
+    { key: "bank_details", label: "Bank Details", description: "Account for salary deposits", isMandatory: true, scope: "CANDIDATE", sortOrder: 20 },
+    { key: "right_to_work", label: "Right to Work", description: "Visa / citizenship evidence", isMandatory: true, scope: "CANDIDATE", sortOrder: 30 },
+    { key: "education_certificates", label: "Education Certificates", description: "Highest qualification transcripts", isMandatory: false, scope: "CANDIDATE", sortOrder: 40 },
+    { key: "previous_employment_proof", label: "Previous Employment Proof", description: "Relieving / service letters", isMandatory: false, scope: "CANDIDATE", sortOrder: 50 },
+    // P36 (EM-21) — the EMPLOYEE-scope identification types (never gate a
+    // join; HR requests them from the directory's ID panel).
+    { key: "passport", label: "Passport", description: "Photo page for the personnel file", isMandatory: false, scope: "EMPLOYEE", sortOrder: 60 },
+    { key: "tax_number", label: "Tax Number (IRD)", description: "Payroll tax number evidence", isMandatory: true, scope: "EMPLOYEE", sortOrder: 70 },
+    { key: "visa", label: "Visa / Work Permit", description: "For non-citizens — expiry tracked", isMandatory: false, scope: "EMPLOYEE", sortOrder: 80 },
   ];
   for (const t of DOC_TYPES) {
     await db.documentTypeConfig.create({ data: t });
@@ -2411,7 +2420,34 @@ async function main() {
       });
     }
   }
-  console.log(`  ✓ Hiring R4: ${DOC_TYPES.length} document types + Priyanka's checklist (1 verified, 1 received, 1 requested, 1 rejected) + BGV in review`);
+  console.log(`  ✓ Hiring R4: ${DOC_TYPES.length} document types (5 candidate + 3 employee identification) + Priyanka's checklist (1 verified, 1 received, 1 requested, 1 rejected) + BGV in review`);
+
+  // -----------------------------------------------------------------
+  // P36 (EM-21) — employee identification documents: the seeded
+  // lifecycle showcase (Hana's tax number verified, Diego's passport
+  // requested — he submits from Settings; the joining gate only ever
+  // read the CANDIDATE-scope types above).
+  // -----------------------------------------------------------------
+  await db.employeeDocument.deleteMany();
+  {
+    const hanaId2 = userByName.get("Hana Park");
+    const diegoId2 = userByName.get("Diego Morales");
+    const hrId2 = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+    await db.employeeDocument.createMany({
+      data: [
+        ...(hanaId2 ? [{
+          userId: hanaId2, docTypeKey: "tax_number", label: "Tax Number (IRD)", status: "VERIFIED",
+          fileRef: "ird_hana.pdf", remarks: "Matches the payroll record.",
+          receivedAt: addDays(TODAY, -5), verifiedById: hrId2, verifiedAt: addDays(TODAY, -4),
+        }] : []),
+        ...(diegoId2 ? [{
+          userId: diegoId2, docTypeKey: "passport", label: "Passport", status: "REQUESTED",
+          remarks: "For the personnel file — expiry tracked.",
+        }] : []),
+      ],
+    });
+    console.log("  ✓ P36 employee documents: Hana's IRD verified · Diego's passport requested (self-service submission)");
+  }
 
   // -----------------------------------------------------------------
   // F2.10 (F-R8) — the ONE onboarding template source: the canonical

@@ -33,7 +33,7 @@ login never has to be diagnosed from a timeout alone.
 
 ## What is covered
 
-**129 scenarios across 18 feature files:**
+**132 scenarios across 18 feature files:**
 
 | Feature file | Scenarios |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -45,7 +45,7 @@ login never has to be diagnosed from a timeout alone.
 | `hr-attendance.feature` (5) | F1.3 attendance records: HR opens the Attendance tab and sees the roster grid; managers see the HR console but not the Attendance tab; HR marks a far-future day and a duplicate record is rejected with a friendly error, then the record is deleted; approved leave derives ON_LEAVE in the member's My Attendance view and cancelling the request removes it again |
 | `hr-holidays.feature` (5) | holiday calendar: entries list + half-day flag, HR adds an entry, duplicate dates rejected, the calendar view marks holidays |
 | `hr-leave.feature` (18) | balances + own requests, request form with policy enforcement (weekend block, balance cap, minimum notice, overlap rejection), cancel, chain approval, MEMBER sidebar must not contain the HR group |
-| `hr-directory.feature` (9) | roster + search, manager read-only, admin edits, member self-serves contact fields, member blocked |
+| `hr-directory.feature` (12) | roster + search, manager read-only, admin edits, member self-serves contact fields, member blocked |
 | `hr-reviews.feature` (7) | manager's subtree queue, out-of-chain invisible, self-assessment, manager/HR/skip-level completion, employee acknowledgement |
 | `hr-onboarding.feature` (9) | seeded checklists + progress, create from template, add task, auto-complete on last tick, hire self-serves, outsider blocked; P35: the derived boarding status chip + required-open counter + role-scoped assignee label + holiday-aware due date, the template editor's assignee-axis chips, the pinned start-date walk |
 | `hr-offboarding.feature` (2) | F2.1 offboarding: exit a leaver through the separation checklist; settling the FnF statement locks payslip editing |

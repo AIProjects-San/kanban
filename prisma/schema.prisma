@@ -86,6 +86,10 @@ model User {
   sessions Session[]
   accounts Account[]
 
+  // P36 (EM-21) — identification document rows (the EmployeeDocument
+  // lifecycle: REQUESTED → RECEIVED → VERIFIED | REJECTED).
+  employeeDocuments EmployeeDocument[] @relation("EmployeeDocuments")
+
   @@index([managerId])
 }
 
@@ -1850,10 +1854,17 @@ model DocumentTypeConfig {
   // Mandatory types are flagged in the UI and default-requested when the
   // joining-formalities panel opens for a SELECTED candidate.
   isMandatory Boolean  @default(false)
+  // P36 (EM-21) — the scope axis: CANDIDATE (the joining-formalities
+  // checklist, the pre-P36 meaning of every row) | EMPLOYEE
+  // (identification types — passport, visa, IRD number…). The joining
+  // gate deliberately applies CANDIDATE-scope mandatory types only.
+  scope       String   @default("CANDIDATE")
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([scope])
 }
 
 // One document being collected from one candidate.
@@ -1880,6 +1891,36 @@ model CandidateDocument {
 
   @@unique([candidateId, docTypeKey])
   @@index([candidateId])
+  @@index([status])
+}
+
+// P36 (EM-21) — one identification document being collected from one
+// EMPLOYEE (the CandidateDocument twin). status: REQUESTED → RECEIVED →
+// VERIFIED | REJECTED (a re-request after a rejection resets the row).
+// fileRef is a reference (URL / file name) — no binary upload infra in v1,
+// the CandidateDocument convention. The member themself may move their
+// own row to RECEIVED (the self-service submission); verification stays
+// HR-owned.
+model EmployeeDocument {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("EmployeeDocuments", fields: [userId], references: [id], onDelete: Cascade)
+  // DocumentTypeConfig.key — stable identifier; label is a snapshot.
+  docTypeKey   String
+  label        String
+  // REQUESTED | RECEIVED | VERIFIED | REJECTED
+  status       String    @default("REQUESTED")
+  fileRef      String    @default("")
+  remarks      String    @default("")
+  requestedAt  DateTime  @default(now())
+  receivedAt   DateTime?
+  verifiedById String    @default("")
+  verifiedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([userId, docTypeKey])
+  @@index([userId])
   @@index([status])
 }
 

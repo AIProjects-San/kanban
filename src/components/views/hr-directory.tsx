@@ -12,7 +12,7 @@
 // edit anyone including the HR-only `notes` field.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Download, Loader2, Search, Pencil, ArrowUpRight } from "lucide-react";
+import { Briefcase, Download, Loader2, Search, Pencil, ArrowUpRight, IdCard } from "lucide-react";
 import { toast } from "sonner";
 import { Section } from "../ui/section";
 import { Field } from "../ui/field";
@@ -21,6 +21,8 @@ import { Avatar } from "../ui/avatar";
 import { RoleBadge } from "../ui/role-badge";
 import { EmploymentChangeModal } from "../ui/employment-change-modal";
 import { EmploymentChangesSection } from "../ui/employment-history-section";
+// P36 (EM-21) — the employee identification-documents panel + modal mount.
+import { EmployeeDocumentsPanel } from "../ui/employee-documents-panel";
 import { DEPARTMENT_LABELS, departmentLabel, EMPLOYMENT_TYPE_LABELS, employmentTypeLabel } from "@/lib/config";
 import { retirementProjection } from "@/lib/employment-change";
 import {
@@ -187,6 +189,8 @@ export function DirectoryTab() {
   const [editing, setEditing] = useState<EmployeeProfileT | null>(null);
   // P33 (EM-06/EM-01) — the promotion/transfer modal's subject.
   const [changing, setChanging] = useState<EmployeeProfileT | null>(null);
+  // P36 (EM-21) — the identification-documents modal target.
+  const [docsFor, setDocsFor] = useState<EmployeeProfileT | null>(null);
   // P32 (EM-R02) — the employee_information export's busy flag.
   const [exporting, setExporting] = useState(false);
 
@@ -381,6 +385,16 @@ export function DirectoryTab() {
                   >
                     <ArrowUpRight size={12} />
                   </button>
+                  {/* P36 (EM-21) — the identification-documents lifecycle
+                      (request / receive / verify / reject). */}
+                  <button
+                    className="f-btn f-btn-ghost f-btn-sm"
+                    onClick={() => setDocsFor(p)}
+                    aria-label={`${p.name}'s identification documents`}
+                    data-testid={`directory-docs-${p.name}`}
+                  >
+                    <IdCard size={12} />
+                  </button>
                   <button className="f-btn f-btn-ghost f-btn-sm" onClick={() => setEditing(p)} aria-label={`Edit ${p.name}'s profile`}>
                     <Pencil size={12} />
                   </button>
@@ -443,6 +457,16 @@ export function DirectoryTab() {
         onClose={() => setChanging(null)}
         onSaved={load}
       />
+
+      {/* P36 (EM-21) — the identification-documents lifecycle panel. */}
+      <Modal
+        open={docsFor !== null}
+        onClose={() => setDocsFor(null)}
+        title={docsFor ? `${docsFor.name} — identification documents` : ""}
+        description="Request, receive and verify the identification documents (P36/EM-21)"
+      >
+        {docsFor && <EmployeeDocumentsPanel userId={docsFor.userId} self={false} />}
+      </Modal>
     </div>
   );
 }

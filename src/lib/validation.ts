@@ -886,6 +886,9 @@ export const saveDocumentTypeSchema = z.object({
   label: z.string().trim().min(1, "A label is required.").max(120),
   description: z.string().trim().max(500).default(""),
   isMandatory: z.boolean().default(false),
+  // P36 (EM-21) — the scope axis: CANDIDATE (the joining-formalities
+  // checklist) | EMPLOYEE (identification types).
+  scope: z.enum(["CANDIDATE", "EMPLOYEE"]).default("CANDIDATE"),
   sortOrder: z.number().int().min(0).max(9_999).default(0),
   isActive: z.boolean().default(true),
 }).strict();
@@ -914,6 +917,34 @@ export const verifyDocumentSchema = z.object({
 export const rejectDocumentSchema = z.object({
   documentId: cuidish,
   // Required — the candidate/HR needs to know what to fix.
+  remarks: z.string().trim().min(1, "A rejection note is required.").max(2_000),
+}).strict();
+
+// -------------------------------------------------------------------------
+// P36 (EM-21) — employee identification documents (the DocumentTypeConfig
+// scope axis + the EmployeeDocument lifecycle).
+// -------------------------------------------------------------------------
+
+export const requestEmployeeDocumentSchema = z.object({
+  userId: cuidish,
+  docTypeKey: z.string().trim().min(1).max(60),
+  remarks: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const submitEmployeeDocumentSchema = z.object({
+  documentId: cuidish,
+  // A reference to the submitted file (URL / name) — optional in v1.
+  fileRef: z.string().trim().max(500).default(""),
+}).strict();
+
+export const verifyEmployeeDocumentSchema = z.object({
+  documentId: cuidish,
+  remarks: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const rejectEmployeeDocumentSchema = z.object({
+  documentId: cuidish,
+  // Required — the member needs to know what to fix.
   remarks: z.string().trim().min(1, "A rejection note is required.").max(2_000),
 }).strict();
 
