@@ -40,6 +40,7 @@ const SOURCE_LABELS: Record<string, string> = {
   RETENTION_BONUS: "Retention bonus",
   BENEFIT_PAYOUT: "Benefit payout",
   WITHHOLDING_RELEASE: "Withholding release",
+  SALARY_ADVANCE: "Salary advance recovery",
 };
 
 export function PayAdjustmentModal({ open, onClose, onChanged, employees, defaultPeriod }: Props) {

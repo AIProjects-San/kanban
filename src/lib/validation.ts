@@ -921,6 +921,19 @@ export const rejectDocumentSchema = z.object({
 }).strict();
 
 // -------------------------------------------------------------------------
+// P39 (EM-16's advances half) — salary advances: issue + the recovery
+// through the PayAdjustment adapter.
+// -------------------------------------------------------------------------
+
+export const issueSalaryAdvanceSchema = z.object({
+  userId: cuidish,
+  amount: z.number().min(0.01, "The advance amount must be positive.").max(1_000_000),
+  installments: z.number().int().min(1, "At least one installment.").max(24, "At most 24 installments."),
+  startPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "The start period must be YYYY-MM."),
+  reason: z.string().trim().max(2_000).default(""),
+}).strict();
+
+// -------------------------------------------------------------------------
 // P37 (EM-19, PF-07, EM-18) — the skill master + employee skill maps.
 // -------------------------------------------------------------------------
 

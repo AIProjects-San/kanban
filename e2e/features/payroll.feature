@@ -85,3 +85,14 @@ Feature: Payroll (Recruitment R7)
   Scenario: Managers never see the Payroll leaf
     When I sign in as "manager@fernly.app" with the demo password
     Then the sidebar should not contain "Payroll"
+
+  # P39 (EM-16 advances half) — salary advances: issue through the modal,
+  # the recovery rides the adapter as per-paycheck deductions.
+
+  Scenario: P39 — HR issues a salary advance and sees the seeded one
+    When I sign in as "remy@fernly.app" with the demo password
+    And I open the "Payroll" view
+    And I open the advances panel
+    Then the advances list shows "Diego Morales" with "outstanding"
+    And I issue a 600 advance to "Hana Park" over 3 installments from "2027-01"
+    Then the advances list shows "Hana Park" with "$600.00 outstanding"

@@ -372,3 +372,49 @@ describe("computeFullAndFinal — P38 pending adjustments + encashments", () => 
     expect(out.notes.filter((n) => n.includes("percent-based"))).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P39 (EM-16 advances half) — OPEN salary advances as FnF receivables.
+// ---------------------------------------------------------------------------
+
+describe("computeFullAndFinal — P39 advance receivables", () => {
+  it("an OPEN advance's outstanding is a negative ADVANCE_RECEIVABLE line", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openAdvances: [
+        { id: "sa-1", amount: 1_200, outstanding: 900, installments: 4 },
+      ],
+    });
+    const line = out.lines.find((l) => l.kind === "ADVANCE_RECEIVABLE");
+    expect(line).toMatchObject({
+      label: expect.stringContaining("$1200.00 issued"),
+      amount: -900,
+    });
+    expect(out.receivableTotal).toBe(900);
+    expect(out.netPayable).toBe(-900);
+  });
+
+  it("a fully-consumed advance (outstanding 0) produces no line", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openAdvances: [{ id: "sa-1", amount: 1_200, outstanding: 0, installments: 4 }],
+    });
+    expect(out.lines.find((l) => l.kind === "ADVANCE_RECEIVABLE")).toBeUndefined();
+  });
+
+  it("absent fact set behaves as before (backcompat)", () => {
+    const out = computeFullAndFinal({ ...BASE });
+    expect(out.lines.find((l) => l.kind === "ADVANCE_RECEIVABLE")).toBeUndefined();
+  });
+
+  it("the receivable nets against the salary payable honestly", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openRuns: [run({ payslipNet: 2_000 })],
+      openAdvances: [{ id: "sa-1", amount: 1_000, outstanding: 700, installments: 2 }],
+    });
+    expect(out.payableTotal).toBe(2_000);
+    expect(out.receivableTotal).toBe(700);
+    expect(out.netPayable).toBe(1_300);
+  });
+});

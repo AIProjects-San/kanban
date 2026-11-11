@@ -48,6 +48,9 @@ export const ADJUSTMENT_SOURCE_TYPES = [
   "RETENTION_BONUS",
   "BENEFIT_PAYOUT",
   "WITHHOLDING_RELEASE",
+  // P39 (EM-16 advances half) — salary-advance recovery installments
+  // (DEDUCTION-side, sourceId = the SalaryAdvance row).
+  "SALARY_ADVANCE",
 ] as const;
 export type AdjustmentSourceType = (typeof ADJUSTMENT_SOURCE_TYPES)[number];
 

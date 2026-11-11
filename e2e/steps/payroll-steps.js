@@ -334,3 +334,67 @@ Then("the payslip list should show a deduction hint for {string}", async functio
   );
   assert.ok(/5,940/.test(text), `payslip should show the resolved gross (5,940), got: ${text}`);
 });
+
+// P39 (EM-16 advances half) — the salary-advances panel.
+
+When("I open the advances panel", async function () {
+  const driver = await this.getDriver();
+  const btn = await driver.wait(
+    until.elementLocated(By.css("[data-testid='advances-btn']")),
+    10_000,
+    "Advances button not found",
+  );
+  await btn.click();
+  await driver.wait(
+    until.elementLocated(By.css("[data-testid='salary-advances-list']")),
+    10_000,
+    "advances list did not render",
+  );
+});
+
+Then("the advances list shows {string} with {string}", async function (name, expected) {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(By.css(`[data-testid='advance-${name}']`)),
+    10_000,
+    `advance row for ${name} not found`,
+  );
+  const text = await row.getText();
+  assert.ok(
+    text.includes(expected),
+    `advance row for ${name} does not show "${expected}" (got: ${text.replace(/\n/g, " | ")})`,
+  );
+});
+
+When("I issue a {int} advance to {string} over {int} installments from {string}", async function (amount, name, installments, startPeriod) {
+  const driver = await this.getDriver();
+  const select = await driver.findElement(By.css("[data-testid='advance-employee']"));
+  const value = await driver.executeScript(
+    `const el = arguments[0];
+     return Array.from(el.options).find(o => o.textContent.includes(arguments[1]))?.value ?? "";`,
+    select, name,
+  );
+  await driver.executeScript(
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    select, value,
+  );
+  const amountInput = await driver.findElement(By.css("[data-testid='advance-amount']"));
+  await amountInput.clear();
+  await amountInput.sendKeys(String(amount));
+  const instInput = await driver.findElement(By.css("[data-testid='advance-installments']"));
+  await instInput.clear();
+  await instInput.sendKeys(String(Number(installments)));
+  const periodInput = await driver.findElement(By.css("[data-testid='advance-start-period']"));
+  await driver.executeScript(
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('input', { bubbles: true }));`,
+    periodInput, startPeriod,
+  );
+  await driver.findElement(By.css("[data-testid='advance-issue-btn']")).click();
+  await driver.sleep(1_500);
+});

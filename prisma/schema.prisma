@@ -93,6 +93,9 @@ model User {
   // P37 (EM-18) — the employee's structured skill-map rows.
   skillMap EmployeeSkill[] @relation("EmployeeSkillMap")
 
+  // P39 (EM-16 advances half) — salary advances issued to this employee.
+  salaryAdvances SalaryAdvance[] @relation("SalaryAdvances")
+
   @@index([managerId])
 }
 
@@ -2228,6 +2231,41 @@ model Payslip {
 // covering its period inside that run's creation transaction. Rows are
 // INPUTS: slip lines snapshot at creation and manual slip edits never
 // write back here (the standing snapshot discipline).
+// ---------------------------------------------------------------------------
+// P39 (EM-16's advances half, EX-03 lite) — salary advances: issue →
+// installment recovery through the PayAdjustment adapter → the FnF
+// receivable line. The recovery rides the P1 adapter as DEDUCTION-side
+// RECURRING rows (sourceType SALARY_ADVANCE, sourceId this row); the run
+// that consumes the final installment flips the row RECOVERED. Loans
+// proper stay the later un-decline epic; claim/return combos ride the
+// later expenses epic.
+// ---------------------------------------------------------------------------
+model SalaryAdvance {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation("SalaryAdvances", fields: [userId], references: [id], onDelete: Cascade)
+  amount        Float
+  currencyNote  String    @default("")
+  // OPEN → RECOVERED (the final installment's consuming run flips it).
+  status        String    @default("OPEN")
+  // The number of equal installments the recovery splits into.
+  installments  Int       @default(1)
+  // First recovery period ("YYYY-MM").
+  startPeriod   String
+  reason        String    @default("")
+  issuedById    String    @default("")
+  issuedAt      DateTime  @default(now())
+  recoveredAt   DateTime?
+  // The adapter rows this advance spawned (denormalized count for the UI;
+  // the rows themselves are the source of truth).
+  adjustmentCount Int     @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
 model PayAdjustment {
   id         String   @id @default(cuid())
   userId     String

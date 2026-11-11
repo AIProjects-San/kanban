@@ -334,7 +334,8 @@ export type FnFLineKind =
   | "ADVANCE_LEAVE"
   | "GRATUITY"
   | "BONUS"
-  | "PENDING_ENCASHMENT";
+  | "PENDING_ENCASHMENT"
+  | "ADVANCE_RECEIVABLE";
 
 export interface FnFLineT {
   kind: FnFLineKind;
@@ -717,6 +718,26 @@ export interface DocumentTypeConfigT {
   scope: "CANDIDATE" | "EMPLOYEE";
   sortOrder: number;
   isActive: boolean;
+}
+
+/** P39 (EM-16 advances half) — one salary advance + its live state. */
+export interface SalaryAdvanceT {
+  id: string;
+  userId: string;
+  userName: string;
+  amount: number;
+  status: "OPEN" | "RECOVERED";
+  installments: number;
+  startPeriod: string;
+  reason: string;
+  issuedBy: string | null;
+  issuedAt: string;
+  recoveredAt: string | null;
+  /** The consumed installments' count/total (the adapter rows' state). */
+  consumedCount: number;
+  consumedTotal: number;
+  outstanding: number;
+  summary: string;
 }
 
 /** P37 (EM-19, PF-07) — one row of the SHARED skill master. */

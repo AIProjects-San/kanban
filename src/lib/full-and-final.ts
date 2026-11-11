@@ -33,7 +33,8 @@
 // earnings (retention-bonus installments, unconsumed one-shot incentives)
 // and APPROVED-unpaid encashment requests fold into the LIVE statement as
 // payables (what the company still owes the leaver beyond salary + leave).
-// Salary-advance receivables ride the P39 advances epic. Still out of
+// P39 (the advances half) — OPEN salary advances fold in as receivables:
+// the outstanding the paychecks have not yet returned. Still out of
 // scope: loans proper (the later un-decline epic), asset obligations
 // (EM-B13). P7 landed the gratuity slabs (F3.3): see the gratuity block
 // below and lib/gratuity.ts.
@@ -163,6 +164,22 @@ export interface FnFInput {
    *  approved, the paying run never locked). Each is a payable: the
    *  frozen amount snapshot, not a revaluation. */
   pendingEncashments?: FnFPendingEncashment[];
+  /** P39 (EM-16 advances half) — the employee's OPEN salary advances with
+   *  their outstanding (amount − consumed installments): the money the
+   *  paychecks have not yet returned, a receivable at exit. */
+  openAdvances?: FnFOpenAdvance[];
+}
+
+/** One OPEN salary advance feeding the P39 receivable line. */
+export interface FnFOpenAdvance {
+  /** SalaryAdvance.id. */
+  id: string;
+  /** The advance amount (the label names it). */
+  amount: number;
+  /** The still-outstanding portion (amount − consumed total). */
+  outstanding: number;
+  /** The installment count (display context). */
+  installments: number;
 }
 
 /** One PENDING PayAdjustment feeding the P38 payable line. */
@@ -327,6 +344,18 @@ export function computeFullAndFinal(input: FnFInput): FnFComputedT {
       days: round2(enc.days),
       rate: null,
       amount: round2(enc.amount),
+    });
+  }
+
+  // --- P39 (EM-16 advances half): OPEN salary advances as receivables ---
+  for (const adv of input.openAdvances ?? []) {
+    if (!(adv.outstanding > 0)) continue;
+    lines.push({
+      kind: "ADVANCE_RECEIVABLE",
+      label: `Salary advance — $${adv.amount.toFixed(2)} issued, ${adv.installments} installment${adv.installments === 1 ? "" : "s"} (${adv.outstanding.toFixed(2)} outstanding)`,
+      days: null,
+      rate: null,
+      amount: -round2(adv.outstanding), // negative = receivable side
     });
   }
 

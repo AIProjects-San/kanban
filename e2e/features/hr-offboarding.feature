@@ -55,6 +55,15 @@ Feature: HR offboarding & full-and-final lite (F2.1)
     And the statement for "Soren Lindqvist" should list the live line "Retention bonus"
     And the statement for "Soren Lindqvist" should list the live line "2 unpaid installment(s)"
 
+Scenario: P39 — Soren's open advance rides the live statement as a receivable
+    The seeded OPEN $800 advance (2 installments, none consumed) appears
+    as a Salary advance receivable on the LIVE read.
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Offboarding" tab
+    Then the statement for "Soren Lindqvist" should show status "Unsettled"
+    And the statement for "Soren Lindqvist" should list the live line "Salary advance"
+
   Scenario: F2.1 — the seeded leaver settles and the payslip lock bites
     Soren (the seeded EXITED employee) has an UNSETTLED statement with all
     three line kinds (unprocessed salary, encashment, advance-leave
@@ -75,4 +84,5 @@ Feature: HR offboarding & full-and-final lite (F2.1)
     And I open the payslip for "Soren Lindqvist"
     And I set the loss-of-pay days to 0 and save
     Then the payslip refusal toast should mention the settled statement
+
 

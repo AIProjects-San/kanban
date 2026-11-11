@@ -123,6 +123,8 @@ async function main() {
   // P37 — the skill master + the employee skill maps (seeded below).
   await db.employeeSkill.deleteMany();
   await db.skill.deleteMany();
+  // P39 — the salary advances (seeded below).
+  await db.salaryAdvance.deleteMany();
   await db.onboardingTemplateTask.deleteMany();
   await db.offerTemplate.deleteMany();
   await db.offerRecord.deleteMany();
@@ -3585,6 +3587,51 @@ async function main() {
         console.log("    ✓ P38: Soren's pending retention bonus ($400 × 2 installments) rides the live FnF as a BONUS line");
       }
     }
+  }
+
+  // -----------------------------------------------------------------
+  // P39 (EM-16 advances half) — salary advances: Diego's $1,200
+  // relocation advance recovering over 4 installments from 2026-12 (the
+  // adapter rows carry it; two already consumed by the seeded LOCKED
+  // runs' story is NOT simulated — the PENDING rows sit for the demo),
+  // and Soren's OPEN $800 advance (2 installments, none consumed yet)
+  // riding his live FnF as the receivable line.
+  // -----------------------------------------------------------------
+  {
+    const diegoId3 = userByName.get("Diego Morales");
+    const sorenId3 = userByName.get("Soren Lindqvist");
+    const hrId4 = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+    const mkAdvance = async (userId, amount, installments, startPeriod, reason) => {
+      const advance = await db.salaryAdvance.create({
+        data: { userId, amount, installments, startPeriod, reason, status: "OPEN", issuedById: hrId4, adjustmentCount: installments },
+      });
+      const per = Math.floor((amount / installments) * 100) / 100;
+      const last = Math.round((amount - per * (installments - 1)) * 100) / 100;
+      const [sy, sm] = startPeriod.split("-").map(Number);
+      await db.payAdjustment.createMany({
+        data: Array.from({ length: installments }, (_, i) => {
+          const mi = sm - 1 + i;
+          return {
+            userId,
+            sourceType: "SALARY_ADVANCE",
+            sourceId: advance.id,
+            label: `Salary advance recovery — installment ${i + 1} of ${installments}`,
+            side: "DEDUCTION",
+            recurrence: "ONE_SHOT",
+            calcMode: "FIXED",
+            amount: i === installments - 1 ? last : per,
+            period: `${sy + Math.floor(mi / 12)}-${String((mi % 12) + 1).padStart(2, "0")}`,
+            status: "PENDING",
+            note: reason,
+            createdById: hrId4,
+          };
+        }),
+      });
+      return advance;
+    };
+    if (diegoId3) await mkAdvance(diegoId3, 1_200, 4, "2026-12", "Relocation — deducted over 4 paychecks");
+    if (sorenId3) await mkAdvance(sorenId3, 800, 2, "2026-11", "Exit bridge advance");
+    console.log("  ✓ P39 salary advances: Diego $1,200 × 4 (from 2026-12) · Soren $800 × 2 (the live FnF receivable)");
   }
 
   console.log(`\n✅ Seed complete. Login: ${demoUser.email} / password from NEXT_PUBLIC_DEMO_PASSWORD (.env)`);

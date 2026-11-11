@@ -63,6 +63,7 @@ import {
   type FnFOpenRun,
   type FnFPendingAdjustment,
   type FnFPendingEncashment,
+  type FnFOpenAdvance,
 } from "@/lib/full-and-final";
 import { getOrCreateBalancesBatch, getHolidayLookup, todayUTC } from "./hr-shared";
 // P35 — the DERIVED boarding status kernel (the same one hr-onboarding's
@@ -310,13 +311,38 @@ async function pendingEncashmentsFor(userId: string): Promise<FnFPendingEncashme
   }));
 }
 
+/** P39 (the advances half) — the employee's OPEN salary advances as FnF
+ *  receivable facts: outstanding = amount − the CONSUMED recovery rows
+ *  (the paychecks' returned money); provenance-linked through sourceId. */
+async function openAdvancesFor(userId: string): Promise<FnFOpenAdvance[]> {
+  const rows = await db.salaryAdvance.findMany({
+    where: { userId, status: "OPEN" },
+    select: { id: true, amount: true, installments: true },
+    take: 50,
+  });
+  if (rows.length === 0) return [];
+  const consumed = await db.payAdjustment.groupBy({
+    by: ["sourceId"],
+    where: { sourceType: "SALARY_ADVANCE", sourceId: { in: rows.map((r) => r.id) }, status: "CONSUMED" },
+    _sum: { amount: true },
+  });
+  const consumedBySource = new Map(consumed.map((c) => [c.sourceId, c._sum.amount ?? 0]));
+  const { outstandingAdvance } = await import("@/lib/salary-advances");
+  return rows.map((r) => ({
+    id: r.id,
+    amount: r.amount,
+    outstanding: outstandingAdvance({ amount: r.amount, status: "OPEN" }, consumedBySource.get(r.id) ?? 0),
+    installments: r.installments,
+  }));
+}
+
 /** The LIVE statement for one user (pure kernel + the DB facts it reads).
  * Computed for anyone; the UI only surfaces it on the EXITED arc (the
  * F1.6 transition guard guarantees a lastWorkingDay there). */
 async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
   const now = todayUTC();
   const year = now.getUTCFullYear();
-  const [profile, monthlyGross, openRuns, accounts, pendingAdjustments, pendingEncashments] = await Promise.all([
+  const [profile, monthlyGross, openRuns, accounts, pendingAdjustments, pendingEncashments, openAdvances] = await Promise.all([
     db.employeeProfile.findUnique({
       where: { userId },
       select: { lastWorkingDay: true },
@@ -327,6 +353,8 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
     // P38 — the pending bonus/adjustment + encashment payables.
     pendingAdjustmentsFor(userId),
     pendingEncashmentsFor(userId),
+    // P39 — the OPEN salary advances as receivables.
+    openAdvancesFor(userId),
   ]);
   const lastWorkingDay = isoDateOrNull(profile?.lastWorkingDay ?? null);
   const ratePeriod = lastWorkingDay ? lastWorkingDay.slice(0, 7) : "";
@@ -345,6 +373,7 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
     gratuity,
     pendingAdjustments,
     pendingEncashments,
+    openAdvances,
   });
 }
 

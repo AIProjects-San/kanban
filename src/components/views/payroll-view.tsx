@@ -10,7 +10,7 @@
 //     monthly gross), copied from the signed offer or entered manually.
 
 import { useCallback, useEffect, useState } from "react";
-import { Award, Banknote, BarChart3, BookOpen, CalendarPlus, CircleDollarSign, Download, FileText, HeartPulse, Landmark, Layers, Loader2, Lock, Pause, Plus, RotateCcw, Scale, ShieldAlert, Undo2, Users, Wallet } from "lucide-react";
+import { Award, Banknote, BarChart3, BookOpen, CalendarPlus, CircleDollarSign, Download, FileText, HeartPulse, Landmark, Layers, Loader2, Lock, Pause, Plus, RotateCcw, Scale, ShieldAlert, Undo2, Users, Wallet, HandCoins } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
@@ -34,6 +34,8 @@ import {
   type PayrollFrequency,
 } from "@/lib/payroll-windows";
 import { StructureModal } from "../ui/structure-modal";
+// P39 (EM-16 advances half) — the salary-advances modal.
+import { SalaryAdvancesModal } from "../ui/salary-advances-modal";
 import { PayslipModal } from "../ui/payslip-modal";
 import { ComponentCatalogModal } from "../ui/component-catalog-modal";
 import { PayAdjustmentModal } from "../ui/pay-adjustment-modal";
@@ -87,6 +89,8 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [benefitsOpen, setBenefitsOpen] = useState(false);
   // P6 (PR-20/PR-23) — the retention-bonus writer.
   const [retentionOpen, setRetentionOpen] = useState(false);
+  // P39 (EM-16 advances half) — the salary-advances modal.
+  const [advancesOpen, setAdvancesOpen] = useState(false);
   const [gratuityOpen, setGratuityOpen] = useState(false);
   const [withholdingOpen, setWithholdingOpen] = useState(false);
   const [newFrequency, setNewFrequency] = useState<PayrollFrequency>("MONTHLY");
@@ -259,6 +263,10 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => setRetentionOpen(true)} data-testid="retention-btn">
             <Award size={15} /> Retention bonus
+          </button>
+          {/* P39 (EM-16 advances half) — issue + track salary advances. */}
+          <button className="f-btn f-btn-ghost" onClick={() => setAdvancesOpen(true)} data-testid="advances-btn">
+            <HandCoins size={15} /> Advances
           </button>
           <button className="f-btn f-btn-ghost" onClick={() => setGratuityOpen(true)} data-testid="gratuity-btn">
             <Scale size={15} /> Gratuity rule
@@ -754,6 +762,13 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       <RetentionBonusModal
         open={retentionOpen}
         onClose={() => setRetentionOpen(false)}
+        onChanged={load}
+        employees={employees}
+      />
+      {/* P39 (EM-16 advances half) — the salary-advances modal. */}
+      <SalaryAdvancesModal
+        open={advancesOpen}
+        onClose={() => setAdvancesOpen(false)}
         onChanged={load}
         employees={employees}
       />

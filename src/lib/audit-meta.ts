@@ -155,6 +155,8 @@ export type AuditAction =
   | "hr.skill_deleted"
   | "hr.employee_skill_rated"
   | "hr.employee_skill_removed"
+  // P39 (EM-16 advances half) — salary advances.
+  | "payroll.advance_issued"
   // Recruitment module lifecycle (docs/RECRUITMENT_MODULE_PLAN.md)
   | "hiring.candidate_created"
   | "hiring.candidate_updated"
@@ -367,6 +369,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.skill_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hr.employee_skill_rated": { icon: Award, cls: "text-amber-500 bg-amber-500/10" },
   "hr.employee_skill_removed": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
+  "payroll.advance_issued": { icon: CircleDollarSign, cls: "text-primary bg-primary/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "onboarding.template_task_saved": { icon: Plus, cls: "text-primary bg-primary/10" },

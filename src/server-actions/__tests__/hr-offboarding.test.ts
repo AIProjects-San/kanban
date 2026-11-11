@@ -19,6 +19,8 @@ const db = vi.hoisted(() => {
     "gratuityRule", "gratuitySlab",
     // P38 — the pending bonus/adjustment + encashment fact reads.
     "payAdjustment", "leaveEncashment",
+    // P39 — the OPEN salary advances as FnF receivables.
+    "salaryAdvance",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -172,6 +174,9 @@ beforeEach(() => {
   db.payAdjustment.findMany.mockResolvedValue([]);
   db.leaveEncashment.findMany.mockResolvedValue([]);
   db.payrollRun.findFirst.mockResolvedValue(null);
+  // P39 — no OPEN advances by default.
+  db.salaryAdvance.findMany.mockResolvedValue([]);
+  db.payAdjustment.groupBy.mockResolvedValue([]);
   requirePermissionMock.mockResolvedValue(HR_AUTH);
   seededFnFWorld();
 });
@@ -713,5 +718,82 @@ describe("computeFnFForUser — P38 pending adjustments + encashments", () => {
     const bonus = computed?.lines.find((l) => l.kind === "BONUS");
     expect(bonus?.amount).toBe(500); // 1 remaining × 500 (was 3 × 500 unbounded)
     expect(bonus?.label).toContain("unpaid (2026-11)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P39 (EM-16 advances half) — OPEN salary advances as FnF receivables.
+// ---------------------------------------------------------------------------
+
+describe("computeFnFForUser — P39 advance receivables", () => {
+  function p39Setup() {
+    db.user.findUnique.mockImplementation(async ({ where }: { where: { id?: string; email?: string } }) => {
+      if (where.id === "u-soren" || where.email === "soren@fernly.app") {
+        return { id: "u-soren", name: "Soren Lindqvist", deletedAt: null, managerId: null };
+      }
+      return null;
+    });
+    db.user.findMany.mockResolvedValue([{ id: "u-soren", name: "Soren Lindqvist" }]);
+    db.employeeProfile.findUnique.mockImplementation(async ({ where }: { where: { userId?: string } }) => {
+      if (where.userId === "u-soren") {
+        return { lastWorkingDay: new Date("2026-11-10T00:00:00.000Z"), hireDate: new Date("2025-10-01T00:00:00.000Z") };
+      }
+      return null;
+    });
+    db.employeeProfile.findMany.mockImplementation(async ({ where }: { where?: { employmentStatus?: string; userId?: { in: string[] } } }) => {
+      const soren = {
+        userId: "u-soren", jobTitle: "QA Engineer", department: "ENGINEERING", employmentStatus: "EXITED",
+        hireDate: new Date("2025-10-01T00:00:00.000Z"), lastWorkingDay: new Date("2026-11-10T00:00:00.000Z"),
+        noticePeriodWeeks: null,
+      };
+      if (where?.employmentStatus === "EXITED") return [soren];
+      if (where?.userId?.in?.includes("u-soren")) return [soren];
+      return [];
+    });
+    db.exitInterview.findMany.mockResolvedValue([]);
+    db.fullAndFinalStatement.findFirst.mockResolvedValue(null);
+    db.onboardingChecklist.findMany.mockResolvedValue([]);
+    db.leaveType.findMany.mockResolvedValue([]);
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([]);
+    db.payrollRun.findMany.mockResolvedValue([]);
+    db.salaryStructure.findFirst.mockResolvedValue(null);
+    db.gratuityRule.findFirst.mockResolvedValue(null);
+    db.payslip.findMany.mockResolvedValue([]);
+    db.payAdjustment.findMany.mockResolvedValue([]);
+    db.leaveEncashment.findMany.mockResolvedValue([]);
+  }
+
+  it("an OPEN advance's outstanding becomes an ADVANCE_RECEIVABLE line", async () => {
+    p39Setup();
+    db.salaryAdvance.findMany.mockResolvedValue([
+      { id: "sa-1", userId: "u-soren", amount: 1_200, installments: 4, status: "OPEN" },
+    ]);
+    db.payAdjustment.groupBy.mockResolvedValue([
+      { sourceId: "sa-1", _sum: { amount: 600 } },
+    ]);
+    const res = await getOffboardingOverview();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const soren = res.data.cases.find((c) => c.userId === "u-soren");
+    const computed = soren?.fnf.status === "UNSETTLED"
+      ? soren.fnf.computed
+      : soren?.fnf.status === "NONE" ? soren.fnf.computed : null;
+    const line = computed?.lines.find((l) => l.kind === "ADVANCE_RECEIVABLE");
+    expect(line).toMatchObject({ amount: -600 });
+    expect(line?.label).toContain("$1200.00 issued");
+  });
+
+  it("a RECOVERED advance never reads (the action filters status OPEN)", async () => {
+    p39Setup();
+    db.salaryAdvance.findMany.mockImplementation(async ({ where }: { where?: { status?: string } }) =>
+      where?.status === "OPEN" ? [] : [{ id: "sa-2", amount: 500, installments: 1 }]);
+    const res = await getOffboardingOverview();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const soren = res.data.cases.find((c) => c.userId === "u-soren");
+    const computed = soren?.fnf.status === "UNSETTLED"
+      ? soren.fnf.computed
+      : soren?.fnf.status === "NONE" ? soren.fnf.computed : null;
+    expect(computed?.lines.find((l) => l.kind === "ADVANCE_RECEIVABLE")).toBeUndefined();
   });
 });
