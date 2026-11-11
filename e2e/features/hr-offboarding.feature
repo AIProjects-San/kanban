@@ -40,6 +40,21 @@ Feature: HR offboarding & full-and-final lite (F2.1)
     When I settle the full-and-final statement for "Rafael Costa"
     Then the statement for "Rafael Costa" should show status "Settled"
 
+# P38 (EM-16/EM-B12) — the extended line space: pending bonus
+  # installments + APPROVED-unpaid encashments fold into the LIVE
+  # statement as payables.
+
+  Scenario: P38 — Soren's pending retention bonus rides the live statement
+    The seeded PENDING retention installment ($400 × 2 periods past the
+    locked boundary) appears as a Bonus payable on the LIVE read, while
+    the frozen snapshot (generated before it) stays untouched.
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Offboarding" tab
+    Then the statement for "Soren Lindqvist" should show status "Unsettled"
+    And the statement for "Soren Lindqvist" should list the live line "Retention bonus"
+    And the statement for "Soren Lindqvist" should list the live line "2 unpaid installment(s)"
+
   Scenario: F2.1 — the seeded leaver settles and the payslip lock bites
     Soren (the seeded EXITED employee) has an UNSETTLED statement with all
     three line kinds (unprocessed salary, encashment, advance-leave
@@ -60,3 +75,4 @@ Feature: HR offboarding & full-and-final lite (F2.1)
     And I open the payslip for "Soren Lindqvist"
     And I set the loss-of-pay days to 0 and save
     Then the payslip refusal toast should mention the settled statement
+

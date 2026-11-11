@@ -17,6 +17,8 @@ const db = vi.hoisted(() => {
     "leaveLedgerEntry", "leaveRequest", "salaryStructure", "payrollRun",
     "payslip", "holidayCalendarEntry", "auditLog", "notification",
     "gratuityRule", "gratuitySlab",
+    // P38 — the pending bonus/adjustment + encashment fact reads.
+    "payAdjustment", "leaveEncashment",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -167,6 +169,9 @@ function seededFnFWorld() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  db.payAdjustment.findMany.mockResolvedValue([]);
+  db.leaveEncashment.findMany.mockResolvedValue([]);
+  db.payrollRun.findFirst.mockResolvedValue(null);
   requirePermissionMock.mockResolvedValue(HR_AUTH);
   seededFnFWorld();
 });
@@ -583,5 +588,130 @@ describe("getOffboardingOverview", () => {
     // Every active user is offered — the picker covers prep-before-exit AND
     // the post-exit checklist (the seeded story's shape).
     expect(res.data.members.find((m) => m.userId === "u-soren")).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P38 (EM-16/EM-B12) — the extended FnF line space at the action layer:
+// pending PayAdjustment earnings + APPROVED-unpaid encashments fold into
+// the LIVE statement computeFnFForUser reads.
+// ---------------------------------------------------------------------------
+
+describe("computeFnFForUser — P38 pending adjustments + encashments", () => {
+  function overviewSetup() {
+    // Soren is the seeded EXITED leaver the overview reads.
+    db.user.findUnique.mockImplementation(async ({ where }: { where: { id?: string; email?: string } }) => {
+      if (where.id === "u-soren" || where.email === "soren@fernly.app") {
+        return { id: "u-soren", name: "Soren Lindqvist", deletedAt: null, managerId: null };
+      }
+      return null;
+    });
+    db.user.findMany.mockResolvedValue([{ id: "u-soren", name: "Soren Lindqvist" }]);
+    db.employeeProfile.findUnique.mockImplementation(async ({ where }: { where: { userId?: string } }) => {
+      if (where.userId === "u-soren") {
+        return { lastWorkingDay: new Date("2026-11-10T00:00:00.000Z"), hireDate: new Date("2025-10-01T00:00:00.000Z") };
+      }
+      return null;
+    });
+    // The orbit's userIds source (EXITED profiles) + the profile-by-user
+    // read both ride findMany — where-aware so both see Soren.
+    db.employeeProfile.findMany.mockImplementation(async ({ where }: { where?: { employmentStatus?: string; userId?: { in: string[] } } }) => {
+      const soren = {
+        userId: "u-soren", jobTitle: "QA Engineer", department: "ENGINEERING", employmentStatus: "EXITED",
+        hireDate: new Date("2025-10-01T00:00:00.000Z"), lastWorkingDay: new Date("2026-11-10T00:00:00.000Z"),
+        noticePeriodWeeks: null,
+      };
+      if (where?.employmentStatus === "EXITED") return [soren];
+      if (where?.userId?.in?.includes("u-soren")) return [soren];
+      return [];
+    });
+    db.exitInterview.findMany.mockResolvedValue([]);
+    db.fullAndFinalStatement.findFirst.mockResolvedValue(null);
+    db.onboardingChecklist.findMany.mockResolvedValue([]);
+    db.leaveType.findMany.mockResolvedValue([]);
+    db.leaveLedgerEntry.groupBy.mockResolvedValue([]);
+    db.payrollRun.findMany.mockResolvedValue([]);
+    db.salaryStructure.findFirst.mockResolvedValue(null);
+    db.gratuityRule.findFirst.mockResolvedValue(null);
+    db.payslip.findMany.mockResolvedValue([]);
+  }
+
+  it("a FIXED pending retention installment becomes a BONUS line in the overview's live FnF", async () => {
+    overviewSetup();
+    db.payAdjustment.findMany.mockResolvedValue([
+      { id: "pa-1", userId: "u-soren", sourceType: "RETENTION_BONUS", label: "Retention bonus", side: "EARNING", recurrence: "RECURRING", calcMode: "FIXED", amount: 500, period: "2026-12", endPeriod: "2027-02", status: "PENDING" },
+    ]);
+    // No locked runs → everything from 2026-12 on remains (3 installments).
+    db.payrollRun.findFirst.mockResolvedValue(null);
+    const res = await getOffboardingOverview();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const soren = res.data.cases.find((c) => c.userId === "u-soren");
+    expect(soren).toBeDefined();
+    const computed = soren?.fnf.status === "UNSETTLED"
+      ? soren.fnf.computed
+      : soren?.fnf.status === "NONE" ? soren.fnf.computed : null;
+    const bonus = computed?.lines.find((l) => l.kind === "BONUS");
+    expect(bonus).toMatchObject({ amount: 1_500, label: expect.stringContaining("3 unpaid installment(s)") });
+  });
+
+  it("an APPROVED-unpaid encashment becomes a PENDING_ENCASHMENT line", async () => {
+    overviewSetup();
+    db.leaveEncashment.findMany.mockResolvedValue([
+      { id: "le-1", userId: "u-soren", leaveTypeId: "lt-annual", days: 4, amount: 990.48, status: "APPROVED", payoutPeriod: "2026-12" },
+    ]);
+    db.leaveType.findMany.mockResolvedValue([{ id: "lt-annual", name: "Annual Leave", active: true, paid: true, policy: null }]);
+    const res = await getOffboardingOverview();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const soren = res.data.cases.find((c) => c.userId === "u-soren");
+    const computed = soren?.fnf.status === "UNSETTLED"
+      ? soren.fnf.computed
+      : soren?.fnf.status === "NONE" ? soren.fnf.computed : null;
+    const enc = computed?.lines.find((l) => l.kind === "PENDING_ENCASHMENT");
+    expect(enc).toMatchObject({
+      amount: 990.48,
+      label: expect.stringContaining("Annual Leave encashment"),
+      days: 4,
+    });
+  });
+
+  it("PENDING/REJECTED encashments and deduction-side adjustments never read", async () => {
+    overviewSetup();
+    // Where-aware mocks: the action's filters (side EARNING / status
+    // APPROVED) do the work; the mock honors them like a real query.
+    db.payAdjustment.findMany.mockImplementation(async ({ where }: { where?: { side?: string } }) =>
+      where?.side === "EARNING" ? [] : [{ id: "pa-d", label: "Deduction", side: "DEDUCTION", amount: 100, period: "2026-11" }]);
+    db.leaveEncashment.findMany.mockImplementation(async ({ where }: { where?: { status?: string } }) =>
+      where?.status === "APPROVED" ? [] : [{ id: "le-p", days: 2, amount: 500, payoutPeriod: "2026-12" }]);
+    db.leaveType.findMany.mockResolvedValue([{ id: "lt-annual", name: "Annual Leave", active: true, paid: true, policy: null }]);
+    const res = await getOffboardingOverview();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const soren = res.data.cases.find((c) => c.userId === "u-soren");
+    const computed = soren?.fnf.status === "UNSETTLED"
+      ? soren.fnf.computed
+      : soren?.fnf.status === "NONE" ? soren.fnf.computed : null;
+    expect((computed?.lines ?? []).filter((l) => l.kind === "BONUS" || l.kind === "PENDING_ENCASHMENT")).toEqual([]);
+  });
+
+  it("a locked-run boundary trims the remaining installments", async () => {
+    overviewSetup();
+    db.payAdjustment.findMany.mockResolvedValue([
+      { id: "pa-1", userId: "u-soren", sourceType: "RETENTION_BONUS", label: "Retention bonus", side: "EARNING", recurrence: "RECURRING", calcMode: "FIXED", amount: 500, period: "2026-11", endPeriod: "2027-01", status: "PENDING" },
+    ]);
+    // 2026-11 and 2026-12 already locked → only 2027-01 remains: ONE
+    // installment's amount, the single-installment label form.
+    db.payrollRun.findFirst.mockResolvedValue({ period: "2026-12" });
+    const res = await getOffboardingOverview();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const soren = res.data.cases.find((c) => c.userId === "u-soren");
+    const computed = soren?.fnf.status === "UNSETTLED"
+      ? soren.fnf.computed
+      : soren?.fnf.status === "NONE" ? soren.fnf.computed : null;
+    const bonus = computed?.lines.find((l) => l.kind === "BONUS");
+    expect(bonus?.amount).toBe(500); // 1 remaining × 500 (was 3 × 500 unbounded)
+    expect(bonus?.label).toContain("unpaid (2026-11)");
   });
 });

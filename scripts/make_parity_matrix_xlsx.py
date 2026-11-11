@@ -2,7 +2,7 @@
 """Build the 309-feature parity matrix workbook from the matrix doc.
 
 Parses docs/Fernly_HRMS_Feature_Parity_Matrix.md (the sweep's own ledger,
-post-P37) and the P16-P37 sweep table from the enhancement plan, then emits
+post-P38) and the P16-P38 sweep table from the enhancement plan, then emits
 a two-sheet xlsx: the full feature matrix (filterable, status color-coded)
 and the census (status totals, per-domain pivot, the sweep ledger).
 """
@@ -129,7 +129,7 @@ def bucket_of(status: str) -> str:
 
 
 def parse_sweep_ledger():
-    """P16-P37 rows from the enhancement plan's §7.2.2 table only."""
+    """P16-P38 rows from the enhancement plan's §7.2.2 table only."""
     entries = []
     in_722 = False
     with open(PLAN_DOC, encoding="utf-8") as f:
@@ -150,7 +150,7 @@ def parse_sweep_ledger():
                     item = clean(cells[2])
                     done = item.startswith("DONE")
                     entries.append((num, rows_closed, done, item))
-    return [e for e in entries if 16 <= e[0] <= 37]
+    return [e for e in entries if 16 <= e[0] <= 38]
 
 
 STATUS_FILLS = {
@@ -174,7 +174,7 @@ STATUS_FONTS = {
 def build_matrix_sheet(ws, rows):
     headers = ["#", "ID", "Domain", "Section", "Benchmark feature (Frappe HRMS)",
                "Fernly surface", "Status", "Family / epic"]
-    setup_sheet(ws, title="Fernly HRMS Feature Parity Matrix — the full feature table (post-P37, 2026-11-11)", last_col=2 + len(headers) - 1)
+    setup_sheet(ws, title="Fernly HRMS Feature Parity Matrix — the full feature table (post-P38, 2026-11-12)", last_col=2 + len(headers) - 1)
     header_row = 4
     for i, h in enumerate(headers, start=2):
         ws.cell(row=header_row, column=i, value=h)
@@ -256,7 +256,7 @@ def build_census_sheet(ws, rows, ledger):
     ws.cell(row=note_r, column=2,
             value=("The sweep ledger's counted convention: 309 feature rows counted "
                    "(the raw table carries 314 multi-item rows — split/compound rows reconcile the two). "
-                   "Post-P37 census (2026-11-12): 129 Parity · 45 Partial · 99 Missing · 36 Out of scope. "
+                   "Post-P38 census (2026-11-12): 129 Parity · 45 Partial · 99 Missing · 36 Out of scope. "
                    "P35 closed EM-12/EM-B06/EM-11/EM-14/EM-B05 — onboarding/separation template depth: the "
                    "user-XOR-role assignee (a pinned user or a role KEY — every holder sees and ticks the "
                    "task; the manager pass skips role rows), the per-task required flag "
@@ -272,7 +272,7 @@ def build_census_sheet(ws, rows, ledger):
                    "facts (QA-19 \"\" = unclassified), the directory's four filter chips (department + the three axes) "
                    "as the org-slicing surface, the roster card / settings strip / CSV export carrying the facts, and "
                    "grade registered in the P33 property-history registry (a promotion moves the ladder). "
-                   "P37 closed EM-18/EM-19/PF-07 — Partial → Parity — the skill master + employee skill maps: the shared Skill master (keyed rows, hr:admin CRUD, 8 seeded) + the EmployeeSkill rated map (1-5 with the derived proficiency label, HR rates from the directory card's skill-map modal, the member reads their own map read-only from Settings, the card's Top-skills line; the free-text skills string stays the quick summary), with the interview round-template consumer riding the P41 epic. P36 before it closed EM-21 (the DocumentTypeConfig scope axis + the EmployeeDocument lifecycle, the joining gate pinned to CANDIDATE-scope mandatory types only). Next sweep head: P38 (FnF line extension — EM-16, EM-B12, EM-B14)."))
+                   "P38 extended the FnF line space (EM-16/EM-B12 improved): pending PayAdjustment earnings (retention installments × remaining periods past the locked boundary, unconsumed one-shots) as BONUS payables + APPROVED-unpaid encashments at the frozen snapshot as PENDING_ENCASHMENT payables on the live read; the salary-advance receivable half rides the P39 epic. P37 closed EM-18/EM-19/PF-07 — Partial → Parity — the skill master + employee skill maps: the shared Skill master (keyed rows, hr:admin CRUD, 8 seeded) + the EmployeeSkill rated map (1-5 with the derived proficiency label, HR rates from the directory card's skill-map modal, the member reads their own map read-only from Settings, the card's Top-skills line; the free-text skills string stays the quick summary), with the interview round-template consumer riding the P41 epic. P36 before it closed EM-21 (the DocumentTypeConfig scope axis + the EmployeeDocument lifecycle, the joining gate pinned to CANDIDATE-scope mandatory types only). Next sweep head: P39 (salary advances lite — the EM-16 advances half)."))
     ws.cell(row=note_r, column=2).font = font_caption()
     ws.merge_cells(start_row=note_r, start_column=2, end_row=note_r, end_column=8)
     ws.cell(row=note_r, column=2).alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
@@ -318,9 +318,9 @@ def build_census_sheet(ws, rows, ledger):
     ws.cell(row=r, column=4 + len(order), value=total_rows)
     ws.cell(row=r, column=4 + len(order)).alignment = align_number()
 
-    # --- Sweep ledger P16-P37 ---
+    # --- Sweep ledger P16-P38 ---
     sweep_start = r + 2
-    ws.cell(row=sweep_start, column=2, value="§7.2.2 Partial Residual Sweep — the P16–P37 ledger")
+    ws.cell(row=sweep_start, column=2, value="§7.2.2 Partial Residual Sweep — the P16–P38 ledger")
     ws.cell(row=sweep_start, column=2).font = font_subheader()
     hdr3 = sweep_start + 1
     for ci, h in enumerate(["Item", "Rows closed", "Status", "Scope (condensed)"], start=2):
@@ -351,7 +351,7 @@ def main():
         print("  UNPARSED:", u["id"], u["artifact"][:70])
 
     ledger = parse_sweep_ledger()
-    print(f"sweep ledger entries P16-P37: {len(ledger)}")
+    print(f"sweep ledger entries P16-P38: {len(ledger)}")
 
     wb = Workbook()
     ws1 = wb.active

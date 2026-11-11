@@ -53,6 +53,9 @@ const FNF_KIND_LABELS: Record<string, string> = {
   ENCASHMENT: "Encashment",
   ADVANCE_LEAVE: "Recovery",
   GRATUITY: "Gratuity",
+  // P38 — the extended line space.
+  BONUS: "Bonus",
+  PENDING_ENCASHMENT: "Encashment",
 };
 
 function FnFBlock({ fnf }: { fnf: OffboardingCaseT["fnf"] }) {

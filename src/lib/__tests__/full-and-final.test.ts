@@ -258,3 +258,117 @@ describe("computeFullAndFinal — P8 withholding interaction", () => {
     expect(out.notes.some((n) => n.includes("already released") && n.includes("release adjustment"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P38 (EM-16/EM-B12) — the extended line space: pending PayAdjustment
+// earnings (retention installments, unconsumed one-shots) and
+// APPROVED-unpaid encashments fold into the LIVE statement as payables.
+// ---------------------------------------------------------------------------
+
+describe("computeFullAndFinal — P38 pending adjustments + encashments", () => {
+  it("a FIXED one-shot pending adjustment is a BONUS payable line", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      pendingAdjustments: [
+        { id: "pa-1", sourceType: "INCENTIVE", label: "Referral bonus — Maya referral", amount: 800, period: "2026-11", remainingPeriods: 1 },
+      ],
+    });
+    const line = out.lines.find((l) => l.kind === "BONUS");
+    expect(line).toMatchObject({
+      label: "Referral bonus — Maya referral — unpaid (2026-11)",
+      amount: 800,
+      days: null,
+    });
+    expect(out.payableTotal).toBe(800);
+  });
+
+  it("a retention installment row multiplies by the remaining periods", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      pendingAdjustments: [
+        { id: "pa-2", sourceType: "RETENTION_BONUS", label: "Retention bonus (1,500 × 3)", amount: 500, period: "2026-11", remainingPeriods: 3 },
+      ],
+    });
+    const line = out.lines.find((l) => l.kind === "BONUS");
+    expect(line?.label).toContain("3 unpaid installment(s) from 2026-11");
+    expect(line?.amount).toBe(1_500);
+    expect(out.netPayable).toBe(1_500);
+  });
+
+  it("a percent-based pending adjustment values NOT — a note explains the settle-after-run path", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      pendingAdjustments: [
+        { id: "pa-3", sourceType: "MANUAL", label: "Spot bonus 5% of gross", amount: null, period: "2026-11", remainingPeriods: 1 },
+      ],
+    });
+    expect(out.lines.find((l) => l.kind === "BONUS")).toBeUndefined();
+    expect(out.notes.some((n) => n.includes("percent-based") && n.includes("paying run resolves it"))).toBe(true);
+  });
+
+  it("a zero/non-positive pending amount produces no line (nothing owed)", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      pendingAdjustments: [
+        { id: "pa-4", sourceType: "MANUAL", label: "Zero bonus", amount: 0, period: "2026-11", remainingPeriods: 1 },
+      ],
+    });
+    expect(out.lines.find((l) => l.kind === "BONUS")).toBeUndefined();
+  });
+
+  it("an APPROVED-unpaid encashment is a PENDING_ENCASHMENT payable at the frozen snapshot", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      pendingEncashments: [
+        { id: "le-1", leaveName: "Annual Leave", days: 4, amount: 990.48, payoutPeriod: "2026-12" },
+      ],
+    });
+    const line = out.lines.find((l) => l.kind === "PENDING_ENCASHMENT");
+    expect(line).toMatchObject({
+      label: "Annual Leave encashment — 4 day(s) approved, unpaid (2026-12)",
+      days: 4,
+      amount: 990.48,
+    });
+    expect(out.payableTotal).toBe(990.48);
+  });
+
+  it("the frozen snapshot is NOT revalued against the live ledger projection (no double-count)", () => {
+    // 4 days still in the ledger AND an approved-unpaid encashment for the
+    // same days: the encashment row IS the money for those days — the
+    // ledger's CONSUME already removed them in the projection the action
+    // reads, but even if it hadn't, the frozen amount stands alone.
+    const out = computeFullAndFinal({
+      ...BASE,
+      leaveAccounts: [account({ available: 4 })],
+      pendingEncashments: [
+        { id: "le-1", leaveName: "Annual Leave", days: 4, amount: 990.48, payoutPeriod: "2026-12" },
+      ],
+    });
+    const enc = out.lines.find((l) => l.kind === "PENDING_ENCASHMENT");
+    const live = out.lines.find((l) => l.kind === "ENCASHMENT");
+    expect(enc?.amount).toBe(990.48);
+    // The live projection is a SEPARATE fact: whatever it says, it says it.
+    expect(live?.days).toBe(4);
+  });
+
+  it("the extended lines sum with the salary lines into the net", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openRuns: [run({ payslipNet: 3_200 })],
+      pendingAdjustments: [
+        { id: "pa-1", sourceType: "RETENTION_BONUS", label: "Retention bonus", amount: 500, period: "2026-11", remainingPeriods: 2 },
+      ],
+      pendingEncashments: [
+        { id: "le-1", leaveName: "Annual Leave", days: 4, amount: 990.48, payoutPeriod: "2026-12" },
+      ],
+    });
+    expect(out.payableTotal).toBe(3_200 + 1_000 + 990.48);
+    expect(out.netPayable).toBe(5_190.48);
+  });
+
+  it("absent fact sets (undefined) behave exactly as before — no lines, no notes", () => {
+    const out = computeFullAndFinal({ ...BASE });
+    expect(out.lines.filter((l) => l.kind === "BONUS" || l.kind === "PENDING_ENCASHMENT")).toEqual([]);
+    expect(out.notes.filter((n) => n.includes("percent-based"))).toEqual([]);
+  });
+});

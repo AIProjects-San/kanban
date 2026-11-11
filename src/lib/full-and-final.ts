@@ -29,10 +29,14 @@
 //     daily rate (design doc §5.2 — "an advance leave is days owed to the
 //     employer, docked … if the exit FnF encashes a negative balance").
 //
-// Deliberately absent (the line space extends when they land): pending
-// bonuses (F2.3's PayAdjustment), outstanding advances/loans (F2.8), asset
-// obligations (EM-B13 — out of scope). P7 landed the gratuity slabs
-// (F3.3): see the gratuity block below and lib/gratuity.ts.
+// P38 (EM-16/EM-B12) — the line space extends: pending PayAdjustment
+// earnings (retention-bonus installments, unconsumed one-shot incentives)
+// and APPROVED-unpaid encashment requests fold into the LIVE statement as
+// payables (what the company still owes the leaver beyond salary + leave).
+// Salary-advance receivables ride the P39 advances epic. Still out of
+// scope: loans proper (the later un-decline epic), asset obligations
+// (EM-B13). P7 landed the gratuity slabs (F3.3): see the gratuity block
+// below and lib/gratuity.ts.
 //
 // Balances are read for the asOf YEAR only (the ledger projection folds
 // carry-over into the current year's CARRY rows via the F2.4 rollover —
@@ -147,6 +151,52 @@ export interface FnFInput {
     /** yyyy-mm-dd — EmployeeProfile.hireDate; null = unknown. */
     hireDate: string | null;
   };
+  /** P38 (EM-16/EM-B12) — the employee's PENDING PayAdjustment rows that
+   *  still owe money at exit: retention-bonus installments not yet paid,
+   *  unconsumed one-shot incentives/bonuses. Each folds into the LIVE
+   *  statement as a payable line (resolved like the run would resolve it:
+   *  FIXED magnitudes only here — percent rows value at their remaining
+   *  FIXED-equivalent snapshot when the action has one, else a note). */
+  pendingAdjustments?: FnFPendingAdjustment[];
+  /** P38 (EM-16/EM-B12) — the employee's APPROVED-but-unpaid encashment
+   *  requests (days already consumed from the ledger — the money was
+   *  approved, the paying run never locked). Each is a payable: the
+   *  frozen amount snapshot, not a revaluation. */
+  pendingEncashments?: FnFPendingEncashment[];
+}
+
+/** One PENDING PayAdjustment feeding the P38 payable line. */
+export interface FnFPendingAdjustment {
+  /** PayAdjustment.id. */
+  id: string;
+  /** Provenance label (RETENTION_BONUS, INCENTIVE, MANUAL…). */
+  sourceType: string;
+  /** The row's display label (already carries the source's wording). */
+  label: string;
+  /** FIXED: the magnitude; PERCENT_*: null (the note explains the
+   *  unresolved basis — percent rows value only when the action resolved
+   *  them to a concrete amount). */
+  amount: number | null;
+  /** "YYYY-MM" — the row's first period (the label names it). */
+  period: string;
+  /** RECURRING rows: how many periods remain unpaid at exit (the action
+   *  computes it from endPeriod vs the last LOCKED run; ONE_SHOT rows
+   *  carry 1). */
+  remainingPeriods: number;
+}
+
+/** One APPROVED-unpaid encashment feeding the P38 payable line. */
+export interface FnFPendingEncashment {
+  /** LeaveEncashment.id. */
+  id: string;
+  /** The leave type's name (label context). */
+  leaveName: string;
+  /** Days sold (already consumed from the ledger). */
+  days: number;
+  /** The frozen amount snapshot from approval. */
+  amount: number;
+  /** The payout period the money was slated for. */
+  payoutPeriod: string;
 }
 
 /** Per-day leave value: monthly gross ÷ working days, rounded once. 0 when
@@ -247,6 +297,37 @@ export function computeFullAndFinal(input: FnFInput): FnFComputedT {
         amount: -round2(owed * dailyRate), // negative = receivable side
       });
     }
+  }
+
+  // --- P38 (EM-16/EM-B12): pending bonus/adjustment payables ---
+  for (const adj of input.pendingAdjustments ?? []) {
+    if (adj.amount === null || !(adj.amount > 0)) {
+      notes.push(
+        `Pending ${adj.sourceType.toLowerCase().replace("_", " ")} adjustment "${adj.label}" (${adj.period}) is percent-based — it values when the paying run resolves it; settle after that run locks or record the cash equivalent.`,
+      );
+      continue;
+    }
+    lines.push({
+      kind: "BONUS",
+      label: adj.remainingPeriods > 1
+        ? `${adj.label} — ${adj.remainingPeriods} unpaid installment(s) from ${adj.period}`
+        : `${adj.label} — unpaid (${adj.period})`,
+      days: null,
+      rate: null,
+      amount: round2(adj.amount * adj.remainingPeriods),
+    });
+  }
+
+  // --- P38 (EM-16/EM-B12): APPROVED-unpaid encashment payables ---
+  for (const enc of input.pendingEncashments ?? []) {
+    if (!(enc.amount > 0)) continue;
+    lines.push({
+      kind: "PENDING_ENCASHMENT",
+      label: `${enc.leaveName} encashment — ${enc.days} day(s) approved, unpaid (${enc.payoutPeriod})`,
+      days: round2(enc.days),
+      rate: null,
+      amount: round2(enc.amount),
+    });
   }
 
   // --- P7 (F3.3): gratuity — slab walk over completed service years. ---

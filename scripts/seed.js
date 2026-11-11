@@ -3559,6 +3559,31 @@ async function main() {
         },
       });
       console.log(`    ✓ F2.1 offboarding: Soren EXITED (LWD ${sorenLwd.toISOString().slice(0, 10)}) — separation checklist 3/5, exit interview COMPLETED, FnF UNSETTLED (payable $${payableTotal.toFixed(2)} − receivable $${receivableTotal.toFixed(2)}${gratuityAmount > 0 ? `, incl. gratuity $${gratuityAmount.toFixed(2)} (${completedYears} yr × slab rule)` : ""})`);
+
+      // P38 (EM-16/EM-B12) — the extended line space on the LIVE read: a
+      // PENDING retention installment for Soren (2 periods remain past the
+      // seeded LOCKED boundary) folds a BONUS payable into the overview's
+      // live computation; the frozen snapshot above predates it (generated
+      // before), so the UNSETTLED card shows both.
+      if (f21SorenId) {
+        await db.payAdjustment.create({
+          data: {
+            userId: f21SorenId,
+            sourceType: "RETENTION_BONUS",
+            label: "Retention bonus (exit arrears)",
+            side: "EARNING",
+            recurrence: "RECURRING",
+            calcMode: "FIXED",
+            amount: 400,
+            period: "2026-12",
+            endPeriod: "2027-01",
+            status: "PENDING",
+            note: "Seeded P38: the remaining installments fold into Soren's live FnF.",
+            createdById: f21HrId,
+          },
+        });
+        console.log("    ✓ P38: Soren's pending retention bonus ($400 × 2 installments) rides the live FnF as a BONUS line");
+      }
     }
   }
 

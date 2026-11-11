@@ -283,3 +283,17 @@ Then("the payslip refusal toast should mention the settled statement", async fun
     "no payslip refusal toast mentioning the settled statement appeared",
   );
 });
+
+// P38 (EM-16/EM-B12) — the extended line space: the LIVE computation's
+// pending-bonus / pending-encashment lines (rendered on the UNSETTLED
+// card, where computed is the live read).
+
+Then("the statement for {string} should list the live line {string}", async function (name, needle) {
+  const card = await offboardingCard(this, name);
+  const section = await card.findElement(By.css("[data-testid='fnf-lines']"));
+  const text = await section.getText();
+  assert.ok(
+    text.includes(needle),
+    `live statement lines for ${name} do not mention "${needle}": ${text.replace(/\n/g, " | ")}`,
+  );
+});

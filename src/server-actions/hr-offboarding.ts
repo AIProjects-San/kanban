@@ -61,6 +61,8 @@ import {
   type FnFInput,
   type FnFLeaveAccount,
   type FnFOpenRun,
+  type FnFPendingAdjustment,
+  type FnFPendingEncashment,
 } from "@/lib/full-and-final";
 import { getOrCreateBalancesBatch, getHolidayLookup, todayUTC } from "./hr-shared";
 // P35 — the DERIVED boarding status kernel (the same one hr-onboarding's
@@ -221,13 +223,100 @@ async function rateWorkingDaysFor(period: string): Promise<number> {
   return workingDaysInPeriod(period, holidays);
 }
 
+/** P38 (EM-16/EM-B12) — the employee's PENDING PayAdjustment rows that
+ *  still owe money at exit: EARNING-side rows (deductions at exit are the
+ *  company's, already spent), FIXED amounts only (percent rows arrive with
+ *  amount null → the note path), and the remaining-installment count for
+ *  RECURRING rows (endPeriod minus the last LOCKED period boundary — the
+ *  same isDueInPeriod walk the run kernel applies, counted here so the
+ *  pure kernel stays clock-free). */
+async function pendingAdjustmentsFor(userId: string): Promise<FnFPendingAdjustment[]> {
+  const rows = await db.payAdjustment.findMany({
+    where: { userId, status: "PENDING", side: "EARNING" },
+    orderBy: { period: "asc" },
+    take: 200,
+  });
+  if (rows.length === 0) return [];
+  // The boundary: the last LOCKED run's period (paid) — installments due
+  // after it remain unpaid. No locked runs → everything from period on.
+  const lastLocked = await db.payrollRun.findFirst({
+    where: { status: "LOCKED" },
+    orderBy: { period: "desc" },
+    select: { period: true },
+  });
+  // The boundary as a real DATE (parsePayrollPeriodKey — the same parser
+  // isDueInPeriod uses): mixed cadences make raw period-string comparison
+  // wrong ("2026-W45" sorts after "2026-12" lexically but STARTS before
+  // it), so the walk compares window starts.
+  const { parsePayrollPeriodKey } = await import("@/lib/payroll-windows");
+  const boundaryStart =
+    (lastLocked ? parsePayrollPeriodKey(lastLocked.period)?.start ?? null : null);
+  return rows.map((r) => {
+    let remainingPeriods = 1;
+    if (r.recurrence === "RECURRING" && r.endPeriod) {
+      // Walk the row's own monthly grid (adjustment periods are monthly
+      // keyed — "YYYY-MM"), comparing each window start against the
+      // boundary's, capped sanely.
+      remainingPeriods = 0;
+      const endStart = parsePayrollPeriodKey(r.endPeriod)?.start ?? null;
+      const [cy, cm] = r.period.split("-").map(Number);
+      let y = cy;
+      let m = cm;
+      for (let i = 0; i < 120; i++) {
+        const p = `${y}-${String(m).padStart(2, "0")}`;
+        const w = parsePayrollPeriodKey(p)?.start ?? null;
+        if (endStart && w && w.getTime() > endStart.getTime()) break;
+        if (!boundaryStart || (w && w.getTime() > boundaryStart.getTime())) {
+          remainingPeriods += 1;
+        }
+        m += 1;
+        if (m > 12) { m = 1; y += 1; }
+      }
+      if (remainingPeriods === 0) remainingPeriods = 1; // honest floor
+    }
+    return {
+      id: r.id,
+      sourceType: r.sourceType,
+      label: r.label || r.sourceType,
+      amount: r.calcMode === "FIXED" ? r.amount : null,
+      period: r.period,
+      remainingPeriods,
+  };
+  }).filter((a) => a.amount !== null || a.remainingPeriods > 1);
+}
+
+/** P38 (EM-16/EM-B12) — the employee's APPROVED-but-unpaid encashments:
+ *  days already consumed from the ledger, money approved, the paying run
+ *  never locked. The frozen amount snapshot is the payable (a revaluation
+ *  would double-count the consumed days against the ledger projection). */
+async function pendingEncashmentsFor(userId: string): Promise<FnFPendingEncashment[]> {
+  const rows = await db.leaveEncashment.findMany({
+    where: { userId, status: "APPROVED" },
+    orderBy: { payoutPeriod: "asc" },
+    take: 100,
+  });
+  if (rows.length === 0) return [];
+  const types = await db.leaveType.findMany({
+    where: { id: { in: rows.map((r) => r.leaveTypeId) } },
+    select: { id: true, name: true },
+  });
+  const nameById = new Map(types.map((t) => [t.id, t.name]));
+  return rows.map((r) => ({
+    id: r.id,
+    leaveName: nameById.get(r.leaveTypeId) ?? "Leave",
+    days: r.days,
+    amount: r.amount,
+    payoutPeriod: r.payoutPeriod,
+  }));
+}
+
 /** The LIVE statement for one user (pure kernel + the DB facts it reads).
  * Computed for anyone; the UI only surfaces it on the EXITED arc (the
  * F1.6 transition guard guarantees a lastWorkingDay there). */
 async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
   const now = todayUTC();
   const year = now.getUTCFullYear();
-  const [profile, monthlyGross, openRuns, accounts] = await Promise.all([
+  const [profile, monthlyGross, openRuns, accounts, pendingAdjustments, pendingEncashments] = await Promise.all([
     db.employeeProfile.findUnique({
       where: { userId },
       select: { lastWorkingDay: true },
@@ -235,6 +324,9 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
     monthlyGrossFor(userId),
     openRunsFor(userId),
     leaveAccountsFor(userId, year),
+    // P38 — the pending bonus/adjustment + encashment payables.
+    pendingAdjustmentsFor(userId),
+    pendingEncashmentsFor(userId),
   ]);
   const lastWorkingDay = isoDateOrNull(profile?.lastWorkingDay ?? null);
   const ratePeriod = lastWorkingDay ? lastWorkingDay.slice(0, 7) : "";
@@ -251,6 +343,8 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
     openRuns,
     leaveAccounts: accounts,
     gratuity,
+    pendingAdjustments,
+    pendingEncashments,
   });
 }
 

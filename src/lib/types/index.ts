@@ -326,7 +326,15 @@ export interface ExitInterviewT {
 }
 
 /** One money line on a full-and-final statement. */
-export type FnFLineKind = "SALARY" | "ENCASHMENT" | "ADVANCE_LEAVE" | "GRATUITY";
+// P38 — BONUS (pending PayAdjustment earnings) and PENDING_ENCASHMENT
+// (APPROVED-unpaid encashment requests) join the line set.
+export type FnFLineKind =
+  | "SALARY"
+  | "ENCASHMENT"
+  | "ADVANCE_LEAVE"
+  | "GRATUITY"
+  | "BONUS"
+  | "PENDING_ENCASHMENT";
 
 export interface FnFLineT {
   kind: FnFLineKind;
