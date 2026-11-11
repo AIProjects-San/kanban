@@ -10,13 +10,17 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 // pattern, not asserted, same as the payroll CSV buttons).
 // ---------------------------------------------------------------------------
 
-const { getDirectory, getMyProfile, upsertMyProfile, updateProfileAsAdmin, exportDirectoryCsv, transitionEmployment } = vi.hoisted(() => ({
+const { getDirectory, getMyProfile, upsertMyProfile, updateProfileAsAdmin, exportDirectoryCsv, transitionEmployment, applyEmploymentChange, getEmploymentHistory } = vi.hoisted(() => ({
   getDirectory: vi.fn(),
   getMyProfile: vi.fn(),
   upsertMyProfile: vi.fn(),
   updateProfileAsAdmin: vi.fn(),
   exportDirectoryCsv: vi.fn(),
   transitionEmployment: vi.fn(),
+  // P33 — the promotion/transfer writer + the structured history reader
+  // (rendered components import them; the export tests never call them).
+  applyEmploymentChange: vi.fn(),
+  getEmploymentHistory: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hr-directory", () => ({
@@ -27,7 +31,7 @@ vi.mock("@/server-actions/hr-directory", () => ({
   exportDirectoryCsv,
 }));
 
-vi.mock("@/server-actions/employment", () => ({ transitionEmployment }));
+vi.mock("@/server-actions/employment", () => ({ transitionEmployment, applyEmploymentChange, getEmploymentHistory }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
@@ -50,6 +54,7 @@ beforeEach(() => {
         },
       ],
       canAdmin: false,
+      retirementAge: null,
     },
   });
 });

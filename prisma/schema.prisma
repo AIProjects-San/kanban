@@ -629,6 +629,15 @@ model Workspace {
   // per pair; a REJECTED draft stands for the year (the documented
   // house discipline — no daily re-draft after a no).
   autoLeaveEncashment    Boolean @default(false)
+  // P33 (EM-B02) — the retirement-age display knob (the benchmark's HR
+  // Settings retirement_age feeding the Employee's retirement_date
+  // projection). NULL = not configured → the directory's profile modal
+  // renders no projection (the pre-P33 silence); when set (40–80), the
+  // modal projects each member's retirement from birthDate + this age.
+  // Display-only by design: nothing gates on it (the retirement-age
+  // CONCEPT was declined; this is the display field the sweep's P33 row
+  // scopes).
+  retirementAge         Int?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -1393,6 +1402,36 @@ model EmployeeProfile {
 
   @@index([department])
   @@index([employmentStatus])
+}
+
+// P33 (EM-06) — the structured property history (the benchmark's
+// Employee Property History child): ONE row per changed employment
+// property, written ONLY by the guarded applyEmploymentChange action
+// inside its transaction (the promotion/transfer writer), carrying the
+// property key, the display value before and after, the effective date
+// and the change's kind. The generic AuditLog stays the free-form
+// record; THIS table is the machine-readable diff the promotion/transfer
+// actions and the directory's history panel read. Grade joins the
+// property set when EM-03 (P34) lands the field.
+model EmployeePropertyHistory {
+  id           String   @id @default(cuid())
+  userId       String
+  // jobTitle | department | manager | salary (the promotable property
+  // registry lives in lib/employment-change.ts).
+  property     String
+  // Display value BEFORE the change (label/manager-name/gross rendered).
+  currentValue String
+  // Display value AFTER the change.
+  newValue     String
+  // The change's effective date (date-only semantics, UTC midnight).
+  effectiveAt  DateTime
+  // PROMOTION | TRANSFER (the writer's kind).
+  sourceKind   String    @default("PROMOTION")
+  createdById  String    @default("")
+  createdAt    DateTime  @default(now())
+
+  @@index([userId, effectiveAt])
+  @@index([userId, createdAt])
 }
 
 // HR Module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).

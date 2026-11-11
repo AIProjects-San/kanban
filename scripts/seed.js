@@ -125,6 +125,8 @@ async function main() {
   await db.payrollRun.deleteMany(); // cascades payslips
   await db.holidayCalendarEntry.deleteMany();
   await db.attendanceRecord.deleteMany();
+  // P33 (EM-06) — the structured property history (reset before reseeding).
+  await db.employeePropertyHistory.deleteMany();
 
   // -----------------------------------------------------------------
   // Workspace settings
@@ -160,6 +162,10 @@ async function main() {
       // byte-identical to the calendar-year basis — the knob demos without
       // moving a single fixture.
       fiscalYearStartMonth: 4,
+      // P33 (EM-B02) — the retirement-age display knob (the benchmark's HR
+      // Settings retirement_age): 65 projects each member's retirement
+      // month in the directory's profile modal (display-only).
+      retirementAge: 65,
     },
   });
 
@@ -1860,6 +1866,93 @@ async function main() {
     profileCount += 1;
   }
   console.log(`  ✓ HR directory: ${profileCount} employee profiles seeded (F1.6: ${profileCount - probationSeed.size - exitSeed.size} ACTIVE, ${probationSeed.size} PROBATION, ${exitSeed.size} EXITED)`);
+
+  // -------------------------------------------------------------------------
+  // P33 (EM-06/EM-01) — structured property history: the seeded changes END
+  // at the CURRENT profile facts (no profile row is rewritten), so every
+  // pinned fixture (payroll numbers, e2e titles) stays byte-identical while
+  // the history panel demos a promotion and a multi-row transfer exactly
+  // the way the guarded action records them.
+  //   • Amara (PROMOTION, -45d): UX Research Intern → UX Researcher.
+  //   • Marcus (TRANSFER, -20d): Technical Writer (Engineering) → Content
+  //     Strategist (Marketing) — the two-property diff.
+  // No pre-P33 backfill: honest history starts at the first structured
+  // change; older edits stay audit-log-only.
+  // -------------------------------------------------------------------------
+  {
+    const remyId = userByName.get("Remy Laurent") ?? "";
+    const amaraId = userByName.get("Amara Diallo");
+    const marcusId = userByName.get("Marcus Bell");
+    const historySeed = [];
+    if (amaraId) {
+      const at = addDays(TODAY, -45);
+      historySeed.push({
+        userId: amaraId,
+        property: "jobTitle",
+        currentValue: "UX Research Intern",
+        newValue: "UX Researcher",
+        effectiveAt: at,
+        sourceKind: "PROMOTION",
+        createdById: remyId,
+        createdAt: at,
+      });
+    }
+    if (marcusId) {
+      const at = addDays(TODAY, -20);
+      historySeed.push(
+        {
+          userId: marcusId,
+          property: "jobTitle",
+          currentValue: "Technical Writer",
+          newValue: "Content Strategist",
+          effectiveAt: at,
+          sourceKind: "TRANSFER",
+          createdById: remyId,
+          createdAt: at,
+        },
+        {
+          userId: marcusId,
+          property: "department",
+          currentValue: "Engineering",
+          newValue: "Marketing",
+          effectiveAt: at,
+          sourceKind: "TRANSFER",
+          createdById: remyId,
+          createdAt: at,
+        },
+      );
+    }
+    for (const h of historySeed) {
+      await db.employeePropertyHistory.create({ data: h });
+    }
+    // The matching audit rows (the human-readable copy, like every writer).
+    const remyActor = { id: remyId, name: "Remy Laurent" };
+    if (amaraId) {
+      await audit(
+        remyActor,
+        "HR",
+        "hr.employment_change_applied",
+        "EMPLOYEE_PROFILE",
+        "Amara Diallo",
+        `Remy Laurent applied a promotion to Amara Diallo effective ${addDays(TODAY, -45).toISOString().slice(0, 10)} — Job title UX Research Intern → UX Researcher.`,
+        45,
+        0,
+      );
+    }
+    if (marcusId) {
+      await audit(
+        remyActor,
+        "HR",
+        "hr.employment_change_applied",
+        "EMPLOYEE_PROFILE",
+        "Marcus Bell",
+        `Remy Laurent applied a transfer to Marcus Bell effective ${addDays(TODAY, -20).toISOString().slice(0, 10)} — Job title Technical Writer → Content Strategist; Department Engineering → Marketing.`,
+        20,
+        0,
+      );
+    }
+    console.log(`  ✓ P33 structured property history: ${historySeed.length} rows (1 promotion + 1 transfer)`);
+  }
 
   // -------------------------------------------------------------------------
   // HR module seed — performance reviews (docs/HR_MODULE_PLAN.md §6).

@@ -53,6 +53,8 @@ function baseConfig(notificationTemplates: WorkspaceConfig["notificationTemplate
       holidayReminderDaysAhead: 7, emailEngagementReminders: false,
       remindInterviews: true, emailInterviewReminders: false,
       autoLeaveEncashment: false,
+      // P33 (EM-B02) — the retirement-age display knob (null = off).
+      retirementAge: null,
     },
     mail: { configured: false, provider: "none" },
     taskStatuses: [], projectStatuses: [], eventTypes: [], taskTags: [], priorities: [],

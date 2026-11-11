@@ -36,6 +36,15 @@ vi.mock("@/server-actions/shared", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
 }));
 
+// P33 (EM-B02) — getDirectory rides the cached workspace config for the
+// retirement-age knob; mocked so the roster tests stay DB-free (the action
+// only reads config.workspace.retirementAge).
+const getWorkspaceConfigMock = vi.fn();
+vi.mock("@/lib/config-loader", () => ({
+  getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
+  bumpConfigCache: vi.fn(),
+}));
+
 // PR-56 — partial mock for ONE drift-simulation test below (everything but
 // DEPARTMENT_LABELS stays real). The unknown-department guard in
 // updateProfileAsAdmin (hr-directory.ts:188-189) is defensive against
@@ -85,6 +94,8 @@ beforeEach(() => {
   db.employeeProfile.upsert.mockResolvedValue({});
   db.user.findMany.mockResolvedValue([]);
   db.user.findUnique.mockResolvedValue(null);
+  // P33 — the retirement-age knob's config read (null = not configured).
+  getWorkspaceConfigMock.mockResolvedValue({ workspace: { retirementAge: null } });
 });
 
 describe("getDirectory", () => {
@@ -119,6 +130,19 @@ describe("getDirectory", () => {
       });
       expect(res.data.canAdmin).toBe(false); // MANAGER: read-only directory
     }
+  });
+
+  it("P33 (EM-B02): carries the workspace retirement-age knob to the modal (null when not configured)", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.employeeProfile.findMany.mockResolvedValue([PROFILE_ROW]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-theo", name: "Theo Vance", email: "theo@fernly.app", role: "MEMBER", managerId: null },
+    ]);
+    getWorkspaceConfigMock.mockResolvedValue({ workspace: { retirementAge: 65 } });
+    const res = await getDirectory();
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.data.retirementAge).toBe(65);
+    // The null default is asserted by every other test's beforeEach mock.
   });
 });
 

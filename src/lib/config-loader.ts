@@ -182,6 +182,12 @@ export interface WorkspaceSettingsT {
    * rejection stands for the year). Default OFF — drafting on members'
    * behalf is a workspace policy choice. */
   autoLeaveEncashment: boolean;
+  /** P33 (EM-B02) — the retirement-age display knob (the benchmark's HR
+   * Settings retirement_age). Null = not configured → the directory
+   * profile modal renders no projection (the pre-P33 silence); when set
+   * (40–80) each member's retirement projects from birthDate + this age.
+   * Display-only: nothing gates on it. */
+  retirementAge: number | null;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -370,6 +376,11 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           remindInterviews: workspace.remindInterviews !== false,
           emailInterviewReminders: workspace.emailInterviewReminders === true,
           autoLeaveEncashment: workspace.autoLeaveEncashment === true,
+          // P33 — nullable knob: null = not configured (the pre-P33 silence).
+          retirementAge:
+            workspace.retirementAge == null
+              ? null
+              : Math.min(Math.max(Math.round(workspace.retirementAge) || 0, 40), 80),
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -405,6 +416,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           remindInterviews: true,
           emailInterviewReminders: false,
           autoLeaveEncashment: false,
+          retirementAge: null,
         },
 
     taskStatuses: taskStatuses.length

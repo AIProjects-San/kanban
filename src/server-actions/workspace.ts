@@ -97,6 +97,11 @@ export async function updateWorkspaceSettings(input: Partial<{
    * one pending LeaveEncashment per encashable pair over the floor when
    * ON — default OFF, the pre-P31 silence). */
   autoLeaveEncashment?: boolean;
+  /** P33 (EM-B02) — the retirement-age display knob (Settings → General;
+   * the benchmark's HR Settings retirement_age). Null = not configured →
+   * the directory's profile modal renders no projection. Display-only:
+   * nothing gates on it. */
+  retirementAge?: number | null;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

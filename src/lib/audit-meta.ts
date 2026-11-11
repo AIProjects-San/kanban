@@ -15,6 +15,7 @@ import {
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
+  ArrowUpRight,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -115,6 +116,10 @@ export type AuditAction =
   // F1.6 — employment lifecycle transitions (guarded action; one entry per
   // status change, from → to recorded in the detail line)
   | "hr.employment_transitioned"
+  // P33 (EM-06/EM-01, F2.5-lite) — the promotion/transfer writer: one entry
+  // per applied change, the property diff recorded in the detail line and
+  // the structured rows in EmployeePropertyHistory.
+  | "hr.employment_change_applied"
   // HR module — performance review lifecycle (docs/HR_MODULE_PLAN.md §6)
   | "review.created"
   | "review.updated"
@@ -323,6 +328,8 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.holiday_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hr.attendance_marked": { icon: ClipboardCheck, cls: "text-emerald-600 bg-emerald-500/10" },
   "hr.employment_transitioned": { icon: ArrowRightLeft, cls: "text-amber-500 bg-amber-500/10" },
+  // P33 — the promotion/transfer application (EM-06/EM-01).
+  "hr.employment_change_applied": { icon: ArrowUpRight, cls: "text-emerald-500 bg-emerald-500/10" },
   "hr.attendance_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.attendance_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 

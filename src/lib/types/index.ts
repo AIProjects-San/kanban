@@ -205,6 +205,29 @@ export type ReviewStatus = "DRAFT" | "SUBMITTED" | "REVIEWED" | "ACKNOWLEDGED";
 // has asserted yet renders as "—"), mirroring the department convention.
 export type EmploymentStatus = "" | "PROBATION" | "ACTIVE" | "SUSPENDED" | "EXITED";
 
+// ---------------------------------------------------------------------------
+// P33 (EM-06/EM-01) — the structured property history (the benchmark's
+// Employee Property History child) and the promotion/transfer change that
+// writes it. The promotable property registry + the pure diff/raise/retire
+// math live in lib/employment-change.ts; this is the shared wire type.
+// ---------------------------------------------------------------------------
+
+/** One structured property-history row (property / current / new). */
+export interface EmploymentPropertyHistoryT {
+  id: string;
+  userId: string;
+  /** jobTitle | department | manager | salary (registry in
+   * lib/employment-change.ts; grade joins at P34). */
+  property: string;
+  currentValue: string;
+  newValue: string;
+  /** "yyyy-mm-dd". */
+  effectiveAt: string;
+  /** PROMOTION | TRANSFER. */
+  sourceKind: string;
+  createdAt: string;
+}
+
 /** F1.6 — separates ordinary review cycles from probation reviews (§9.3 gate). */
 export type ReviewKind = "STANDARD" | "PROBATION";
 

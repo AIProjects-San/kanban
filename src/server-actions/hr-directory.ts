@@ -18,6 +18,7 @@ import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { DEPARTMENT_LABELS } from "@/lib/config";
+import { getWorkspaceConfig } from "@/lib/config-loader";
 import type { EmployeeProfileT } from "@/lib/types";
 import { employeeProfileSchema, employeeProfileSelfSchema, parseOrThrow } from "@/lib/validation";
 import { isoDateOrNull, EMPLOYMENT_STATUS_LABELS } from "@/lib/employment";
@@ -81,20 +82,24 @@ async function managerNameOf(userId: string, usersById: Map<string, { name: stri
 // ---------------------------------------------------------------------------
 
 export async function getDirectory(): Promise<
-  ActionResult<{ profiles: EmployeeProfileT[]; canAdmin: boolean }>
+  ActionResult<{ profiles: EmployeeProfileT[]; canAdmin: boolean; retirementAge: number | null }>
 > {
   return toResult(async () => {
     const auth = await requirePermission("hr:view");
 
     // PR-21 — hard caps on both roster queries (a directory beyond ~500
     // people is a paginated-list concern, not a single-render concern).
-    const [rows, users] = await Promise.all([
+    const [rows, users, config] = await Promise.all([
       db.employeeProfile.findMany({ orderBy: { createdAt: "asc" }, take: 500 }),
       db.user.findMany({
         where: { deletedAt: null },
         select: { id: true, name: true, email: true, role: true, managerId: true },
         take: 500,
       }),
+      // P33 (EM-B02) — the retirement-age display knob (cached 60s like
+      // every config read; null = not configured → the modal renders no
+      // projection).
+      getWorkspaceConfig(),
     ]);
     const usersById = new Map(users.map((u) => [u.id, u]));
 
@@ -104,7 +109,11 @@ export async function getDirectory(): Promise<
       if (!u) continue; // profile of a deleted user — hidden from the roster
       profiles.push(serialize(row, { name: u.name, email: u.email, role: u.role, managerName: await managerNameOf(row.userId, usersById) }));
     }
-    return { profiles, canAdmin: hasPermission(auth.role as never, "hr:admin") };
+    return {
+      profiles,
+      canAdmin: hasPermission(auth.role as never, "hr:admin"),
+      retirementAge: config.workspace.retirementAge,
+    };
   });
 }
 

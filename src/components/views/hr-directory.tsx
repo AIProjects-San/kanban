@@ -12,14 +12,17 @@
 // edit anyone including the HR-only `notes` field.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Download, Loader2, Search, Pencil } from "lucide-react";
+import { Briefcase, Download, Loader2, Search, Pencil, ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import { Section } from "../ui/section";
 import { Field } from "../ui/field";
 import { Modal } from "../ui/modal";
 import { Avatar } from "../ui/avatar";
 import { RoleBadge } from "../ui/role-badge";
+import { EmploymentChangeModal } from "../ui/employment-change-modal";
+import { EmploymentChangesSection } from "../ui/employment-history-section";
 import { DEPARTMENT_LABELS, departmentLabel } from "@/lib/config";
+import { retirementProjection } from "@/lib/employment-change";
 import {
   EMPLOYMENT_STATUS_BADGE,
   EMPLOYMENT_STATUS_LABELS,
@@ -153,8 +156,13 @@ export function EmployeeProfileSection() {
 export function DirectoryTab() {
   const [profiles, setProfiles] = useState<EmployeeProfileT[] | null>(null);
   const [canAdmin, setCanAdmin] = useState(false);
+  // P33 (EM-B02) — the retirement-age display knob rides the directory
+  // load (null = not configured → the modal renders no projection).
+  const [retirementAge, setRetirementAge] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<EmployeeProfileT | null>(null);
+  // P33 (EM-06/EM-01) — the promotion/transfer modal's subject.
+  const [changing, setChanging] = useState<EmployeeProfileT | null>(null);
   // P32 (EM-R02) — the employee_information export's busy flag.
   const [exporting, setExporting] = useState(false);
 
@@ -163,6 +171,7 @@ export function DirectoryTab() {
     if (res.ok) {
       setProfiles(res.data.profiles);
       setCanAdmin(res.data.canAdmin);
+      setRetirementAge(res.data.retirementAge);
     } else {
       toast.error(res.error);
       setProfiles([]);
@@ -246,9 +255,21 @@ export function DirectoryTab() {
                 </div>
               </div>
               {canAdmin && (
-                <button className="f-btn f-btn-ghost f-btn-sm shrink-0" onClick={() => setEditing(p)} aria-label={`Edit ${p.name}'s profile`}>
-                  <Pencil size={12} />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* P33 (EM-06/EM-01) — the effective-dated promotion/transfer
+                      writer (structured property history + structure revision). */}
+                  <button
+                    className="f-btn f-btn-ghost f-btn-sm"
+                    onClick={() => setChanging(p)}
+                    aria-label={`Promote or transfer ${p.name}`}
+                    data-testid="directory-promote"
+                  >
+                    <ArrowUpRight size={12} />
+                  </button>
+                  <button className="f-btn f-btn-ghost f-btn-sm" onClick={() => setEditing(p)} aria-label={`Edit ${p.name}'s profile`}>
+                    <Pencil size={12} />
+                  </button>
+                </div>
               )}
             </div>
             <div className="mt-3 space-y-1 text-[0.6875rem] text-muted-foreground">
@@ -283,9 +304,18 @@ export function DirectoryTab() {
       <EditProfileModal
         profile={editing}
         roster={(profiles ?? []).map((p) => ({ userId: p.userId, name: p.name }))}
+        retirementAge={retirementAge}
         onClose={() => setEditing(null)}
         // No bumpRefresh here: it remounts the HR console and flips the
         // active tab back to Requests — the directory reload suffices.
+        onSaved={load}
+      />
+
+      {/* P33 (EM-06/EM-01) — the promotion/transfer writer. */}
+      <EmploymentChangeModal
+        profile={changing}
+        roster={(profiles ?? []).map((p) => ({ userId: p.userId, name: p.name }))}
+        onClose={() => setChanging(null)}
         onSaved={load}
       />
     </div>
@@ -293,11 +323,14 @@ export function DirectoryTab() {
 }
 
 function EditProfileModal({
-  profile, roster, onClose, onSaved,
+  profile, roster, retirementAge, onClose, onSaved,
 }: {
   profile: EmployeeProfileT | null;
   /** S14 — the roster feeds the leave-approver override picker. */
   roster: { userId: string; name: string }[];
+  /** P33 (EM-B02) — the retirement-age display knob (null = not
+   * configured → no projection line). */
+  retirementAge: number | null;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -423,6 +456,26 @@ function EditProfileModal({
               onChange={(e) => setBirthDate(e.target.value)}
             />
           </Field>
+          {/* P33 (EM-B02) — the retirement-age display field (the benchmark's
+              retirement_date projection): birthDate + the workspace's
+              retirement age. Rendered ONLY when both exist — no birthday on
+              file or no configured age renders no line (never a fabricated
+              projection). Display-only: nothing gates on it. */}
+          {(() => {
+            const projection = retirementProjection({
+              birthDate: profile.birthDate ?? null,
+              retirementAge,
+            });
+            return projection ? (
+              <div
+                className="sm:col-span-2 text-[0.6875rem] text-muted-foreground"
+                data-testid="retirement-projection"
+              >
+                Projected retirement: <span className="font-medium text-foreground">{projection.monthLabel} {projection.year}</span>{" "}
+                (at age {retirementAge}) — display only, nothing gates on it.
+              </div>
+            ) : null;
+          })()}
           <Field label="Location">
             <input className="f-input" value={location} maxLength={100} onChange={(e) => setLocation(e.target.value)} />
           </Field>
@@ -523,6 +576,10 @@ function EditProfileModal({
             ) : null}
           </div>
         </div>
+        {/* P33 (EM-06) — the structured employment-changes panel (the
+            benchmark's Employee Property History child under the Employee
+            form): lazy, collapsed by default, one row per changed property. */}
+        <EmploymentChangesSection userId={profile.userId} userName={profile.name} />
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>
           <button type="submit" className="f-btn f-btn-primary f-btn-sm" disabled={busy}>

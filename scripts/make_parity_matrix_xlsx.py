@@ -2,7 +2,7 @@
 """Build the 309-feature parity matrix workbook from the matrix doc.
 
 Parses docs/Fernly_HRMS_Feature_Parity_Matrix.md (the sweep's own ledger,
-post-P32) and the P16-P32 sweep table from the enhancement plan, then emits
+post-P33) and the P16-P33 sweep table from the enhancement plan, then emits
 a two-sheet xlsx: the full feature matrix (filterable, status color-coded)
 and the census (status totals, per-domain pivot, the sweep ledger).
 """
@@ -129,7 +129,7 @@ def bucket_of(status: str) -> str:
 
 
 def parse_sweep_ledger():
-    """P16-P31 rows from the enhancement plan's §7.2.2 table only."""
+    """P16-P33 rows from the enhancement plan's §7.2.2 table only."""
     entries = []
     in_722 = False
     with open(PLAN_DOC, encoding="utf-8") as f:
@@ -150,7 +150,7 @@ def parse_sweep_ledger():
                     item = clean(cells[2])
                     done = item.startswith("DONE")
                     entries.append((num, rows_closed, done, item))
-    return [e for e in entries if 16 <= e[0] <= 32]
+    return [e for e in entries if 16 <= e[0] <= 33]
 
 
 STATUS_FILLS = {
@@ -174,7 +174,7 @@ STATUS_FONTS = {
 def build_matrix_sheet(ws, rows):
     headers = ["#", "ID", "Domain", "Section", "Benchmark feature (Frappe HRMS)",
                "Fernly surface", "Status", "Family / epic"]
-    setup_sheet(ws, title="Fernly HRMS Feature Parity Matrix — the full feature table (post-P32, 2026-11-11)", last_col=2 + len(headers) - 1)
+    setup_sheet(ws, title="Fernly HRMS Feature Parity Matrix — the full feature table (post-P33, 2026-11-11)", last_col=2 + len(headers) - 1)
     header_row = 4
     for i, h in enumerate(headers, start=2):
         ws.cell(row=header_row, column=i, value=h)
@@ -256,10 +256,13 @@ def build_census_sheet(ws, rows, ledger):
     ws.cell(row=note_r, column=2,
             value=("The sweep ledger's counted convention: 309 feature rows counted "
                    "(the raw table carries 314 multi-item rows — split/compound rows reconcile the two). "
-                   "Post-P32 census (2026-11-11, commit befc551): 117 Parity · 55 Partial · 101 Missing · 36 Out of scope. "
-                   "P32 closed AT-R01, EM-R02 and PL-11 — all three Partial → Parity — report exports first cut: the shared "
-                   "report-csv builder, the monthly attendance sheet CSV and the employee_information directory CSV. "
-                   "Next sweep head: P33 (structured property history — EM-06, EM-01, EM-B02)."))
+                   "Post-P33 census (2026-11-11): 119 Parity · 53 Partial · 101 Missing · 36 Out of scope. "
+                   "P33 closed EM-06 and EM-B02 — both Partial → Parity — and landed EM-01's promotion/transfer remainder "
+                   "(the row improves to Partial (improved); grouping axes stay P34): the structured EmployeePropertyHistory "
+                   "rows the guarded applyEmploymentChange writer powers (one transaction: profile + org chart + structure "
+                   "revision + history + notice), and the retirement-age display field (Workspace.retirementAge + the "
+                   "profile modal's projected retirement line). "
+                   "Next sweep head: P34 (grouping axes — EM-03)."))
     ws.cell(row=note_r, column=2).font = font_caption()
     ws.merge_cells(start_row=note_r, start_column=2, end_row=note_r, end_column=8)
     ws.cell(row=note_r, column=2).alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
@@ -305,9 +308,9 @@ def build_census_sheet(ws, rows, ledger):
     ws.cell(row=r, column=4 + len(order), value=total_rows)
     ws.cell(row=r, column=4 + len(order)).alignment = align_number()
 
-    # --- Sweep ledger P16-P32 ---
+    # --- Sweep ledger P16-P33 ---
     sweep_start = r + 2
-    ws.cell(row=sweep_start, column=2, value="§7.2.2 Partial Residual Sweep — the P16–P32 ledger")
+    ws.cell(row=sweep_start, column=2, value="§7.2.2 Partial Residual Sweep — the P16–P33 ledger")
     ws.cell(row=sweep_start, column=2).font = font_subheader()
     hdr3 = sweep_start + 1
     for ci, h in enumerate(["Item", "Rows closed", "Status", "Scope (condensed)"], start=2):
@@ -338,7 +341,7 @@ def main():
         print("  UNPARSED:", u["id"], u["artifact"][:70])
 
     ledger = parse_sweep_ledger()
-    print(f"sweep ledger entries P16-P32: {len(ledger)}")
+    print(f"sweep ledger entries P16-P33: {len(ledger)}")
 
     wb = Workbook()
     ws1 = wb.active

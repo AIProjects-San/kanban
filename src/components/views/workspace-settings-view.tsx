@@ -251,6 +251,26 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               onChange={(e) => setForm({ ...form, auditRetentionDays: Number(e.target.value) })}
             />
           </Field>
+          {/* P33 (EM-B02) — the retirement-age display knob (the benchmark's
+              HR Settings retirement_age). Blank = not configured → the
+              directory's profile modal renders no projection; 40–80 bounds
+              the age. Display-only: nothing gates on it. */}
+          <Field label="Retirement age (years, blank = off)">
+            <input
+              type="number"
+              className="f-input"
+              min={40}
+              max={80}
+              value={form.retirementAge ?? ""}
+              data-testid="retirement-age-input"
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  retirementAge: e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+            />
+          </Field>
         </FormRow>
         <FormRow>
           {/* F2.10 (F-R9/E5) — the joining gate: markJoined refuses while any

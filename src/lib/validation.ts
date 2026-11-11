@@ -238,6 +238,10 @@ export const workspaceSettingsSchema = z.object({
   // dispatcher's encashment pass drafts one pending LeaveEncashment per
   // encashable pair whose balance exceeds the floor).
   autoLeaveEncashment: z.boolean().optional(),
+  // P33 (EM-B02) — the retirement-age display knob (the benchmark's HR
+  // Settings retirement_age). Null/omitted = not configured → no
+  // projection rendered; 40–80 bounds the age to plausible employment.
+  retirementAge: z.number().int().finite().min(40).max(80).nullable().optional(),
 }).strict(); // reject unknown keys
 
 /**
@@ -631,6 +635,26 @@ export const employmentTransitionSchema = z.object({
   target: z.enum(["PROBATION", "ACTIVE", "SUSPENDED", "EXITED"]),
   probationEndsAt: isoDateish,
   lastWorkingDay: isoDateish,
+}).strict();
+
+// P33 (EM-06/EM-01, F2.5-lite) — the promotion/transfer change input
+// (applyEmploymentChange). Every property is optional: the change records
+// exactly what it moves (the writer refuses an empty diff); raisePercent
+// is the shape-preserving revision (FIXED earnings scale, percent lines
+// ride the grown basis); managerId null clears the reporting line.
+export const employmentChangeSchema = z.object({
+  kind: z.enum(["PROMOTION", "TRANSFER"]),
+  effectiveDate: isoDateStr,
+  jobTitle: z.string().trim().max(100).optional(),
+  department: z.string().trim().max(64).optional(),
+  managerId: z.string().trim().max(64).nullable().optional(),
+  raisePercent: z
+    .number()
+    .finite()
+    .min(0.5, "A raise needs at least half a percent.")
+    .max(100, "A raise cannot exceed 100%.")
+    .optional(),
+  note: z.string().trim().max(500).optional(),
 }).strict();
 
 export const selfAssessmentSchema = z.object({
