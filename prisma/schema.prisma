@@ -857,6 +857,18 @@ model LeaveType {
   // days per working day taken). Unpaid types charge the full working
   // fraction regardless (paid = false is fraction 0 by definition).
   salaryFraction Float  @default(1)
+  // P30 (LV-01) — the benchmark's is_optional_leave: applications with this
+  // type may land entirely on holidays/weekends (the range's working-day
+  // count may be 0), and those days consume no balance — the optional
+  // holiday is recorded and approved but never deducted (the request's
+  // `days` stays 0). The per-year COUNT cap is the policy knob below.
+  isOptionalLeave Boolean @default(false)
+  // P30 (LV-01/LV-11) — the benchmark's is_compensatory: days arrive ONLY
+  // through approved CompensatoryLeaveRequests (the worked-holiday claim
+  // flow writes the ledger GRANT row); consumption is the normal request
+  // path against those earned days. Usually paired with annualDays 0 (no
+  // scheduled entitlement — the seed's Comp Off type shows the shape).
+  isCompensatory Boolean  @default(false)
   color        String   @default("#8b5cf6")
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
@@ -939,6 +951,11 @@ model LeavePolicy {
   // The balance floor that can never be encashed:
   // available − requested must stay ≥ this.
   nonEncashableDays    Float    @default(5)
+  // P30 (LV-01) — the benchmark's "Max Days Leave Allowed" for optional
+  // leave: how many optional-holiday applications one member may hold
+  // (PENDING + APPROVED, this ledger bucket) per year. Null = no count cap
+  // (the zero-change default — the type flag alone governs).
+  maxOptionalHolidaysPerYear Int?
   updatedAt           DateTime  @updatedAt
 }
 
@@ -1062,6 +1079,40 @@ model LeaveEncashment {
 
   @@index([userId, status])
   @@index([status])
+}
+
+// P30 (LV-01/LV-11, the benchmark's `Compensatory Leave Request`) — the
+// worked-holiday claim: a member files the non-working day(s) they worked
+// (workFrom..workTo, EVERY day must be a weekend/holiday-calendar day), HR
+// validates attendance shows they actually worked (PRESENT/WFH = 1 day,
+// HALF_DAY = 0.5), and APPROVAL appends the comp GRANT ledger row (+days,
+// sourceType COMP_REQUEST) in the same transaction as the status flip —
+// the days then spend through the normal LeaveRequest path against the
+// compensatory type. REJECTED claims nothing. Plain-string FKs (the
+// LeaveRequest convention): ledger rows outlive their sources.
+model CompensatoryLeaveRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  // Must reference an active LeaveType with isCompensatory = true.
+  leaveTypeId String
+  // The worked span (UTC-midnight date-only, the LeaveRequest convention).
+  workFromDate DateTime
+  workToDate   DateTime
+  // Derived at creation from the day walk (kernel: earnedCompDays) —
+  // never re-derived; the number the GRANT row will write.
+  days        Float
+  reason      String   @default("")
+  // PENDING → APPROVED | REJECTED (guarded flips only).
+  status      String   @default("PENDING")
+  decidedById String?
+  decidedAt   DateTime?
+  decisionNote String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([workFromDate, workToDate])
 }
 
 // A member's time-off request. `days` is denormalized at creation from the

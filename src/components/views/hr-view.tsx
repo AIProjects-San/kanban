@@ -10,13 +10,13 @@
 // interviews and full-and-final settlement.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Check, CircleDollarSign, Loader2, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck, DoorOpen, Scale, Layers, Users, Trash2 } from "lucide-react";
+import { Briefcase, Check, CircleDollarSign, Loader2, X, Plus, Settings2, ClipboardCheck, ListChecks, CalendarDays, CalendarCheck, CalendarClock, DoorOpen, Scale, Layers, Users, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
 import { FilterBar } from "../ui/filter-bar";
 import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/config";
-import type { LeaveRequestT, LeaveTypeT } from "@/lib/types";
+import type { LeaveRequestT, LeaveTypeT, CompLeaveRequestT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   getLeaveQueue,
@@ -34,6 +34,11 @@ import { OffboardingTab } from "./hr-offboarding";
 import { BalancesTab } from "./hr-leave-balances";
 import { getEncashmentQueue, decideLeaveEncashment } from "@/server-actions/leave-encashment";
 import type { LeaveEncashmentT } from "@/lib/types";
+// P30 (LV-01/LV-11) — the compensatory claim queue + its decision action.
+import {
+  getCompensatoryQueue,
+  decideCompensatoryLeaveRequest,
+} from "@/server-actions/compensatory-leave";
 import { getDirectory } from "@/server-actions/hr-directory";
 // P27 (LV-08) — the leave period master (named allocation windows).
 import {
@@ -77,6 +82,8 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
   const [canManageAttendance, setCanManageAttendance] = useState(false);
   // P2 (LV-09, F2.2) — the encashment decision queue rides the Requests tab.
   const [encashments, setEncashments] = useState<LeaveEncashmentT[]>([]);
+  // P30 (LV-01/LV-11) — the comp-off claim queue rides the Requests tab too.
+  const [compRequests, setCompRequests] = useState<CompLeaveRequestT[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
@@ -91,6 +98,8 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
     }
     const enc = await getEncashmentQueue();
     if (enc.ok) setEncashments(enc.data.requests);
+    const comp = await getCompensatoryQueue();
+    if (comp.ok) setCompRequests(comp.data);
     setLoaded(true);
   }, []);
 
@@ -101,7 +110,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
     return <div className="p-6 text-sm text-muted-foreground">Loading HR console…</div>;
   }
 
-  const pending = requests.filter((r) => r.status === "PENDING");
+  const pendingCount = requests.filter((r) => r.status === "PENDING").length + compRequests.length;
 
   return (
     <div className="space-y-5">
@@ -113,7 +122,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
             HR
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {pending.length} pending decision{pending.length === 1 ? "" : "s"}
+            {pendingCount} pending decision{pendingCount === 1 ? "" : "s"}
             {currentUser.role === "MANAGER" ? " · your team" : " · whole workspace"}
           </p>
         </div>
@@ -168,6 +177,7 @@ export function HRView({ currentUser }: { currentUser: CurrentUser }) {
           currentUserId={currentUser.id}
           onChanged={load}
           encashments={encashments}
+          compRequests={compRequests}
         />
       )}
       {tab === "types" && canAdmin && (
@@ -207,7 +217,7 @@ function TabButton({
 // ---------------------------------------------------------------------------
 
 function RequestsTab({
-  requests, types, canAdmin, currentUserId, onChanged, encashments,
+  requests, types, canAdmin, currentUserId, onChanged, encashments, compRequests,
 }: {
   requests: LeaveRequestT[];
   types: LeaveTypeT[];
@@ -215,6 +225,7 @@ function RequestsTab({
   currentUserId: string;
   onChanged: () => Promise<void>;
   encashments: LeaveEncashmentT[];
+  compRequests: CompLeaveRequestT[];
 }) {
   const [statusFilter, setStatusFilter] = useState("PENDING");
   const [deciding, setDeciding] = useState<LeaveRequestT | null>(null);
@@ -355,6 +366,15 @@ function RequestsTab({
           </table>
         </div>
       )}
+
+      {/* P30 (LV-01/LV-11) — the comp-off claim queue: worked-holiday
+          claims decided by the same chain as time-off. Approve = the comp
+          GRANT ledger row lands. */}
+      <CompOffQueueSection
+        compRequests={compRequests}
+        currentUserId={currentUserId}
+        onChanged={onChanged}
+      />
 
       {/* LV-10 (S9) — the ADJUST ledger writer: signed days, reason
           required, floor-honest. Mount-on-open keeps the form pristine. */}
@@ -506,6 +526,106 @@ function EncashmentDecideButtons({
         disabled={busy !== ""}
         onClick={() => void decide("REJECT")}
         data-testid={`encashment-reject-${encashment.id}`}
+      >
+        {busy === "REJECT" ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} Reject
+      </button>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P30 (LV-01/LV-11) — the compensatory claim queue: worked-holiday claims,
+// decided inline (approve = the comp GRANT ledger row + the balance lands;
+// reject = nothing granted). Exported for the focused component test.
+// ---------------------------------------------------------------------------
+export function CompOffQueueSection({
+  compRequests, currentUserId, onChanged,
+}: {
+  compRequests: CompLeaveRequestT[];
+  currentUserId: string;
+  onChanged: () => Promise<void>;
+}) {
+  if (compRequests.length === 0) return null;
+  return (
+    <div className="f-card overflow-hidden" data-testid="compoff-queue">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <CalendarClock size={14} className="text-lime-600 dark:text-lime-400" /> Comp-off claims
+        </h2>
+        <span className="text-[0.6875rem] text-muted-foreground">{compRequests.length} pending</span>
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[0.6875rem] uppercase tracking-wider text-muted-foreground border-b border-border">
+            <th className="px-4 py-2 font-semibold">Member</th>
+            <th className="px-4 py-2 font-semibold">Type</th>
+            <th className="px-4 py-2 font-semibold">Worked</th>
+            <th className="px-4 py-2 font-semibold">Days earned</th>
+            <th className="px-4 py-2 font-semibold">Reason</th>
+            <th className="px-4 py-2 font-semibold"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {compRequests.map((c) => (
+            <tr key={c.id} className="border-b border-border last:border-0" data-testid="compoff-queue-row">
+              <td className="px-4 py-2.5 font-medium">{c.userName}</td>
+              <td className="px-4 py-2.5">
+                <span className="inline-flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.typeColor }} aria-hidden />
+                  {c.typeName}
+                </span>
+              </td>
+              <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                {fmtDay(c.workFromDate)} → {fmtDay(c.workToDate)}
+              </td>
+              <td className="px-4 py-2.5 tabular-nums">{c.days}</td>
+              <td className="px-4 py-2.5 text-muted-foreground text-[0.8125rem] max-w-48 truncate" title={c.reason}>
+                {c.reason || "—"}
+              </td>
+              <td className="px-4 py-2.5 text-right">
+                {c.userId !== currentUserId && <CompOffDecideButtons claim={c} onChanged={onChanged} />}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// P30 — inline approve/reject for a comp-off claim (the EncashmentDecideButtons
+// discipline: no modal — the row already shows every fact).
+function CompOffDecideButtons({
+  claim, onChanged,
+}: { claim: CompLeaveRequestT; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState<"" | "APPROVE" | "REJECT">("");
+  const decide = async (decision: "APPROVE" | "REJECT") => {
+    setBusy(decision);
+    const res = await decideCompensatoryLeaveRequest({ compId: claim.id, decision });
+    setBusy("");
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success(
+      decision === "APPROVE"
+        ? `Comp-off approved — ${claim.days} day(s) earned on ${claim.typeName}.`
+        : "Comp-off claim rejected.",
+    );
+    await onChanged();
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <button
+        className="f-btn f-btn-secondary f-btn-sm"
+        disabled={busy !== ""}
+        onClick={() => void decide("APPROVE")}
+        data-testid={`compoff-approve-${claim.id}`}
+      >
+        {busy === "APPROVE" ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Approve
+      </button>
+      <button
+        className="f-btn f-btn-ghost f-btn-sm"
+        disabled={busy !== ""}
+        onClick={() => void decide("REJECT")}
+        data-testid={`compoff-reject-${claim.id}`}
       >
         {busy === "REJECT" ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} Reject
       </button>
@@ -1404,6 +1524,13 @@ function TypeCard({ type, onChanged }: { type: LeaveTypeT; onChanged: () => Prom
           {type.requiresDoc && (
             <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">docs</span>
           )}
+          {/* P30 (LV-01) — the optional-leave / compensatory type flags. */}
+          {type.isOptionalLeave && (
+            <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400">optional</span>
+          )}
+          {type.isCompensatory && (
+            <span className="text-[0.625rem] px-1.5 py-0.5 rounded bg-lime-500/10 text-lime-600 dark:text-lime-400">comp-off</span>
+          )}
           <span className={cn("text-[0.625rem] px-1.5 py-0.5 rounded", type.paid ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400")}>
             {/* P15 (PR-06) — a paid type below full salary shows its
                 fraction (the benchmark's partially-paid leave). */}
@@ -1494,6 +1621,8 @@ interface PolicyFormState {
   encashable: boolean;
   maxEncashableDays: number;
   nonEncashableDays: number;
+  // P30 (LV-01) — the optional-holiday count cap (null = no cap).
+  maxOptionalHolidaysPerYear: number | null;
 }
 
 function defaultPolicyForm(): PolicyFormState {
@@ -1518,6 +1647,7 @@ function defaultPolicyForm(): PolicyFormState {
     encashable: false,
     maxEncashableDays: 5,
     nonEncashableDays: 5,
+    maxOptionalHolidaysPerYear: null,
   };
 }
 
@@ -1545,6 +1675,7 @@ function policyFormFrom(policy: LeaveTypeT["policy"]): PolicyFormState {
     encashable: policy.encashable ?? d.encashable,
     maxEncashableDays: policy.maxEncashableDays ?? d.maxEncashableDays,
     nonEncashableDays: policy.nonEncashableDays ?? d.nonEncashableDays,
+    maxOptionalHolidaysPerYear: policy.maxOptionalHolidaysPerYear ?? null,
   };
 }
 
@@ -1562,6 +1693,10 @@ function EditTypeModal({
 }: { type: LeaveTypeT; open: boolean; onClose: () => void; onChanged: () => Promise<void> }) {
   const [name, setName] = useState(type.name);
   const [color, setColor] = useState(type.color);
+  // P30 (LV-01) — the optional-leave / compensatory type flags ride the
+  // edit form (type-level knobs, like paid/requiresDoc — not policy rows).
+  const [isOptionalLeave, setIsOptionalLeave] = useState(type.isOptionalLeave ?? false);
+  const [isCompensatory, setIsCompensatory] = useState(type.isCompensatory ?? false);
   // P15 (PR-06) — the partially-paid fraction rides the edit form too
   // (only rendered for paid types — an unpaid type is fraction 0 by
   // definition and the knob would read as a lie).
@@ -1578,6 +1713,8 @@ function EditTypeModal({
           setBusy(true);
           const res = await updateLeaveType(type.id, {
             name, color,
+            isOptionalLeave,
+            isCompensatory,
             ...(type.paid ? { salaryFraction: fractionStr === "" ? 1 : Number(fractionStr) } : {}),
             policy,
           });
@@ -1615,7 +1752,29 @@ function EditTypeModal({
             </p>
           </div>
         )}
-        <PolicyFields policy={policy} setPolicy={setPolicy} />
+        {/* P30 (LV-01) — the optional-leave / compensatory flags (type-level
+            knobs; the optional count cap rides the policy fields below). */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+          <label className="flex items-center gap-2 text-sm text-foreground" data-testid="lt-optional">
+            <input
+              id="lt-optional-flag"
+              type="checkbox"
+              checked={isOptionalLeave}
+              onChange={(e) => setIsOptionalLeave(e.target.checked)}
+            />
+            Optional leave (holiday/weekend applications don't consume balance)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-foreground" data-testid="lt-comp">
+            <input
+              id="lt-comp-flag"
+              type="checkbox"
+              checked={isCompensatory}
+              onChange={(e) => setIsCompensatory(e.target.checked)}
+            />
+            Compensatory (days arrive via worked-holiday claims)
+          </label>
+        </div>
+        <PolicyFields policy={policy} setPolicy={setPolicy} showOptionalCap={isOptionalLeave} />
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>
           <button type="submit" className="f-btn f-btn-primary f-btn-sm" disabled={busy}>
@@ -1633,6 +1792,10 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
   const [color, setColor] = useState("#8b5cf6");
   const [requiresDoc, setRequiresDoc] = useState(false);
   const [paid, setPaid] = useState(true);
+  // P30 (LV-01) — the optional-leave / compensatory flags (default false =
+  // a classic type, the pre-P30 behavior).
+  const [isOptionalLeave, setIsOptionalLeave] = useState(false);
+  const [isCompensatory, setIsCompensatory] = useState(false);
   // P15 (PR-06) — partially-paid leave: fraction of daily salary paid per
   // leave day (paid types only; 1 = fully paid = the pre-P15 default).
   const [fractionStr, setFractionStr] = useState("1");
@@ -1648,6 +1811,8 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
           setBusy(true);
           const res = await createLeaveType({
             name, code: code.toUpperCase(), color, requiresDoc, paid,
+            isOptionalLeave,
+            isCompensatory,
             salaryFraction: fractionStr === "" ? 1 : Number(fractionStr),
             policy,
           });
@@ -1699,7 +1864,30 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
             </p>
           </div>
         )}
-        <PolicyFields policy={policy} setPolicy={setPolicy} />
+        {/* P30 (LV-01) — the optional-leave / compensatory flags; checking
+            Compensatory usually pairs with Days/year 0 (earned days are a
+            comp type's only entitlement). */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+          <label className="flex items-center gap-2 text-sm text-foreground" data-testid="nlt-optional">
+            <input
+              id="nlt-optional-flag"
+              type="checkbox"
+              checked={isOptionalLeave}
+              onChange={(e) => setIsOptionalLeave(e.target.checked)}
+            />
+            Optional leave (holiday/weekend applications don't consume balance)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-foreground" data-testid="nlt-comp">
+            <input
+              id="nlt-comp-flag"
+              type="checkbox"
+              checked={isCompensatory}
+              onChange={(e) => setIsCompensatory(e.target.checked)}
+            />
+            Compensatory (days arrive via worked-holiday claims)
+          </label>
+        </div>
+        <PolicyFields policy={policy} setPolicy={setPolicy} showOptionalCap={isOptionalLeave} />
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>
           <button type="submit" className="f-btn f-btn-primary f-btn-sm" disabled={busy}>
@@ -1712,10 +1900,14 @@ function CreateTypeModal({ open, onClose, onChanged }: { open: boolean; onClose:
 }
 
 function PolicyFields({
-  policy, setPolicy,
+  policy, setPolicy, showOptionalCap = false,
 }: {
   policy: PolicyFormState;
   setPolicy: (p: PolicyFormState) => void;
+  /** P30 (LV-01) — render the optional-holiday count cap (the flag lives on
+   * the type; the cap is a policy row — only meaningful for optional
+   * types, so the modals pass the flag's state down). */
+  showOptionalCap?: boolean;
 }) {
   const num = (v: string): number => (v === "" ? 0 : Number(v));
   const set = (patch: Partial<PolicyFormState>) => setPolicy({ ...policy, ...patch });
@@ -1900,6 +2092,20 @@ function PolicyFields({
               Count holidays
             </label>
           </Field>
+          {showOptionalCap && (
+            <Field label="Max optional applications / year (empty = no cap)">
+              <input
+                id="pf-optcap"
+                type="number"
+                min={1}
+                max={365}
+                className="f-input"
+                value={policy.maxOptionalHolidaysPerYear ?? ""}
+                onChange={(e) => set({ maxOptionalHolidaysPerYear: e.target.value === "" ? null : Math.round(num(e.target.value)) })}
+                data-testid="pf-optcap"
+              />
+            </Field>
+          )}
         </div>
 
         {(strategy === "EARNED" || strategy === "ANNUAL_LUMP_SUM") && (

@@ -113,6 +113,13 @@ export interface LeaveTypeT {
    * only; 1 = fully paid). Optional in the wire type (older snapshots
    * default to 1 via `?? 1`); the server DTO always fills it. */
   salaryFraction?: number;
+  /** P30 (LV-01) — optional-leave types: applications landing entirely on
+   * holidays/weekends consume no balance (zero-day requests allowed).
+   * Optional in the wire type for snapshot compat; the server DTO fills it. */
+  isOptionalLeave?: boolean;
+  /** P30 (LV-01/LV-11) — compensatory types: days arrive only through
+   * approved worked-holiday claims (CompensatoryLeaveRequest). */
+  isCompensatory?: boolean;
   color: string;
   active: boolean;
   policy: {
@@ -142,6 +149,9 @@ export interface LeaveTypeT {
     encashable?: boolean;
     maxEncashableDays?: number;
     nonEncashableDays?: number;
+    // P30 (LV-01) — the optional-holiday count cap (the benchmark's Max Days
+    // Leave Allowed; null = no cap).
+    maxOptionalHolidaysPerYear?: number | null;
   } | null;
 }
 
@@ -154,6 +164,28 @@ export interface LeaveRequestT {
   userName: string;
   startDate: string;
   endDate: string;
+  days: number;
+  reason: string;
+  status: LeaveStatus;
+  decidedById: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionNote: string;
+  createdAt: string;
+}
+
+/** P30 (LV-01/LV-11) — one worked-holiday compensatory claim: the span the
+ * member filed, the days the walk priced, the decision pair. Status rides
+ * the same PENDING/APPROVED/REJECTED labels + LEAVE_STATUS_LABELS. */
+export interface CompLeaveRequestT {
+  id: string;
+  userId: string;
+  userName: string;
+  leaveTypeId: string;
+  typeName: string;
+  typeColor: string;
+  workFromDate: string;
+  workToDate: string;
   days: number;
   reason: string;
   status: LeaveStatus;

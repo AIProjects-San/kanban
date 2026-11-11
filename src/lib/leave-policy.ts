@@ -89,6 +89,9 @@ export interface LeavePolicyRow {
   encashable?: boolean | null;
   maxEncashableDays?: number | null;
   nonEncashableDays?: number | null;
+  // P30 (LV-01) — the optional-holiday count cap (the benchmark's Max Days
+  // Leave Allowed; null = no cap).
+  maxOptionalHolidaysPerYear?: number | null;
 }
 
 /** The defaulted policy every rule consumes (no nulls, no unknowns). */
@@ -122,6 +125,11 @@ export interface ResolvedLeavePolicy {
   /** The balance floor that can never be encashed (available − requested
    * must stay ≥ this). */
   nonEncashableDays: number;
+  /** P30 (LV-01) — how many optional-holiday applications (PENDING +
+   * APPROVED, this ledger bucket) one member may hold per year; null =
+   * no count cap (read ONLY on isOptionalLeave types — the benchmark's
+   * Max Days Leave Allowed). */
+  maxOptionalHolidaysPerYear: number | null;
 }
 
 const STRATEGIES: LeaveAllocationStrategy[] = ["MANUAL", "ANNUAL_LUMP_SUM", "EARNED", "AFTER_SERVICE"];
@@ -178,6 +186,10 @@ export function resolveLeavePolicy(row: LeavePolicyRow | null | undefined): Reso
     encashable: pickBool(row?.encashable, false),
     maxEncashableDays: Math.max(0, pickNumber(row?.maxEncashableDays, 5)),
     nonEncashableDays: Math.max(0, pickNumber(row?.nonEncashableDays, 5)),
+    maxOptionalHolidaysPerYear:
+      typeof row?.maxOptionalHolidaysPerYear === "number" && Number.isFinite(row.maxOptionalHolidaysPerYear)
+        ? Math.max(1, Math.round(row.maxOptionalHolidaysPerYear))
+        : null,
   };
 }
 

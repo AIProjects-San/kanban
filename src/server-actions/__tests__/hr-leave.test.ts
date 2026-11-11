@@ -2872,3 +2872,136 @@ describe("P24 — template-driven leave notifications", () => {
     expect(mailArg.text).toBe("B: approved");
   });
 });
+
+// ---------------------------------------------------------------------------
+// P30 (LV-01) — optional leave: applications on holidays/weekends consume no
+// balance. An OPTIONAL type lifts the zero-working-day refusal (the request
+// lands with days = 0 — recorded, approved, never deducted); the per-year
+// count cap rides the policy knob; the cancel of a zero-day approval writes
+// no reversal rows (nothing was deducted to return).
+// ---------------------------------------------------------------------------
+
+const OPTIONAL_TYPE = {
+  id: "lt-opt",
+  name: "Optional Holiday",
+  code: "OPTIONAL",
+  color: "#2dd4bf",
+  requiresDoc: false,
+  paid: true,
+  active: true,
+  isOptionalLeave: true,
+  policy: {
+    id: "lp-opt", leaveTypeId: "lt-opt", annualDays: 0, maxCarryOver: 0,
+    minNoticeDays: 0, maxConsecutiveDays: 5, maxOptionalHolidaysPerYear: null,
+  },
+};
+
+describe("P30 (LV-01) — optional leave requests", () => {
+  beforeEach(() => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    db.leaveType.findUnique.mockResolvedValue(OPTIONAL_TYPE);
+    db.employeeProfile.findUnique.mockResolvedValue(undefined);
+    db.leaveRequest.count.mockResolvedValue(0);
+  });
+
+  it("accepts a weekend-only application (days 0, nothing deducted)", async () => {
+    // 2027-06-12 (Sat) → 2027-06-13 (Sun): zero working days, zero holidays.
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-opt",
+      startDate: "2027-06-12",
+      endDate: "2027-06-13",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.days).toBe(0);
+    expect(db.leaveRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ leaveTypeId: "lt-opt", days: 0, status: "PENDING" }),
+      }),
+    );
+  });
+
+  it("accepts an all-holiday weekday application (days 0 on a holiday list)", async () => {
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2027-06-07T00:00:00.000Z"), isHalfDay: false },
+      { date: new Date("2027-06-08T00:00:00.000Z"), isHalfDay: false },
+    ]);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-opt",
+      startDate: "2027-06-07",
+      endDate: "2027-06-08",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.days).toBe(0);
+  });
+
+  it("still refuses a non-optional type on the same weekend range", async () => {
+    db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-annual",
+      startDate: "2027-06-12",
+      endDate: "2027-06-13",
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/no working days/i);
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("caps optional applications per allocation window (the Max Days knob)", async () => {
+    db.leaveType.findUnique.mockResolvedValue({
+      ...OPTIONAL_TYPE,
+      policy: { ...OPTIONAL_TYPE.policy, maxOptionalHolidaysPerYear: 2 },
+    });
+    db.leaveRequest.count.mockResolvedValue(2);
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-opt",
+      startDate: "2027-06-12",
+      endDate: "2027-06-12",
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("at most 2 application(s) per year");
+    expect(db.leaveRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("a mixed range on an optional type still consumes its working days", async () => {
+    // Fri 2027-06-11 → Sun 2027-06-13: one working day (Friday).
+    const res = await createLeaveRequest({
+      leaveTypeId: "lt-opt",
+      startDate: "2027-06-11",
+      endDate: "2027-06-13",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.days).toBe(1);
+  });
+});
+
+describe("P30 (LV-01) — cancelling a zero-day (optional) approval", () => {
+  it("writes NO reversal rows — nothing was deducted to return", async () => {
+    requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
+    // The approved optional request: Sat → Sun, days 0.
+    db.leaveRequest.findUnique.mockResolvedValue({
+      id: "lr-opt",
+      leaveTypeId: "lt-opt",
+      userId: MEMBER_AUTH.userId,
+      startDate: new Date("2027-06-12T00:00:00.000Z"),
+      endDate: new Date("2027-06-13T00:00:00.000Z"),
+      days: 0,
+      reason: "",
+      status: "APPROVED",
+    });
+    db.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
+    // The approval wrote no CONSUME rows (both split parts are zero).
+    db.leaveLedgerEntry.findMany.mockResolvedValue([]);
+    const res = await cancelLeaveRequest({ requestId: "lr-opt" });
+    expect(res.ok).toBe(true);
+    expect(db.leaveLedgerEntry.createMany).not.toHaveBeenCalled();
+    expect(db.leaveLedgerEntry.create).not.toHaveBeenCalled();
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "leave.cancelled", entityId: "lr-opt" }),
+    );
+  });
+});

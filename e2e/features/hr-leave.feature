@@ -273,3 +273,48 @@ Feature: HR leave management
     Then the policy assignments list should be empty
     When I delete the policy set "Standard 2027"
     Then the policy sets empty notice should render
+
+  # --- P30 (LV-01/LV-11): compensatory + optional leave --------------------
+
+  @hr-e @hr-p30
+  Scenario: Comp-off claims earn ledger days; optional holiday applications consume none
+    The seeded pending claim (Theo worked a Saturday) approves through the
+    HR queue — the comp GRANT row lands on the ledger and the member's
+    Comp Off card shows the earned day. The day then spends through the
+    normal request path and cancels back (the reversal restores it). An
+    optional-holiday application on the next Saturday lands with 0 days —
+    nothing deducted, nothing restored — approve-then-cancel, zero
+    ledger drift.
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    Then the comp-off queue should show a pending "Comp Off" claim from "Theo Vance"
+    When I approve the comp-off claim for "Theo Vance"
+    And I sign out
+    When I sign in as "member@fernly.app" with the demo password
+    And I open the "Leave" view
+    Then the leave balance for "Comp Off" should show 1 days available
+    And my comp-off claims list should show the approved claim
+    When I request "Comp Off" from a Monday 14 days out to the same day with reason "E2E comp day spent"
+    Then a request with reason "E2E comp day spent" should appear as Pending in my requests
+    And I sign out
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I approve the request with reason "E2E comp day spent"
+    And I sign out
+    When I sign in as "member@fernly.app" with the demo password
+    And I open the "Leave" view
+    Then the leave balance for "Comp Off" should show 0 days available
+    When I cancel my request with reason "E2E comp day spent"
+    Then the leave balance for "Comp Off" should show 1 days available
+    When I request "Optional Holiday" on the next Saturday with reason "E2E optional day"
+    Then the request with reason "E2E optional day" should show 0 day in my requests
+    And I sign out
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I approve the request with reason "E2E optional day"
+    And I sign out
+    When I sign in as "member@fernly.app" with the demo password
+    And I open the "Leave" view
+    Then the leave balance for "Optional Holiday" should show 0 days available
+    When I cancel my request with reason "E2E optional day"
+    Then the leave balance for "Optional Holiday" should show 0 days available

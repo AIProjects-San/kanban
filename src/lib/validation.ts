@@ -450,6 +450,10 @@ export const leaveTypeSchema = z.object({
     .refine((n) => Math.round(n * 100) === n * 100, "Salary fraction moves in 1% steps (0–1).")
     .default(1),
   active: z.boolean().default(true),
+  // P30 (LV-01) — the benchmark's is_optional_leave / is_compensatory type
+  // flags (both default false = the pre-P30 behavior byte-for-byte).
+  isOptionalLeave: z.boolean().default(false),
+  isCompensatory: z.boolean().default(false),
   // F2.4 — the allocation strategy block (docs/Fernly_Policy_Engine_Design.md
   // §4.1). Every default reproduces the pre-F2.4 behavior exactly, so a
   // request that sends only the four legacy knobs is valid and identical.
@@ -475,6 +479,9 @@ export const leaveTypeSchema = z.object({
     encashable: z.boolean().default(false),
     maxEncashableDays: z.number().min(0).max(365).default(5),
     nonEncashableDays: z.number().min(0).max(365).default(5),
+    // P30 (LV-01) — the optional-holiday count cap (the benchmark's Max
+    // Days Leave Allowed; null = no cap).
+    maxOptionalHolidaysPerYear: z.number().int().min(1).max(365).nullable().default(null),
   }).strict(),
 }).strict();
 
@@ -1176,6 +1183,26 @@ export const requestLeaveEncashmentSchema = z.object({
 
 export const decideLeaveEncashmentSchema = z.object({
   encashmentId: cuidish,
+  decision: z.enum(["APPROVE", "REJECT"]),
+  note: z.string().trim().max(500).default(""),
+}).strict();
+
+// ---------------------------------------------------------------------------
+// P30 (LV-01/LV-11) — compensatory leave requests (the worked-holiday
+// claim). The span's every day must be a weekend/holiday with worked
+// attendance (the pure kernel + the action's facts decide); the schema only
+// pins the wire shape.
+// ---------------------------------------------------------------------------
+
+export const createCompLeaveRequestSchema = z.object({
+  leaveTypeId: cuidish,
+  workFromDate: isoDateStr,
+  workToDate: isoDateStr,
+  reason: z.string().trim().max(500).default(""),
+}).strict();
+
+export const decideCompLeaveRequestSchema = z.object({
+  compId: cuidish,
   decision: z.enum(["APPROVE", "REJECT"]),
   note: z.string().trim().max(500).default(""),
 }).strict();

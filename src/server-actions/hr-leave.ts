@@ -206,6 +206,8 @@ export async function getMyLeaveData(): Promise<
         requiresDoc: t.requiresDoc,
         paid: t.paid,
         salaryFraction: t.salaryFraction ?? 1,
+        isOptionalLeave: t.isOptionalLeave ?? false,
+        isCompensatory: t.isCompensatory ?? false,
         color: t.color,
         active: t.active,
         policy: t.policy ? policyDto(t.policy) : null,
@@ -290,6 +292,8 @@ export async function getLeaveQueue(): Promise<
         requiresDoc: t.requiresDoc,
         paid: t.paid,
         salaryFraction: t.salaryFraction ?? 1,
+        isOptionalLeave: t.isOptionalLeave ?? false,
+        isCompensatory: t.isCompensatory ?? false,
         color: t.color,
         active: t.active,
         policy: t.policy ? policyDto(t.policy) : null,
@@ -319,6 +323,10 @@ function policyDto(p: NonNullable<LeavePolicyRow> & Record<string, unknown>): No
     negativeFloor: p.negativeFloor ?? 0,
     carryExpiresAfterMonths: p.carryExpiresAfterMonths ?? null,
     countHolidaysInLeave: p.countHolidaysInLeave ?? false,
+    encashable: p.encashable ?? false,
+    maxEncashableDays: p.maxEncashableDays ?? 5,
+    nonEncashableDays: p.nonEncashableDays ?? 5,
+    maxOptionalHolidaysPerYear: p.maxOptionalHolidaysPerYear ?? null,
   };
 }
 
@@ -389,7 +397,12 @@ export async function createLeaveRequest(input: {
       ? new Map([...holidays].filter(([, v]) => v.isHalfDay))
       : holidays;
     const days = workingDaysBetween(start, end, countingHolidays);
-    if (days <= 0) {
+    // P30 (LV-01) — optional leave: applications landing entirely on
+    // holidays/weekends consume no balance. An OPTIONAL type lifts the
+    // zero-working-day refusal — the request lands with days = 0 (recorded,
+    // approved, attendance-derived like any leave, never deducted); every
+    // other type keeps the refusal (the F1.1 read contract).
+    if (days <= 0 && !type.isOptionalLeave) {
       throw new AuthorizationError("That range contains no working days (Mon–Fri, holidays excluded).");
     }
 
@@ -549,6 +562,28 @@ export async function createLeaveRequest(input: {
     const periods = await loadLeavePeriods();
     const requestWindow = windowForDate(periods, data.startDate);
     const year = requestWindow.bucketYear;
+    // P30 (LV-01) — the benchmark's Max Days Leave Allowed: optional-holiday
+    // applications are COUNT-capped per allocation window (PENDING + APPROVED
+    // starting inside it; the window rule the ledger buckets on). A null
+    // knob = no cap (the zero-change default).
+    if (type.isOptionalLeave && resolvedPolicy.maxOptionalHolidaysPerYear != null) {
+      const heldOptional = await db.leaveRequest.count({
+        where: {
+          userId: auth.userId,
+          leaveTypeId: type.id,
+          status: { in: ["PENDING", "APPROVED"] },
+          startDate: {
+            gte: new Date(`${requestWindow.start}T00:00:00.000Z`),
+            lte: new Date(`${requestWindow.end}T00:00:00.000Z`),
+          },
+        },
+      });
+      if (heldOptional >= resolvedPolicy.maxOptionalHolidaysPerYear) {
+        throw new AuthorizationError(
+          `${type.name} allows at most ${resolvedPolicy.maxOptionalHolidaysPerYear} application(s) per year — you already hold ${heldOptional}.`,
+        );
+      }
+    }
     // P28 (LV-03) — the assigned set's allocation for this type in the
     // request's bucket (undefined when unassigned — byte-identical guard).
     const requestOverride = (await assignmentOverridesFor(auth.userId, year))?.annualDaysByType.get(type.id);
@@ -1034,7 +1069,12 @@ export async function cancelLeaveRequest(input: { requestId: string }): Promise<
                 delta: -r.delta,
                 note: `Reversal: approved request cancelled (${-r.delta} d returned)`,
               }))
-            : [{ delta: request.days, note: `Reversal: approved request cancelled (${request.days} d returned)` }];
+            : // P30 (LV-01) — a zero-day (optional-holiday) approval wrote no
+              // CONSUME rows and has no days to return: no reversal row
+              // either (a 0-delta ledger row would be pure noise).
+              request.days > 0
+              ? [{ delta: request.days, note: `Reversal: approved request cancelled (${request.days} d returned)` }]
+              : [];
         if (reversals.length > 0) {
           await tx.leaveLedgerEntry.createMany({
             data: reversals.map((r) => ({
@@ -1108,6 +1148,9 @@ export async function createLeaveType(input: {
   paid?: boolean;
   // P15 (PR-06) — partially-paid leave fraction (paid types; default 1).
   salaryFraction?: number;
+  // P30 (LV-01) — the optional-leave / compensatory type flags.
+  isOptionalLeave?: boolean;
+  isCompensatory?: boolean;
   policy: {
     annualDays: number;
     maxCarryOver: number;
@@ -1132,6 +1175,8 @@ export async function createLeaveType(input: {
     encashable?: boolean;
     maxEncashableDays?: number;
     nonEncashableDays?: number;
+    // P30 (LV-01) — the optional-holiday count cap (null = no cap).
+    maxOptionalHolidaysPerYear?: number | null;
   };
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
@@ -1148,6 +1193,8 @@ export async function createLeaveType(input: {
           requiresDoc: data.requiresDoc,
           paid: data.paid,
           salaryFraction: data.salaryFraction,
+          isOptionalLeave: data.isOptionalLeave,
+          isCompensatory: data.isCompensatory,
           active: true,
           policy: { create: data.policy },
         },
@@ -1186,6 +1233,9 @@ export async function updateLeaveType(id: string, input: {
   paid?: boolean;
   // P15 (PR-06) — partially-paid leave fraction (paid types).
   salaryFraction?: number;
+  // P30 (LV-01) — the optional-leave / compensatory type flags.
+  isOptionalLeave?: boolean;
+  isCompensatory?: boolean;
   active?: boolean;
   policy?: {
     annualDays: number;
@@ -1212,6 +1262,8 @@ export async function updateLeaveType(id: string, input: {
     encashable?: boolean;
     maxEncashableDays?: number;
     nonEncashableDays?: number;
+    // P30 (LV-01) — the optional-holiday count cap (null = no cap).
+    maxOptionalHolidaysPerYear?: number | null;
   };
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
@@ -1234,6 +1286,8 @@ export async function updateLeaveType(id: string, input: {
           ...(data.requiresDoc !== undefined ? { requiresDoc: data.requiresDoc } : {}),
           ...(data.paid !== undefined ? { paid: data.paid } : {}),
           ...(data.salaryFraction !== undefined ? { salaryFraction: data.salaryFraction } : {}),
+          ...(data.isOptionalLeave !== undefined ? { isOptionalLeave: data.isOptionalLeave } : {}),
+          ...(data.isCompensatory !== undefined ? { isCompensatory: data.isCompensatory } : {}),
           ...(data.active !== undefined ? { active: data.active } : {}),
         },
       });

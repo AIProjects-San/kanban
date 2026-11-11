@@ -163,8 +163,12 @@ Then("my requests list should contain exactly {int} pending requests", async fun
   await driver.wait(until.elementsLocated(By.css("table tbody tr")), 10_000, "requests table did not render");
   await driver.wait(
     async () => {
+      // P30 — the Leave view carries MORE tables than "My requests" now
+      // (the comp-off claims history rows also read "Pending"); scope the
+      // count to the requests card's own table so sibling sections never
+      // skew it.
       const rows = await driver.findElements(
-        By.xpath(`//table//tbody/tr[contains(., "Pending")]`),
+        By.xpath(`//div[contains(@class, "f-card")][.//h2[contains(., "My requests")]]//table//tbody/tr[contains(., "Pending")]`),
       );
       return rows.length === count;
     },
@@ -1052,4 +1056,88 @@ Then("the policy sets empty notice should render", async function () {
     10_000,
     "the policy-sets empty (per-type policies are the world) notice did not render",
   );
+});
+
+// ---------------------------------------------------------------------------
+// P30 (LV-01/LV-11) — compensatory claims + optional-holiday applications
+// ---------------------------------------------------------------------------
+
+/** The first upcoming Saturday (strictly future; today-is-Saturday → +7). */
+function nextSaturdayE2E() {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  const dow = d.getUTCDay();
+  const add = dow === 6 ? 7 : 6 - dow;
+  d.setUTCDate(d.getUTCDate() + add);
+  return d;
+}
+
+Then("the comp-off queue should show a pending {string} claim from {string}", async function (typeName, memberName) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementsLocated(
+      By.xpath(`//*[@data-testid='compoff-queue-row'][contains(., "${memberName}")][contains(., "${typeName}")]`),
+    ),
+    10_000,
+    `no pending comp-off claim row for ${memberName} (${typeName})`,
+  );
+});
+
+When("I approve the comp-off claim for {string}", async function (memberName) {
+  const driver = await this.getDriver();
+  const row = await driver.wait(
+    until.elementLocated(By.xpath(`//*[@data-testid='compoff-queue-row'][contains(., "${memberName}")]`)),
+    10_000,
+    `no comp-off claim row for ${memberName}`,
+  );
+  await row.findElement(By.xpath(`.//button[contains(., "Approve")]`)).click();
+  await waitForToast(driver, "Comp-off approved");
+  // The queue reloads through onChanged — the approved row disappears.
+  await driver.wait(
+    async () =>
+      (await driver.findElements(
+        By.xpath(`//*[@data-testid='compoff-queue-row'][contains(., "${memberName}")]`),
+      )).length === 0,
+    10_000,
+    `${memberName}'s comp-off claim row never cleared after approval`,
+  );
+});
+
+Then("my comp-off claims list should show the approved claim", async function () {
+  const driver = await this.getDriver();
+  await driver.wait(
+    async () => {
+      const cards = await driver.findElements(By.css('[data-testid="compoff-history"]'));
+      if (cards.length === 0) return false;
+      const text = await cards[0].getText();
+      return text.includes("Approved") && text.includes("days on your balance");
+    },
+    10_000,
+    "the approved comp-off claim never rendered in My comp-off claims",
+  );
+});
+
+When("I request {string} on the next Saturday with reason {string}", async function (typeName, reason) {
+  const saturday = nextSaturdayE2E();
+  await submitRange(this, typeName, saturday, saturday, reason);
+});
+
+Then("the request with reason {string} should show {int} day in my requests", async function (reason, days) {
+  const driver = await this.getDriver();
+  await driver.wait(
+    until.elementsLocated(By.xpath(`//table//tr[contains(., "${reason}")]`)),
+    10_000,
+    `request with reason "${reason}" never rendered`,
+  );
+  const rows = await driver.findElements(By.xpath(`//table//tr[contains(., "${reason}")]`));
+  const text = await rows[0].getText();
+  assert.ok(
+    text.includes(String(days)),
+    `request row for "${reason}" should show ${days} day(s): ${text.replace(/\n/g, " | ")}`,
+  );
+});
+
+When("I request {string} from a Monday {int} days out to the same day with reason {string}", async function (typeName, daysOut, reason) {
+  const monday = mondayAtLeast(daysOut);
+  await submitRange(this, typeName, monday, monday, reason);
 });

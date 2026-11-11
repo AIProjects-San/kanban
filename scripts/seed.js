@@ -83,6 +83,9 @@ async function main() {
   await db.notification.deleteMany();
   await db.timeEntry.deleteMany();
   await db.leaveRequest.deleteMany();
+  // P30 (LV-01/LV-11) — the compensatory claim rows wipe with the rest of
+  // the leave story (their ledger GRANT rows go with leaveLedgerEntry).
+  await db.compensatoryLeaveRequest.deleteMany();
   await db.leaveBalance.deleteMany();
   await db.leaveLedgerEntry.deleteMany();
   // P28 (LV-02/LV-03) — the policy set master + assignments: wiped clean
@@ -1320,6 +1323,31 @@ async function main() {
     },
     include: { policy: true },
   });
+  // P30 (LV-01/LV-11) — the compensatory demo type: days arrive ONLY via
+  // approved worked-holiday claims (annualDays 0 — the seeded claim below
+  // is Yuki's whole comp entitlement story), unspent days lapse at year end
+  // (carry 0).
+  const compType = await db.leaveType.create({
+    data: {
+      name: "Comp Off", code: "COMP_OFF", color: "#84cc16", paid: true, requiresDoc: false,
+      isCompensatory: true,
+      policy: { create: { annualDays: 0, maxCarryOver: 0, minNoticeDays: 0, maxConsecutiveDays: 10 } },
+    },
+    include: { policy: true },
+  });
+  // P30 (LV-01) — the optional-holiday demo type: applications landing on a
+  // weekend/holiday consume no balance (days = 0); with annualDays 0 the
+  // balance guard refuses any request with working days in it, so the type
+  // effectively only spends on non-working days — the benchmark's optional
+  // leave shape. Max 2 applications per year (the Max Days knob).
+  const optionalType = await db.leaveType.create({
+    data: {
+      name: "Optional Holiday", code: "OPTIONAL", color: "#2dd4bf", paid: true, requiresDoc: false,
+      isOptionalLeave: true,
+      policy: { create: { annualDays: 0, maxCarryOver: 0, minNoticeDays: 0, maxConsecutiveDays: 5, maxOptionalHolidaysPerYear: 2 } },
+    },
+    include: { policy: true },
+  });
 
 
   const balanceFor = async (userId, type, entitled, used) => {
@@ -1338,6 +1366,10 @@ async function main() {
     await balanceFor(u.id, unpaidType, 0, 0);
     await balanceFor(u.id, advanceType, advanceEntitled, 0);
     await balanceFor(u.id, halfPayType, 4, 0);
+    // P30 — the comp + optional types materialize empty (the comp GRANT
+    // arrives with the worked-holiday claim below).
+    await balanceFor(u.id, compType, 0, 0);
+    await balanceFor(u.id, optionalType, 0, 0);
   }
   const rafaelId = userByName.get("Rafael Costa");
   if (rafaelId) {
@@ -1451,6 +1483,21 @@ async function main() {
   // Soren — REJECTED sick-leave (no doc) as a documentation example.
   await mkRequest("Soren Lindqvist", sickType, -5, -5, "REJECTED", "Ingrid Solberg", { reason: "Migraine", decision: "No medical certificate attached." }, 1);
 
+  // P30 (LV-01) — Lena's PENDING optional-holiday application on the NEXT
+  // Saturday (a zero-working-day request: days 0, nothing deducted, the
+  // approval records it). Graceful degrade: none when today is Saturday+0
+  // shifts oddly — the upcoming Saturday always exists, so no guard needed.
+  {
+    const dow = new Date();
+    dow.setUTCHours(0, 0, 0, 0);
+    const todayDow = dow.getUTCDay();
+    const nextSaturday = todayDow === 6 ? 7 : 6 - todayDow;
+    await mkRequest(
+      "Lena Okafor", optionalType, nextSaturday, nextSaturday, "PENDING", null,
+      { reason: "Optional holiday — cultural celebration" }, 0,
+    );
+  }
+
   // -------------------------------------------------------------------------
   // F1.2 — leave ledger seed (docs/Fernly_HR_Payroll_Enhancement_Plan.md
   // §7.1). Mirrors the production write paths exactly ("seed mirrors
@@ -1533,13 +1580,69 @@ async function main() {
       },
     );
   }
+  // P30 (LV-01/LV-11) — the comp-off stories: Yuki worked the most recent
+  // Saturday and Theo the one before (HR marked them PRESENT — attendance
+  // rows land with the F1.3 section below). Yuki's claim is already
+  // APPROVED (the ledger GRANT row + the entitled-1 cache mirror below),
+  // Theo's is PENDING for the HR queue demo. Graceful degrade: when the
+  // most recent Saturday falls outside the current ledger year (an early-
+  // January reseed), both stories quietly skip (zero fixture drift).
+  const compAttendance = [];
+  {
+    const todayUtc0 = new Date();
+    todayUtc0.setUTCHours(0, 0, 0, 0);
+    const saturdayOffset = (todayUtc0.getUTCDay() + 1) % 7; // 0 when today IS Saturday
+    const sat0 = day(-saturdayOffset);
+    const sat1 = day(-(saturdayOffset + 7));
+    if (sat0.getUTCFullYear() === YEAR) {
+      const yukiId = userByName.get("Yuki Tanaka");
+      const theoId = userByName.get("Theo Vance");
+      const miraId = userByName.get("Mira Hale") ?? null;
+      if (yukiId) {
+        const claim = await db.compensatoryLeaveRequest.create({
+          data: {
+            userId: yukiId, leaveTypeId: compType.id,
+            workFromDate: sat0, workToDate: sat0, days: 1,
+            reason: "Release crunch — Saturday deploy support",
+            status: "APPROVED", decidedById: miraId, decidedAt: new Date(),
+            decisionNote: "Approved — thanks for the Saturday.",
+          },
+        });
+        // The comp GRANT row (the production approve-path twin: one row,
+        // sourceType COMP_REQUEST, the claim's id as its pointer) + the
+        // cache mirror (entitled 1 — the type's whole entitlement story).
+        grantRows.push({
+          userId: yukiId, leaveTypeId: compType.id, year: YEAR, delta: 1,
+          entryType: "GRANT", sourceType: "COMP_REQUEST", sourceId: claim.id,
+          note: `Comp-off earned: worked ${sat0.toISOString().slice(0, 10)}`,
+          isReversal: false,
+        });
+        await db.leaveBalance.update({
+          where: { userId_leaveTypeId_year: { userId: yukiId, leaveTypeId: compType.id, year: YEAR } },
+          data: { entitled: 1 },
+        });
+        compAttendance.push({ userId: yukiId, date: sat0, note: "Worked Saturday — comp-off claim approved" });
+      }
+      if (theoId) {
+        await db.compensatoryLeaveRequest.create({
+          data: {
+            userId: theoId, leaveTypeId: compType.id,
+            workFromDate: sat1, workToDate: sat1, days: 1,
+            reason: "Weekend rollout support",
+            status: "PENDING",
+          },
+        });
+        compAttendance.push({ userId: theoId, date: sat1, note: "Worked Saturday — comp-off claim pending" });
+      }
+    }
+  }
   if (grantRows.length || consumeRows.length) {
     await db.leaveLedgerEntry.createMany({
       data: [...grantRows, ...consumeRows],
     });
   }
 
-  console.log(`  ✓ HR leave: 4 types + policies (incl. F2.4 EARNED advance type), balances for ${allUsers.length} users, ${leaveRequests.length} requests across all statuses (YEAR ${YEAR}); ledger: ${grantRows.length} GRANT + ${consumeRows.length} CONSUME/reversal rows`);
+  console.log(`  ✓ HR leave: 6 types + policies (incl. F2.4 EARNED advance type + P30 comp/optional), balances for ${allUsers.length} users, ${leaveRequests.length} requests across all statuses (YEAR ${YEAR}); ledger: ${grantRows.length} GRANT + ${consumeRows.length} CONSUME/reversal rows`);
 
   // -------------------------------------------------------------------------
   // F1.3 — attendance seed (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.1).
@@ -1615,6 +1718,19 @@ async function main() {
     // write path (upsertAttendanceRecord derives before storing).
     const timing = deriveTiming(inTime, outTime);
     attendanceRows.push({ userId, date: d, status, inTime, outTime, ...timing, note, source: "MANUAL" });
+  }
+  // P30 (LV-01/LV-11) — the worked-Saturday PRESENT marks behind the comp
+  // claims (09:00–17:30 = a plain worked day, no overtime). A same-day
+  // derived row wins, one record per person per day.
+  for (const ca of compAttendance) {
+    const key = `${ca.userId}|${dayKeyOf(ca.date)}`;
+    if (takenAttendance.has(key)) continue;
+    takenAttendance.add(key);
+    attendanceRows.push({
+      userId: ca.userId, date: ca.date, status: "PRESENT",
+      inTime: "09:00", outTime: "17:30", ...deriveTiming("09:00", "17:30"),
+      note: ca.note, source: "MANUAL",
+    });
   }
   // F1.4 — Hana (a salary-structure holder) gets an ABSENT working day so
   // the current-month OPEN run has a genuine AUTO-derived LOP example next

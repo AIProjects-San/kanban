@@ -212,6 +212,11 @@ export type AuditAction =
   | "leave.encashment_requested"
   | "leave.encashment_approved"
   | "leave.encashment_rejected"
+  // P30 (LV-01/LV-11) — compensatory leave: the worked-holiday claim's
+  // request/decision pair.
+  | "leave.comp_requested"
+  | "leave.comp_approved"
+  | "leave.comp_rejected"
   // P24 (PL-01) — the notification template master (Settings →
   // Notifications): customize / reset one event's override row.
   | "notification.template_updated"
@@ -391,6 +396,10 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.encashment_requested": { icon: CircleDollarSign, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_approved": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_rejected": { icon: CircleDollarSign, cls: "text-rose-500 bg-rose-500/10" },
+  // P30 (LV-01/LV-11) — compensatory claims (worked holidays → comp days).
+  "leave.comp_requested": { icon: CalendarClock, cls: "text-amber-500 bg-amber-500/10" },
+  "leave.comp_approved": { icon: CalendarClock, cls: "text-emerald-500 bg-emerald-500/10" },
+  "leave.comp_rejected": { icon: CalendarClock, cls: "text-rose-500 bg-rose-500/10" },
   "notification.template_updated": { icon: MessageSquareText, cls: "text-violet-500 bg-violet-500/10" },
   "notification.template_reset": { icon: RotateCcw, cls: "text-violet-500 bg-violet-500/10" },
 };

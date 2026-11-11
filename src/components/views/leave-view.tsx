@@ -6,12 +6,12 @@
 // Decision actions live in the HR console (hr-view), not here.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, CircleDollarSign, Loader2, Plus, X } from "lucide-react";
+import { CalendarClock, CalendarDays, CircleDollarSign, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
 import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/config";
-import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT, LeaveEncashmentT } from "@/lib/types";
+import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT, LeaveEncashmentT, CompLeaveRequestT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { getMyLeaveData, createLeaveRequest, cancelLeaveRequest } from "@/server-actions/hr-leave";
 import { holidayLookupFrom, workingDaysBetween } from "@/lib/working-days";
@@ -20,6 +20,13 @@ import { useApp } from "@/store/app-store";
 import { getMyEncashments, requestLeaveEncashment } from "@/server-actions/leave-encashment";
 import { planLeaveEncashment, type EncashmentPolicy } from "@/lib/leave-encashment";
 import { currentPeriod } from "@/lib/payroll-math";
+// P30 (LV-01/LV-11) — the compensatory claim flow (worked-holiday days
+// earned through the ledger).
+import {
+  getMyCompensatoryRequests,
+  createCompensatoryLeaveRequest,
+} from "@/server-actions/compensatory-leave";
+import { claimedNonWorkingDays } from "@/lib/compensatory-leave";
 
 interface CurrentUser {
   id: string;
@@ -54,6 +61,9 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
   // P2 (LV-09, F2.2) — the encashment request flow (encashable types only).
   const [encashments, setEncashments] = useState<LeaveEncashmentT[]>([]);
   const [encashTypeId, setEncashTypeId] = useState<string | null>(null);
+  // P30 (LV-01/LV-11) — the compensatory claim flow (comp types only).
+  const [compClaims, setCompClaims] = useState<CompLeaveRequestT[]>([]);
+  const [showCompForm, setShowCompForm] = useState(false);
   const { bumpRefresh } = useApp();
 
   const load = useCallback(async () => {
@@ -69,6 +79,8 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
     }
     const enc = await getMyEncashments();
     if (enc.ok) setEncashments(enc.data);
+    const comp = await getMyCompensatoryRequests();
+    if (comp.ok) setCompClaims(comp.data);
     setLoaded(true);
   }, []);
 
@@ -89,6 +101,11 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
       .map((t) => t.id),
   );
 
+  // P30 (LV-01/LV-11) — the compensatory types: worked-holiday claims are
+  // filed against them (the server re-checks the flag on every surface).
+  // Plain derivation (after the early return — no hooks below it).
+  const compTypes = types.filter((t) => t.isCompensatory === true && t.active);
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -102,9 +119,21 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
             {currentUser.name} · {year} balances{pendingCount > 0 ? ` · ${pendingCount} request${pendingCount === 1 ? "" : "s"} awaiting a decision` : ""}
           </p>
         </div>
-        <button onClick={() => setShowForm(true)} className="f-btn f-btn-primary f-btn-sm">
-          <Plus size={14} /> Request Leave
-        </button>
+        <div className="flex items-center gap-2">
+          {compTypes.length > 0 && (
+            <button
+              onClick={() => setShowCompForm(true)}
+              className="f-btn f-btn-secondary f-btn-sm"
+              data-testid="claim-compoff-button"
+              title="Claim comp-off days for a weekend or holiday you worked"
+            >
+              <CalendarClock size={14} /> Claim comp-off
+            </button>
+          )}
+          <button onClick={() => setShowForm(true)} className="f-btn f-btn-primary f-btn-sm">
+            <Plus size={14} /> Request Leave
+          </button>
+        </div>
       </div>
 
       {/* Balances */}
@@ -302,6 +331,75 @@ export function LeaveView({ currentUser }: { currentUser: CurrentUser }) {
           bumpRefresh();
         }}
       />
+
+      {/* P30 (LV-01/LV-11) — the compensatory claim history (worked-holiday
+          days earned through the ledger). */}
+      {compClaims.length > 0 && (
+        <div className="f-card overflow-hidden" data-testid="compoff-history">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <CalendarClock size={14} className="text-lime-600 dark:text-lime-400" /> My comp-off claims
+            </h2>
+            <span className="text-[0.6875rem] text-muted-foreground">{compClaims.length} total</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[0.6875rem] uppercase tracking-wider text-muted-foreground border-b border-border">
+                <th className="px-4 py-2 font-semibold">Type</th>
+                <th className="px-4 py-2 font-semibold">Worked</th>
+                <th className="px-4 py-2 font-semibold">Days earned</th>
+                <th className="px-4 py-2 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {compClaims.map((c) => (
+                <tr key={c.id} className="border-b border-border last:border-0" data-testid="compoff-claim-row">
+                  <td className="px-4 py-2.5">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.typeColor }} aria-hidden />
+                      {c.typeName}
+                    </span>
+                    {c.reason && (
+                      <div className="text-[0.6875rem] text-muted-foreground mt-0.5 max-w-48 truncate" title={c.reason}>
+                        “{c.reason}”
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                    {fmtDay(c.workFromDate)} → {fmtDay(c.workToDate)}
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums">{c.days}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={cn("inline-flex px-2 py-0.5 rounded text-[0.6875rem] font-medium", LEAVE_STATUS_BADGE[c.status])}>
+                      {LEAVE_STATUS_LABELS[c.status]}
+                    </span>
+                    {c.status === "APPROVED" && (
+                      <div className="text-[0.6875rem] text-muted-foreground mt-0.5">days on your balance</div>
+                    )}
+                    {c.status === "REJECTED" && c.decisionNote && (
+                      <div className="text-[0.6875rem] text-muted-foreground mt-0.5 max-w-48 truncate" title={c.decisionNote}>
+                        {c.decisionNote}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <CompClaimModal
+        open={showCompForm}
+        onClose={() => setShowCompForm(false)}
+        compTypes={compTypes}
+        holidays={holidays}
+        onCreated={async () => {
+          setShowCompForm(false);
+          await load();
+          bumpRefresh();
+        }}
+      />
     </div>
   );
 }
@@ -382,6 +480,10 @@ function RequestFormModal({
       countingHolidayMap,
     );
   }, [startDate, endDate, countingHolidayMap]);
+  // P30 (LV-01) — optional types accept zero-working-day applications
+  // (holiday/weekend days consume no balance; the request is recorded with
+  // days = 0 and never deducted).
+  const optionalType = selectedType?.isOptionalLeave === true;
   const rangeHolidays = useMemo(
     () => holidaysInRange(startDate, endDate, holidays),
     [startDate, endDate, holidays],
@@ -522,7 +624,9 @@ function RequestFormModal({
               : endBeforeStart
                 ? "End date is before the start date"
                 : startDate && endDate
-                  ? "That range contains no working days (Mon–Fri, holidays excluded)"
+                  ? optionalType
+                    ? "Optional holiday — 0 days consumed (weekend/holiday application)"
+                    : "That range contains no working days (Mon–Fri, holidays excluded)"
                   : "Pick a date range"}
           </span>
           {rangeHolidays.length > 0 && days > 0 && (
@@ -557,7 +661,7 @@ function RequestFormModal({
             className="f-btn f-btn-primary f-btn-sm"
             disabled={
               busy ||
-              days === 0 ||
+              (days === 0 && !optionalType) ||
               endBeforeStart ||
               // QA-7: the loaded balance is for the CURRENT year — a range
               // that starts in a different year is validated server-side
@@ -666,6 +770,140 @@ function EncashmentRequestModal({
           <button type="button" className="f-btn f-btn-ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="f-btn f-btn-primary" disabled={busy || !plan?.ok} data-testid="encashment-submit">
             {busy ? <Loader2 size={15} className="animate-spin" /> : <CircleDollarSign size={15} />} Request encashment
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P30 (LV-01/LV-11) — the comp-off claim modal: file the weekend/holiday you
+// worked. The live preview walks the span against the holiday calendar (the
+// same claimedNonWorkingDays kernel shape the server runs); attendance facts
+// are the server's to judge — HR must have marked the days worked, and the
+// approval re-validates inside its transaction. Exported for the focused
+// component test.
+// ---------------------------------------------------------------------------
+export function CompClaimModal({
+  open, onClose, compTypes, holidays, onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  compTypes: LeaveTypeT[];
+  holidays: HolidayT[];
+  onCreated: () => Promise<void>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [typeId, setTypeId] = useState(compTypes[0]?.id ?? "");
+  const [workFrom, setWorkFrom] = useState("");
+  const [workTo, setWorkTo] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const holidayMap = useMemo(() => holidayLookupFrom(holidays), [holidays]);
+  const claimed = useMemo(() => {
+    if (!workFrom || !workTo || workTo < workFrom) return null;
+    return claimedNonWorkingDays(workFrom, workTo, holidayMap);
+  }, [workFrom, workTo, holidayMap]);
+  const valid = Boolean(workFrom && workTo && workTo >= workFrom && (claimed ?? 0) > 0);
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Claim comp-off"
+      description="File the weekend or holiday you worked — approval puts the earned days on your compensatory balance."
+    >
+      <form
+        className="space-y-4"
+        data-testid="compoff-form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!typeId) { toast.error("Pick a compensatory leave type."); return; }
+          setBusy(true);
+          const res = await createCompensatoryLeaveRequest({
+            leaveTypeId: typeId,
+            workFromDate: workFrom,
+            workToDate: workTo,
+            reason: reason.trim() || undefined,
+          });
+          setBusy(false);
+          if (res.ok) {
+            toast.success(`Claim submitted — ${res.data.days} comp-off day(s) for ${workFrom} → ${workTo}.`);
+            setWorkFrom(""); setWorkTo(""); setReason("");
+            await onCreated();
+          } else {
+            toast.error(res.error);
+          }
+        }}
+      >
+        <FormRow>
+          <Field label="Leave type">
+            <select
+              className="f-input"
+              value={typeId}
+              onChange={(e) => setTypeId(e.target.value)}
+              data-testid="compoff-type"
+              required
+            >
+              {compTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </Field>
+        </FormRow>
+        <FormRow>
+          <Field label="Worked from">
+            <input
+              className="f-input"
+              type="date"
+              value={workFrom}
+              max={today}
+              onChange={(e) => {
+                setWorkFrom(e.target.value);
+                if (!workTo || workTo < e.target.value) setWorkTo(e.target.value);
+              }}
+              data-testid="compoff-from"
+              required
+            />
+          </Field>
+          <Field label="Worked to">
+            <input
+              className="f-input"
+              type="date"
+              value={workTo}
+              min={workFrom || undefined}
+              max={today}
+              onChange={(e) => setWorkTo(e.target.value)}
+              data-testid="compoff-to"
+              required
+            />
+          </Field>
+        </FormRow>
+        <Field label="Reason (optional)">
+          <textarea
+            className="f-input min-h-20"
+            maxLength={500}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="What you worked on that day"
+          />
+        </Field>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">
+            {claimed == null
+              ? "Pick the day(s) you worked"
+              : `${claimed} non-working day${claimed === 1 ? "" : "s"} claimed — attendance must be marked worked (HR), half-day marks earn half.`}
+          </span>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Close</button>
+          <button
+            type="submit"
+            className="f-btn f-btn-primary f-btn-sm"
+            disabled={busy || !valid}
+            data-testid="compoff-submit"
+          >
+            {busy ? "Submitting…" : "Submit claim"}
           </button>
         </div>
       </form>
