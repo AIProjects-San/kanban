@@ -6,9 +6,9 @@
 // property changes, powering the promotion/transfer actions. Fernly's pure
 // kernel owns the three rules every caller rides:
 //
-//   • the promotable property registry — jobTitle / department / manager /
-//     salary (grade joins when EM-03/P34 lands the field; the registry is
-//     the single place it registers)
+//   • the promotable property registry — jobTitle / department / grade /
+//     manager / salary (grade registered at P34/EM-03 when the field
+//     landed; the registry is the single place it registers)
 //   • planEmploymentChange — the diff: ONE row per property whose display
 //     value actually changes; unchanged properties record nothing (the
 //     no-change change is refused by the writer, never recorded as noise)
@@ -36,12 +36,13 @@ import { computeOffer, type OfferComponent } from "@/lib/offer-math";
 // The property registry.
 // ---------------------------------------------------------------------------
 
-/** Every property a promotion/transfer may change (grade joins at P34). */
-export type EmploymentProperty = "jobTitle" | "department" | "manager" | "salary";
+/** Every property a promotion/transfer may change. */
+export type EmploymentProperty = "jobTitle" | "department" | "grade" | "manager" | "salary";
 
 export const EMPLOYMENT_PROPERTIES: EmploymentProperty[] = [
   "jobTitle",
   "department",
+  "grade",
   "manager",
   "salary",
 ];
@@ -54,6 +55,7 @@ export interface EmploymentPropertyDef {
 export const EMPLOYMENT_PROPERTY_DEFS: EmploymentPropertyDef[] = [
   { key: "jobTitle", label: "Job title" },
   { key: "department", label: "Department" },
+  { key: "grade", label: "Grade" },
   { key: "manager", label: "Reporting manager" },
   { key: "salary", label: "Salary (annual gross)" },
 ];

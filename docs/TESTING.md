@@ -148,6 +148,10 @@ Execute each group per persona. ✅ = pass criterion.
 | HR-3 | HR console gating | Open `G R` as MEMBER | No HR group in sidebar; console unavailable |
 | HR-4 | Calendar surfacing | Approve a leave request covering next week | Leave appears on the calendar as a virtual event |
 | HR-5 | Directory & reviews | As HR (`remy@`), browse directory, run a review cycle stage, check onboarding progress | All views gated to `hr:*` holders; onboarding checklist progress persists |
+| HR-6 | P34 grouping axes — card & chips | As HR (`remy@`) open HR → Directory: inspect Theo Vance's card, then pick each filter chip (Department / Employment type / Grade / Branch) | Theo's card shows `Grade: L4`, `Type: Full-time`, `Branch: Auckland HQ`; each chip narrows the roster and the "N of M people" count updates; **Clear filters** restores the full roster |
+| HR-7 | P34 grouping axes — HR classification & QA-10 | As HR (`remy@`) edit Kofi Mensah's profile: set Grade `L3`, Employment type `Contract`, Branch `Accra`, save; then as Kofi (`member@`) open Settings → Employee profile | The directory card and the CSV export pick up the three axes; the settings card shows them read-only (job data stays HR-owned — a member can never self-grade) |
+| HR-8 | P34 grade promotion diff | As HR (`remy@`) open Theo Vance's card → Promote/transfer: change only the Grade to `L5`, pick an effective date, apply | Toast "1 property change recorded"; Theo's Employment changes panel shows `Grade L4 → L5` with the effective date, and the audit log line carries the same diff |
+| HR-9 | P34 CSV export columns | As HR (`remy@`) click the directory's Export CSV, open the file | The header carries `Grade`, `Employment type`, `Branch` after `Department`; classified rows show their values, unclassified rows render blank (only the status column states "Not set") |
 
 ### 2.9 Team & messaging (MSG)
 

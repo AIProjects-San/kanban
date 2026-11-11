@@ -57,8 +57,27 @@ describe("P33 — planEmploymentChange (the structured diff)", () => {
     expect(rows).toEqual([]);
   });
 
-  it("the registry covers the promotable properties (grade joins at P34)", () => {
-    expect(EMPLOYMENT_PROPERTIES).toEqual(["jobTitle", "department", "manager", "salary"]);
+  it("the registry covers the promotable properties (grade joined at P34/EM-03)", () => {
+    expect(EMPLOYMENT_PROPERTIES).toEqual(["jobTitle", "department", "grade", "manager", "salary"]);
+  });
+
+  // P34 (EM-03) — grade is promotable: the diff planner treats it exactly
+  // like jobTitle (a display string the writer resolves; "" renders "—").
+  it("P34 — a grade move records between department and manager (registry order)", () => {
+    const rows = planEmploymentChange({
+      current: { jobTitle: "Backend Engineer", department: "Engineering", grade: "L4", manager: "(none)" },
+      requested: { jobTitle: "Senior Backend Engineer", department: "Engineering", grade: "L5", manager: "(none)" },
+    });
+    expect(rows.map((r) => r.property)).toEqual(["jobTitle", "grade"]);
+    expect(rows[1]).toEqual({ property: "grade", currentValue: "L4", newValue: "L5" });
+  });
+
+  it("P34 — an unchanged grade records nothing (the no-noise rule)", () => {
+    const rows = planEmploymentChange({
+      current: { grade: "L4" },
+      requested: { grade: "L4" },
+    });
+    expect(rows).toEqual([]);
   });
 });
 

@@ -1397,11 +1397,27 @@ model EmployeeProfile {
   // is HONEST data (the engine only ever compares month+day; the roster
   // never displays the year). HR-owned like hireDate, never self-service.
   birthDate            DateTime?
+  // P34 (EM-03) — the employee grouping axes: grade, employment type and
+  // branch (the benchmark's Employee master slicing facts). QA-19 style:
+  // "" = not classified yet (rendered as "—"), never a fabricated default.
+  // HR-owned like jobTitle/department (the self-service schema rejects
+  // them — QA-10); grade is a free-form ladder string (the Employee Grade
+  // MASTER, EM-09, stays a later epic — this is the field), employmentType
+  // is a controlled vocabulary (lib/config EMPLOYMENT_TYPE_LABELS:
+  // FULL_TIME / PART_TIME / CONTRACT / INTERN / CONSULTANT) validated at
+  // the zod boundary, branch is a plain string (workspaces name their own
+  // offices — no master by design, the plan entry says "a plain branch
+  // string"). Grade is promotable: the P33 property-history registry
+  // registers it at P34 as planned (lib/employment-change.ts).
+  grade                String   @default("")
+  employmentType       String   @default("")
+  branch               String   @default("")
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
   @@index([department])
   @@index([employmentStatus])
+  @@index([employmentType])
 }
 
 // P33 (EM-06) — the structured property history (the benchmark's
@@ -1411,13 +1427,13 @@ model EmployeeProfile {
 // property key, the display value before and after, the effective date
 // and the change's kind. The generic AuditLog stays the free-form
 // record; THIS table is the machine-readable diff the promotion/transfer
-// actions and the directory's history panel read. Grade joins the
-// property set when EM-03 (P34) lands the field.
+// actions and the directory's history panel read. Grade joined the
+// property set when EM-03 (P34) landed the field.
 model EmployeePropertyHistory {
   id           String   @id @default(cuid())
   userId       String
-  // jobTitle | department | manager | salary (the promotable property
-  // registry lives in lib/employment-change.ts).
+  // jobTitle | department | grade | manager | salary (the promotable
+  // property registry lives in lib/employment-change.ts).
   property     String
   // Display value BEFORE the change (label/manager-name/gross rendered).
   currentValue String

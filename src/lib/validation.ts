@@ -569,6 +569,14 @@ export const employeeProfileSchema = z.object({
   // admin path may save a profile without picking a department. Every other
   // unknown string stays rejected.
   department: z.enum(["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"]).or(z.literal("")).optional(),
+  // P34 (EM-03) — the grouping axes, same QA-19 ""-is-unclassified rule.
+  // grade/branch are free-form (the plan's "plain branch string"; the grade
+  // MASTER is EM-09's later epic); employmentType is the controlled
+  // vocabulary (lib/config EMPLOYMENT_TYPE_KEYS) — an unknown key is
+  // rejected, never silently blanked.
+  grade: z.string().trim().max(64, "Grade is at most 64 characters.").optional(),
+  employmentType: z.enum(["FULL_TIME", "PART_TIME", "CONTRACT", "INTERN", "CONSULTANT"]).or(z.literal("")).optional(),
+  branch: z.string().trim().max(64, "Branch is at most 64 characters.").optional(),
   hireDate: isoDateish,
   // P25 (PL-02/EM-J01) — the birthday engine's input (date-only semantics,
   // HR-owned like hireDate; null clears it — no birthday, no reminder).
@@ -600,7 +608,9 @@ export const employeeProfileSchema = z.object({
 export const employeeProfileAdminSchema = employeeProfileSchema; // notes included above
 
 // QA-10: self-service may only edit CONTACT fields — job data (jobTitle,
-// department, hireDate, notes) is HR-owned per docs/HR_MODULE_PLAN.md §5
+// department, hireDate, notes — and, since P34/EM-03, the grade /
+// employmentType / branch grouping axes) is HR-owned per
+// docs/HR_MODULE_PLAN.md §5
 // ("Self-service edit of own contact fields; HR/ADMIN edit everything").
 // Before this schema existed the self-service action accepted jobTitle /
 // department / hireDate, so any member could self-certify "CTO" in the
@@ -647,6 +657,11 @@ export const employmentChangeSchema = z.object({
   effectiveDate: isoDateStr,
   jobTitle: z.string().trim().max(100).optional(),
   department: z.string().trim().max(64).optional(),
+  // P34 (EM-03) — grade is promotable: the P33 property-history registry
+  // registered it the moment the field landed ("L3" → "L4" rides the
+  // structured diff like any other property). Free-form ladder string,
+  // "" = unclassified (rendered "—" in the diff).
+  grade: z.string().trim().max(64, "Grade is at most 64 characters.").optional(),
   managerId: z.string().trim().max(64).nullable().optional(),
   raisePercent: z
     .number()

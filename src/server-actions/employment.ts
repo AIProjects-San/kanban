@@ -207,7 +207,7 @@ export async function transitionEmployment(
 //      gate, not payroll:manage: one change, one transaction, one audit).
 //   2. The pure diff (lib/employment-change.ts planEmploymentChange): one
 //      structured row per property whose display value actually changes
-//      (jobTitle / department / manager / salary); an empty diff is
+//      (jobTitle / department / grade / manager / salary); an empty diff is
 //      refused — a change that changes nothing is not recorded as history
 //      noise.
 //   3. EXITED finality: the offboarding gate (createLeaveRequest's own
@@ -245,6 +245,8 @@ export async function applyEmploymentChange(
     effectiveDate: string;
     jobTitle?: string;
     department?: string;
+    /** P34 (EM-03) — the grade grouping axis (free-form ladder string). */
+    grade?: string;
     managerId?: string | null;
     raisePercent?: number;
     note?: string;
@@ -274,6 +276,9 @@ export async function applyEmploymentChange(
     // ---------------------------------------------------- the current values
     const currentTitle = row?.jobTitle ?? "";
     const currentDepartment = row?.department ?? "";
+    // P34 (EM-03) — the grade axis rides the diff like jobTitle (a
+    // free-form display string; "" renders "—" in both diff cells).
+    const currentGrade = row?.grade ?? "";
     // The manager display name (null = no manager — "(none)" keeps the row
     // honest without fabricating a name).
     let currentManagerName: string | null = null;
@@ -336,10 +341,11 @@ export async function applyEmploymentChange(
     }
 
     // --------------------------------------------------------- the diff plan
-    const requested: Partial<Record<"jobTitle" | "department" | "manager" | "salary", string>> = {};
-    const current: Partial<Record<"jobTitle" | "department" | "manager" | "salary", string>> = {
+    const requested: Partial<Record<"jobTitle" | "department" | "grade" | "manager" | "salary", string>> = {};
+    const current: Partial<Record<"jobTitle" | "department" | "grade" | "manager" | "salary", string>> = {
       jobTitle: currentTitle,
       department: departmentLabelOf(currentDepartment),
+      grade: currentGrade || "—",
       manager: currentManagerName ?? "(none)",
       ...(currentGross != null ? { salary: formatAnnualGross(currentGross) } : {}),
     };
@@ -348,6 +354,9 @@ export async function applyEmploymentChange(
     }
     if (data.department !== undefined) {
       requested.department = departmentLabelOf(data.department);
+    }
+    if (data.grade !== undefined) {
+      requested.grade = data.grade || "—";
     }
     if (data.managerId !== undefined) {
       requested.manager = newManagerName ?? "(none)";
@@ -359,7 +368,7 @@ export async function applyEmploymentChange(
     const rows = planEmploymentChange({ current, requested });
     if (rows.length === 0) {
       throw new AuthorizationError(
-        "Nothing to record — pick at least one property to change (title, department, manager or salary).",
+        "Nothing to record — pick at least one property to change (title, department, grade, manager or salary).",
       );
     }
 
@@ -379,21 +388,23 @@ export async function applyEmploymentChange(
         );
       }
 
-      // The profile facts (jobTitle / department) — upsert keeps the
+      // The profile facts (jobTitle / department / grade) — upsert keeps the
       // profile-less member legal (neutral defaults like the transition).
-      if (data.jobTitle !== undefined || data.department !== undefined) {
+      if (data.jobTitle !== undefined || data.department !== undefined || data.grade !== undefined) {
         await tx.employeeProfile.upsert({
           where: { userId: targetUserId },
           create: {
             userId: targetUserId,
             jobTitle: data.jobTitle ?? currentTitle,
             department: data.department ?? currentDepartment,
+            grade: data.grade ?? currentGrade,
             hireDate: null,
             employmentStatus: "",
           },
           update: {
             ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
             ...(data.department !== undefined ? { department: data.department } : {}),
+            ...(data.grade !== undefined ? { grade: data.grade } : {}),
           },
         });
       }

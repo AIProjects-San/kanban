@@ -45,6 +45,7 @@ const PROFILE = {
   id: "ep-1", userId: "u-1", employeeNumber: "EMP-0003", leaveApproverId: null,
   name: "Theo Vance", email: "theo@x.co", role: "MEMBER", managerName: "Ada Lovelace",
   jobTitle: "Senior Frontend Engineer", department: "ENGINEERING",
+  grade: "L4", employmentType: "FULL_TIME", branch: "Auckland HQ",
   hireDate: "2024-06-10", birthDate: "1992-06-14", phone: "+64 21 555 0003", location: "Auckland, NZ",
   emergencyContactName: "Rae Vance", emergencyContactPhone: "+64 21 555 0199",
   skills: "React, TypeScript", notes: "HR note", employmentStatus: "ACTIVE",
@@ -102,6 +103,7 @@ describe("P33 — the Promote / transfer button and modal (EM-06/EM-01)", () => 
           kind: "TRANSFER",
           jobTitle: "Lead Frontend Engineer",
           department: "ENGINEERING",
+          grade: "L4",
           effectiveDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
         }),
       );
@@ -112,8 +114,28 @@ describe("P33 — the Promote / transfer button and modal (EM-06/EM-01)", () => 
     await waitFor(() => expect(getDirectory).toHaveBeenCalledTimes(2));
   });
 
+  // P34 (EM-03) — grade is promotable: the modal prefills the member's
+  // current ladder position and a changed grade rides the action payload.
+  it("P34 — the grade input prefills and a ladder move rides the payload", async () => {
+    render(<DirectoryTab />);
+    fireEvent.click((await screen.findAllByTestId("directory-promote"))[0]);
+
+    const gradeInput = await screen.findByTestId("employment-change-grade");
+    expect((gradeInput as HTMLInputElement).value).toBe("L4");
+
+    fireEvent.change(gradeInput, { target: { value: "L5" } });
+    fireEvent.click(screen.getByTestId("employment-change-submit"));
+
+    await waitFor(() => {
+      expect(applyEmploymentChange).toHaveBeenCalledWith(
+        "u-1",
+        expect.objectContaining({ grade: "L5" }),
+      );
+    });
+  });
+
   it("a refusal surfaces as an error toast and keeps the modal open (fix and retry)", async () => {
-    applyEmploymentChange.mockResolvedValue({ ok: false, error: "Nothing to record — pick at least one property to change (title, department, manager or salary)." });
+    applyEmploymentChange.mockResolvedValue({ ok: false, error: "Nothing to record — pick at least one property to change (title, department, grade, manager or salary)." });
     render(<DirectoryTab />);
     fireEvent.click((await screen.findAllByTestId("directory-promote"))[0]);
     await screen.findByTestId("employment-change-title");

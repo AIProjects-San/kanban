@@ -82,3 +82,31 @@ Feature: HR employee directory
     And I open the "Directory" tab
     And I change "Diego Morales" employment status to "Active"
     Then the directory card for "Diego Morales" should show employment status "Active"
+
+  # P34 (EM-03) — the employee grouping axes: the roster card carries the
+  # grade / employment-type / branch facts (seeded: Theo L4 full-time at the
+  # Auckland HQ branch; Diego the probation new-hire is the INTERN), and the
+  # org-slicing filter chips narrow the roster by each axis (the count line
+  # always tells the truth; unclassified members surface only under All).
+  Scenario: P34 — the directory card shows each member's grouping axes
+    When I sign in as "manager@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Directory" tab
+    Then the directory card for "Theo Vance" should show grade "L4"
+    And the directory card for "Theo Vance" should show employment type "Full-time"
+    And the directory card for "Theo Vance" should show branch "Auckland HQ"
+    And the directory card for "Diego Morales" should show employment type "Intern"
+
+  Scenario: P34 — the org-slicing filter chips narrow the roster
+    When I sign in as "manager@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Directory" tab
+    And the directory should show at least 13 profiles
+    When I filter the directory by employment type to "Intern"
+    Then the directory should show 1 profiles
+    And the directory card for "Diego Morales" should show employment type "Intern"
+    When I filter the directory by employment type to "Full-time"
+    Then the directory should show at least 10 profiles
+    When I filter the directory by grade to "L4"
+    Then the directory should show 3 profiles
+    And the directory card for "Theo Vance" should show grade "L4"

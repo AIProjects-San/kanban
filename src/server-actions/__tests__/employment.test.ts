@@ -379,6 +379,7 @@ function changeInput(
     effectiveDate: string;
     jobTitle: string;
     department: string;
+    grade: string;
     managerId: string | null;
     raisePercent: number;
     note: string;
@@ -521,6 +522,63 @@ describe("P33 — applyEmploymentChange: the transaction writes", () => {
     expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ update: expect.objectContaining({ department: "DESIGN" }) }),
     );
+  });
+
+  // P34 (EM-03) — grade is promotable: the ladder move rides the SAME
+  // structured diff (one row, the display strings, the registry order).
+  it("P34 — a grade move records its own structured row and updates the profile", async () => {
+    db.employeeProfile.findUnique.mockResolvedValue(row({ grade: "L4" }));
+    const res = await applyEmploymentChange("u-theo", changeInput({ grade: "L5", jobTitle: undefined as unknown as string }));
+    expect(res.ok).toBe(true);
+    expect(res.ok === true && res.data.applied).toBe(1);
+    expect(db.employeePropertyHistory.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          property: "grade",
+          currentValue: "L4",
+          newValue: "L5",
+          sourceKind: "PROMOTION",
+        }),
+      ],
+    });
+    expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ grade: "L5" }) }),
+    );
+    // The audit line carries the grade diff (the human-readable copy).
+    expect(logAuditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "hr.employment_change_applied",
+        detail: expect.stringMatching(/Grade L4 → L5/),
+      }),
+    );
+  });
+
+  it("P34 — an ungraded employee's first grade renders the QA-19 em dash", async () => {
+    // row() carries no grade → "" → the diff renders "—" (the jobTitle rule).
+    const res = await applyEmploymentChange("u-theo", changeInput({ grade: "L3", jobTitle: undefined as unknown as string }));
+    expect(res.ok).toBe(true);
+    expect(db.employeePropertyHistory.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({ property: "grade", currentValue: "—", newValue: "L3" }),
+      ],
+    });
+  });
+
+  it("P34 — a title + grade promotion records BOTH rows in registry order", async () => {
+    db.employeeProfile.findUnique.mockResolvedValue(row({ grade: "L4" }));
+    const res = await applyEmploymentChange("u-theo", changeInput({ grade: "L5" }));
+    expect(res.ok).toBe(true);
+    expect(res.ok === true && res.data.applied).toBe(2);
+    const data = db.employeePropertyHistory.createMany.mock.calls[0][0].data;
+    expect(data.map((r: { property: string }) => r.property)).toEqual(["jobTitle", "grade"]);
+  });
+
+  it("P34 — an unchanged grade records nothing (the no-noise rule holds for the axis)", async () => {
+    db.employeeProfile.findUnique.mockResolvedValue(row({ grade: "L4" }));
+    const res = await applyEmploymentChange("u-theo", changeInput({ grade: "L4", jobTitle: undefined as unknown as string }));
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/nothing to record/i);
+    expect(db.employeePropertyHistory.createMany).not.toHaveBeenCalled();
   });
 
   it("a manager change writes the org chart (User.managerId) and records the NAME", async () => {

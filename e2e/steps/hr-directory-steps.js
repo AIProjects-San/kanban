@@ -364,3 +364,73 @@ Then("my employee profile should show phone {string}", async function (phone) {
     "saved phone did not persist after reload",
   );
 });
+
+// ---------------------------------------------------------------------------
+// P34 (EM-03) — the grouping axes: the org-slicing filter chips and the
+// card's Grade / Type / Branch lines. The step waits for the roster BEFORE
+// picking (the chips' grade/branch options derive from the loaded roster),
+// then re-polls the count until React settles — the same discipline the
+// search step uses.
+// ---------------------------------------------------------------------------
+
+async function pickFilterChip(world, testId, value) {
+  const driver = await world.getDriver();
+  await driver.wait(
+    until.elementsLocated(By.css("[data-testid='directory-name']")),
+    10_000,
+    "directory roster did not render",
+  );
+  const chip = await driver.findElement(By.css(`[data-testid='${testId}']`));
+  await driver.executeScript(
+    "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+    chip,
+    value,
+  );
+  await driver.sleep(600);
+}
+
+When("I filter the directory by employment type to {string}", async function (value) {
+  await pickFilterChip(this, "directory-filter-employment-type", value);
+});
+
+When("I filter the directory by grade to {string}", async function (value) {
+  await pickFilterChip(this, "directory-filter-grade", value);
+});
+
+When("I filter the directory by branch to {string}", async function (value) {
+  await pickFilterChip(this, "directory-filter-branch", value);
+});
+
+When("I filter the directory by department to {string}", async function (value) {
+  await pickFilterChip(this, "directory-filter-department", value);
+});
+
+Then("the directory card for {string} should show grade {string}", async function (name, grade) {
+  const card = await directoryCard(this, name);
+  const line = await card.findElement(By.css("[data-testid='directory-grade']"));
+  const text = (await line.getText()).trim();
+  assert.ok(
+    text.includes(grade),
+    `card for ${name} shows grade "${text}", expected it to mention "${grade}"`,
+  );
+});
+
+Then("the directory card for {string} should show employment type {string}", async function (name, typeLabel) {
+  const card = await directoryCard(this, name);
+  const line = await card.findElement(By.css("[data-testid='directory-employment-type']"));
+  const text = (await line.getText()).trim();
+  assert.ok(
+    text.includes(typeLabel),
+    `card for ${name} shows employment type "${text}", expected it to mention "${typeLabel}"`,
+  );
+});
+
+Then("the directory card for {string} should show branch {string}", async function (name, branch) {
+  const card = await directoryCard(this, name);
+  const line = await card.findElement(By.css("[data-testid='directory-branch']"));
+  const text = (await line.getText()).trim();
+  assert.ok(
+    text.includes(branch),
+    `card for ${name} shows branch "${text}", expected it to mention "${branch}"`,
+  );
+});

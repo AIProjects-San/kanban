@@ -129,6 +129,31 @@ export function departmentLabel(d: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// P34 (EM-03) — the employment-type grouping axis. A controlled vocabulary
+// (the benchmark's Employment Type master collapsed to the workspace-scope
+// set), keyed like DEPARTMENT_LABELS so the pickers, the directory filter
+// chips, the roster card and the CSV export share one table. QA-19: "" is
+// NOT a key — it is the unclassified state, rendered "—" / "Not set".
+// ---------------------------------------------------------------------------
+
+export const EMPLOYMENT_TYPE_LABELS: { key: string; label: string }[] = [
+  { key: "FULL_TIME", label: "Full-time" },
+  { key: "PART_TIME", label: "Part-time" },
+  { key: "CONTRACT", label: "Contract" },
+  { key: "INTERN", label: "Intern" },
+  { key: "CONSULTANT", label: "Consultant" },
+];
+
+export const EMPLOYMENT_TYPE_KEYS = EMPLOYMENT_TYPE_LABELS.map((t) => t.key);
+
+/** Key → display label; an unknown key renders raw, never silently blank
+ * (the DEPARTMENT_LABELS discipline — data integrity beats silence). */
+export function employmentTypeLabel(key: string): string {
+  if (!key) return "";
+  return EMPLOYMENT_TYPE_LABELS.find((t) => t.key === key)?.label ?? key;
+}
+
+// ---------------------------------------------------------------------------
 // Bug tracking — severity, priority, status, resolution labels + styles.
 // Used by bugs-view (badges, filters), bug-modal (selects), bug-detail
 // (lifecycle timeline), and server-actions (audit detail strings).

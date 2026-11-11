@@ -42,6 +42,10 @@ export function EmploymentChangeModal({
   const [effectiveDate, setEffectiveDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [jobTitle, setJobTitle] = useState("");
   const [department, setDepartment] = useState("");
+  // P34 (EM-03) — the grade grouping axis is promotable (the registry
+  // registered it at P34): a promotion moves "L3" → "L4" like any other
+  // property, recorded as a structured diff row.
+  const [grade, setGrade] = useState("");
   // "" = no change (the picker never offers it as a value); "__none__" is
   // the explicit clear (a transfer can remove the reporting line).
   const [managerId, setManagerId] = useState("");
@@ -56,6 +60,7 @@ export function EmploymentChangeModal({
       setEffectiveDate(new Date().toISOString().slice(0, 10));
       setJobTitle(profile.jobTitle);
       setDepartment(profile.department);
+      setGrade(profile.grade);
       setManagerId("");
       setRaisePercent("");
       setNote("");
@@ -73,6 +78,7 @@ export function EmploymentChangeModal({
       effectiveDate,
       jobTitle,
       department,
+      grade,
       managerId: managerId === "" ? undefined : managerId === "__none__" ? null : managerId,
       raisePercent: raisePercent === "" ? undefined : Number(raisePercent),
       note: note || undefined,
@@ -144,6 +150,17 @@ export function EmploymentChangeModal({
           </Field>
         </FormRow>
         <FormRow>
+          {/* P34 (EM-03) — grade is promotable: a ladder move rides the same
+              structured diff as the title ("" records "—", the QA-19 shape). */}
+          <Field label="Grade" hint="Free-form ladder, e.g. L4 — unchanged records nothing">
+            <input
+              className="f-input"
+              maxLength={64}
+              value={grade}
+              data-testid="employment-change-grade"
+              onChange={(e) => setGrade(e.target.value)}
+            />
+          </Field>
           <Field label="Reporting manager" hint="Unchanged keeps the current reporting line">
             <select
               className="f-input"
@@ -160,6 +177,8 @@ export function EmploymentChangeModal({
                 ))}
             </select>
           </Field>
+        </FormRow>
+        <FormRow>
           <Field
             label="Salary raise (%)"
             hint="Scales the fixed earnings; percent-based lines ride the grown basis. Needs an active salary structure — the server refuses otherwise."
@@ -176,17 +195,17 @@ export function EmploymentChangeModal({
               placeholder="e.g. 8"
             />
           </Field>
+          <Field label="Note (optional, recorded with the change)">
+            <input
+              className="f-input"
+              maxLength={500}
+              value={note}
+              data-testid="employment-change-note"
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Annual review cycle, effective this quarter"
+            />
+          </Field>
         </FormRow>
-        <Field label="Note (optional, recorded with the change)">
-          <input
-            className="f-input"
-            maxLength={500}
-            value={note}
-            data-testid="employment-change-note"
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. Annual review cycle, effective this quarter"
-          />
-        </Field>
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>
             Cancel

@@ -17,7 +17,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
-import { DEPARTMENT_LABELS } from "@/lib/config";
+import { DEPARTMENT_LABELS, employmentTypeLabel } from "@/lib/config";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import type { EmployeeProfileT } from "@/lib/types";
 import { employeeProfileSchema, employeeProfileSelfSchema, parseOrThrow } from "@/lib/validation";
@@ -35,6 +35,7 @@ const VALID_DEPARTMENTS = new Set<string>(DEPARTMENT_LABELS.map((d) => d.key));
 function serialize(
   row: {
     id: string; userId: string; employeeNumber: string | null; leaveApproverId: string | null; jobTitle: string; department: string;
+    grade: string; employmentType: string; branch: string;
     hireDate: Date | null; birthDate: Date | null; phone: string; location: string;
     emergencyContactName: string; emergencyContactPhone: string;
     skills: string; notes: string; createdAt: Date; updatedAt: Date;
@@ -54,6 +55,13 @@ function serialize(
     managerName: user.managerName,
     jobTitle: row.jobTitle,
     department: row.department as EmployeeProfileT["department"],
+    // P34 (EM-03) — the grouping axes (QA-19: "" = unclassified, rendered
+    // "—"; employmentType is the raw key — the views resolve the label
+    // through employmentTypeLabel so an unknown key renders raw, never
+    // silently blank).
+    grade: row.grade,
+    employmentType: row.employmentType as EmployeeProfileT["employmentType"],
+    branch: row.branch,
     hireDate: row.hireDate ? row.hireDate.toISOString().slice(0, 10) : null,
     birthDate: row.birthDate ? row.birthDate.toISOString().slice(0, 10) : null,
     phone: row.phone,
@@ -178,6 +186,13 @@ export async function exportDirectoryCsv(): Promise<ActionResult<{ filename: str
         department: row.department
           ? DEPARTMENT_LABELS.find((d) => d.key === row.department)?.label ?? row.department
           : "",
+        // P34 (EM-03) — the grouping axes mirror the roster card's facts:
+        // the raw grade/branch strings and the employment-type label
+        // (blank when unclassified — the data-file convention, only the
+        // STATUS column states its unknown-ness).
+        grade: row.grade,
+        employmentType: employmentTypeLabel(row.employmentType),
+        branch: row.branch,
         managerName,
         employmentStatus: EMPLOYMENT_STATUS_LABELS[row.employmentStatus as keyof typeof EMPLOYMENT_STATUS_LABELS] ?? row.employmentStatus,
         hireDate: row.hireDate ? row.hireDate.toISOString().slice(0, 10) : "",
@@ -265,6 +280,10 @@ export async function upsertMyProfile(input: {
 export async function updateProfileAsAdmin(userId: string, input: {
   jobTitle?: string;
   department?: string;
+  /** P34 (EM-03) — the grouping axes (QA-19: "" = unclassified). */
+  grade?: string;
+  employmentType?: string;
+  branch?: string;
   hireDate?: string | null;
   /** P25 (PL-02) — the birthday engine's input (null clears it). */
   birthDate?: string | null;
@@ -331,6 +350,10 @@ export async function updateProfileAsAdmin(userId: string, input: {
         // HR save without a picked department leaves it unset, not
         // "ENGINEERING".
         department: data.department ?? "",
+        // P34 (EM-03) — the axes ride the same neutral-default rule.
+        grade: data.grade ?? "",
+        employmentType: data.employmentType ?? "",
+        branch: data.branch ?? "",
         hireDate: hireDate ?? null,
         birthDate: birthDate ?? null,
         phone: data.phone ?? "",
@@ -347,6 +370,9 @@ export async function updateProfileAsAdmin(userId: string, input: {
       update: {
         ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
         ...(data.department !== undefined ? { department: data.department } : {}),
+        ...(data.grade !== undefined ? { grade: data.grade } : {}),
+        ...(data.employmentType !== undefined ? { employmentType: data.employmentType } : {}),
+        ...(data.branch !== undefined ? { branch: data.branch } : {}),
         ...(hireDate !== undefined ? { hireDate } : {}),
         ...(birthDate !== undefined ? { birthDate } : {}),
         ...(data.phone !== undefined ? { phone: data.phone } : {}),

@@ -5,15 +5,16 @@
 // roster (HR module feature 2) as the CSV, deliberately mirroring the
 // roster CARD's facts:
 //   employee no · name · email · role · job title · department (label) ·
-//   manager (org-chart name) · employment status · hire date · location ·
-//   skills
+//   grade · employment type (label) · branch · manager (org-chart name) ·
+//   employment status · hire date · location · skills
 // and deliberately NOT exporting what the card never displays — birthday,
 // emergency contact and the HR notes stay out of data files (the PII
 // posture: a person's sensitive facts are read on-screen by entitled
 // roles, not bulk-exported). Employment status renders its roster label
 // ("Not set" when unclassified — a status column should state its
 // unknown-ness); every other unset fact renders blank (data files feed
-// parsers, "—" is a UI affordance).
+// parsers, "—" is a UI affordance) — the P34 grouping axes follow that
+// rule too (grade/branch raw, employment type as its display label).
 //
 // Rows sort by (name, employee number) for deterministic output — the
 // golden-file CSV test owns the bytes.
@@ -35,6 +36,12 @@ export interface DirectoryReportRow {
   jobTitle: string;
   /** The display label, or "" when unclassified. */
   department: string;
+  /** P34 (EM-03) — the raw ladder string, or "" when ungraded. */
+  grade: string;
+  /** The display label ("Full-time"…), or "" when unclassified. */
+  employmentType: string;
+  /** The plain branch string, or "" when unset. */
+  branch: string;
   /** The manager's display name, or null when nobody reports above. */
   managerName: string | null;
   /** The display label ("Not set" when unclassified). */
@@ -68,6 +75,9 @@ export function employeeInformationCsv(input: {
       "Role",
       "Job title",
       "Department",
+      "Grade",
+      "Employment type",
+      "Branch",
       "Manager",
       "Employment status",
       "Hire date",
@@ -82,6 +92,9 @@ export function employeeInformationCsv(input: {
         r.role,
         r.jobTitle,
         r.department,
+        r.grade,
+        r.employmentType,
+        r.branch,
         r.managerName ?? "",
         r.employmentStatus,
         r.hireDate,

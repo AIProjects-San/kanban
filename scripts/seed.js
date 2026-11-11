@@ -1835,6 +1835,28 @@ async function main() {
     ["Remy Laurent", "People Operations Lead", "MANAGEMENT", "2025-05-20", "Paris, France", "+33 6 55 55 01 13", "People ops, onboarding design, coaching", "1986-05-11"],
     ["Kofi Mensah", "Support Engineer", "ENGINEERING", "2025-06-02", "Accra, Ghana", "+233 20 555 0014", "Customer support, escalations, triage", null],
   ];
+  // P34 (EM-03) — the grouping axes: grade (free-form ladder), employment
+  // type (the controlled vocabulary) and branch (a plain string). Honest
+  // mix, QA-19 style: Marcus/Diego/Kofi carry no grade ("" = ungraded),
+  // Diego the probation new-hire is the INTERN, Kofi PART_TIME, Rafael the
+  // DevOps contractor is CONTRACT — the directory's filter chips have real
+  // slices to demo without a single fabricated fact.
+  const axesSeed = new Map([
+    ["Mira Hale", { grade: "L6", employmentType: "FULL_TIME", branch: "Auckland HQ" }],
+    ["Ingrid Solberg", { grade: "L5", employmentType: "FULL_TIME", branch: "Oslo" }],
+    ["Theo Vance", { grade: "L4", employmentType: "FULL_TIME", branch: "Auckland HQ" }],
+    ["Lena Okafor", { grade: "L4", employmentType: "FULL_TIME", branch: "London" }],
+    ["Rafael Costa", { grade: "L3", employmentType: "CONTRACT", branch: "São Paulo" }],
+    ["Yuki Tanaka", { grade: "L4", employmentType: "FULL_TIME", branch: "Tokyo" }],
+    ["Amara Diallo", { grade: "L3", employmentType: "FULL_TIME", branch: "Dakar" }],
+    ["Soren Lindqvist", { grade: "L3", employmentType: "FULL_TIME", branch: "Stockholm" }],
+    ["Priya Nair", { grade: "L5", employmentType: "FULL_TIME", branch: "Kolkata" }],
+    ["Marcus Bell", { grade: "", employmentType: "FULL_TIME", branch: "New York" }],
+    ["Hana Park", { grade: "L3", employmentType: "FULL_TIME", branch: "Seoul" }],
+    ["Diego Morales", { grade: "", employmentType: "INTERN", branch: "Mexico City" }],
+    ["Remy Laurent", { grade: "L5", employmentType: "FULL_TIME", branch: "Paris" }],
+    ["Kofi Mensah", { grade: "", employmentType: "PART_TIME", branch: "Accra" }],
+  ]);
   let profileCount = 0;
   // EM-B01 (S13) — the employee-number series mirrors the migration's
   // deterministic backfill: EMP-0001… in profileSeed (createdAt) order.
@@ -1855,6 +1877,7 @@ async function main() {
         ...(probationSeed.has(name) ? { probationEndsAt: probationSeed.get(name) } : {}),
         ...(exitSeed.has(name) ? { lastWorkingDay: exitSeed.get(name) } : {}),
         ...(noticeSeed.has(name) ? { noticePeriodWeeks: noticeSeed.get(name) } : {}),
+        ...(axesSeed.get(name) ?? { grade: "", employmentType: "", branch: "" }),
         location,
         phone,
         skills,
@@ -1886,16 +1909,30 @@ async function main() {
     const historySeed = [];
     if (amaraId) {
       const at = addDays(TODAY, -45);
-      historySeed.push({
-        userId: amaraId,
-        property: "jobTitle",
-        currentValue: "UX Research Intern",
-        newValue: "UX Researcher",
-        effectiveAt: at,
-        sourceKind: "PROMOTION",
-        createdById: remyId,
-        createdAt: at,
-      });
+      historySeed.push(
+        {
+          userId: amaraId,
+          property: "jobTitle",
+          currentValue: "UX Research Intern",
+          newValue: "UX Researcher",
+          effectiveAt: at,
+          sourceKind: "PROMOTION",
+          createdById: remyId,
+          createdAt: at,
+        },
+        // P34 (EM-03) — grade is promotable: Amara's promotion moved the
+        // ladder too (L2 → L3, ending at her CURRENT profile grade).
+        {
+          userId: amaraId,
+          property: "grade",
+          currentValue: "L2",
+          newValue: "L3",
+          effectiveAt: at,
+          sourceKind: "PROMOTION",
+          createdById: remyId,
+          createdAt: at,
+        },
+      );
     }
     if (marcusId) {
       const at = addDays(TODAY, -20);
@@ -1934,7 +1971,7 @@ async function main() {
         "hr.employment_change_applied",
         "EMPLOYEE_PROFILE",
         "Amara Diallo",
-        `Remy Laurent applied a promotion to Amara Diallo effective ${addDays(TODAY, -45).toISOString().slice(0, 10)} — Job title UX Research Intern → UX Researcher.`,
+        `Remy Laurent applied a promotion to Amara Diallo effective ${addDays(TODAY, -45).toISOString().slice(0, 10)} — Job title UX Research Intern → UX Researcher; Grade L2 → L3.`,
         45,
         0,
       );
@@ -1951,7 +1988,7 @@ async function main() {
         0,
       );
     }
-    console.log(`  ✓ P33 structured property history: ${historySeed.length} rows (1 promotion + 1 transfer)`);
+    console.log(`  ✓ P33 structured property history: ${historySeed.length} rows (1 promotion with the P34 grade diff + 1 transfer)`);
   }
 
   // -------------------------------------------------------------------------

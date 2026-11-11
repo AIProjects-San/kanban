@@ -397,6 +397,12 @@ export interface EmployeeProfileT {
   jobTitle: string;
   /** QA-19: "" means "not classified yet" — rendered as "—" until HR sets it. */
   department: "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT" | "";
+  // P34 (EM-03) — the grouping axes. Same QA-19 rule: "" = not classified
+  // yet (rendered "—"); grade/branch are free-form strings, employmentType
+  // is the controlled vocabulary keyed in lib/config (EMPLOYMENT_TYPE_LABELS).
+  grade: string;
+  employmentType: "FULL_TIME" | "PART_TIME" | "CONTRACT" | "INTERN" | "CONSULTANT" | "";
+  branch: string;
   hireDate: string | null;
   /** P25 (PL-02) — the birthday engine's input; null = not on file. */
   birthDate: string | null;

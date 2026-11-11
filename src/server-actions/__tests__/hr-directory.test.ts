@@ -75,6 +75,10 @@ const PROFILE_ROW = {
   userId: "u-theo",
   jobTitle: "Senior Frontend Engineer",
   department: "ENGINEERING",
+  // P34 (EM-03) — the grouping axes on the roster fixture.
+  grade: "L4",
+  employmentType: "FULL_TIME",
+  branch: "Auckland HQ",
   hireDate: new Date("2024-06-10T00:00:00.000Z"),
   phone: "+64 21 555 0003",
   location: "Auckland, NZ",
@@ -127,6 +131,10 @@ describe("getDirectory", () => {
         managerName: "Ingrid Solberg",
         jobTitle: "Senior Frontend Engineer",
         hireDate: "2024-06-10",
+        // P34 (EM-03) — the grouping axes serialize with the roster row.
+        grade: "L4",
+        employmentType: "FULL_TIME",
+        branch: "Auckland HQ",
       });
       expect(res.data.canAdmin).toBe(false); // MANAGER: read-only directory
     }
@@ -210,6 +218,11 @@ describe("upsertMyProfile", () => {
       { department: "MANAGEMENT" },
       { hireDate: "2020-01-01" },
       { notes: "self-promoted" },
+      // P34 (EM-03) — the grouping axes are HR-owned job data too: a
+      // member self-grading "L9" or self-hiring as full-time must bounce.
+      { grade: "L9" },
+      { employmentType: "FULL_TIME" },
+      { branch: "Executive Suite" },
     ]) {
       const res = await upsertMyProfile(smuggle as never);
       expect(res.ok).toBe(false);
@@ -296,6 +309,57 @@ describe("updateProfileAsAdmin", () => {
     expect(res.ok).toBe(true);
     const call = db.employeeProfile.upsert.mock.calls[0][0];
     expect(call.create.department).toBe("");
+  });
+
+  // P34 (EM-03) — HR classifies the grouping axes through the admin path:
+  // the three fields ride the update branch, and "" clears each one back to
+  // the unclassified state (the QA-19 ""-is-a-value rule).
+  it("P34: HR sets the grouping axes (grade / employment type / branch) on the update branch", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", {
+      grade: "L5",
+      employmentType: "CONTRACT",
+      branch: "Oslo",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "u-theo" },
+        update: expect.objectContaining({ grade: "L5", employmentType: "CONTRACT", branch: "Oslo" }),
+      }),
+    );
+    // Clearing each axis back to "" is a legal save (not classified).
+    const cleared = await updateProfileAsAdmin("u-theo", { grade: "", employmentType: "", branch: "" });
+    expect(cleared.ok).toBe(true);
+    expect(db.employeeProfile.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ grade: "", employmentType: "", branch: "" }),
+      }),
+    );
+  });
+
+  // P34 — the admin create-branch gives the axes the same neutral "" the
+  // department gets (an HR save that never picked them classifies nothing).
+  it("P34: the admin create-branch leaves unset axes at \"\" (no fabrication)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { jobTitle: "Senior FE" });
+    expect(res.ok).toBe(true);
+    const call = db.employeeProfile.upsert.mock.calls[0][0];
+    expect(call.create.grade).toBe("");
+    expect(call.create.employmentType).toBe("");
+    expect(call.create.branch).toBe("");
+  });
+
+  // P34 — employmentType is a controlled vocabulary: an unknown key bounces
+  // at the zod boundary, never silently blanked into the roster.
+  it("P34: an unknown employment type is rejected at the schema gate", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-theo", name: "Theo Vance", deletedAt: null });
+    const res = await updateProfileAsAdmin("u-theo", { employmentType: "FREELANCE_FOREVER" as never });
+    expect(res.ok).toBe(false);
+    expect(db.employeeProfile.upsert).not.toHaveBeenCalled();
   });
 
   it("S14 — sets the leave-approver override (validated target) and clears it with null", async () => {
@@ -502,6 +566,10 @@ describe("P32 (EM-R02) — exportDirectoryCsv", () => {
     employeeNumber: "EMP-0003",
     jobTitle: "Senior Frontend Engineer",
     department: "ENGINEERING",
+    // P34 (EM-03) — the grouping axes ride the card-mirror export.
+    grade: "L4",
+    employmentType: "FULL_TIME",
+    branch: "Auckland HQ",
     employmentStatus: "ACTIVE",
     hireDate: new Date("2024-06-10T00:00:00.000Z"),
     phone: "+64 21 555 0003",
@@ -551,14 +619,14 @@ describe("P32 (EM-R02) — exportDirectoryCsv", () => {
     const lines = res.data.csv.split("\r\n");
     expect(lines[0]).toBe("# Employee information — Fernly HR — directory export");
     expect(lines[2]).toBe(
-      "Employee no,Employee,Email,Role,Job title,Department,Manager,Employment status,Hire date,Location,Skills",
+      "Employee no,Employee,Email,Role,Job title,Department,Grade,Employment type,Branch,Manager,Employment status,Hire date,Location,Skills",
     );
     // Name-sorted; Theo is the only report row — Ada has no employee
     // profile row (a profile-less member never appears), and u-gone has
     // no live user — hidden exactly like the roster cards.
     expect(lines).toHaveLength(4 + 1); // 3 comment/header + header + 1 row + trailing
     expect(lines[3]).toBe(
-      'EMP-0003,Theo Vance,theo@x.co,MEMBER,Senior Frontend Engineer,Engineering,Ada Lovelace,Active,2024-06-10,"Auckland, NZ","React, TypeScript"',
+      'EMP-0003,Theo Vance,theo@x.co,MEMBER,Senior Frontend Engineer,Engineering,L4,Full-time,Auckland HQ,Ada Lovelace,Active,2024-06-10,"Auckland, NZ","React, TypeScript"',
     );
     // The card never displays birthday / emergency contact / HR notes —
     // and neither does the export (nothing from the PII block).
@@ -572,10 +640,10 @@ describe("P32 (EM-R02) — exportDirectoryCsv", () => {
     expect(logAuditMock.mock.calls[0][0].detail).toContain("1 member row(s)");
   });
 
-  it("an unclassified member renders honest empties (blank department, the Not set status label)", async () => {
+  it("an unclassified member renders honest empties (blank department/axes, the Not set status label)", async () => {
     requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
     db.employeeProfile.findMany.mockResolvedValue([
-      { ...EXPORT_PROFILE_THEO, employeeNumber: null, jobTitle: "", department: "", employmentStatus: "", hireDate: null, location: "", skills: "" },
+      { ...EXPORT_PROFILE_THEO, employeeNumber: null, jobTitle: "", department: "", grade: "", employmentType: "", branch: "", employmentStatus: "", hireDate: null, location: "", skills: "" },
     ]);
     db.user.findMany.mockResolvedValue([
       { id: "u-theo", name: "Theo Vance", email: "theo@x.co", role: "MEMBER", managerId: null },
@@ -583,6 +651,8 @@ describe("P32 (EM-R02) — exportDirectoryCsv", () => {
     const res = await exportDirectoryCsv();
     if (!res.ok) throw new Error(res.error);
     const line = res.data.csv.split("\r\n")[3];
-    expect(line).toBe(",Theo Vance,theo@x.co,MEMBER,,,,Not set,,,");
+    // P34 — the three unset axes render blank (data-file convention; only
+    // the STATUS column states its unknown-ness).
+    expect(line).toBe(",Theo Vance,theo@x.co,MEMBER,,,,,,,Not set,,,");
   });
 });
