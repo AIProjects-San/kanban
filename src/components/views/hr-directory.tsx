@@ -12,7 +12,7 @@
 // edit anyone including the HR-only `notes` field.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Download, Loader2, Search, Pencil, ArrowUpRight, IdCard } from "lucide-react";
+import { Briefcase, Download, Loader2, Search, Pencil, ArrowUpRight, IdCard, Award } from "lucide-react";
 import { toast } from "sonner";
 import { Section } from "../ui/section";
 import { Field } from "../ui/field";
@@ -23,6 +23,9 @@ import { EmploymentChangeModal } from "../ui/employment-change-modal";
 import { EmploymentChangesSection } from "../ui/employment-history-section";
 // P36 (EM-21) — the employee identification-documents panel + modal mount.
 import { EmployeeDocumentsPanel } from "../ui/employee-documents-panel";
+// P37 (EM-18) — the skill-map panel + the card's top-skills line.
+import { SkillMapPanel } from "../ui/skill-map-panel";
+import { topSkills } from "@/lib/skills";
 import { DEPARTMENT_LABELS, departmentLabel, EMPLOYMENT_TYPE_LABELS, employmentTypeLabel } from "@/lib/config";
 import { retirementProjection } from "@/lib/employment-change";
 import {
@@ -191,6 +194,8 @@ export function DirectoryTab() {
   const [changing, setChanging] = useState<EmployeeProfileT | null>(null);
   // P36 (EM-21) — the identification-documents modal target.
   const [docsFor, setDocsFor] = useState<EmployeeProfileT | null>(null);
+  // P37 (EM-18) — the skill-map modal target.
+  const [skillsFor, setSkillsFor] = useState<EmployeeProfileT | null>(null);
   // P32 (EM-R02) — the employee_information export's busy flag.
   const [exporting, setExporting] = useState(false);
 
@@ -395,6 +400,15 @@ export function DirectoryTab() {
                   >
                     <IdCard size={12} />
                   </button>
+                  {/* P37 (EM-18) — the rated skill map. */}
+                  <button
+                    className="f-btn f-btn-ghost f-btn-sm"
+                    onClick={() => setSkillsFor(p)}
+                    aria-label={`${p.name}'s skill map`}
+                    data-testid={`directory-skills-${p.name}`}
+                  >
+                    <Award size={12} />
+                  </button>
                   <button className="f-btn f-btn-ghost f-btn-sm" onClick={() => setEditing(p)} aria-label={`Edit ${p.name}'s profile`}>
                     <Pencil size={12} />
                   </button>
@@ -429,6 +443,12 @@ export function DirectoryTab() {
               <div><span className="font-medium text-foreground/70">Manager:</span> {p.managerName ?? "—"}</div>
               <div><span className="font-medium text-foreground/70">Location:</span> {p.location || "—"}</div>
               {p.skills && <div className="truncate"><span className="font-medium text-foreground/70">Skills:</span> {p.skills}</div>}
+              {(p.skillMap?.length ?? 0) > 0 && (
+                <div data-testid="directory-top-skills">
+                  <span className="font-medium text-foreground/70">Top skills:</span>{" "}
+                  {topSkills(p.skillMap ?? []).map((t) => `${t.label} ${t.rating}/5`).join(" · ")}
+                </div>
+              )}
             </div>
             <div className="mt-2">
               <RoleBadge role={p.role as never} />
@@ -466,6 +486,16 @@ export function DirectoryTab() {
         description="Request, receive and verify the identification documents (P36/EM-21)"
       >
         {docsFor && <EmployeeDocumentsPanel userId={docsFor.userId} self={false} />}
+      </Modal>
+
+      {/* P37 (EM-18) — the rated skill-map panel. */}
+      <Modal
+        open={skillsFor !== null}
+        onClose={() => setSkillsFor(null)}
+        title={skillsFor ? `${skillsFor.name} — skill map` : ""}
+        description="The rated skill record (P37/EM-18) — HR rates, the proficiency labels derive"
+      >
+        {skillsFor && <SkillMapPanel userId={skillsFor.userId} self={false} />}
       </Modal>
     </div>
   );

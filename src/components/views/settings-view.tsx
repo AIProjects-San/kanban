@@ -16,6 +16,8 @@ import { MyReviewsSection } from "./hr-reviews";
 import { MyOnboardingSection } from "./hr-onboarding";
 // P36 (EM-21) — my identification documents (the self-service submission).
 import { MyDocumentsSection } from "../ui/employee-documents-panel";
+// P37 (EM-18) — my rated skill map (read-only; HR owns the ratings).
+import { MySkillMapSection } from "../ui/skill-map-panel";
 import { Field } from "../ui/field";
 import { PasswordInput } from "../ui/password-input";
 import { AvatarColorPicker } from "../ui/avatar-color-picker";
@@ -174,6 +176,10 @@ export function SettingsView({ user }: SettingsViewProps) {
       {/* P36 (EM-21) — my identification documents: the member submits,
           HR verifies. */}
       <MyDocumentsSection />
+
+      {/* P37 (EM-18) — my rated skill map (read-only; the free-text
+          summary above is the member's own). */}
+      <MySkillMapSection />
 
       {/* Security — change password */}
       <SecuritySection userId={user.id} email={user.email} />

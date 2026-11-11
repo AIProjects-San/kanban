@@ -120,6 +120,9 @@ async function main() {
   await db.documentTypeConfig.deleteMany();
   // P36 — the employee identification-document rows (seeded below).
   await db.employeeDocument.deleteMany();
+  // P37 — the skill master + the employee skill maps (seeded below).
+  await db.employeeSkill.deleteMany();
+  await db.skill.deleteMany();
   await db.onboardingTemplateTask.deleteMany();
   await db.offerTemplate.deleteMany();
   await db.offerRecord.deleteMany();
@@ -2448,6 +2451,48 @@ async function main() {
     });
     console.log("  ✓ P36 employee documents: Hana's IRD verified · Diego's passport requested (self-service submission)");
   }
+
+  // -----------------------------------------------------------------
+  // P37 (EM-19, PF-07, EM-18) — the skill master + employee skill maps.
+  // The master is the SHARED source (the interview round-template epic
+  // joins on the same keys); the map is the structured per-employee
+  // record HR rates (the free-text `skills` string stays the quick
+  // self-service summary).
+  // -----------------------------------------------------------------
+  const SKILL_MASTER = [
+    { key: "react", label: "React", description: "Component architecture, hooks, performance", sortOrder: 10 },
+    { key: "typescript", label: "TypeScript", description: "Strict typing, generics, module design", sortOrder: 20 },
+    { key: "accessibility", label: "Accessibility", description: "WCAG, ARIA, keyboard flows", sortOrder: 30 },
+    { key: "design_systems", label: "Design Systems", description: "Tokens, components, documentation", sortOrder: 40 },
+    { key: "user_research", label: "User Research", description: "Interviews, usability testing, synthesis", sortOrder: 50 },
+    { key: "api_design", label: "API Design", description: "REST conventions, versioning, contracts", sortOrder: 60 },
+    { key: "kubernetes", label: "Kubernetes", description: "Deployments, operators, observability", sortOrder: 70 },
+    { key: "people_ops", label: "People Ops", description: "Onboarding design, coaching, policy", sortOrder: 80 },
+  ];
+  for (const t of SKILL_MASTER) {
+    await db.skill.create({ data: t });
+  }
+  const hrId3 = (await db.user.findUnique({ where: { email: "remy@fernly.app" }, select: { id: true } }))?.id ?? "";
+  const RATED = (name, skillKey, label, rating, notes) => {
+    const uid = userByName.get(name);
+    return uid ? { userId: uid, skillKey, label, rating, notes, assessedById: hrId3, assessedAt: addDays(TODAY, -7) } : null;
+  };
+  const SKILL_MAPS = [
+    RATED("Theo Vance", "react", "React", 5, "Owns the design-system review."),
+    RATED("Theo Vance", "typescript", "TypeScript", 4, "Strict-mode champion."),
+    RATED("Theo Vance", "accessibility", "Accessibility", 5, "Runs the a11y audits."),
+    RATED("Yuki Tanaka", "design_systems", "Design Systems", 5, "Tokens + docs owner."),
+    RATED("Yuki Tanaka", "user_research", "User Research", 3, "Pairs with Amara."),
+    RATED("Amara Diallo", "user_research", "User Research", 5, "Leads the interview program."),
+    RATED("Amara Diallo", "design_systems", "Design Systems", 2, "Consumes, designs around."),
+    RATED("Lena Okafor", "api_design", "API Design", 4, "Versioned the public API."),
+    RATED("Rafael Costa", "kubernetes", "Kubernetes", 4, "Operator rollout owner."),
+    RATED("Remy Laurent", "people_ops", "People Ops", 5, "Onboarding redesign lead."),
+  ].filter(Boolean);
+  if (SKILL_MAPS.length > 0) {
+    await db.employeeSkill.createMany({ data: SKILL_MAPS });
+  }
+  console.log(`  ✓ P37 skills: ${SKILL_MASTER.length} master rows + ${SKILL_MAPS.length} ratings (Theo 3 · avg 4.7 Expert, Yuki's design systems 5/5, Remy people-ops 5/5)`);
 
   // -----------------------------------------------------------------
   // F2.10 (F-R8) — the ONE onboarding template source: the canonical

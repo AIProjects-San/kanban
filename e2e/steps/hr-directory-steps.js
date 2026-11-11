@@ -542,3 +542,115 @@ When("I verify the identification document {string}", async function (label) {
   await driver.executeScript("arguments[0].click();", btn);
   await driver.sleep(1_200);
 });
+
+// P37 (EM-19, PF-07, EM-18) — the skill master + employee skill maps: the
+// card's top-skills line, the map panel and the member read-only view.
+
+Then("the directory card for {string} should show top skills including {string}", async function (name, expected) {
+  const card = await directoryCard(this, name);
+  const line = await card.findElement(By.css("[data-testid='directory-top-skills']"));
+  const text = await line.getText();
+  assert.ok(text.includes(expected), `"${name}" top skills does not include "${expected}" (got: ${text})`);
+});
+
+async function openSkillPanel(world, name) {
+  const driver = await world.getDriver();
+  await openDirectoryTab(world);
+  const btn = await driver.wait(
+    until.elementLocated(By.xpath(`//button[@data-testid='directory-skills-${name}']`)),
+    10_000,
+    `skill-map button for ${name} not found`,
+  );
+  await driver.executeScript("arguments[0].click();", btn);
+  return driver.wait(
+    until.elementLocated(By.css("[data-testid='skill-map-panel']")),
+    10_000,
+    "skill-map panel did not render",
+  );
+}
+
+When("I open the skill map panel for {string}", async function (name) {
+  await openSkillPanel(this, name);
+});
+
+Then("the skill map summary shows no rated skills yet", async function () {
+  const driver = await this.getDriver();
+  const summary = await driver.wait(
+    until.elementLocated(By.css("[data-testid='skill-map-summary']")),
+    10_000,
+  );
+  const text = await summary.getText();
+  assert.ok(/no rated skills yet/.test(text), `summary does not show the empty state (got: ${text})`);
+});
+
+Then("the skill map summary shows {int} skill(s)", async function (count) {
+  const driver = await this.getDriver();
+  const summary = await driver.wait(
+    until.elementLocated(By.css("[data-testid='skill-map-summary']")),
+    10_000,
+  );
+  const text = await summary.getText();
+  assert.ok(new RegExp(`^${count} skill`).test(text), `summary does not show ${count} skill(s) (got: ${text})`);
+});
+
+When("I rate the {string} skill {int} with note {string}", async function (label, rating, note) {
+  const driver = await this.getDriver();
+  const select = await driver.wait(
+    until.elementLocated(By.css("[data-testid='skill-rate-select']")),
+    10_000,
+    "skill select not found",
+  );
+  const value = await driver.executeScript(
+    `const el = arguments[0];
+     return Array.from(el.options).find(o => o.textContent.includes(arguments[1]))?.value ?? "";`,
+    select, label,
+  );
+  await driver.executeScript(
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    select, value,
+  );
+  const ratingSelect = await driver.findElement(By.css("[data-testid='skill-rate-value']"));
+  await driver.executeScript(
+    `const el = arguments[0], val = String(arguments[1]);
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    ratingSelect, rating,
+  );
+  const noteInput = await driver.findElement(By.xpath("//form[@data-testid='skill-rate-form']//input"));
+  await noteInput.clear();
+  await noteInput.sendKeys(note);
+  await driver.findElement(By.xpath("//form[@data-testid='skill-rate-form']//button[contains(., 'Rate')]")).click();
+  await driver.sleep(1_200);
+});
+
+Then("the skill map shows {string} rated {string}", async function (label, ratingText) {
+  const driver = await this.getDriver();
+  const chip = await driver.wait(
+    until.elementLocated(By.css(`[data-testid='skill-rating-${label}']`)),
+    10_000,
+    `rating chip for "${label}" not found`,
+  );
+  const text = await chip.getText();
+  assert.ok(text.includes(ratingText), `"${label}" rating chip does not show "${ratingText}" (got: ${text})`);
+});
+
+Then("my skill map shows {string} rated {string}", async function (label, ratingText) {
+  const driver = await this.getDriver();
+  const chip = await driver.wait(
+    until.elementLocated(By.css(`[data-testid='skill-rating-${label}']`)),
+    10_000,
+    `rating chip for "${label}" not found in settings`,
+  );
+  const text = await chip.getText();
+  assert.ok(text.includes(ratingText), `"${label}" does not show "${ratingText}" (got: ${text})`);
+});
+
+Then("my skill map shows no rating form", async function () {
+  const driver = await this.getDriver();
+  const forms = await driver.findElements(By.css("[data-testid='skill-rate-form']"));
+  assert.strictEqual(forms.length, 0, "the read-only mount must not render the rating form");
+});

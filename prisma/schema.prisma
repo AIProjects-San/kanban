@@ -90,6 +90,9 @@ model User {
   // lifecycle: REQUESTED → RECEIVED → VERIFIED | REJECTED).
   employeeDocuments EmployeeDocument[] @relation("EmployeeDocuments")
 
+  // P37 (EM-18) — the employee's structured skill-map rows.
+  skillMap EmployeeSkill[] @relation("EmployeeSkillMap")
+
   @@index([managerId])
 }
 
@@ -1682,6 +1685,50 @@ model FullAndFinalStatement {
 // A stage in the workspace's hiring pipeline template. ownerRole is the
 // DEFAULT owner (display hint; concrete per-candidate owner is
 // CandidateStage.ownerUserId — e.g. the assigned interviewer).
+// ---------------------------------------------------------------------------
+// P37 (EM-19, PF-07, EM-18) — the skill master + employee skill maps.
+//
+// The benchmark's Skill master is SHARED between employee skill maps and
+// interview Expected Skill Sets (the round-template epic rides the same
+// master). Rows are referenced by KEY so label renames never orphan
+// history — the DocumentTypeConfig discipline.
+// ---------------------------------------------------------------------------
+model Skill {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  description String   @default("")
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
+// P37 (EM-18) — one RATED skill per employee (the structured record HR
+// curates; the free-text profile `skills` string stays as the quick
+// self-service summary). rating 1–5; proficiency labels derive at read.
+model EmployeeSkill {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("EmployeeSkillMap", fields: [userId], references: [id], onDelete: Cascade)
+  // Skill.key — stable identifier; label is a snapshot.
+  skillKey     String
+  label        String
+  // 1–5 (validated at the zod boundary; default 3 = "solid").
+  rating       Int       @default(3)
+  notes        String    @default("")
+  assessedById String    @default("")
+  assessedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([userId, skillKey])
+  @@index([userId])
+  @@index([skillKey])
+}
+
 model HiringStageConfig {
   id          String   @id @default(cuid())
   key         String   @unique

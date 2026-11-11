@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["employeeProfile", "user", "auditLog"];
+  const models = ["employeeProfile", "user", "auditLog", "employeeSkill"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -98,6 +98,8 @@ beforeEach(() => {
   db.employeeProfile.upsert.mockResolvedValue({});
   db.user.findMany.mockResolvedValue([]);
   db.user.findUnique.mockResolvedValue(null);
+  // P37 — the batched skill-map read (empty = no rated rows).
+  db.employeeSkill.findMany.mockResolvedValue([]);
   // P33 — the retirement-age knob's config read (null = not configured).
   getWorkspaceConfigMock.mockResolvedValue({ workspace: { retirementAge: null } });
 });

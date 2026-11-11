@@ -143,3 +143,30 @@ Feature: HR employee directory
     And I open the "Directory" tab
     And I open the identification documents panel for "Hana Park"
     Then the identification panel shows "Tax Number (IRD)" as "Verified"
+
+  # P37 (EM-19, PF-07, EM-18) — the skill master + the employee skill maps:
+  # the rated record on the profile card + the map panel + the member's
+  # read-only view.
+
+  Scenario: The directory card shows the top-rated skills
+    When I sign in as "manager@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Directory" tab
+    Then the directory card for "Theo Vance" should show top skills including "React 5/5"
+    And the directory card for "Theo Vance" should show top skills including "Accessibility 5/5"
+
+  Scenario: HR opens the skill map and rates a skill
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Directory" tab
+    And I open the skill map panel for "Diego Morales"
+    Then the skill map summary shows no rated skills yet
+    And I rate the "Kubernetes" skill 4 with note "cluster rollout owner"
+    Then the skill map shows "Kubernetes" rated "4/5 · Advanced"
+    And the skill map summary shows 1 skill
+
+  Scenario: The member sees their own rated skill map read-only
+    When I sign in as "diego@fernly.app" with the demo password
+    And I open the "Settings" view
+    Then my skill map shows "Kubernetes" rated "4/5 · Advanced"
+    And my skill map shows no rating form

@@ -150,6 +150,11 @@ export type AuditAction =
   | "hr.employee_document_submitted"
   | "hr.employee_document_verified"
   | "hr.employee_document_rejected"
+  // P37 (EM-19/EM-18) — the skill master + the employee skill map.
+  | "hr.skill_saved"
+  | "hr.skill_deleted"
+  | "hr.employee_skill_rated"
+  | "hr.employee_skill_removed"
   // Recruitment module lifecycle (docs/RECRUITMENT_MODULE_PLAN.md)
   | "hiring.candidate_created"
   | "hiring.candidate_updated"
@@ -358,6 +363,10 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.employee_document_submitted": { icon: Upload, cls: "text-amber-500 bg-amber-500/10" },
   "hr.employee_document_verified": { icon: BadgeCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "hr.employee_document_rejected": { icon: FileX, cls: "text-red-500 bg-red-500/10" },
+  "hr.skill_saved": { icon: Award, cls: "text-primary bg-primary/10" },
+  "hr.skill_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "hr.employee_skill_rated": { icon: Award, cls: "text-amber-500 bg-amber-500/10" },
+  "hr.employee_skill_removed": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "onboarding.template_task_saved": { icon: Plus, cls: "text-primary bg-primary/10" },

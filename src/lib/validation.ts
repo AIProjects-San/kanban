@@ -921,6 +921,34 @@ export const rejectDocumentSchema = z.object({
 }).strict();
 
 // -------------------------------------------------------------------------
+// P37 (EM-19, PF-07, EM-18) — the skill master + employee skill maps.
+// -------------------------------------------------------------------------
+
+export const saveSkillSchema = z.object({
+  id: cuidish.optional(),
+  key: z.string().trim().min(1, "A key is required.").max(60).regex(/^[a-z0-9_]+$/, "Lowercase letters, digits and underscores only."),
+  label: z.string().trim().min(1, "A label is required.").max(120),
+  description: z.string().trim().max(500).default(""),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(9_999).default(0),
+}).strict();
+
+export const deleteSkillSchema = z.object({
+  id: cuidish,
+}).strict();
+
+export const upsertEmployeeSkillSchema = z.object({
+  userId: cuidish,
+  skillKey: z.string().trim().min(1).max(60),
+  rating: z.number().int().min(1, "Rating must be 1-5.").max(5, "Rating must be 1-5."),
+  notes: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const removeEmployeeSkillSchema = z.object({
+  id: cuidish,
+}).strict();
+
+// -------------------------------------------------------------------------
 // P36 (EM-21) — employee identification documents (the DocumentTypeConfig
 // scope axis + the EmployeeDocument lifecycle).
 // -------------------------------------------------------------------------

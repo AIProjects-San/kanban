@@ -433,6 +433,9 @@ export interface EmployeeProfileT {
   emergencyContactName: string;
   emergencyContactPhone: string;
   skills: string;
+  /** P37 (EM-18) — the structured map (rated rows; the free-text string
+   * above stays the quick self-service summary). */
+  skillMap: { skillKey: string; label: string; rating: number }[];
   notes: string;
   // F1.6 — employment lifecycle (written only by transitionEmployment for
   // the status itself; the three plain fields are HR-editable facts).
@@ -706,6 +709,39 @@ export interface DocumentTypeConfigT {
   scope: "CANDIDATE" | "EMPLOYEE";
   sortOrder: number;
   isActive: boolean;
+}
+
+/** P37 (EM-19, PF-07) — one row of the SHARED skill master. */
+export interface SkillT {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/** P37 (EM-18) — one RATED skill on an employee's map. */
+export interface EmployeeSkillT {
+  id: string;
+  userId: string;
+  userName: string;
+  skillKey: string;
+  label: string;
+  rating: number;
+  /** The derived proficiency label (Learning…Expert). */
+  proficiency: string;
+  notes: string;
+  assessedBy: string | null;
+  assessedAt: string | null;
+}
+
+/** P37 (EM-18) — an employee's map + the master it draws from. */
+export interface SkillMapT {
+  entries: EmployeeSkillT[];
+  skills: SkillT[];
+  summary: string;
+  canManage: boolean;
 }
 
 /** P36 (EM-21) — one identification document being collected from one

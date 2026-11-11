@@ -39,6 +39,7 @@ function serialize(
     hireDate: Date | null; birthDate: Date | null; phone: string; location: string;
     emergencyContactName: string; emergencyContactPhone: string;
     skills: string; notes: string; createdAt: Date; updatedAt: Date;
+    skillMap?: { skillKey: string; label: string; rating: number }[] | null;
     employmentStatus: string; probationEndsAt: Date | null;
     noticePeriodWeeks: number | null; lastWorkingDay: Date | null;
   },
@@ -69,6 +70,7 @@ function serialize(
     emergencyContactName: row.emergencyContactName,
     emergencyContactPhone: row.emergencyContactPhone,
     skills: row.skills,
+    skillMap: row.skillMap ?? [],
     notes: row.notes,
     // F1.6 — employment lifecycle ("" = not tracked, rendered as "—").
     employmentStatus: row.employmentStatus as EmployeeProfileT["employmentStatus"],
@@ -110,12 +112,27 @@ export async function getDirectory(): Promise<
       getWorkspaceConfig(),
     ]);
     const usersById = new Map(users.map((u) => [u.id, u]));
+    // P37 (EM-18) — the batched skill-map read (ONE query for the whole
+    // roster — the PR-21 cap discipline; grouped per user in JS).
+    const skillRows = await db.employeeSkill.findMany({
+      select: { userId: true, skillKey: true, label: true, rating: true },
+      take: 2000,
+    });
+    const skillMapByUser = new Map<string, { skillKey: string; label: string; rating: number }[]>();
+    for (const r of skillRows) {
+      const list = skillMapByUser.get(r.userId) ?? [];
+      list.push({ skillKey: r.skillKey, label: r.label, rating: r.rating });
+      skillMapByUser.set(r.userId, list);
+    }
 
     const profiles: EmployeeProfileT[] = [];
     for (const row of rows) {
       const u = usersById.get(row.userId);
       if (!u) continue; // profile of a deleted user — hidden from the roster
-      profiles.push(serialize(row, { name: u.name, email: u.email, role: u.role, managerName: await managerNameOf(row.userId, usersById) }));
+      profiles.push(serialize(
+        { ...row, skillMap: skillMapByUser.get(row.userId) ?? [] },
+        { name: u.name, email: u.email, role: u.role, managerName: await managerNameOf(row.userId, usersById) },
+      ));
     }
     return {
       profiles,
@@ -138,7 +155,15 @@ export async function getMyProfile(): Promise<ActionResult<EmployeeProfileT | nu
     const manager = me.managerId
       ? await db.user.findUnique({ where: { id: me.managerId }, select: { name: true } })
       : null;
-    return serialize(row, { name: me.name, email: me.email, role: me.role, managerName: manager?.name ?? null });
+    // P37 (EM-18) — the member's own rated map rides the self-service read.
+    const mySkills = await db.employeeSkill.findMany({
+      where: { userId: auth.userId },
+      select: { skillKey: true, label: true, rating: true },
+    });
+    return serialize(
+      { ...row, skillMap: mySkills },
+      { name: me.name, email: me.email, role: me.role, managerName: manager?.name ?? null },
+    );
   });
 }
 
