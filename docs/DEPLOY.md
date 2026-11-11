@@ -290,8 +290,10 @@ staging deploy → smoke test → production deploy`.
   purges), then the **HR daily dispatcher** `/api/cron/daily`
   (P26/PL-03) — one route carrying every HR job in a fixed order: the
   leave-allocation ledger pass (earned-leave grants, year-end rollover,
-  carry lapse), the engagement-reminders digests (P25) and the
-  interview-reminders nudges (P26); new HR jobs register inside that
+  carry lapse), the engagement-reminders digests (P25), the
+  interview-reminders nudges (P26) and the encashment auto-draft pass
+  (P31 — opt-in, gated by the `autoLeaveEncashment` workspace switch,
+  default OFF); new HR jobs register inside that
   route, not in compose. Each job keeps its own maintenance-lock identity
   and its own idempotency (deterministic sourceKeys), so a doubled
   trigger runs each pass exactly once, and one job failing never aborts
@@ -302,8 +304,8 @@ staging deploy → smoke test → production deploy`.
   response's `lockBackend` field says which backend guarded the run
   (`redis` / `memory`). The standalone per-job routes
   (`/api/cron/leave-allocation`, `/api/cron/employee-reminders`,
-  `/api/cron/interview-reminders`) stay available for deployments that
-  schedule jobs individually.
+  `/api/cron/interview-reminders`, `/api/cron/leave-encashment`) stay
+  available for deployments that schedule jobs individually.
 - **Prometheus metrics (PR-32):** `GET /api/metrics` serves the standard
   text exposition format — per-instance gauges for app/DB/Redis up-ness,
   process uptime + memory, event-loop lag, and the last successful

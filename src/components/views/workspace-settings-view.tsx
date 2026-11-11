@@ -465,6 +465,28 @@ function GeneralSettings({ config, reload }: { config: WorkspaceConfig; reload: 
               </span>
             </span>
           </label>
+          {/* P31 (LV-J02 / LV-09's remainder) — the encashment auto-draft
+              switch (the benchmark's daily generate_leave_encashment job).
+              Off by default: drafting encashment requests on members'
+              behalf is a workspace policy choice, never a surprise queue
+              row. One live draft per (member × encashable type × year); a
+              rejection stands for the year. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3 cursor-pointer" data-testid="auto-encashment-toggle">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.autoLeaveEncashment ?? false}
+              onChange={(e) => setForm({ ...form, autoLeaveEncashment: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Auto-draft leave encashment</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                The daily scheduler drafts one encashment request per member whose balance exceeds the type&apos;s
+                non-encashable floor (capped per request, quarter-day steps) — pending in the HR queue, payout next
+                month. One live draft per member and type; a rejection stands for the year.
+              </span>
+            </span>
+          </label>
           {/* P25 (PL-02/EM-23) — the engagement reminder switches (the
               benchmark HR Settings' reminders block, incl. its
               stop-birthday-reminders field). The three in-app digests fire

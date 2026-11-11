@@ -9,7 +9,15 @@ import { describe, it, expect } from "vitest";
 // GROSS_OVER_WORKING_DAYS rate math. Pure — no mocks, no db.
 // ---------------------------------------------------------------------------
 
-import { planLeaveEncashment, encashmentDailyRate, encashmentAmount } from "@/lib/leave-encashment";
+import {
+  planLeaveEncashment,
+  encashmentDailyRate,
+  encashmentAmount,
+  dueEncashmentAutoDrafts,
+  nextPayoutPeriod,
+  type EncashmentAutoDraftCandidate,
+  type EncashmentAutoDraftSwitches,
+} from "@/lib/leave-encashment";
 
 const POLICY = { encashable: true, maxEncashableDays: 5, nonEncashableDays: 5 };
 
@@ -79,5 +87,182 @@ describe("encashmentDailyRate / encashmentAmount (F2.1 basis)", () => {
     expect(encashmentAmount(2.5, 319.05)).toBe(797.63); // 797.625 → 797.63
     expect(encashmentAmount(0, 319.05)).toBe(0);
     expect(encashmentAmount(3, -1)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P31 (LV-J02 / LV-09's remainder) — the auto-draft planner. One rule, both
+// callers: every planned draft re-validates through planLeaveEncashment, so
+// the matrix below double-pins the invariant.
+// ---------------------------------------------------------------------------
+
+const SWITCH_ON: EncashmentAutoDraftSwitches = { autoLeaveEncashment: true };
+
+function candidate(overrides: Partial<EncashmentAutoDraftCandidate>): EncashmentAutoDraftCandidate {
+  return {
+    userId: "u-1",
+    leaveTypeId: "lt-1",
+    leaveTypeName: "Annual Leave",
+    policy: POLICY,
+    availableDays: 20,
+    hasLiveDraft: false,
+    hasRejectedDraft: false,
+    ...overrides,
+  };
+}
+
+describe("nextPayoutPeriod (the day-after-month key)", () => {
+  it("rolls November into December, and December into next January", () => {
+    expect(nextPayoutPeriod("2026-11-10")).toBe("2026-12");
+    expect(nextPayoutPeriod("2026-12-25")).toBe("2027-01");
+    expect(nextPayoutPeriod("2027-01-31")).toBe("2027-02");
+  });
+
+  it("pads single-digit months", () => {
+    expect(nextPayoutPeriod("2026-03-09")).toBe("2026-04");
+  });
+});
+
+describe("dueEncashmentAutoDrafts (the pure rule)", () => {
+  it("the switch off → not a single draft (the workspace gate)", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [candidate({})],
+      switches: { autoLeaveEncashment: false },
+    });
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("drafts the days above the floor, capped per request — payout = next month", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [candidate({})],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toEqual([
+      {
+        userId: "u-1",
+        leaveTypeId: "lt-1",
+        leaveTypeName: "Annual Leave",
+        days: 5, // min(20 − 5 floor, 5 cap)
+        payoutPeriod: "2026-12",
+      },
+    ]);
+  });
+
+  it("a zero cap = no per-request limit — the whole over-floor balance", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [candidate({ policy: { ...POLICY, maxEncashableDays: 0 } })],
+      switches: SWITCH_ON,
+    });
+    expect(drafts[0].days).toBe(15); // 20 − 5 floor
+  });
+
+  it("a non-encashable type never drafts", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [candidate({ policy: { ...POLICY, encashable: false } })],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("a live draft (PENDING or APPROVED-unpaid) blocks the pair — the idempotency rule", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [candidate({ hasLiveDraft: true })],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("a rejected draft stands for the year — no daily re-litigation of a no", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [candidate({ hasRejectedDraft: true })],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("at or below the floor → nothing to sell", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [
+        candidate({ availableDays: 5 }), // exactly the floor
+        candidate({ availableDays: 3 }), // under it
+      ],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("fractional headroom floors to quarter-day steps (10.3 → 10.25)", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [candidate({ policy: { ...POLICY, maxEncashableDays: 0, nonEncashableDays: 0 }, availableDays: 10.3 })],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].days).toBe(10.25);
+  });
+
+  it("headroom under a quarter day drafts nothing", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-11-10",
+      candidates: [
+        candidate({ policy: { ...POLICY, maxEncashableDays: 0, nonEncashableDays: 0 }, availableDays: 0.1 }),
+        candidate({ policy: { ...POLICY, maxEncashableDays: 0 }, availableDays: 5.1 }), // floor 5 → headroom 0.1
+      ],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("every planned draft survives planLeaveEncashment verbatim (one rule, both callers)", () => {
+    // The invariant loop: for a matrix of knobs and balances, each planned
+    // days value must be exactly what the member-facing validation accepts.
+    const knobs = [
+      { encashable: true, maxEncashableDays: 0, nonEncashableDays: 0 },
+      { encashable: true, maxEncashableDays: 5, nonEncashableDays: 5 },
+      { encashable: true, maxEncashableDays: 45, nonEncashableDays: 1 },
+      POLICY,
+    ];
+    const balances = [0.1, 0.25, 1.5, 5, 7.75, 10.3, 20, 61];
+    for (const policy of knobs) {
+      for (const availableDays of balances) {
+        const drafts = dueEncashmentAutoDrafts({
+          asOf: "2026-11-10",
+          candidates: [candidate({ policy, availableDays })],
+          switches: SWITCH_ON,
+        });
+        for (const d of drafts) {
+          const plan = planLeaveEncashment(policy, d.days, availableDays);
+          expect(plan.ok, `policy ${JSON.stringify(policy)} / avail ${availableDays} → days ${d.days}`).toBe(true);
+          if (plan.ok) expect(plan.days).toBe(d.days);
+        }
+      }
+    }
+  });
+
+  it("two pairs plan independently (different floors, different types)", () => {
+    const drafts = dueEncashmentAutoDrafts({
+      asOf: "2026-12-01",
+      candidates: [
+        candidate({}),
+        candidate({
+          userId: "u-2",
+          leaveTypeId: "lt-2",
+          leaveTypeName: "Sick Leave",
+          policy: { encashable: true, maxEncashableDays: 0, nonEncashableDays: 2 },
+          availableDays: 8,
+        }),
+      ],
+      switches: SWITCH_ON,
+    });
+    expect(drafts).toHaveLength(2);
+    expect(drafts[1].days).toBe(6);
+    expect(drafts[1].payoutPeriod).toBe("2027-01"); // December rolls over
   });
 });

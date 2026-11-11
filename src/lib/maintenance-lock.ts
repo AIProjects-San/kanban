@@ -51,6 +51,11 @@ export const EMPLOYEE_REMINDERS_LOCK_KEY = `${redisKeyPrefix()}maintenance:emplo
  * (the day-of interviewer nudges; the fourth job the daily dispatcher
  * carries). Same discipline: one job's run never suppresses another's. */
 export const INTERVIEW_REMINDERS_LOCK_KEY = `${redisKeyPrefix()}maintenance:interview_reminders`;
+/** P31 (LV-J02/LV-09's remainder) — the encashment auto-draft job's own
+ * lock identity (the benchmark's daily generate_leave_encashment; the
+ * fifth job the daily dispatcher carries). Same discipline: one job's
+ * run never suppresses another's. */
+export const ENCASHMENT_AUTO_DRAFT_LOCK_KEY = `${redisKeyPrefix()}maintenance:encashment_auto_draft`;
 
 export interface MaintenanceLockResult {
   acquired: boolean;

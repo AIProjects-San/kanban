@@ -5,12 +5,17 @@ import {
 } from "@/lib/leave-allocation-core";
 import { runEmployeeRemindersJob } from "@/lib/employee-reminders";
 import { runInterviewRemindersJob } from "@/lib/interview-reminders";
+import {
+  runEncashmentAutoDraftJob,
+  sendEncashmentAutoDraftFailureAlarm,
+} from "@/lib/encashment-auto-draft";
 import { captureError, logError } from "@/lib/observability";
 import {
   tryAcquireMaintenanceLock,
   LEAVE_ALLOCATION_LOCK_KEY,
   EMPLOYEE_REMINDERS_LOCK_KEY,
   INTERVIEW_REMINDERS_LOCK_KEY,
+  ENCASHMENT_AUTO_DRAFT_LOCK_KEY,
 } from "@/lib/maintenance-lock";
 
 // ---------------------------------------------------------------------------
@@ -28,8 +33,9 @@ import {
 //   2. employee-reminders — the engagement digests: birthdays, work
 //      anniversaries, advance holidays (P25 / PL-02, EM-J01–03)
 //   3. interview-reminders — the day-of interviewer nudges (P26 / RJ-B18)
-//   (P31's encashment auto-draft joins here when its epic lands — the
-//   dispatcher is the single registration point for new HR jobs.)
+//   4. encashment-auto-draft — the opt-in encashment proposals for
+//      balances over the floor (P31 / LV-J02, LV-09's remainder;
+//      gated by the Workspace.autoLeaveEncashment switch, default OFF)
 //
 // NOT carried: the platform audit purge (/api/cron/prune-audit) — launch
 // gate 12's own endpoint, called first in the compose loop. The HR jobs
@@ -156,6 +162,24 @@ async function handle(req: Request): Promise<NextResponse> {
     await runJob("interview-reminders", INTERVIEW_REMINDERS_LOCK_KEY, async () =>
       (await runInterviewRemindersJob()) as unknown as Record<string, unknown>,
     ),
+  );
+  jobs.push(
+    await runJob("encashment-auto-draft", ENCASHMENT_AUTO_DRAFT_LOCK_KEY, async () => {
+      const report = await runEncashmentAutoDraftJob();
+      // P31 — the LV-B18 failure-alarm discipline riding this job too
+      // (the core module owns the alarm so every caller is identical).
+      if (report.failures > 0) {
+        await sendEncashmentAutoDraftFailureAlarm(report).catch((err: unknown) => {
+          logError("[daily:encashment-auto-draft] failure alarm failed:", err);
+          captureError(err, {
+            route: "/api/cron/daily",
+            job: "encashment-auto-draft",
+            phase: "failure-alarm",
+          });
+        });
+      }
+      return report as unknown as Record<string, unknown>;
+    }),
   );
 
   const allOk = jobs.every((j) => j.ok);

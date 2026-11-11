@@ -616,6 +616,19 @@ model Workspace {
   // nudged interview, rendered through the P24 template registry). Default
   // OFF = the F-R17 zero-mail posture.
   emailInterviewReminders Boolean @default(false)
+  // P31 (LV-J02 / LV-09's remainder) — the encashment auto-draft switch
+  // (the benchmark's daily generate_leave_encashment job, whose HR Settings
+  // enablement gates the whole pass). When ON, the daily dispatcher's
+  // encashment pass drafts ONE LeaveEncashment request per (member ×
+  // encashable type × year) whose ledger balance exceeds the type's
+  // non-encashable floor — quarter-stepped, capped by maxEncashableDays,
+  // landing PENDING in the HR decision queue (the S14 approver chain
+  // decides; approval consumes days through the same P2 transaction).
+  // Default OFF: drafting encashment requests on members' behalf is a
+  // workspace policy choice, never a surprise queue row. One live draft
+  // per pair; a REJECTED draft stands for the year (the documented
+  // house discipline — no daily re-draft after a no).
+  autoLeaveEncashment    Boolean @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

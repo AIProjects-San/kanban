@@ -106,3 +106,29 @@ export function leaveJobFailureEmailText(
     "— Fernly HR",
   ].join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// P31 (LV-J02) — the encashment auto-draft failure alarm, the same contract
+// as the allocation pass's above (the LV-B18 discipline riding the new job).
+// ---------------------------------------------------------------------------
+
+export function encashmentDraftFailureEmailSubject(): string {
+  return "Automatic leave encashment drafts failed";
+}
+
+export function encashmentDraftFailureEmailText(
+  asOf: string,
+  failures: Array<{ leaveTypeName: string; reason: string }>,
+): string {
+  const shown = failures.slice(0, 10);
+  return [
+    `The daily encashment auto-draft pass (${asOf}) recorded ${failures.length} failure(s):`,
+    "",
+    ...shown.map((f) => `- ${f.leaveTypeName} (draft phase): ${f.reason}`),
+    ...(failures.length > shown.length ? [`- … and ${failures.length - shown.length} more (see the Outbox copy in Fernly)`] : []),
+    "",
+    "The next daily pass re-plans every pair idempotently. If a failure repeats, check the error log.",
+    "",
+    "— Fernly HR",
+  ].join("\n");
+}

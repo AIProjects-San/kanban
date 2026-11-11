@@ -233,6 +233,11 @@ export const workspaceSettingsSchema = z.object({
   // + its opt-in email rail (default OFF).
   remindInterviews: z.boolean().optional(),
   emailInterviewReminders: z.boolean().optional(),
+  // P31 (LV-J02 / LV-09's remainder) — the encashment auto-draft switch
+  // (default OFF = the pre-P31 pass is byte-identical; the daily
+  // dispatcher's encashment pass drafts one pending LeaveEncashment per
+  // encashable pair whose balance exceeds the floor).
+  autoLeaveEncashment: z.boolean().optional(),
 }).strict(); // reject unknown keys
 
 /**

@@ -182,8 +182,9 @@ services:
           # doubled trigger runs each pass exactly once. Jobs carried: the
           # leave-allocation ledger pass (earned-leave grants, year-end
           # rollover, carry lapse), the engagement-reminders digests (P25),
-          # and the interview-reminders nudges (P26); new HR jobs register
-          # in this route, not here (P31's encashment auto-draft joins it).
+          # the interview-reminders nudges (P26), and the encashment
+          # auto-draft pass (P31 — opt-in, default OFF); new HR jobs
+          # register in this route, not here.
           echo "[audit-cron] $$(date -u +%FT%TZ) calling /api/cron/daily"
           wget -q -O- --server-response \
             --header="Authorization: Bearer $${CRON_SECRET}" \

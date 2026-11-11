@@ -92,6 +92,11 @@ export async function updateWorkspaceSettings(input: Partial<{
    * rail (Settings → General; the daily cron route's interview pass). */
   remindInterviews?: boolean;
   emailInterviewReminders?: boolean;
+  /** P31 (LV-J02 / LV-09's remainder) — the encashment auto-draft switch
+   * (Settings → General; the daily dispatcher's encashment pass drafts
+   * one pending LeaveEncashment per encashable pair over the floor when
+   * ON — default OFF, the pre-P31 silence). */
+  autoLeaveEncashment?: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("role:manage");

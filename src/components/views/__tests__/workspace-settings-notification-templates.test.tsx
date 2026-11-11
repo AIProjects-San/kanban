@@ -11,17 +11,18 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 // Save/Reset call the actions with the right payload.
 // ---------------------------------------------------------------------------
 
-const { loadWorkspaceConfig, updateNotificationTemplate, resetNotificationTemplate } = vi.hoisted(() => ({
+const { loadWorkspaceConfig, updateNotificationTemplate, resetNotificationTemplate, updateWorkspaceSettings } = vi.hoisted(() => ({
   loadWorkspaceConfig: vi.fn(),
   updateNotificationTemplate: vi.fn(),
   resetNotificationTemplate: vi.fn(),
+  updateWorkspaceSettings: vi.fn(),
 }));
 
 vi.mock("@/server-actions/data", () => ({
   loadWorkspaceConfig,
   updateNotificationTemplate,
   resetNotificationTemplate,
-  updateWorkspaceSettings: vi.fn(),
+  updateWorkspaceSettings,
   updateConfigItem: vi.fn(),
   createConfigItem: vi.fn(),
   deleteConfigItem: vi.fn(),
@@ -51,6 +52,7 @@ function baseConfig(notificationTemplates: WorkspaceConfig["notificationTemplate
       remindBirthdays: true, remindAnniversaries: true, remindHolidays: true,
       holidayReminderDaysAhead: 7, emailEngagementReminders: false,
       remindInterviews: true, emailInterviewReminders: false,
+      autoLeaveEncashment: false,
     },
     mail: { configured: false, provider: "none" },
     taskStatuses: [], projectStatuses: [], eventTypes: [], taskTags: [], priorities: [],
@@ -72,6 +74,7 @@ beforeEach(() => {
   loadWorkspaceConfig.mockResolvedValue({ ok: true, data: baseConfig([]) });
   updateNotificationTemplate.mockResolvedValue({ ok: true, data: undefined });
   resetNotificationTemplate.mockResolvedValue({ ok: true, data: undefined });
+  updateWorkspaceSettings.mockResolvedValue({ ok: true, data: undefined });
 });
 
 describe("P24 — the notification template editor", () => {
@@ -160,5 +163,24 @@ describe("P24 — the notification template editor", () => {
     // edited text is still in the field (the admin can fix the typo).
     expect(screen.getByTestId("tpl-badge-LEAVE_PENDING").textContent).toBe("System default");
     expect((screen.getByTestId("tpl-message-LEAVE_PENDING") as HTMLTextAreaElement).value).toBe("{{dayz}}");
+  });
+});
+
+describe("P31 — the encashment auto-draft switch (Settings → General)", () => {
+  it("renders unchecked by default; toggling + Save sends autoLeaveEncashment: true", async () => {
+    render(<WorkspaceSettingsView currentUser={CURRENT_USER} />);
+    const toggle = await screen.findByTestId("auto-encashment-toggle");
+    const input = toggle.querySelector("input[type=checkbox]") as HTMLInputElement;
+    expect(input.checked).toBe(false); // the default-OFF pin
+
+    fireEvent.click(input);
+    await waitFor(() => expect(input.checked).toBe(true));
+    // The General tab's own save button (the form's single submit).
+    fireEvent.click(screen.getByRole("button", { name: /Save settings/i }));
+
+    await waitFor(() => expect(updateWorkspaceSettings).toHaveBeenCalled());
+    expect(updateWorkspaceSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ autoLeaveEncashment: true }),
+    );
   });
 });

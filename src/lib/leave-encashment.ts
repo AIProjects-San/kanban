@@ -85,3 +85,112 @@ export function encashmentAmount(days: number, dailyRate: number): number {
   if (!Number.isFinite(days) || !Number.isFinite(dailyRate)) return 0;
   return round2(Math.max(0, days) * Math.max(0, dailyRate));
 }
+
+// ---------------------------------------------------------------------------
+// P31 (LV-J02 / LV-09's remainder) — the auto-draft planner (pure).
+//
+// The benchmark's daily generate_leave_encashment job walks every employee
+// and drafts a Leave Encashment for the balance they could sell. Fernly's
+// translation plans the drafts through the SAME planLeaveEncashment rule
+// the member-facing request validates with — a draft the manual path
+// would refuse never lands:
+//
+//   • only ENCASHABLE types opt in (the policy knob, default off);
+//   • days = available − nonEncashableDays (the floor stays forever),
+//     capped by maxEncashableDays, floored to quarter-day steps, and
+//     finally re-validated through planLeaveEncashment itself;
+//   • the payout period is the NEXT month after the pass day (money lands
+//     after review — the current month's run may already be locking);
+//   • ONE LIVE DRAFT per (member, type, year): a PENDING or
+//     APPROVED-unpaid row blocks the next (the approval will consume or
+//     return the days before the balance re-plans);
+//   • a REJECTED draft stands for the YEAR (the house discipline — HR's
+//     no is not re-litigated by the next daily pass; a new year resets).
+// ---------------------------------------------------------------------------
+
+/** The candidate facts the writer gathers per (user, type, year) pair. */
+export interface EncashmentAutoDraftCandidate {
+  userId: string;
+  leaveTypeId: string;
+  leaveTypeName: string;
+  /** The type's resolved encashment knobs (lib/leave-policy.ts). */
+  policy: EncashmentPolicy;
+  /** The CURRENT ledger projection's available days for the pair. */
+  availableDays: number;
+  /** A PENDING or APPROVED (unpaid) encashment row exists for the pair. */
+  hasLiveDraft: boolean;
+  /** A REJECTED encashment row exists for the pair this year. */
+  hasRejectedDraft: boolean;
+}
+
+/** The workspace switch gate (Workspace.autoLeaveEncashment, default off). */
+export interface EncashmentAutoDraftSwitches {
+  autoLeaveEncashment: boolean;
+}
+
+/** One planned draft: the row the writer creates, fully decided. */
+export interface DueEncashmentAutoDraft {
+  userId: string;
+  leaveTypeId: string;
+  leaveTypeName: string;
+  /** Quarter-stepped days to encash (floored at 0.25). */
+  days: number;
+  /** "YYYY-MM" — the month AFTER the pass day. */
+  payoutPeriod: string;
+}
+
+/** The next payout period after a day key ("2026-11-10" → "2026-12";
+ * December rolls into next January). Pure date arithmetic on the key. */
+export function nextPayoutPeriod(asOf: string): string {
+  const [y, m] = asOf.split("-").map(Number);
+  const year = Number.isFinite(y) ? y : 2026;
+  const month = Number.isFinite(m) && m >= 1 && m <= 12 ? m : 1;
+  return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, "0")}`;
+}
+
+/** Floor to the quarter-day grid every leave fraction moves in. */
+function quarterFloor(n: number): number {
+  return Math.floor(n * 4) / 4;
+}
+
+/**
+ * The pure rule: which candidates get an auto-draft today. The switch off
+ * → nothing (never a single row); every other skip is named above. The
+ * days ALWAYS re-validate through planLeaveEncashment — one rule, both
+ * callers (a drifted projection or a pathological knob produces no
+ * draft, not a refused row).
+ */
+export function dueEncashmentAutoDrafts(input: {
+  asOf: string;
+  candidates: EncashmentAutoDraftCandidate[];
+  switches: EncashmentAutoDraftSwitches;
+}): DueEncashmentAutoDraft[] {
+  if (!input.switches.autoLeaveEncashment) return [];
+  const payoutPeriod = nextPayoutPeriod(input.asOf);
+  const drafts: DueEncashmentAutoDraft[] = [];
+  for (const c of input.candidates) {
+    if (!c.policy.encashable) continue;
+    if (c.hasLiveDraft) continue;
+    if (c.hasRejectedDraft) continue;
+    const overFloor = c.availableDays - c.policy.nonEncashableDays;
+    if (overFloor <= 0) continue;
+    const capped =
+      c.policy.maxEncashableDays > 0
+        ? Math.min(overFloor, c.policy.maxEncashableDays)
+        : overFloor;
+    const days = quarterFloor(capped);
+    if (days < 0.25) continue;
+    // One rule, both callers: the draft must survive the SAME validation
+    // a member request faces, or it never lands.
+    const plan = planLeaveEncashment(c.policy, days, c.availableDays);
+    if (!plan.ok) continue;
+    drafts.push({
+      userId: c.userId,
+      leaveTypeId: c.leaveTypeId,
+      leaveTypeName: c.leaveTypeName,
+      days: plan.days,
+      payoutPeriod,
+    });
+  }
+  return drafts;
+}

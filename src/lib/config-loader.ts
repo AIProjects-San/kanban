@@ -175,6 +175,13 @@ export interface WorkspaceSettingsT {
    * nudged interview, via the P24 template registry). Default OFF = the
    * F-R17 zero-mail posture. */
   emailInterviewReminders: boolean;
+  /** P31 (LV-J02 / LV-09's remainder) — the encashment auto-draft switch:
+   * when ON, the daily dispatcher's encashment pass drafts ONE pending
+   * LeaveEncashment per (member × encashable type × year) whose ledger
+   * balance exceeds the type's floor (one live draft per pair; a
+   * rejection stands for the year). Default OFF — drafting on members'
+   * behalf is a workspace policy choice. */
+  autoLeaveEncashment: boolean;
 }
 
 /** P0-6 (D-05/D-18, persona-audit) — mail-provider truth for the client:
@@ -362,6 +369,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           emailEngagementReminders: workspace.emailEngagementReminders === true,
           remindInterviews: workspace.remindInterviews !== false,
           emailInterviewReminders: workspace.emailInterviewReminders === true,
+          autoLeaveEncashment: workspace.autoLeaveEncashment === true,
         }
       : // Fallback defaults if the Workspace row doesn't exist yet
         {
@@ -396,6 +404,7 @@ export async function getWorkspaceConfig(): Promise<WorkspaceConfig> {
           emailEngagementReminders: false,
           remindInterviews: true,
           emailInterviewReminders: false,
+          autoLeaveEncashment: false,
         },
 
     taskStatuses: taskStatuses.length
