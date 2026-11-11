@@ -46,6 +46,8 @@ export type AuditAction =
   | "user.deleted"
   | "user.account_created"
   | "profile.updated"
+  // P32 (EM-R02) — the employee_information directory CSV export.
+  | "directory.report_exported"
   | "workspace.updated"
   | "config.created"
   | "config.updated"
@@ -108,6 +110,8 @@ export type AuditAction =
   | "hr.attendance_marked"
   | "hr.attendance_updated"
   | "hr.attendance_deleted"
+  // P32 (AT-R01) — the monthly attendance sheet CSV export.
+  | "attendance.report_exported"
   // F1.6 — employment lifecycle transitions (guarded action; one entry per
   // status change, from → to recorded in the detail line)
   | "hr.employment_transitioned"
@@ -304,6 +308,9 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.leave_adjusted": { icon: Scale, cls: "text-sky-500 bg-sky-500/10" },
   "leave.report_exported": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
+  // P32 — the two new report exports join the family's icon.
+  "attendance.report_exported": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
+  "directory.report_exported": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
   "leave.period_created": { icon: CalendarPlus, cls: "text-primary bg-primary/10" },
   "leave.period_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "leave.policy_set_created": { icon: CalendarPlus, cls: "text-violet-500 bg-violet-500/10" },

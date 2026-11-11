@@ -33,6 +33,7 @@ import { parseDay } from "./hr-shared";
 import { deriveAttendanceTiming, type AttendanceTimingFacts } from "@/lib/attendance-flags";
 import { getWorkspaceConfig } from "@/lib/config-loader";
 import { nonWorkingDayReason } from "@/lib/working-days";
+import { monthlyAttendanceSheetCsv } from "@/lib/attendance-sheet";
 
 /** Clamp/normalize a (year, month) pair; invalid input falls back to the
  * current UTC month (getHolidayCalendar's year convention). */
@@ -313,5 +314,90 @@ export async function getMyAttendance(
       take: 400,
     });
     return { year, month, records: rows.map((r) => serializeAttendance(r, auth.name)) };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// P32 (AT-R01) — the monthly attendance sheet export
+// ---------------------------------------------------------------------------
+
+/**
+ * The monthly attendance sheet report (benchmark: hrms
+ * monthly_attendance_sheet): the HR console's own month grid rendered as
+ * CSV — one row per live member (all-blank months included, the grid's
+ * roster), one column per day-of-month coded P/A/HD/W/L for records and
+ * WO/H for unmarked weekends/full holidays, eight summary columns closing
+ * each row. attendance:manage (the grid's own gate). Audited like every
+ * report export (the P20 payroll-csv discipline).
+ */
+export async function exportAttendanceSheetCsv(input?: {
+  year?: number;
+  month?: number;
+}): Promise<ActionResult<{ filename: string; csv: string; mime: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("attendance:manage");
+    const { year, month } = normalizeMonth(input?.year, input?.month);
+    const { start, end } = monthBounds(year, month);
+    const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+
+    // The grid's own reads (roster + records + calendar) + the employee
+    // numbers the sheet's identity column needs. PR-21 caps on the roster
+    // reads; the records/holidays of one month are bounded by construction.
+    const [users, records, holidays, profiles] = await Promise.all([
+      db.user.findMany({
+        where: { deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+        take: 500,
+      }),
+      db.attendanceRecord.findMany({
+        where: { date: { gte: start, lte: end } },
+        select: { userId: true, date: true, status: true },
+        orderBy: { date: "asc" },
+      }),
+      db.holidayCalendarEntry.findMany({
+        where: { date: { gte: start, lte: end } },
+        select: { date: true, label: true, isHalfDay: true },
+        orderBy: { date: "asc" },
+      }),
+      db.employeeProfile.findMany({
+        select: { userId: true, employeeNumber: true },
+      }),
+    ]);
+    const employeeNoByUser = new Map(profiles.map((p) => [p.userId, p.employeeNumber]));
+
+    const csv = monthlyAttendanceSheetCsv({
+      year,
+      month,
+      members: users.map((u) => ({
+        userId: u.id,
+        userName: u.name,
+        employeeNumber: employeeNoByUser.get(u.id) ?? null,
+      })),
+      records: records.map((r) => ({
+        userId: r.userId,
+        date: r.date.toISOString().slice(0, 10),
+        status: r.status,
+      })),
+      holidays: holidays.map((h) => ({
+        date: h.date.toISOString().slice(0, 10),
+        label: h.label,
+        isHalfDay: h.isHalfDay,
+      })),
+    });
+
+    await logAudit({
+      actor: auth,
+      action: "attendance.report_exported",
+      entityType: "ATTENDANCE_MONTH",
+      entityId: monthKey,
+      entityLabel: `attendance sheet ${monthKey}`,
+      detail: `${auth.name} exported the monthly attendance sheet for ${monthKey} (${users.length} member row(s)).`,
+    });
+    return {
+      filename: `attendance-sheet-${monthKey}.csv`,
+      csv,
+      mime: "text/csv; charset=utf-8",
+    };
   });
 }

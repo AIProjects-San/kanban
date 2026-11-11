@@ -19,10 +19,11 @@
 // benchmark's "leave out pairs without ledger entries" filter.
 //
 // Pure and dependency-free: the server action feeds ledger rows + label
-// maps; unit tests own the arithmetic.
+// maps; unit tests own the arithmetic. P32: the CSV builder rides the
+// shared `lib/report-csv.ts` helper (one file shape for every report).
 // ---------------------------------------------------------------------------
 
-import { csvEscape } from "@/lib/payroll-csv";
+import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
 
 export interface LedgerRowForReport {
   userId: string;
@@ -143,24 +144,21 @@ export function buildLeaveBalanceReportRows(input: {
   return rows;
 }
 
-/** LV-R01 — the balance report CSV (one row per type × employee). */
+/** LV-R01 — the balance report CSV (one row per type × employee; rides the
+ * P32 shared report-csv helper — bytes unchanged, golden-pinned). */
 export function leaveBalanceReportCsv(input: {
   year: number;
   generatedAt?: Date;
   rows: LeaveBalanceReportRow[];
 }): string {
   const generatedAt = input.generatedAt ?? new Date();
-  const header = ["Leave type", "Employee no", "Employee", "Opening balance", "Allocated", "Taken", "Expired", "Closing balance"]
-    .map(csvEscape)
-    .join(",");
   const lines = [
-    `# Employee leave balance — Fernly HR — year ${input.year}`,
-    `# Generated ${generatedAt.toISOString()} — non-statutory export; verify before use.`,
-    header,
+    ...reportCsvHeaderLines({ kind: "Employee leave balance", scope: `year ${input.year}`, generatedAt }),
+    csvRow(["Leave type", "Employee no", "Employee", "Opening balance", "Allocated", "Taken", "Expired", "Closing balance"]),
   ];
   for (const r of input.rows) {
     lines.push(
-      [
+      csvRow([
         r.leaveTypeName,
         r.employeeNumber ?? "",
         r.userName,
@@ -169,10 +167,8 @@ export function leaveBalanceReportCsv(input: {
         r.taken,
         r.expired,
         r.closing,
-      ]
-        .map(csvEscape)
-        .join(","),
+      ]),
     );
   }
-  return `${lines.join("\r\n")}\r\n`;
+  return csvFileBody(lines);
 }

@@ -10,7 +10,7 @@
 // Weekends and calendar holidays are shaded (F1.1 integration).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarCheck, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, Download, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -18,7 +18,7 @@ import { ATTENDANCE_STATUS_CODE, ATTENDANCE_STATUS_LABELS } from "@/lib/config";
 import type { AttendanceT, AttendanceMonthT, AttendanceStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { deriveAttendanceTiming, describeAttendanceTiming } from "@/lib/attendance-flags";
-import { getAttendanceMonth, upsertAttendanceRecord, deleteAttendanceRecord } from "@/server-actions/hr-attendance";
+import { getAttendanceMonth, upsertAttendanceRecord, deleteAttendanceRecord, exportAttendanceSheetCsv } from "@/server-actions/hr-attendance";
 
 /** Statuses HR may set from the form — ON_LEAVE is derived-only. */
 const SETTABLE: Exclude<AttendanceStatus, "ON_LEAVE">[] = ["PRESENT", "ABSENT", "HALF_DAY", "WFH"];
@@ -46,6 +46,8 @@ export function AttendanceTab() {
   // for the header's generic "Mark a day" button, which shows the select).
   const [marking, setMarking] = useState<{ userId: string; date: string } | null>(null);
   const [editing, setEditing] = useState<AttendanceT | null>(null);
+  // P32 (AT-R01) — the sheet export's busy flag.
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async (y: number, m: number) => {
     const res = await getAttendanceMonth(y, m);
@@ -86,6 +88,24 @@ export function AttendanceTab() {
   }, [data]);
 
   const monthValue = `${year}-${String(month).padStart(2, "0")}`;
+
+  // P32 (AT-R01) — the monthly attendance sheet CSV (the analytics Blob
+  // pattern; the action builds the RFC 4180 file and audits the export like
+  // every report CSV).
+  const exportSheet = async () => {
+    setExporting(true);
+    const res = await exportAttendanceSheetCsv({ year, month });
+    setExporting(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    const blob = new Blob([res.data.csv], { type: res.data.mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.data.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Attendance sheet for ${monthValue} exported (${res.data.filename}).`);
+  };
 
   return (
     <div className="space-y-3" data-testid="hr-attendance">
@@ -147,6 +167,17 @@ export function AttendanceTab() {
             data-testid="att-mark-button"
           >
             Mark a day
+          </button>
+          <button
+            type="button"
+            className="f-btn f-btn-secondary f-btn-sm"
+            onClick={exportSheet}
+            disabled={exporting}
+            data-testid="att-sheet-export"
+            aria-label={`Export the ${fmtMonth(year, month)} attendance sheet as CSV`}
+          >
+            {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            Sheet CSV
           </button>
         </div>
       </div>

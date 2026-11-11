@@ -12,7 +12,7 @@
 // edit anyone including the HR-only `notes` field.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Search, Pencil } from "lucide-react";
+import { Briefcase, Download, Loader2, Search, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Section } from "../ui/section";
 import { Field } from "../ui/field";
@@ -32,6 +32,7 @@ import {
   upsertMyProfile,
   getDirectory,
   updateProfileAsAdmin,
+  exportDirectoryCsv,
 } from "@/server-actions/hr-directory";
 import { transitionEmployment } from "@/server-actions/employment";
 
@@ -154,6 +155,8 @@ export function DirectoryTab() {
   const [canAdmin, setCanAdmin] = useState(false);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<EmployeeProfileT | null>(null);
+  // P32 (EM-R02) — the employee_information export's busy flag.
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     const res = await getDirectory();
@@ -179,6 +182,24 @@ export function DirectoryTab() {
     );
   }, [profiles, query]);
 
+  // P32 (EM-R02) — the employee_information report CSV (the analytics Blob
+  // pattern; the action builds the RFC 4180 file and audits the export like
+  // every report CSV).
+  const exportCsv = async () => {
+    setExporting(true);
+    const res = await exportDirectoryCsv();
+    setExporting(false);
+    if (!res.ok) { toast.error(res.error); return; }
+    const blob = new Blob([res.data.csv], { type: res.data.mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.data.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Employee information report exported (${res.data.filename}).`);
+  };
+
   if (profiles === null) {
     return <div className="p-6 text-sm text-muted-foreground">Loading directory…</div>;
   }
@@ -197,6 +218,17 @@ export function DirectoryTab() {
           />
         </div>
         <span className="text-xs text-muted-foreground">{visible.length} of {profiles.length} people</span>
+        <button
+          type="button"
+          className="f-btn f-btn-secondary f-btn-sm"
+          onClick={exportCsv}
+          disabled={exporting}
+          data-testid="directory-export"
+          aria-label="Export the employee information report as CSV"
+        >
+          {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+          Export CSV
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

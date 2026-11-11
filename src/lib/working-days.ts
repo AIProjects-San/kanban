@@ -70,20 +70,46 @@ export function workingDaysInPeriod(period: string, holidays?: HolidayLookup): n
 }
 
 /**
+ * P32 (AT-R01) — the day-kind classifier: "WEEKEND", "FULL_HOLIDAY",
+ * "HALF_HOLIDAY" or "WORKING" for one UTC-midnight date. Pure; the caller
+ * supplies the calendar row (if any). ONE rule for every surface that
+ * needs the classification (the F-R15 marking guard's reason strings, the
+ * P32 attendance-sheet export's WO/H cell codes) — nonWorkingDayReason
+ * below is its message rendering, and the sheet cell codes are its code
+ * rendering, so the three can never drift.
+ */
+export type NonWorkingDayKind = "WEEKEND" | "FULL_HOLIDAY" | "HALF_HOLIDAY" | "WORKING";
+
+export function dayKind(
+  d: Date,
+  holiday?: { label: string; isHalfDay: boolean } | null,
+): NonWorkingDayKind {
+  const dow = d.getUTCDay(); // 0 Sun … 6 Sat
+  if (dow === 0 || dow === 6) return "WEEKEND";
+  if (holiday && !holiday.isHalfDay) return "FULL_HOLIDAY";
+  if (holiday && holiday.isHalfDay) return "HALF_HOLIDAY";
+  return "WORKING";
+}
+
+/**
  * F-R15 (S3) — why a date is NOT markable for attendance, or null when it
  * is a working day. Pure: the caller supplies the calendar row (if any).
  * Half-day holidays ARE working (half) days — marking stays allowed; the
  * S2 timing facts and the F1.4 LOP derivation handle their halfness.
+ * P32: the message rendering of the dayKind classifier above.
  */
 export function nonWorkingDayReason(
   d: Date,
   holiday?: { label: string; isHalfDay: boolean } | null,
 ): string | null {
-  const dow = d.getUTCDay(); // 0 Sun … 6 Sat
-  if (dow === 0) return "a Sunday";
-  if (dow === 6) return "a Saturday";
-  if (holiday && !holiday.isHalfDay) return `a holiday (${holiday.label})`;
-  return null;
+  switch (dayKind(d, holiday)) {
+    case "WEEKEND":
+      return d.getUTCDay() === 0 ? "a Sunday" : "a Saturday";
+    case "FULL_HOLIDAY":
+      return `a holiday (${holiday?.label ?? "holiday"})`;
+    default:
+      return null; // WORKING and HALF_HOLIDAY are both markable
+  }
 }
 
 /**

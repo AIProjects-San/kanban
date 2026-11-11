@@ -20,10 +20,11 @@ import { hasPermission } from "@/lib/rbac";
 import { DEPARTMENT_LABELS } from "@/lib/config";
 import type { EmployeeProfileT } from "@/lib/types";
 import { employeeProfileSchema, employeeProfileSelfSchema, parseOrThrow } from "@/lib/validation";
-import { isoDateOrNull } from "@/lib/employment";
+import { isoDateOrNull, EMPLOYMENT_STATUS_LABELS } from "@/lib/employment";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+import { employeeInformationCsv, type DirectoryReportRow } from "@/lib/directory-report";
 
 // QA-19: "" (not classified yet) is a valid stored value, so the set is
 // keyed by plain strings; the four real departments remain the only
@@ -121,6 +122,76 @@ export async function getMyProfile(): Promise<ActionResult<EmployeeProfileT | nu
       ? await db.user.findUnique({ where: { id: me.managerId }, select: { name: true } })
       : null;
     return serialize(row, { name: me.name, email: me.email, role: me.role, managerName: manager?.name ?? null });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// P32 (EM-R02) — the employee_information report export
+// ---------------------------------------------------------------------------
+
+/**
+ * The employee_information report (benchmark: hrms employee_information):
+ * the directory roster rendered as CSV — one row per live member, columns
+ * mirroring the roster card's facts (birthday, emergency contact and the
+ * HR notes are deliberately NOT exported — the card never displays them
+ * and the PII posture keeps them out of data files). hr:view gated (the
+ * directory's own gate). Audited like every report export.
+ */
+export async function exportDirectoryCsv(): Promise<ActionResult<{ filename: string; csv: string; mime: string }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("hr:view");
+
+    // getDirectory's own reads (PR-21 caps; profiles of deleted users are
+    // hidden exactly like the roster cards).
+    const [rows, users] = await Promise.all([
+      db.employeeProfile.findMany({ orderBy: { createdAt: "asc" }, take: 500 }),
+      db.user.findMany({
+        where: { deletedAt: null },
+        select: { id: true, name: true, email: true, role: true, managerId: true },
+        take: 500,
+      }),
+    ]);
+    const usersById = new Map(users.map((u) => [u.id, u]));
+
+    const reportRows: DirectoryReportRow[] = [];
+    for (const row of rows) {
+      const u = usersById.get(row.userId);
+      if (!u) continue; // profile of a deleted user — never exported
+      const managerName = u.managerId ? usersById.get(u.managerId)?.name ?? null : null;
+      reportRows.push({
+        employeeNumber: row.employeeNumber,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        jobTitle: row.jobTitle,
+        // The roster card's label (QA-19: "" stays unclassified, not
+        // fabricated); an unknown key renders raw, never silently blank.
+        department: row.department
+          ? DEPARTMENT_LABELS.find((d) => d.key === row.department)?.label ?? row.department
+          : "",
+        managerName,
+        employmentStatus: EMPLOYMENT_STATUS_LABELS[row.employmentStatus as keyof typeof EMPLOYMENT_STATUS_LABELS] ?? row.employmentStatus,
+        hireDate: row.hireDate ? row.hireDate.toISOString().slice(0, 10) : "",
+        location: row.location,
+        skills: row.skills,
+      });
+    }
+
+    const csv = employeeInformationCsv({ rows: reportRows });
+    const today = new Date().toISOString().slice(0, 10);
+    await logAudit({
+      actor: auth,
+      action: "directory.report_exported",
+      entityType: "EMPLOYEE_PROFILE",
+      entityId: "all",
+      entityLabel: "directory export",
+      detail: `${auth.name} exported the employee information report (${reportRows.length} member row(s)).`,
+    });
+    return {
+      filename: `employee-information-${today}.csv`,
+      csv,
+      mime: "text/csv; charset=utf-8",
+    };
   });
 }
 

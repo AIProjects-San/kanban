@@ -8,31 +8,32 @@
 // quote, a newline or a leading/trailing space; quotes inside double.
 // Numbers are rendered as plain decimal strings (no thousands separators —
 // bank files feed parsers, not eyes).
+//
+// P32: the RFC 4180 escaper + the row composer + the disclaimer header now
+// live in the shared `lib/report-csv.ts` helper (the ONE place every
+// tabular report CSV gets its file shape from — PL-11's first cut). The
+// escaper is re-exported here so existing importers are unchanged, and the
+// bytes are identical — the P20 golden tests pin that.
 // ---------------------------------------------------------------------------
 
-/** RFC 4180 field escaping. */
-export function csvEscape(field: string | number | null | undefined): string {
-  const s = field == null ? "" : String(field);
-  if (/[",\r\n]/.test(s) || s !== s.trim()) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
+import { csvEscape, csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
 
-function row(fields: Array<string | number | null | undefined>): string {
-  return fields.map(csvEscape).join(",");
-}
+export { csvEscape } from "@/lib/report-csv";
 
 function money(n: number): string {
   return (Math.round(n * 100) / 100).toFixed(2);
 }
 
-/** The shared leading comment lines (the non-statutory disclaimer). */
+/** The shared leading comment lines (the non-statutory disclaimer; the
+ * payroll files keep their explicit ADR-014 restatement — golden-pinned). */
 function disclaimerLines(kind: "Salary register" | "Bank remittance", period: string, generatedAt: Date): string[] {
-  return [
-    `# ${kind} — Fernly Payroll — period ${period}`,
-    `# Generated ${generatedAt.toISOString()} — non-statutory export; verify before use. Not a tax document (ADR-014).`,
-  ];
+  return reportCsvHeaderLines({
+    kind,
+    product: "Fernly Payroll",
+    scope: `period ${period}`,
+    generatedAt,
+    disclaimerExtra: " Not a tax document (ADR-014).",
+  });
 }
 
 /** PR-R01 — the salary register: one row per paid slip + a totals row. */
@@ -54,9 +55,9 @@ export function salaryRegisterCsv(input: {
   const generatedAt = input.generatedAt ?? new Date();
   const lines = [
     ...disclaimerLines("Salary register", input.period, generatedAt),
-    row(["Slip no", "Employee no", "Employee", "Job title", "Gross", "Deductions", "Net pay", "LOP days", "Withheld"]),
+    csvRow(["Slip no", "Employee no", "Employee", "Job title", "Gross", "Deductions", "Net pay", "LOP days", "Withheld"]),
     ...input.rows.map((r) =>
-      row([
+      csvRow([
         r.slipNo,
         r.employeeNumber ?? "",
         r.employeeName,
@@ -72,8 +73,8 @@ export function salaryRegisterCsv(input: {
   const gross = input.rows.reduce((s, r) => s + r.gross, 0);
   const deductions = input.rows.reduce((s, r) => s + r.deductions, 0);
   const net = input.rows.reduce((s, r) => s + r.net, 0);
-  lines.push(row(["TOTAL", "", `${input.rows.length} payslip(s)`, "", money(gross), money(deductions), money(net), "", ""]));
-  return `${lines.join("\r\n")}\r\n`;
+  lines.push(csvRow(["TOTAL", "", `${input.rows.length} payslip(s)`, "", money(gross), money(deductions), money(net), "", ""]));
+  return csvFileBody(lines);
 }
 
 /** PR-R02 — the bank remittance advice: one payment row per paid slip, the
@@ -95,12 +96,12 @@ export function bankRemittanceCsv(input: {
   const lines = [
     ...disclaimerLines("Bank remittance", input.period, generatedAt),
     ...(input.workspaceName ? [`# Workspace: ${csvEscape(input.workspaceName)}`] : []),
-    row(["Employee no", "Employee name", "Bank account", "Amount", "Currency", "Period", "Payment reference"]),
+    csvRow(["Employee no", "Employee name", "Bank account", "Amount", "Currency", "Period", "Payment reference"]),
     ...input.rows
       // WITHHELD nets are not disbursed — they never reach the bank file.
       .filter((r) => r.withholdStatus !== "WITHHELD")
       .map((r) =>
-        row([
+        csvRow([
           r.employeeNumber ?? "",
           r.employeeName,
           "", // the employer's bank fills this from its records
@@ -114,6 +115,6 @@ export function bankRemittanceCsv(input: {
   const disbursed = input.rows
     .filter((r) => r.withholdStatus !== "WITHHELD")
     .reduce((s, r) => s + r.net, 0);
-  lines.push(row(["TOTAL", `${input.rows.filter((r) => r.withholdStatus !== "WITHHELD").length} payment(s)`, "", money(disbursed), "NZD", input.period, ""]));
-  return `${lines.join("\r\n")}\r\n`;
+  lines.push(csvRow(["TOTAL", `${input.rows.filter((r) => r.withholdStatus !== "WITHHELD").length} payment(s)`, "", money(disbursed), "NZD", input.period, ""]));
+  return csvFileBody(lines);
 }

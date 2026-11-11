@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["attendanceRecord", "holidayCalendarEntry", "user", "auditLog"];
+  const models = ["attendanceRecord", "holidayCalendarEntry", "user", "employeeProfile", "auditLog"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -55,6 +55,7 @@ import {
   upsertAttendanceRecord,
   deleteAttendanceRecord,
   getMyAttendance,
+  exportAttendanceSheetCsv,
 } from "../hr-attendance";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Ada", email: "ada@x.co" };
@@ -429,5 +430,84 @@ describe("getMyAttendance", () => {
     const now = new Date();
     expect(res.data.year).toBe(now.getUTCFullYear());
     expect(res.data.month).toBe(now.getUTCMonth() + 1);
+  });
+});
+
+describe("P32 (AT-R01) — exportAttendanceSheetCsv", () => {
+  it("is attendance:manage-gated — a member is refused before any read", async () => {
+    requirePermissionMock.mockRejectedValue(new Error("no perm"));
+    const res = await exportAttendanceSheetCsv({ year: 2026, month: 11 });
+    expect(res.ok).toBe(false);
+    expect(requirePermissionMock).toHaveBeenCalledWith("attendance:manage");
+    expect(db.user.findMany).not.toHaveBeenCalled();
+    expect(logAuditMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the month as the sheet: every live member a row, records + calendar + employee numbers fed to the kernel", async () => {
+    db.user.findMany.mockResolvedValue([
+      { id: "u-theo", name: "Theo Vance" },
+      { id: "u-admin", name: "Ada Lovelace" },
+    ]);
+    db.attendanceRecord.findMany.mockResolvedValue([
+      { userId: "u-theo", date: new Date("2026-11-05T00:00:00.000Z"), status: "WFH" },
+    ]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2026-11-27T00:00:00.000Z"), label: "Regional anniversary", isHalfDay: false },
+    ]);
+    db.employeeProfile.findMany.mockResolvedValue([
+      { userId: "u-theo", employeeNumber: "EMP-0003" },
+    ]);
+    const res = await exportAttendanceSheetCsv({ year: 2026, month: 11 });
+    if (!res.ok) throw new Error(res.error);
+
+    // The reads mirror the grid's own month bounds.
+    expect(db.attendanceRecord.findMany).toHaveBeenCalledWith({
+      where: { date: { gte: new Date("2026-11-01T00:00:00.000Z"), lte: new Date("2026-11-30T00:00:00.000Z") } },
+      select: { userId: true, date: true, status: true },
+      orderBy: { date: "asc" },
+    });
+    expect(db.holidayCalendarEntry.findMany).toHaveBeenCalledWith({
+      where: { date: { gte: new Date("2026-11-01T00:00:00.000Z"), lte: new Date("2026-11-30T00:00:00.000Z") } },
+      select: { date: true, label: true, isHalfDay: true },
+      orderBy: { date: "asc" },
+    });
+
+    // The file itself: the identity header names the month; Theo's row
+    // (roster order) carries his employee number, the WFH record codes W,
+    // the unmarked holiday codes H, weekends WO; Ada (no profile row) has
+    // a blank employee number and still gets her row.
+    expect(res.data.filename).toBe("attendance-sheet-2026-11.csv");
+    expect(res.data.mime).toBe("text/csv; charset=utf-8");
+    const lines = res.data.csv.split("\r\n");
+    expect(lines[0]).toBe("# Monthly attendance sheet — Fernly HR — month 2026-11");
+    expect(lines[3].split(",")[0]).toBe("Employee no");
+    const theo = lines[4].split(",");
+    expect(theo[0]).toBe("EMP-0003");
+    expect(theo[1]).toBe("Theo Vance");
+    expect(theo[1 + 5]).toBe("W"); // 2026-11-05 (Thursday) WFH
+    expect(theo[1 + 27]).toBe("H"); // 2026-11-27 (Friday) unmarked holiday
+    expect(theo[1 + 1]).toBe("WO"); // 2026-11-01 (Sunday)
+    expect(theo.slice(-8)).toEqual(["0", "0", "0", "1", "0", "9", "1", "19"]);
+    const ada = lines[5].split(",");
+    expect(ada[0]).toBe("");
+    expect(ada[1]).toBe("Ada Lovelace");
+    expect(ada.slice(-8)).toEqual(["0", "0", "0", "0", "0", "9", "1", "20"]);
+
+    // Audited like every report export.
+    expect(logAuditMock.mock.calls[0][0].action).toBe("attendance.report_exported");
+    expect(logAuditMock.mock.calls[0][0].entityId).toBe("2026-11");
+    expect(logAuditMock.mock.calls[0][0].detail).toContain("2 member row(s)");
+  });
+
+  it("clamps an invalid month to the current UTC month (the grid's convention)", async () => {
+    db.user.findMany.mockResolvedValue([]);
+    db.attendanceRecord.findMany.mockResolvedValue([]);
+    db.holidayCalendarEntry.findMany.mockResolvedValue([]);
+    db.employeeProfile.findMany.mockResolvedValue([]);
+    const res = await exportAttendanceSheetCsv({ year: 2026, month: 13 });
+    if (!res.ok) throw new Error(res.error);
+    const now = new Date();
+    const expected = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+    expect(res.data.filename).toBe(`attendance-sheet-${expected}.csv`);
   });
 });

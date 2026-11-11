@@ -54,7 +54,7 @@ vi.mock("@/lib/config", async (importOriginal) => {
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { getDirectory, getMyProfile, upsertMyProfile, updateProfileAsAdmin } from "../hr-directory";
+import { getDirectory, getMyProfile, upsertMyProfile, updateProfileAsAdmin, exportDirectoryCsv } from "../hr-directory";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Ada", email: "ada@x.co" };
 const MANAGER_AUTH = { userId: "u-mgr", role: "MANAGER" as const, name: "Ingrid", email: "ingrid@x.co" };
@@ -469,5 +469,96 @@ describe("PR-56 — remaining branch coverage", () => {
     expect(res.ok).toBe(true);
     const call = db.employeeProfile.upsert.mock.calls[0][0];
     expect(call.update).toEqual({ department: "ENGINEERING" });
+  });
+});
+
+describe("P32 (EM-R02) — exportDirectoryCsv", () => {
+  const EXPORT_PROFILE_THEO = {
+    userId: "u-theo",
+    employeeNumber: "EMP-0003",
+    jobTitle: "Senior Frontend Engineer",
+    department: "ENGINEERING",
+    employmentStatus: "ACTIVE",
+    hireDate: new Date("2024-06-10T00:00:00.000Z"),
+    phone: "+64 21 555 0003",
+    location: "Auckland, NZ",
+    emergencyContactName: "Rae Vance",
+    emergencyContactPhone: "+64 21 555 0199",
+    skills: "React, TypeScript",
+    notes: "HR note",
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  };
+  const EXPORT_PROFILE_GONE = {
+    ...EXPORT_PROFILE_THEO,
+    userId: "u-gone",
+    employeeNumber: "EMP-0009",
+    employmentStatus: "",
+  };
+
+  function seedRoster() {
+    db.employeeProfile.findMany.mockResolvedValue([EXPORT_PROFILE_THEO, EXPORT_PROFILE_GONE]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-admin", name: "Ada Lovelace", email: "ada@x.co", role: "ADMIN", managerId: null },
+      { id: "u-theo", name: "Theo Vance", email: "theo@x.co", role: "MEMBER", managerId: "u-admin" },
+    ]);
+  }
+
+  it("requires hr:view (a MEMBER is rejected before any read)", async () => {
+    requirePermissionMock.mockImplementation(async (perm: string) => {
+      if (perm === "hr:view") {
+        throw new (class extends Error { digest = "AuthorizationError"; })("denied");
+      }
+      return MEMBER_AUTH;
+    });
+    const res = await exportDirectoryCsv();
+    expect(res.ok).toBe(false);
+    expect(db.employeeProfile.findMany).not.toHaveBeenCalled();
+    expect(logAuditMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the roster as the report: card facts resolved, deleted users hidden, PII never exported", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    seedRoster();
+    const res = await exportDirectoryCsv();
+    if (!res.ok) throw new Error(res.error);
+
+    expect(res.data.mime).toBe("text/csv; charset=utf-8");
+    expect(res.data.filename).toMatch(/^employee-information-\d{4}-\d{2}-\d{2}\.csv$/);
+    const lines = res.data.csv.split("\r\n");
+    expect(lines[0]).toBe("# Employee information — Fernly HR — directory export");
+    expect(lines[2]).toBe(
+      "Employee no,Employee,Email,Role,Job title,Department,Manager,Employment status,Hire date,Location,Skills",
+    );
+    // Name-sorted; Theo is the only report row — Ada has no employee
+    // profile row (a profile-less member never appears), and u-gone has
+    // no live user — hidden exactly like the roster cards.
+    expect(lines).toHaveLength(4 + 1); // 3 comment/header + header + 1 row + trailing
+    expect(lines[3]).toBe(
+      'EMP-0003,Theo Vance,theo@x.co,MEMBER,Senior Frontend Engineer,Engineering,Ada Lovelace,Active,2024-06-10,"Auckland, NZ","React, TypeScript"',
+    );
+    // The card never displays birthday / emergency contact / HR notes —
+    // and neither does the export (nothing from the PII block).
+    expect(res.data.csv).not.toContain("Rae Vance");
+    expect(res.data.csv).not.toContain("555 0199");
+    expect(res.data.csv).not.toContain("HR note");
+
+    // Audited like every report export.
+    expect(logAuditMock.mock.calls[0][0].action).toBe("directory.report_exported");
+    expect(logAuditMock.mock.calls[0][0].entityId).toBe("all");
+    expect(logAuditMock.mock.calls[0][0].detail).toContain("1 member row(s)");
+  });
+
+  it("an unclassified member renders honest empties (blank department, the Not set status label)", async () => {
+    requirePermissionMock.mockResolvedValue(MANAGER_AUTH);
+    db.employeeProfile.findMany.mockResolvedValue([
+      { ...EXPORT_PROFILE_THEO, employeeNumber: null, jobTitle: "", department: "", employmentStatus: "", hireDate: null, location: "", skills: "" },
+    ]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-theo", name: "Theo Vance", email: "theo@x.co", role: "MEMBER", managerId: null },
+    ]);
+    const res = await exportDirectoryCsv();
+    if (!res.ok) throw new Error(res.error);
+    const line = res.data.csv.split("\r\n")[3];
+    expect(line).toBe(",Theo Vance,theo@x.co,MEMBER,,,,Not set,,,");
   });
 });
