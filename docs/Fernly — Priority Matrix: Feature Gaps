@@ -1,0 +1,304 @@
+# Fernly — Priority Matrix: HRMS Feature Gaps
+
+**Document type:** Prioritisation report  
+**System under analysis:** Fernly (`AIProjects-San/kanban`)  
+**Reference system:** Frappe HRMS (`frappe/hrms`)  
+**Analysis basis:** Direct source-code inspection (Prisma schema, server-actions, commit history), not documentation alone  
+**Date:** 2026-11-12  
+**Status:** Draft for planning review  
+**Owner:** Engineering / HR Product
+
+---
+
+## 1. Purpose
+
+This document is the single source of truth for prioritising the work required to bring Fernly's HR, Payroll, and Joining modules to parity with — and in some areas beyond — Frappe HRMS.
+
+It contains:
+
+1. A summary of the gaps identified in the code-level analysis.
+2. The consolidated **priority matrix** with rationale, effort, and dependencies.
+3. Tier-by-tier rationale (P0 → P3).
+4. A dependency-ordered sequencing recommendation.
+5. A register of what Fernly already has and must **not** be rebuilt.
+6. Risks that could shift priorities.
+7. Acceptance criteria per tier.
+8. Open decisions that block or reshape the plan.
+
+This document complements — but does not duplicate — the full enhancement report (`payroll-hr-joining-enhancement-report.md`). Where that report describes *what* to build, this report describes *in what order and why*.
+
+---
+
+## 2. Analysis basis
+
+The priority matrix is grounded in direct inspection of:
+
+| Source | Purpose |
+|---|---|
+| `prisma/schema.prisma` | Full data model — 412 lines; used to confirm presence/absence of models. |
+| `src/server-actions/payroll.ts` | 396 lines — payroll run lifecycle, payslip editing, lock, YTD, LOP, CSV exports. |
+| `src/server-actions/payroll-components.ts` | 108 lines — salary component catalog. |
+| `src/server-actions/payroll-benefits.ts` | 140 lines — flexible benefits. |
+| `src/server-actions/hr-attendance.ts` | 194 lines — manual attendance, leave-derived status, overtime. |
+| `src/server-actions/hr-onboarding.ts` | 275 lines — onboarding and separation checklists. |
+| `src/server-actions/hr-offboarding.ts` | 401 lines — exit interviews, full-and-final generation. |
+| `src/server-actions/salary-advances.ts` | 96 lines — advance issuance and recovery. |
+| `src/server-actions/` directory listing | Used to confirm absence of `timesheet`, `loan`, `shift`, `tax`, `promotion`, `transfer`, `expense`, `goal`, `kra`. |
+| `package.json` | Stack confirmation — Next.js 16, React 19, Prisma 6, PostgreSQL, Better Auth, Zustand, Tailwind v4. |
+
+**Method:** A capability is recorded as a gap when there is **no model, no server-action file, and no references** in the codebase. Partial implementations (e.g., salary advances as a subset of loans) are marked as such.
+
+---
+
+## 3. Gap summary
+
+### 3.1 Structural gaps (seven)
+
+| # | Gap | One-line description |
+|---|---|---|
+| G1 | Statutory compliance & taxation | No tax slabs, PF, ESI, PT, TDS, Form 16, or investment declarations. Payroll is explicitly pre-statutory. |
+| G2 | General ledger & accounting | No journal entries, chart of accounts, or payroll posting. Finance cannot reconcile. |
+| G3 | Full loan management | Only salary advances lite — no interest, amortization, or loan lifecycle. |
+| G4 | Timesheets & shift management | No timesheet→payroll bridge; no shift rosters. |
+| G5 | Biometric attendance integration | Attendance manually marked; no device sync. |
+| G6 | Employee lifecycle documents | No transfer/promotion documents; no effective-dated job history. |
+| G7 | Expense claims & general workflow | No general expense module; approvals are domain-specific. |
+
+### 3.2 Secondary gaps (six)
+
+| # | Gap | One-line description |
+|---|---|---|
+| G8 | Effective-dated salary assignments | Salary revisions may overwrite; arrears and history not reliably reconstructable. |
+| G9 | Performance goals / KRAs | Reviews exist; goal alignment does not. |
+| G10 | Tax declarations / investment proofs | Not implemented. |
+| G11 | Multi-frequency payroll | Monthly runs only; no weekly, fortnightly, or off-cycle. |
+| G12 | Bank payment files | CSV exports exist; no bank-specific format (NACHA/SEPA/local). |
+| G13 | Granular onboarding templates | Templates are workspace-wide; not role/grade/department-specific. |
+| G14 | Mobile app / PWA | SPA only; no mobile app. |
+
+> **Note:** G8 (effective-dated salary assignments) is elevated to a **P0** structural concern in the matrix below because it blocks arrears, statutory computation across tax years, and employee transfer/promotion (G6).
+
+---
+
+## 4. Priority matrix
+
+Priorities are assigned on three criteria:
+
+- **Compliance impact** — does its absence make payroll non-compliant in a target jurisdiction?
+- **Financial integrity** — does its absence create reconciliation or audit risk?
+- **Dependency weight** — how many other capabilities does it block?
+
+Effort signal: **S** (≤2 weeks), **M** (2–6 weeks), **L** (6–12 weeks), **XL** (>12 weeks). Estimates assume the existing team and stack.
+
+| ID | Gap | Priority | Category | Why it matters | Effort | Blocks / unblocks | Evidence |
+|---|---|---|---|---|---|---|---|
+| G1 | Statutory compliance & taxation | **P0** | Compliance | Payroll is non-compliant in most jurisdictions without it. Largest single operational risk. | **XL** | Unblocks G10 (tax declarations), compliance filings, statutory FnF | No `IncomeTaxSlab`, `TaxSlab`, `StatutoryRule` in schema; `payroll.ts` has no statutory lines |
+| G2 | General ledger & accounting | **P0** | Financial integrity | Payroll cannot be reconciled to the books. Finance re-keys totals externally. | **L** | Unblocks G7 (expense posting), statutory posting, bank payment reconciliation | No `Account`, `JournalEntry`, `AccountingPeriod` in schema; no ledger files in `server-actions` |
+| G8 | Effective-dated salary assignments | **P0** | Data integrity | Arrears, tax computation across tax years, and transfer/promotion all require salary history. | **M** | Unblocks G6 (transfer/promotion), arrears, accurate statutory computation | Salary structure is per-employee; no `SalaryStructureAssignment` model with `fromDate` |
+| G3 | Full loan management | **P1** | Operational completeness | Advances-lite insufficient for housing/vehicle/emergency loans with interest. | **M** | Independent; integrates with payroll deductions | `salary-advances.ts` explicitly states loans are deferred ("later un-decline epic") |
+| G4 | Timesheets & shift management | **P1** | Operational completeness | Hourly, contractor, and shift-based workforces cannot be paid from recorded time. | **M** (timesheet) + **M** (shift) | Unblocks timesheet-based payroll; integrates with G5 | No `timesheet.ts` or `shift.ts` in `server-actions`; no `Shift` model in schema |
+| G5 | Biometric attendance integration | **P1** | Operational completeness | Manual re-keying defeats device investment; attendance data quality suffers. | **M** | Improves payroll accuracy; depends on existing `AttendanceRecord` model | `AttendanceRecord` has `source` enum but no device adapter; no `BiometricDevice` model |
+| G6 | Employee transfer/promotion | **P1** | Lifecycle & audit | Job history cannot be reconstructed; promotions and transfers are overwrites. | **S–M** | Depends on G8 (effective dating) | No `EmployeeTransfer`/`EmployeePromotion` models; no files in `server-actions` |
+| G7 | Expense claims & general workflow | **P2** | Extended capability | Reimbursements happen outside Fernly; finance handles manually. | **M** | Benefits from G2 (posting); independent of G1 | No `ExpenseClaim` model; no expense files in `server-actions` |
+| G9 | Performance goals / KRAs | **P2** | Extended capability | Reviews exist but goal alignment does not. | **M** | Independent | No `Goal`/`KRA` model; no files in `server-actions` |
+| G10 | Tax declarations / investment proofs | **P2** | Extended capability | Employee self-service for tax planning is expected in mature HRMS. | **S–M** | Depends on G1 (statutory engine) | No `TaxDeclaration` model or file |
+| G11 | Multi-frequency payroll | **P2** | Operational completeness | Weekly/fortnightly/off-cycle runs are unsupported today. | **M–L** | Depends on G1 (period model) and G8 (effective dating) | `payroll.ts` model comment: "PayrollRun — one month" |
+| G12 | Bank payment files | **P3** | Convenience | CSV exports partially cover this; bank-specific formats are polish. | **S** | Depends on G2 (payment reconciliation) | `bankRemittanceCsv` exists; no NACHA/SEPA/local format |
+| G13 | Granular onboarding templates | **P3** | Convenience | Role/grade/department-specific checklists improve onboarding quality. | **S–M** | Independent | `hr-onboarding.ts` uses single template table with constants |
+| G14 | Mobile app / PWA | **P3** | Convenience | Employee self-service convenience; not a payroll blocker. | **L–XL** | Depends on stable API surface | Next.js SPA only; no mobile/PWA in stack |
+
+---
+
+## 5. Priority tier rationale
+
+### 5.1 P0 — Blocks compliance or financial integrity
+
+These three items are the **minimum required** for Fernly to be a viable payroll system in any regulated jurisdiction. None can be deferred without accepting a material operational or audit risk.
+
+**G1 — Statutory compliance engine.** Without it, payroll produces gross-to-net calculations but no statutory deductions. This is acceptable only if the organisation operates in jurisdictions with zero mandatory payroll deductions — which is rare. The engine must be **DB-driven and super-admin-configurable**, not hard-coded, to support the stated goal of "any company based on its location can configure it accordingly".
+
+**G2 — General ledger.** Without it, payroll totals must be re-keyed into an external accounting system. This creates reconciliation risk on every pay cycle, and makes statutory posting (PF/ESI/TDS payables) impossible. A **minimal double-entry ledger** is sufficient for payroll; full accounting can follow later.
+
+**G8 — Effective-dated salary assignments.** Without it, salary revisions overwrite history. This breaks arrears, breaks statutory tax computation across tax years (which requires monthly salary history), and breaks transfer/promotion records (which reference historical salaries). It is foundational for G1, G6, and G11.
+
+> **Interdependency:** G1, G2, and G8 must be **designed together** in Phase 0, because:
+> - G1 needs to reference salary components (which G8 dates).
+> - G1's statutory posting needs accounts (which G2 defines).
+> - G2's payroll posting needs to reference payslips (which G1 and G8 generate).
+
+### 5.2 P1 — Operational completeness with strong business case
+
+These items unlock real workforce scenarios that Fernly currently cannot support. Each has an independent business case, but they are not existential in the way P0 items are.
+
+**G3 — Full loan management.** Salary advances lite is a deliberate scoping decision. Real loan programmes (housing, vehicle, emergency) require interest, amortization, and multi-year repayment. Separate from advances; different data model.
+
+**G4 — Timesheets & shift management.** Hourly, contractor, and shift-based workforces cannot be paid from recorded time today. This blocks a large class of customers. Timesheet and shift are separable, but typically requested together.
+
+**G5 — Biometric attendance.** Attendance is manually marked; this defeats the purpose of deployed biometric hardware and creates data-quality risk. Depends on the existing `AttendanceRecord` model but needs a device adapter and punch reconciliation.
+
+**G6 — Employee transfer/promotion.** Job history is a compliance and audit requirement in most jurisdictions, and a prerequisite for arrears and lifecycle reporting. **Depends on G8** (effective dating) — this is why G8 is P0 and G6 is P1.
+
+### 5.3 P2 — Extended capability
+
+These items improve the product but are not blockers for core HR/payroll operations.
+
+**G7 — Expense claims.** Reimbursements work today via manual processes outside Fernly. Adding a proper module improves finance integration but is not a payroll compliance requirement.
+
+**G9 — Performance goals / KRAs.** Reviews exist and function. Goal alignment is a maturing capability, not a blocker.
+
+**G10 — Tax declarations.** Employee self-service for tax planning requires G1 to be in place first. Once G1 exists, declarations are a relatively contained addition.
+
+**G11 — Multi-frequency payroll.** Monthly-only payroll is sufficient for many customers. Weekly/fortnightly/off-cycle are valuable but can be deferred until the monthly model is stable and compliant.
+
+### 5.4 P3 — Convenience and polish
+
+These are quality-of-life improvements that do not block operational use.
+
+**G12 — Bank payment files.** CSV exports already exist. Bank-specific formats reduce manual steps but are not critical.
+
+**G13 — Granular onboarding templates.** Current templates work; role-specific templates improve quality but are an optimisation.
+
+**G14 — Mobile app.** The SPA is functional. A mobile app is a convenience improvement, not a payroll blocker.
+
+---
+
+## 6. Dependency-ordered sequencing
+
+The matrix encodes dependencies, but the **sequence** in which work is executed matters. The recommended sequence:
+Phase 0 — Design (parallel, before any implementation)
+├── Statutory meta-model + expression DSL spec
+├── Ledger primitive design (accounts, journal entries, posting rules)
+└── Effective-dating model (salary assignments, lifecycle documents)
+
+Phase 1 — P0 foundations (in this order)
+├── G8 — Effective-dated salary assignments
+├── G2 — General ledger (parallel to G8, coordinated on account mapping)
+└── G1 — Statutory compliance engine (depends on G8 and G2)
+
+Phase 2 — P1 operational completeness (parallelisable)
+├── G5 — Biometric attendance
+├── G6 — Employee transfer/promotion (depends on G8)
+├── G4 — Timesheet & shift
+└── G3 — Full loan management
+
+Phase 3 — P2 extended capability
+├── G10 — Tax declarations (depends on G1)
+├── G7 — Expense claims (benefits from G2)
+├── G9 — Performance goals
+└── G11 — Multi-frequency payroll (depends on G1 and G8)
+
+Phase 4 — P3 polish
+├── G12 — Bank payment files (depends on G2)
+├── G13 — Granular onboarding templates
+└── G14 — Mobile app
+
+
+**Why G8 precedes G1:** statutory tax computation across a tax year requires monthly salary history. Without effective dating, historical salary is not reliably reconstructable.
+
+**Why G2 runs in parallel to G8:** the ledger is independent of payroll data, but account mapping must be agreed before G1 lands, since statutory posting needs accounts.
+
+**Why G1 lands before G10 and G11:** tax declarations and multi-frequency payroll both depend on the statutory engine's period and slab models.
+
+---
+
+## 7. What Fernly already has — do not rebuild
+
+The following capabilities are present and functioning. They should be **preserved and extended**, not replaced, to avoid rework and regression.
+
+| Capability | Evidence | Preserve as |
+|---|---|---|
+| Salary component catalog with percent modes, effective dates, picker | `payroll-components.ts` (108 lines) | Foundation for G1's component-level statutory flags |
+| Flexible benefits with election, accrual, claim, payout | `payroll-benefits.ts` (140 lines) | Extend with pre-tax/post-tax statutory treatment in G1 |
+| Payroll run lifecycle with LOP, YTD, CSV exports | `payroll.ts` (396 lines) | Base for G11's multi-frequency extension |
+| Onboarding and separation checklists with task engine | `hr-onboarding.ts` (275 lines) | Reuse for G6's exit tasks and G13's templates |
+| Full-and-final statement with generate/settle | `hr-offboarding.ts` (401 lines) | Extend with statutory lines when G1 lands |
+| Manual attendance with leave-derived `ON_LEAVE` | `hr-attendance.ts` (194 lines) | Base for G5's biometric reconciliation |
+| Salary advances with recovery | `salary-advances.ts` (96 lines) | Keep as a simpler product alongside G3 |
+| Recruitment pipeline, e-signature, interview scorecards | (README + server-actions) | Independent of this matrix; do not regress |
+| Audit logging and RBAC | (README + server-actions) | Extend with G1/G2 events; do not rebuild |
+
+---
+
+## 8. Risks that could shift priorities
+
+| Risk | If it materialises | Priority shift |
+|---|---|---|
+| A target customer requires weekly/fortnightly payroll | Multi-frequency becomes a sales blocker | **G11 moves P2 → P0/P1** |
+| Regulated jurisdiction becomes primary market | Statutory compliance becomes existential | **G1 effort increases; consider localisation partner** |
+| Biometric hardware already deployed in production | Manual re-keying is a live pain point | **G5 moves P1 → P0** |
+| Finance team is small and cannot handle manual reconciliation | Ledger becomes urgent | **G2 moves earlier within P0** |
+| Employee count grows past ~200 | Effective dating and lifecycle documents become critical for arrears | **G8 confirmed as P0; G6 moved earlier in P1** |
+| Loan programmes are a customer requirement | Advances-lite is insufficient | **G3 moves P1 → P0** |
+| Expense reimbursements are high-volume | Manual processing cost is high | **G7 moves P2 → P1** |
+| Mobile-first workforce | SPA-only access is a blocker | **G14 moves P3 → P1** |
+
+---
+
+## 9. Acceptance criteria per tier
+
+### P0 acceptance
+
+- A salary revision creates a **new effective-dated assignment** without overwriting history (G8).
+- Statutory deductions are computed **entirely from DB configuration**; a super-admin can create, version, preview, publish, and archive rules **without a code deploy** (G1).
+- Payroll lock posts a **balanced journal entry** to a general ledger, reconcilable via trial balance (G2).
+- All three tiers are covered by automated tests at the existing coverage gate.
+
+### P1 acceptance
+
+- An employee can repay a **loan with interest** through payroll deductions over a multi-month schedule (G3).
+- Hourly/contractor employees can be paid **from recorded timesheet hours** (G4).
+- Attendance flows **from biometric devices** into payroll; LWP-dependent components compute without manual intervention (G5).
+- A promotion or transfer generates an **effective-dated lifecycle document** with full audit trail (G6).
+
+### P2 acceptance
+
+- Employees can submit **expense claims** with receipts; approval routes through multi-level workflow; claims post to the ledger (G7).
+- Employees can **declare tax investments** and see projected tax impact (G10).
+- Payroll supports **weekly, fortnightly, and off-cycle** runs with correct proration and YTD across frequencies (G11).
+- Reviews are linked to **goals and KRAs** (G9).
+
+### P3 acceptance
+
+- Bank payment files can be generated in **at least one local format** and reconciled on payment (G12).
+- Onboarding templates can be scoped by **department, designation, or grade** (G13).
+- A **mobile/PWA client** provides core self-service (G14).
+
+---
+
+## 10. Open decisions that block prioritisation
+
+These decisions must be made before Phase 0 can complete. They may shift the matrix.
+
+1. **First target jurisdiction.** The statutory engine is jurisdiction-agnostic, but at least one concrete rule set and filing format must be specified to define Phase 1 scope.
+2. **Multi-tenancy model.** Does "any company based on its location can configure it" mean single-company, multi-location, or multi-tenant? This affects the data model for jurisdictions and the chart of accounts.
+3. **Weekly/fortnightly payroll required at launch?** If yes, G11 moves to P0/P1.
+4. **Biometric hardware already deployed?** If yes, G5 moves to P0.
+5. **Loan programmes in scope for launch customers?** If yes, G3 moves to P0.
+6. **Chart of accounts baseline.** Ship a default payroll chart, or require configuration before first payroll run?
+7. **Timesheet vs attendance-first payroll.** If hourly work is in scope, timesheets are P1. If not, shift management alone may suffice.
+8. **Expense claims volume.** If high, G7 moves P2 → P1.
+
+---
+
+## 11. Summary matrix (one-look view)
+
+| Priority | Gap IDs | Count | Theme |
+|---|---|---|---|
+| **P0** | G1, G2, G8 | 3 | Compliance, financial integrity, data integrity |
+| **P1** | G3, G4, G5, G6 | 4 | Operational completeness for real workforces |
+| **P2** | G7, G9, G10, G11 | 4 | Extended capability and maturing features |
+| **P3** | G12, G13, G14 | 3 | Convenience and polish |
+
+**Total gaps tracked:** 14 (7 structural + 7 secondary).
+
+---
+
+## 12. Revision history
+
+| Date | Author | Change |
+|---|---|---|
+| 2026-11-12 | Analysis | Initial priority matrix based on code-level inspection of Fernly repository. |
+
+---
+
+**End of priority matrix.**
