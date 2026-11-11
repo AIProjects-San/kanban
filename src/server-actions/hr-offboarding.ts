@@ -63,6 +63,9 @@ import {
   type FnFOpenRun,
 } from "@/lib/full-and-final";
 import { getOrCreateBalancesBatch, getHolidayLookup, todayUTC } from "./hr-shared";
+// P35 — the DERIVED boarding status kernel (the same one hr-onboarding's
+// serializer uses, so the two can never drift).
+import { checklistCompletion } from "@/lib/onboarding-template";
 import type {
   ExitInterviewT,
   ExitInterviewStatus,
@@ -274,10 +277,11 @@ function storedComputed(row: {
 function serializeChecklist(
   row: {
     id: string; newHireId: string; title: string; kind: string;
-    completedAt: Date | null; createdAt: Date;
+    completedAt: Date | null; startDate: Date | null; createdAt: Date;
     tasks: {
       id: string; checklistId: string; title: string; assigneeId: string | null;
-      dueOffsetDays: number; done: boolean; doneAt: Date | null; doneById: string | null;
+      assigneeRole: string; dueOffsetDays: number; dueDate: Date | null;
+      isRequired: boolean; done: boolean; doneAt: Date | null; doneById: string | null;
       notes: string; order: number;
     }[];
   },
@@ -290,7 +294,11 @@ function serializeChecklist(
     title: row.title,
     kind: row.kind === "SEPARATION" ? "SEPARATION" : "ONBOARDING",
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    startDate: row.startDate ? row.startDate.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
+    completion: checklistCompletion(
+      row.tasks.map((t) => ({ done: t.done, isRequired: t.isRequired })),
+    ),
     tasks: row.tasks
       .slice()
       .sort((a, b) => a.order - b.order)
@@ -300,7 +308,10 @@ function serializeChecklist(
         title: t.title,
         assigneeId: t.assigneeId,
         assigneeName: t.assigneeId ? names.get(t.assigneeId) ?? null : null,
+        assigneeRole: t.assigneeRole ?? "",
         dueOffsetDays: t.dueOffsetDays,
+        dueDate: t.dueDate ? t.dueDate.toISOString() : null,
+        isRequired: Boolean(t.isRequired),
         done: t.done,
         doneAt: t.doneAt ? t.doneAt.toISOString() : null,
         doneBy: t.doneById ? names.get(t.doneById) ?? null : null,

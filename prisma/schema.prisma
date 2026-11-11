@@ -1501,6 +1501,11 @@ model OnboardingChecklist {
   kind        String    @default("ONBOARDING")
   // Derived: when every task is done, the checklist is complete.
   completedAt DateTime?
+  // P35 (EM-12) — the day the checklist's clock started: the working-day
+  // walk anchor for every task's dueDate (profile hireDate / lastWorkingDay,
+  // HR-pinnable at creation). Nullable = a pre-P35 row (due dates read as
+  // "not yet dated" — never a fabricated today).
+  startDate   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -1519,8 +1524,19 @@ model OnboardingTask {
   // The User responsible for ticking this task (HR, the hire's manager,
   // or the hire themself).
   assigneeId   String?
+  // P35 (EM-B06) — non-empty = a ROLE-scoped task: every holder of this
+  // role key (ADMIN/MANAGER/HR/MEMBER) sees the task and may tick it;
+  // assigneeId stays NULL. "" = the historical single-user discipline.
+  assigneeRole String   @default("")
   // Days after the checklist start the task is due by.
   dueOffsetDays Int     @default(7)
+  // P35 (EM-12) — the holiday-aware due date: startDate advanced
+  // dueOffsetDays WORKING days (weekends + full holiday-calendar entries
+  // skipped; half-day holidays count). Null = pre-P35 row / undated.
+  dueDate      DateTime?
+  // P35 (EM-12) — required tasks render flagged (the benchmark's
+  // required_for_employee_creation flag, carried per row).
+  isRequired   Boolean  @default(false)
   done         Boolean  @default(false)
   doneAt       DateTime?
   doneById     String?
@@ -1550,6 +1566,16 @@ model OnboardingTemplateTask {
   // true = the new hire / exiting employee ticks it themself; false = the
   // hire's manager (or HR when no manager is set) owns it.
   assignSelf    Boolean  @default(false)
+  // P35 (EM-B06) — user XOR role assignee, overriding the self/manager
+  // discipline above: assigneeUserId pins ONE user (the instantiated task
+  // lands on them); assigneeRole scopes the task to a role KEY (every
+  // holder sees and can tick it). Exactly one may be set (zod-enforced);
+  // both empty = the assignSelf rule keeps applying.
+  assigneeUserId String?
+  assigneeRole   String   @default("")
+  // P35 (EM-12) — required_for_employee_creation: rides the
+  // instantiation onto the task row (flagged in the UI).
+  isRequired    Boolean  @default(false)
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())

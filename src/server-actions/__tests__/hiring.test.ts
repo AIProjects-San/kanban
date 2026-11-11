@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord", "teamMember", "employeeProfile", "onboardingChecklist", "onboardingTask", "salaryStructure", "salaryComponent", "onboardingTemplateTask"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord", "teamMember", "employeeProfile", "onboardingChecklist", "onboardingTask", "salaryStructure", "salaryComponent", "onboardingTemplateTask", "holidayCalendarEntry"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -253,6 +253,8 @@ beforeEach(() => {
   // F2.10 — offer lapse (updateMany), salary-structure copy + catalog, and
   // the onboarding-template source (empty table → constant fallback).
   db.offerRecord.updateMany.mockResolvedValue({ count: 0 });
+  // P35 — markJoined's holiday-aware due-date walk reads an empty calendar.
+  db.holidayCalendarEntry.findMany.mockResolvedValue([]);
   db.salaryStructure.updateMany.mockResolvedValue({ count: 0 });
   db.salaryStructure.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-new", ...data }));
   db.salaryComponent.findMany.mockResolvedValue([]);
@@ -2271,7 +2273,8 @@ describe("F2.10 — the unified onboarding template (F-R8)", () => {
     expect(res.ok).toBe(true);
     expect(db.onboardingTask.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { checklistId: "oc-new", assigneeId: null },
+        // P35 — role-scoped rows stay out of the manager pass.
+        where: { checklistId: "oc-new", assigneeId: null, assigneeRole: "" },
         data: { assigneeId: "u-mgr" },
       }),
     );

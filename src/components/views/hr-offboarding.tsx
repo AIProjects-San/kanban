@@ -327,11 +327,23 @@ function TaskRow({
         {task.done && <Check size={12} />}
       </button>
       <div className="min-w-0 flex-1">
-        <div className={cn("text-sm truncate", task.done ? "text-muted-foreground line-through" : "text-foreground")}>
-          {task.title}
+        <div className={cn("text-sm truncate flex items-center gap-1.5", task.done ? "text-muted-foreground line-through" : "text-foreground")}>
+          <span className="truncate">{task.title}</span>
+          {task.isRequired && !task.done && (
+            <span
+              className="shrink-0 rounded bg-warning/15 text-warning text-[0.5625rem] font-semibold uppercase tracking-wider px-1 py-0.5"
+              title="A required task — flagged for the settlement gate"
+              data-testid={`separation-required-${task.title}`}
+            >
+              req
+            </span>
+          )}
         </div>
         <div className="text-[0.625rem] text-muted-foreground">
-          {task.assigneeName ? `@${task.assigneeName}` : "unassigned"} · within {task.dueOffsetDays} day(s)
+          {task.assigneeName ? `@${task.assigneeName}` : task.assigneeRole ? `the ${task.assigneeRole} role` : "unassigned"}{" "}
+          · {task.dueDate
+            ? `due ${new Date(task.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
+            : `within ${task.dueOffsetDays} day(s)`}
         </div>
       </div>
     </div>

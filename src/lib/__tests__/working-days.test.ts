@@ -171,3 +171,44 @@ describe("paymentWindow (S5 / PR-B06)", () => {
     expect(w.paidDays).toBe(15);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P35 (EM-12) — addWorkingDays: the holiday-aware FORWARD walk (the
+// onboarding/separation due date). Pin the exact semantics against the same
+// fixture calendar the rest of this file uses.
+// ---------------------------------------------------------------------------
+
+import { addWorkingDays } from "../working-days";
+
+describe("addWorkingDays", () => {
+  it("advances n calendar working days — Mon start +3 → Thu same week", () => {
+    expect(addWorkingDays(d("2026-11-09"), 3).toISOString().slice(0, 10)).toBe("2026-11-12");
+  });
+
+  it("skips weekends (Fri start +3 → Wed next week)", () => {
+    expect(addWorkingDays(d("2026-11-13"), 3).toISOString().slice(0, 10)).toBe("2026-11-18");
+  });
+
+  it("skips full holiday-calendar entries (Nov 11 2026 is one)", () => {
+    const hol = holidayLookupFrom([{ date: "2026-11-11", isHalfDay: false }]);
+    // Mon 9 +3 working days without the holiday: 10, 12, 13 → Wed 13.
+    expect(addWorkingDays(d("2026-11-09"), 3, hol).toISOString().slice(0, 10)).toBe("2026-11-13");
+    // With the holiday skipped: 10, 12, 13, 16 → Mon 16.
+    expect(addWorkingDays(d("2026-11-10"), 3, hol).toISOString().slice(0, 10)).toBe("2026-11-16");
+  });
+
+  it("half-day holidays COUNT as working days (the dayKind markable rule)", () => {
+    const hol = holidayLookupFrom([{ date: "2026-11-10", isHalfDay: true }]);
+    expect(addWorkingDays(d("2026-11-09"), 1, hol).toISOString().slice(0, 10)).toBe("2026-11-10");
+  });
+
+  it("n <= 0 returns the start unchanged (day-0 semantics belong to the caller)", () => {
+    expect(addWorkingDays(d("2026-11-14"), 0).toISOString().slice(0, 10)).toBe("2026-11-14");
+    expect(addWorkingDays(d("2026-11-09"), -2).toISOString().slice(0, 10)).toBe("2026-11-09");
+  });
+
+  it("a weekend start still walks forward from the next working day", () => {
+    // Sat 14 +1 → Mon 16.
+    expect(addWorkingDays(d("2026-11-14"), 1).toISOString().slice(0, 10)).toBe("2026-11-16");
+  });
+});

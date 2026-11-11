@@ -15,9 +15,11 @@ import { headers as nextHeaders } from "next/headers";
 import { createMailer } from "@/lib/mailer";
 import { Prisma } from "@prisma/client";
 import {
+  resolveTemplateAssignee,
   templateForKind,
   type OnboardingTemplateTaskRow,
 } from "@/lib/onboarding-template";
+import { addWorkingDays, type HolidayLookup } from "@/lib/working-days";
 
 export { AuthorizationError };
 
@@ -555,6 +557,16 @@ export async function readOnboardingTemplate(
  * when one exists (else unassigned — HR picks up). This is the exact
  * createChecklist discipline markJoined previously drifted from; both
  * writers now call this one function.
+ *
+ * P35 (EM-12/EM-B06) — template depth rides the same rows: a pinned
+ * assigneeUserId lands the task on that user; a role key keeps it
+ * role-scoped (assigneeId NULL — every holder sees it, and the manager
+ * pass below deliberately leaves role rows alone); isRequired copies onto
+ * the task; and every task gets a holiday-aware dueDate — startDate
+ * advanced dueOffsetDays WORKING days (addWorkingDays). A null startDate
+ * means "undated": the checklist row stores null and the tasks' dueDate
+ * stays null too (pre-P35 rows read the same way — never a fabricated
+ * today).
  */
 export async function instantiateChecklist(
   tx: Prisma.TransactionClient,
@@ -563,20 +575,34 @@ export async function instantiateChecklist(
     title: string;
     kind: "ONBOARDING" | "SEPARATION";
     template: Omit<OnboardingTemplateTaskRow, "id" | "isActive" | "sortOrder">[];
+    /** P35 — the working-day-walk anchor; null = undated. */
+    startDate?: Date | null;
+    /** P35 — the holiday calendar for the walk (built by the caller). */
+    holidays?: HolidayLookup;
   },
 ) {
+  const start = input.startDate ?? null;
   const created = await tx.onboardingChecklist.create({
     data: {
       newHireId: input.newHireId,
       title: input.title,
       kind: input.kind,
+      startDate: start,
       tasks: {
-        create: input.template.map((t, i) => ({
-          title: t.title,
-          dueOffsetDays: t.dueOffsetDays,
-          assigneeId: t.assignSelf ? input.newHireId : null,
-          order: i,
-        })),
+        create: input.template.map((t, i) => {
+          const { assigneeId, assigneeRole } = resolveTemplateAssignee(t, input.newHireId);
+          return {
+            title: t.title,
+            dueOffsetDays: t.dueOffsetDays,
+            assigneeId,
+            assigneeRole,
+            isRequired: Boolean(t.isRequired),
+            dueDate: start
+              ? addWorkingDays(start, t.dueOffsetDays, input.holidays)
+              : null,
+            order: i,
+          };
+        }),
       },
     },
     include: { tasks: true },
@@ -587,8 +613,10 @@ export async function instantiateChecklist(
   });
   const managerId = approvers?.managerId ?? null;
   if (managerId) {
+    // P35 — role-scoped rows keep their role (assigneeId stays NULL, every
+    // holder sees the task); only the plain manager-default rows resolve.
     await tx.onboardingTask.updateMany({
-      where: { checklistId: created.id, assigneeId: null },
+      where: { checklistId: created.id, assigneeId: null, assigneeRole: "" },
       data: { assigneeId: managerId },
     });
   }

@@ -78,6 +78,8 @@ import { computeOffer, parseComponents, parseBenefits, renderOfferLetter, format
 // the joining gate's pure rule.
 import { isOfferLinkExpired, formatOfferDate, dateOnlyISO } from "@/lib/offer-lifecycle";
 import { evaluateJoiningGate } from "@/lib/joining-gate";
+// P35 — the holiday-aware due-date walk for the markJoined checklist.
+import { holidayLookupFrom } from "@/lib/working-days";
 // R6 — account creation for joined hires + shared HTML escaping.
 import { hashPassword } from "@/lib/password";
 import { escapeHtml } from "@/lib/utils";
@@ -2260,6 +2262,19 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
     // F2.10 (F-R8) — the ONE template source.
     const template = await readOnboardingTemplate("ONBOARDING");
 
+    // P35 (EM-12) — markJoined runs ON the join day: the checklist's
+    // working-day anchor is today, and the walk skips the holiday calendar
+    // (window capped like every read — PR-21 discipline).
+    const joinDay = new Date();
+    const walkEnd = new Date(joinDay.getTime());
+    walkEnd.setUTCDate(walkEnd.getUTCDate() + 370);
+    const holidayRows = await db.holidayCalendarEntry.findMany({
+      where: { date: { gte: joinDay, lte: walkEnd } },
+      select: { date: true, isHalfDay: true },
+      take: 500,
+    });
+    const holidays = holidayLookupFrom(holidayRows);
+
     const user = await db.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
@@ -2332,6 +2347,8 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
         title: `${candidate.fullName} — onboarding`,
         kind: "ONBOARDING",
         template,
+        startDate: joinDay,
+        holidays,
       });
       await tx.candidate.update({
         where: { id: candidate.id },

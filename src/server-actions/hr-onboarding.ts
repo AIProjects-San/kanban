@@ -35,6 +35,8 @@ import {
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit, readOnboardingTemplate, instantiateChecklist } from "./shared";
+import { checklistCompletion } from "@/lib/onboarding-template";
+import { addWorkingDays, holidayLookupFrom } from "@/lib/working-days";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -48,10 +50,11 @@ import type { ActionResult } from "@/lib/action-result";
 function serialize(
   c: {
     id: string; newHireId: string; title: string; kind: string;
-    completedAt: Date | null; createdAt: Date; updatedAt: Date;
+    completedAt: Date | null; startDate: Date | null; createdAt: Date; updatedAt: Date;
     tasks: {
       id: string; checklistId: string; title: string; assigneeId: string | null;
-      dueOffsetDays: number; done: boolean; doneAt: Date | null; doneById: string | null;
+      assigneeRole: string; dueOffsetDays: number; dueDate: Date | null;
+      isRequired: boolean; done: boolean; doneAt: Date | null; doneById: string | null;
       notes: string; order: number; createdAt: Date; updatedAt: Date;
     }[];
   },
@@ -65,7 +68,15 @@ function serialize(
     title: c.title,
     kind: c.kind === "SEPARATION" ? "SEPARATION" : "ONBOARDING",
     completedAt: c.completedAt ? c.completedAt.toISOString() : null,
+    // P35 — the walk anchor; null = a pre-P35 row ("undated", never a
+    // fabricated today).
+    startDate: c.startDate ? c.startDate.toISOString() : null,
     createdAt: c.createdAt.toISOString(),
+    // P35 (EM-11) — the DERIVED boarding status, one pure kernel for every
+    // reader (server serializer here, client surfaces, tests).
+    completion: checklistCompletion(
+      c.tasks.map((t) => ({ done: t.done, isRequired: t.isRequired })),
+    ),
     tasks: c.tasks
       .slice()
       .sort((a, b) => a.order - b.order)
@@ -75,7 +86,10 @@ function serialize(
         title: t.title,
         assigneeId: t.assigneeId,
         assigneeName: t.assigneeId ? names.get(t.assigneeId) ?? null : null,
+        assigneeRole: t.assigneeRole ?? "",
         dueOffsetDays: t.dueOffsetDays,
+        dueDate: t.dueDate ? t.dueDate.toISOString() : null,
+        isRequired: Boolean(t.isRequired),
         done: t.done,
         doneAt: t.doneAt ? t.doneAt.toISOString() : null,
         doneBy: t.doneById ? names.get(t.doneById) ?? null : null,
@@ -113,7 +127,9 @@ export async function getOnboarding(): Promise<ActionResult<OnboardingChecklistT
   });
 }
 
-/** The signed-in user's own actionable onboarding tasks (self-service). */
+/** The signed-in user's own actionable onboarding tasks (self-service).
+ *  P35 (EM-B06) — role-scoped tasks surface here too: every holder of the
+ *  task's role key sees the checklist (and may tick the task). */
 export async function getMyOnboardingTasks(): Promise<ActionResult<{
   checklists: OnboardingChecklistT[];
   canManage: boolean;
@@ -122,7 +138,11 @@ export async function getMyOnboardingTasks(): Promise<ActionResult<{
     const auth = await requirePermission("settings:edit");
     const rows = await db.onboardingChecklist.findMany({
       where: {
-        OR: [{ newHireId: auth.userId }, { tasks: { some: { assigneeId: auth.userId } } }],
+        OR: [
+          { newHireId: auth.userId },
+          { tasks: { some: { assigneeId: auth.userId } } },
+          { tasks: { some: { assigneeRole: auth.role } } },
+        ],
       },
       orderBy: { createdAt: "desc" },
       include: { tasks: true },
@@ -149,6 +169,8 @@ export async function createChecklist(input: {
   title: string;
   useTemplate: boolean;
   kind?: "ONBOARDING" | "SEPARATION";
+  /** P35 — optional yyyy-mm-dd walk anchor (defaults to the profile fact). */
+  startDate?: string;
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("onboarding:manage");
@@ -168,6 +190,30 @@ export async function createChecklist(input: {
     // exiting person themself still ticks the handover tasks (assignSelf),
     // so the deleted-user refusal is the only extra guard needed here.
 
+    // P35 (EM-12) — resolve the working-day-walk anchor: the explicit
+    // startDate wins; else the profile fact for the kind (hireDate for
+    // ONBOARDING, lastWorkingDay for SEPARATION); else today (the honest
+    // fallback — the checklist is starting NOW, and the row records it).
+    const profile = await db.employeeProfile.findUnique({
+      where: { userId: data.newHireId },
+      select: { hireDate: true, lastWorkingDay: true },
+    });
+    const start = data.startDate
+      ? new Date(`${data.startDate}T00:00:00.000Z`)
+      : (kind === "SEPARATION" ? profile?.lastWorkingDay : profile?.hireDate) ?? new Date();
+
+    // P35 — the holiday window for the walk: entries from the start date
+    // out to the schema's longest offset (365d) + slack, capped like every
+    // read (PR-21 discipline).
+    const walkEnd = new Date(start.getTime());
+    walkEnd.setUTCDate(walkEnd.getUTCDate() + 370);
+    const holidayRows = await db.holidayCalendarEntry.findMany({
+      where: { date: { gte: start, lte: walkEnd } },
+      select: { date: true, isHalfDay: true },
+      take: 500,
+    });
+    const holidays = holidayLookupFrom(holidayRows);
+
     // PR-15 (production-readiness audit) — the checklist row, its template
     // tasks and the manager auto-assignment are one logical creation. The
     // nested create was already atomic; the manager updateMany now joins it
@@ -181,6 +227,8 @@ export async function createChecklist(input: {
         title: data.title,
         kind,
         template: data.useTemplate ? template : [],
+        startDate: start,
+        holidays,
       }),
     );
 
@@ -202,6 +250,8 @@ export async function addTask(input: {
   title: string;
   assigneeId?: string | null;
   dueOffsetDays?: number;
+  /** P35 — the required flag on manual adds. */
+  isRequired?: boolean;
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
     const auth = await requirePermission("onboarding:manage");
@@ -233,12 +283,30 @@ export async function addTask(input: {
       select: { order: true },
     });
 
+    // P35 (EM-12) — a manual add is dated with the SAME holiday-aware walk
+    // as template rows: the checklist's own startDate (null = undated,
+    // pre-P35 checklist — the honest empty, no fabricated anchor).
+    const start = checklist.startDate ?? null;
+    let dueDate: Date | null = null;
+    if (start) {
+      const walkEnd = new Date(start.getTime());
+      walkEnd.setUTCDate(walkEnd.getUTCDate() + 370);
+      const holidayRows = await db.holidayCalendarEntry.findMany({
+        where: { date: { gte: start, lte: walkEnd } },
+        select: { date: true, isHalfDay: true },
+        take: 500,
+      });
+      dueDate = addWorkingDays(start, data.dueOffsetDays ?? 7, holidayLookupFrom(holidayRows));
+    }
+
     await db.onboardingTask.create({
       data: {
         checklistId: checklist.id,
         title: data.title,
         assigneeId: data.assigneeId ?? null,
         dueOffsetDays: data.dueOffsetDays ?? 7,
+        dueDate,
+        isRequired: data.isRequired,
         order: (last?.order ?? 0) + 1,
       },
     });
@@ -262,10 +330,10 @@ export async function addTask(input: {
 async function assertCanTick(
   auth: { userId: string; role: string },
   taskId: string,
-): Promise<{ id: string; title: string; checklistId: string; assigneeId: string | null }> {
+): Promise<{ id: string; title: string; checklistId: string; assigneeId: string | null; assigneeRole: string }> {
   const task = await db.onboardingTask.findUnique({
     where: { id: taskId },
-    select: { id: true, title: true, checklistId: true, assigneeId: true },
+    select: { id: true, title: true, checklistId: true, assigneeId: true, assigneeRole: true },
   });
   if (!task) throw new AuthorizationError("Task not found.");
   const checklist = await db.onboardingChecklist.findUnique({
@@ -274,9 +342,12 @@ async function assertCanTick(
   });
   const isAssignee = task.assigneeId === auth.userId;
   const isHire = checklist?.newHireId === auth.userId;
+  // P35 (EM-B06) — a role-scoped task belongs to EVERY holder of its role
+  // key (the benchmark's "role → all holders see the task").
+  const isRoleHolder = task.assigneeRole !== "" && task.assigneeRole === auth.role;
   const canManage = hasPermission(auth.role as never, "onboarding:manage");
-  if (!isAssignee && !isHire && !canManage) {
-    throw new AuthorizationError("Only the task's assignee, the new hire, or HR can tick this task.");
+  if (!isAssignee && !isHire && !isRoleHolder && !canManage) {
+    throw new AuthorizationError("Only the task's assignee, a holder of its role, the new hire, or HR can tick this task.");
   }
   return task;
 }
@@ -355,18 +426,52 @@ export async function getOnboardingTemplates(): Promise<ActionResult<OnboardingT
       title: r.title,
       dueOffsetDays: r.dueOffsetDays,
       assignSelf: r.assignSelf,
+      assigneeUserId: r.assigneeUserId ?? null,
+      assigneeRole: r.assigneeRole ?? "",
+      isRequired: Boolean(r.isRequired),
       isActive: r.isActive,
       sortOrder: r.sortOrder,
     }));
   });
 }
 
+/** P35 — the one-line rendering of a template row's assignee axis for
+ * audit details ("self" / "manager" / "@Name" / "the HR role"). */
+function templateAssigneeLabel(
+  row: { assigneeUserId: string | null; assigneeRole: string; assignSelf: boolean },
+  names: Map<string, string>,
+): string {
+  if (row.assigneeUserId) return `@${names.get(row.assigneeUserId) ?? "user"}`;
+  if (row.assigneeRole) return `the ${row.assigneeRole} role`;
+  return row.assignSelf ? "self" : "manager";
+}
+
 /** Create or edit one template task row. sortOrder defaults to the kind's
- * current max + 1 so new tasks land at the end of their list. */
+ * current max + 1 so new tasks land at the end of their list. P35 — the
+ * user-XOR-role assignee and the required flag ride the same save. */
 export async function saveOnboardingTemplateTask(input: unknown): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
     const auth = await requirePermission("onboarding:manage");
     const data = parseOrThrow(saveOnboardingTemplateTaskSchema, input);
+
+    // QA-12 discipline — a pinned user must be a real active user (the XOR
+    // itself is zod-enforced; this is the referential check).
+    const names = new Map<string, string>();
+    if (data.assigneeUserId) {
+      const pinned = await db.user.findUnique({
+        where: { id: data.assigneeUserId },
+        select: { id: true, name: true, deletedAt: true },
+      });
+      if (!pinned || pinned.deletedAt) {
+        throw new AuthorizationError("The pinned assignee user was not found.");
+      }
+      names.set(pinned.id, pinned.name);
+    }
+    const assigneeFields = {
+      assigneeUserId: data.assigneeUserId ?? null,
+      assigneeRole: data.assigneeRole ?? "",
+      isRequired: data.isRequired,
+    };
 
     if (data.id) {
       const existing = await db.onboardingTemplateTask.findUnique({ where: { id: data.id } });
@@ -378,6 +483,7 @@ export async function saveOnboardingTemplateTask(input: unknown): Promise<Action
           title: data.title,
           dueOffsetDays: data.dueOffsetDays,
           assignSelf: data.assignSelf,
+          ...assigneeFields,
           isActive: data.isActive,
           ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),
         },
@@ -388,7 +494,7 @@ export async function saveOnboardingTemplateTask(input: unknown): Promise<Action
         entityType: "ONBOARDING_TEMPLATE",
         entityId: row.id,
         entityLabel: row.title,
-        detail: `${auth.name} edited the ${row.kind.toLowerCase()} template task "${row.title}" (due day ${row.dueOffsetDays}, ${row.assignSelf ? "self" : "manager"}, ${row.isActive ? "active" : "inactive"}).`,
+        detail: `${auth.name} edited the ${row.kind.toLowerCase()} template task "${row.title}" (due day ${row.dueOffsetDays}, ${templateAssigneeLabel(row, names)}, ${row.isRequired ? "required" : "optional"}, ${row.isActive ? "active" : "inactive"}).`,
       });
       revalidatePath("/");
       return { id: row.id };
@@ -405,6 +511,7 @@ export async function saveOnboardingTemplateTask(input: unknown): Promise<Action
         title: data.title,
         dueOffsetDays: data.dueOffsetDays,
         assignSelf: data.assignSelf,
+        ...assigneeFields,
         isActive: data.isActive,
         sortOrder: data.sortOrder ?? (last?.sortOrder ?? 0) + 1,
       },
@@ -415,7 +522,7 @@ export async function saveOnboardingTemplateTask(input: unknown): Promise<Action
       entityType: "ONBOARDING_TEMPLATE",
       entityId: row.id,
       entityLabel: row.title,
-      detail: `${auth.name} added the ${row.kind.toLowerCase()} template task "${row.title}" (due day ${row.dueOffsetDays}, ${row.assignSelf ? "self" : "manager"}).`,
+      detail: `${auth.name} added the ${row.kind.toLowerCase()} template task "${row.title}" (due day ${row.dueOffsetDays}, ${templateAssigneeLabel(row, names)}, ${row.isRequired ? "required" : "optional"}).`,
     });
     revalidatePath("/");
     return { id: row.id };

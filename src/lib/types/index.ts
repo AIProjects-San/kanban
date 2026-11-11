@@ -258,7 +258,15 @@ export interface OnboardingTaskT {
   title: string;
   assigneeId: string | null;
   assigneeName: string | null;
+  /** P35 (EM-B06) — non-empty = role-scoped task (every holder of the key
+   * sees it and may tick it; assigneeId/assigneeName stay null). */
+  assigneeRole: string;
   dueOffsetDays: number;
+  /** P35 (EM-12) — the holiday-aware due date (ISO); null = undated
+   * (pre-P35 row / no checklist start). */
+  dueDate: string | null;
+  /** P35 (EM-12) — the benchmark's required_for_employee_creation flag. */
+  isRequired: boolean;
   done: boolean;
   doneAt: string | null;
   doneBy: string | null;
@@ -275,7 +283,21 @@ export interface OnboardingChecklistT {
    * owns the row; the default keeps every pre-F2.1 row onboarding. */
   kind: ChecklistKind;
   completedAt: string | null;
+  /** P35 (EM-12) — the working-day-walk anchor the due dates hang off
+   * (ISO); null = pre-P35 row. */
+  startDate: string | null;
   createdAt: string;
+  /** P35 (EM-11) — the DERIVED boarding status: done/total/percent +
+   * NOT_STARTED | IN_PROGRESS | COMPLETE + the open-required count.
+   * Computed per read (lib/onboarding-template's pure kernel) — never
+   * stored, so it can never drift from the task rows. */
+  completion: {
+    done: number;
+    total: number;
+    percent: number;
+    status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETE";
+    requiredOpen: number;
+  };
   tasks: OnboardingTaskT[];
 }
 
@@ -1089,6 +1111,12 @@ export interface OnboardingTemplateTaskT {
   title: string;
   dueOffsetDays: number;
   assignSelf: boolean;
+  /** P35 (EM-B06) — the user XOR role assignee (exactly one non-null/
+   * non-empty at most; both empty = the assignSelf discipline). */
+  assigneeUserId: string | null;
+  assigneeRole: string;
+  /** P35 (EM-12) — required_for_employee_creation. */
+  isRequired: boolean;
   isActive: boolean;
   sortOrder: number;
 }

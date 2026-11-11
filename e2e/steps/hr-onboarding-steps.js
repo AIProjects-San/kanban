@@ -138,3 +138,110 @@ Then("my onboarding checklist {string} should be complete", async function (titl
     `checklist "${title}" never completed`,
   );
 });
+
+// P35 (EM-12/EM-B06/EM-11) — template-depth steps: the derived status chip,
+// the required-open counter, the role-scoped assignee label, the
+// holiday-aware due dates, and the pinned start date.
+
+Then("the onboarding checklist {string} should show the status {string}", async function (title, status) {
+  const card = await checklistCard(this, title);
+  const chip = await card.findElement(
+    By.xpath(`.//*[contains(@class, "rounded")][contains(text(), ${JSON.stringify(status)})]`),
+  );
+  const text = await chip.getText();
+  assert.ok(
+    text.includes(status),
+    `checklist "${title}" status chip does not contain "${status}" (got: ${text})`,
+  );
+});
+
+Then("the onboarding checklist {string} should show {int} required task open", async function (title, count) {
+  const card = await checklistCard(this, title);
+  const text = await card.getText();
+  const match = text.match(/(\d+) required open/);
+  assert.ok(
+    match && Number(match[1]) === count,
+    `checklist "${title}" does not show ${count} required open (got: ${match ? match[1] : "none"})`,
+  );
+});
+
+async function taskRow(world, title, cardTitle) {
+  const driver = await world.getDriver();
+  const card = await checklistCard(world, cardTitle);
+  return driver.wait(
+    until.elementLocated(
+      By.xpath(`//div[@data-testid='checklist-${cardTitle}']//div[.//button[@data-testid='task-${title}']]`),
+    ),
+    10_000,
+    `task "${title}" not found on checklist "${cardTitle}"`,
+  ).then(() => card.findElement(By.xpath(`.//div[.//button[@data-testid='task-${title}']]`)));
+}
+
+Then("the onboarding task {string} should show {string} as its assignee", async function (title, assignee) {
+  const row = await taskRow(this, title, "Nov 2026 onboarding — Diego");
+  const text = await row.getText();
+  assert.ok(text.includes(assignee), `task "${title}" does not show assignee "${assignee}" (got: ${text})`);
+});
+
+Then("the onboarding task {string} should be due on {string}", async function (title, due) {
+  const row = await taskRow(this, title, "Nov 2026 onboarding — Diego");
+  const text = await row.getText();
+  assert.ok(text.includes(due), `task "${title}" is not due ${due} (got: ${text})`);
+});
+
+Then("the onboarding task {string} on {string} should be due on {string}", async function (title, cardTitle, due) {
+  const row = await taskRow(this, title, cardTitle);
+  const text = await row.getText();
+  assert.ok(text.includes(due), `task "${title}" on "${cardTitle}" is not due ${due} (got: ${text})`);
+});
+
+Then("the template task {string} should show {string} in its chip", async function (title, chipText) {
+  const driver = await this.getDriver();
+  const chip = await driver.wait(
+    until.elementLocated(By.xpath(`//span[@data-testid='template-chip-${title}']`)),
+    10_000,
+    `template chip for "${title}" not found`,
+  );
+  const text = await chip.getText();
+  assert.ok(
+    text.includes(chipText),
+    `template chip for "${title}" does not contain "${chipText}" (got: ${text})`,
+  );
+});
+
+When("I start onboarding for {string} titled {string} starting {string}", async function (hire, title, startDate) {
+  const driver = await this.getDriver();
+  await driver.findElement(By.xpath(`//button[contains(., "New Checklist")]`)).click();
+  const modal = await driver.wait(
+    until.elementLocated(By.xpath(`//div[@role='dialog']`)),
+    10_000,
+    "create-checklist modal did not open",
+  );
+  const select = await modal.findElement(By.xpath(`.//select`));
+  const hireValue = await driver.executeScript(
+    `const el = arguments[0];
+     return Array.from(el.options).find(o => o.textContent.includes(arguments[1]))?.value ?? "";`,
+    select, hire,
+  );
+  await driver.executeScript(
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    select, hireValue,
+  );
+  const titleInput = await modal.findElement(By.xpath(`.//input[@type='text' or not(@type)]`));
+  await titleInput.clear();
+  await titleInput.sendKeys(title);
+  const dateInput = await modal.findElement(By.xpath(`.//input[@data-testid='checklist-start-date' or @type='date']`));
+  await driver.executeScript(
+    `const el = arguments[0], val = arguments[1];
+     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+     setter.call(el, val);
+     el.dispatchEvent(new Event('input', { bubbles: true }));
+     el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    dateInput, startDate,
+  );
+  await driver.findElement(By.xpath(`//div[@role='dialog']//button[contains(., "Create checklist")]`)).click();
+  await driver.sleep(1_500);
+});

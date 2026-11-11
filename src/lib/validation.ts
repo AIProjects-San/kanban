@@ -701,6 +701,10 @@ export const createChecklistSchema = z.object({
   // F2.1 — the same machinery carries separation checklists; the default
   // keeps every existing caller on the onboarding side.
   kind: z.enum(["ONBOARDING", "SEPARATION"]).default("ONBOARDING"),
+  // P35 (EM-12) — the working-day-walk anchor for the instantiated tasks'
+  // due dates. Optional: the profile's hireDate (ONBOARDING) / lastWorkingDay
+  // (SEPARATION) is the default, today when neither fact exists.
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Start date must be yyyy-mm-dd.").optional(),
 }).strict();
 
 export const addTaskSchema = z.object({
@@ -708,6 +712,8 @@ export const addTaskSchema = z.object({
   title: z.string().trim().min(1, "Task title is required.").max(200),
   assigneeId: cuidish.nullable().optional(),
   dueOffsetDays: z.number().int().min(0).max(365).optional(),
+  // P35 (EM-12) — the required flag rides manual adds too.
+  isRequired: z.boolean().default(false),
 }).strict();
 
 export const taskDoneSchema = z.object({
@@ -717,15 +723,24 @@ export const taskDoneSchema = z.object({
 
 // F2.10 (F-R8) — the configurable onboarding-template source
 // (OnboardingTemplateTask CRUD, onboarding:manage).
+// P35 (EM-12/EM-B06) — user-XOR-role assignee + the required flag.
 export const saveOnboardingTemplateTaskSchema = z.object({
   id: cuidish.optional(),
   kind: z.enum(["ONBOARDING", "SEPARATION"]),
   title: z.string().trim().min(1, "Task title is required.").max(200),
   dueOffsetDays: z.number().int().min(1).max(365),
   assignSelf: z.boolean().default(false),
+  // P35 — pin ONE user (validated against the roster at the action layer)
+  // XOR scope the task to a role key (every holder sees it).
+  assigneeUserId: cuidish.nullable().optional(),
+  assigneeRole: z.enum(["ADMIN", "MANAGER", "HR", "MEMBER"]).nullable().optional(),
+  isRequired: z.boolean().default(false),
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(999).optional(),
-}).strict();
+}).strict().refine(
+  (d) => !(d.assigneeUserId && d.assigneeRole),
+  { message: "Pick either one user or one role for the assignee — not both." },
+);
 
 export const deleteOnboardingTemplateTaskSchema = z.object({
   id: cuidish,

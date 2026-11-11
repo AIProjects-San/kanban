@@ -2067,40 +2067,60 @@ async function main() {
   await db.onboardingTask.deleteMany();
   const diegoId = userByName.get("Diego Morales");
   const hanaId = userByName.get("Hana Park");
+  // P35 — the seeded checklists are holiday-aware-dated: anchored on Mon
+  // 2026-11-09 (November has no NZ public holidays), due dates walked with
+  // the production rule (weekends skipped). Diego's SSO task is the
+  // role-scoped showcase (the HR role) and the required flags mirror the
+  // canonical template.
+  const ONBOARDING_START = new Date("2026-11-09T00:00:00.000Z");
+  const walk = (n) => {
+    const c = new Date(ONBOARDING_START.getTime());
+    let r = n;
+    while (r > 0) {
+      c.setUTCDate(c.getUTCDate() + 1);
+      const dow = c.getUTCDay();
+      if (dow !== 0 && dow !== 6) r -= 1;
+    }
+    return c;
+  };
   const diegoChecklist = await db.onboardingChecklist.create({
     data: {
       newHireId: diegoId,
       title: "Nov 2026 onboarding — Diego",
+      startDate: ONBOARDING_START,
       tasks: {
         create: [
-          { title: "Sign the employment contract", assigneeId: null, dueOffsetDays: 1, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Remy Laurent") ?? null },
-          { title: "Set up accounts and SSO access", assigneeId: null, dueOffsetDays: 2, order: 1 },
-          { title: "Meet your manager for the 1:1 kick-off", assigneeId: userByName.get("Ingrid Solberg") ?? null, dueOffsetDays: 3, order: 2 },
-          { title: "Complete the workspace tour", assigneeId: diegoId, dueOffsetDays: 5, order: 3 },
-          { title: "First small task shipped with a mentor", assigneeId: diegoId, dueOffsetDays: 14, order: 4 },
+          { title: "Sign the employment contract", assigneeId: null, assigneeRole: "", dueOffsetDays: 1, dueDate: walk(1), isRequired: true, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Remy Laurent") ?? null },
+          { title: "Set up accounts and SSO access", assigneeId: null, assigneeRole: "HR", dueOffsetDays: 2, dueDate: walk(2), isRequired: true, order: 1 },
+          { title: "Meet your manager for the 1:1 kick-off", assigneeId: userByName.get("Ingrid Solberg") ?? null, assigneeRole: "", dueOffsetDays: 3, dueDate: walk(3), isRequired: false, order: 2 },
+          { title: "Complete the workspace tour", assigneeId: diegoId, assigneeRole: "", dueOffsetDays: 5, dueDate: walk(5), isRequired: false, order: 3 },
+          { title: "First small task shipped with a mentor", assigneeId: diegoId, assigneeRole: "", dueOffsetDays: 14, dueDate: walk(14), isRequired: false, order: 4 },
         ],
       },
     },
   });
-  // Unassigned manager tasks fall to the hire's manager (Ingrid).
+  // Unassigned manager tasks fall to the hire's manager (Ingrid) — P35:
+  // role-scoped rows deliberately stay out (the same discipline as
+  // instantiateChecklist's manager pass).
   await db.onboardingTask.updateMany({
-    where: { checklistId: diegoChecklist.id, assigneeId: null },
+    where: { checklistId: diegoChecklist.id, assigneeId: null, assigneeRole: "" },
     data: { assigneeId: userByName.get("Ingrid Solberg") ?? null },
   });
   const hanaChecklist = await db.onboardingChecklist.create({
     data: {
       newHireId: hanaId,
       title: "Nov 2026 onboarding — Hana",
+      startDate: ONBOARDING_START,
       tasks: {
         create: [
-          { title: "Sign the employment contract", assigneeId: userByName.get("Priya Nair") ?? null, dueOffsetDays: 1, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Priya Nair") ?? null },
-          { title: "Set up accounts and SSO access", assigneeId: userByName.get("Priya Nair") ?? null, dueOffsetDays: 2, order: 1, done: true, doneAt: new Date(), doneById: userByName.get("Priya Nair") ?? null },
-          { title: "Meet your manager for the 1:1 kick-off", assigneeId: userByName.get("Priya Nair") ?? null, dueOffsetDays: 3, order: 2 },
+          { title: "Sign the employment contract", assigneeId: userByName.get("Priya Nair") ?? null, assigneeRole: "", dueOffsetDays: 1, dueDate: walk(1), isRequired: true, order: 0, done: true, doneAt: new Date(), doneById: userByName.get("Priya Nair") ?? null },
+          { title: "Set up accounts and SSO access", assigneeId: userByName.get("Priya Nair") ?? null, assigneeRole: "", dueOffsetDays: 2, dueDate: walk(2), isRequired: true, order: 1, done: true, doneAt: new Date(), doneById: userByName.get("Priya Nair") ?? null },
+          { title: "Meet your manager for the 1:1 kick-off", assigneeId: userByName.get("Priya Nair") ?? null, assigneeRole: "", dueOffsetDays: 3, dueDate: walk(3), isRequired: false, order: 2 },
         ],
       },
     },
   });
-  console.log(`  ✓ HR onboarding: 2 checklists seeded (Diego in progress, Hana one task from completion)`);
+  console.log(`  ✓ HR onboarding: 2 checklists seeded (Diego in progress with the role-scoped + dated tasks, Hana one task from completion)`);
 
 
 
@@ -2400,16 +2420,20 @@ async function main() {
   // are only the empty-table fallback.
   // -----------------------------------------------------------------
   const ONBOARDING_TEMPLATE_TASKS = [
-    { kind: "ONBOARDING", title: "Sign the employment contract", dueOffsetDays: 1, assignSelf: false, sortOrder: 10 },
-    { kind: "ONBOARDING", title: "Set up accounts and SSO access", dueOffsetDays: 2, assignSelf: false, sortOrder: 20 },
-    { kind: "ONBOARDING", title: "Meet your manager for the 1:1 kick-off", dueOffsetDays: 3, assignSelf: false, sortOrder: 30 },
-    { kind: "ONBOARDING", title: "Complete the workspace tour", dueOffsetDays: 5, assignSelf: true, sortOrder: 40 },
-    { kind: "ONBOARDING", title: "First small task shipped with a mentor", dueOffsetDays: 14, assignSelf: true, sortOrder: 50 },
-    { kind: "SEPARATION", title: "Hand over ongoing work and documents", dueOffsetDays: 3, assignSelf: true, sortOrder: 10 },
-    { kind: "SEPARATION", title: "Return laptop and access devices", dueOffsetDays: 5, assignSelf: true, sortOrder: 20 },
-    { kind: "SEPARATION", title: "Revoke accounts, SSO and tool access", dueOffsetDays: 5, assignSelf: false, sortOrder: 30 },
-    { kind: "SEPARATION", title: "Hold the exit interview", dueOffsetDays: 7, assignSelf: false, sortOrder: 40 },
-    { kind: "SEPARATION", title: "Settle the full-and-final statement", dueOffsetDays: 10, assignSelf: false, sortOrder: 50 },
+    // P35 — the axes mirror lib/onboarding-template's canonical constants
+    // (the unit tests pin they can never drift): required flags on the
+    // contract/SSO onboarding rows, and the separation access-revocation row
+    // role-scoped to HR (every holder sees it).
+    { kind: "ONBOARDING", title: "Sign the employment contract", dueOffsetDays: 1, assignSelf: false, assigneeRole: "", isRequired: true, sortOrder: 10 },
+    { kind: "ONBOARDING", title: "Set up accounts and SSO access", dueOffsetDays: 2, assignSelf: false, assigneeRole: "", isRequired: true, sortOrder: 20 },
+    { kind: "ONBOARDING", title: "Meet your manager for the 1:1 kick-off", dueOffsetDays: 3, assignSelf: false, assigneeRole: "", isRequired: false, sortOrder: 30 },
+    { kind: "ONBOARDING", title: "Complete the workspace tour", dueOffsetDays: 5, assignSelf: true, assigneeRole: "", isRequired: false, sortOrder: 40 },
+    { kind: "ONBOARDING", title: "First small task shipped with a mentor", dueOffsetDays: 14, assignSelf: true, assigneeRole: "", isRequired: false, sortOrder: 50 },
+    { kind: "SEPARATION", title: "Hand over ongoing work and documents", dueOffsetDays: 3, assignSelf: true, assigneeRole: "", isRequired: true, sortOrder: 10 },
+    { kind: "SEPARATION", title: "Return laptop and access devices", dueOffsetDays: 5, assignSelf: true, assigneeRole: "", isRequired: false, sortOrder: 20 },
+    { kind: "SEPARATION", title: "Revoke accounts, SSO and tool access", dueOffsetDays: 5, assignSelf: false, assigneeRole: "HR", isRequired: true, sortOrder: 30 },
+    { kind: "SEPARATION", title: "Hold the exit interview", dueOffsetDays: 7, assignSelf: false, assigneeRole: "", isRequired: false, sortOrder: 40 },
+    { kind: "SEPARATION", title: "Settle the full-and-final statement", dueOffsetDays: 10, assignSelf: false, assigneeRole: "", isRequired: true, sortOrder: 50 },
   ];
   await db.onboardingTemplateTask.createMany({
     data: ONBOARDING_TEMPLATE_TASKS.map((t) => ({ ...t, isActive: true })),

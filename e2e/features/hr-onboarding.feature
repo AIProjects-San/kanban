@@ -46,3 +46,30 @@ Feature: HR onboarding checklists
     When I sign in as "member@fernly.app" with the demo password
     And I open the "Settings" view
     Then my onboarding list should show no tasks
+
+  # P35 (EM-12/EM-B06/EM-11) — template depth: the derived boarding status,
+  # the required flag, the role-scoped assignee, and holiday-aware due dates.
+
+  Scenario: The derived boarding status chip renders on the seeded checklist
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Onboarding" tab
+    Then the onboarding checklist "Nov 2026 onboarding — Diego" should show the status "in progress"
+    And the onboarding checklist "Nov 2026 onboarding — Diego" should show 1 required task open
+    And the onboarding task "Set up accounts and SSO access" should show "the HR role" as its assignee
+    And the onboarding task "Set up accounts and SSO access" should be due on "11 Nov"
+
+  Scenario: The template editor chips show the assignee axis and the required flag
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Onboarding" tab
+    Then the template task "Revoke accounts, SSO and tool access" should show "HR role" in its chip
+    And the template task "Sign the employment contract" should show "required" in its chip
+
+  Scenario: HR pins the checklist start date and the tasks get holiday-aware due dates
+    When I sign in as "demo@fernly.app" with the demo password
+    And I open the "HR" view
+    And I open the "Onboarding" tab
+    And I start onboarding for "Soren Lindqvist" titled "E2E dated onboarding" starting "2026-11-09"
+    Then the onboarding task "Sign the employment contract" on "E2E dated onboarding" should be due on "10 Nov"
+    And the onboarding task "Complete the workspace tour" on "E2E dated onboarding" should be due on "16 Nov"

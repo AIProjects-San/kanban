@@ -70,6 +70,36 @@ export function workingDaysInPeriod(period: string, holidays?: HolidayLookup): n
 }
 
 /**
+ * P35 (EM-12) — the holiday-aware FORWARD walk: the date `n` working days
+ * after `start` (the onboarding/separation task due date). Skips weekends
+ * and full holiday-calendar entries; half-day holidays count as working
+ * days (dayKind's "markable" rule). `n <= 0` returns `start` unchanged —
+ * the caller's own day-0 semantics (a task due "day 0" is due the day the
+ * checklist starts, whatever kind of day that is; the template schema's
+ * min(1) keeps the walk honest for template rows).
+ *
+ * The counterpart of workingDaysBetween (count) — this one ADVANCES.
+ */
+export function addWorkingDays(
+  start: Date,
+  n: number,
+  holidays?: HolidayLookup,
+): Date {
+  const cursor = new Date(start.getTime());
+  let remaining = Math.floor(n);
+  while (remaining > 0) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const kind = dayKind(cursor, holidays?.get(dayKey(cursor)));
+    // Only real working days decrement the walk — WEEKEND and FULL_HOLIDAY
+    // are skipped; HALF_HOLIDAY counts (the dayKind "markable" rule).
+    if (kind === "WORKING" || kind === "HALF_HOLIDAY") {
+      remaining -= 1;
+    }
+  }
+  return cursor;
+}
+
+/**
  * P32 (AT-R01) — the day-kind classifier: "WEEKEND", "FULL_HOLIDAY",
  * "HALF_HOLIDAY" or "WORKING" for one UTC-midnight date. Pure; the caller
  * supplies the calendar row (if any). ONE rule for every surface that
@@ -82,7 +112,7 @@ export type NonWorkingDayKind = "WEEKEND" | "FULL_HOLIDAY" | "HALF_HOLIDAY" | "W
 
 export function dayKind(
   d: Date,
-  holiday?: { label: string; isHalfDay: boolean } | null,
+  holiday?: { label?: string; isHalfDay: boolean } | null,
 ): NonWorkingDayKind {
   const dow = d.getUTCDay(); // 0 Sun … 6 Sat
   if (dow === 0 || dow === 6) return "WEEKEND";
@@ -100,7 +130,7 @@ export function dayKind(
  */
 export function nonWorkingDayReason(
   d: Date,
-  holiday?: { label: string; isHalfDay: boolean } | null,
+  holiday?: { label?: string; isHalfDay: boolean } | null,
 ): string | null {
   switch (dayKind(d, holiday)) {
     case "WEEKEND":

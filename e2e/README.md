@@ -33,7 +33,7 @@ login never has to be diagnosed from a timeout alone.
 
 ## What is covered
 
-**116 scenarios across 18 feature files:**
+**129 scenarios across 18 feature files:**
 
 | Feature file | Scenarios |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -47,7 +47,7 @@ login never has to be diagnosed from a timeout alone.
 | `hr-leave.feature` (18) | balances + own requests, request form with policy enforcement (weekend block, balance cap, minimum notice, overlap rejection), cancel, chain approval, MEMBER sidebar must not contain the HR group |
 | `hr-directory.feature` (9) | roster + search, manager read-only, admin edits, member self-serves contact fields, member blocked |
 | `hr-reviews.feature` (7) | manager's subtree queue, out-of-chain invisible, self-assessment, manager/HR/skip-level completion, employee acknowledgement |
-| `hr-onboarding.feature` (6) | seeded checklists + progress, create from template, add task, auto-complete on last tick, hire self-serves, outsider blocked |
+| `hr-onboarding.feature` (9) | seeded checklists + progress, create from template, add task, auto-complete on last tick, hire self-serves, outsider blocked; P35: the derived boarding status chip + required-open counter + role-scoped assignee label + holiday-aware due date, the template editor's assignee-axis chips, the pinned start-date walk |
 | `hr-offboarding.feature` (2) | F2.1 offboarding: exit a leaver through the separation checklist; settling the FnF statement locks payslip editing |
 | `hiring.feature` (25) | HR sees board + manage controls, manager view-only, member gated, HR advances a stage, rejection requires a reason; R3: select candidate (offer-prep banner), reject with email lands in the outbox, seeded outbox row visible, manager never sees the outbox, selected-pool chip counts; R4: joining formalities of a selected candidate (checklist + BGV vendor), request a document from the checklist, doc-type editor config-gated; R5: HR builds an offer for a selected candidate (live CTC), offers panel lists records, manager never sees the panel; R6: HR sends the offer + the candidate signs on the public `/offer/<token>` page (four-eyes approval first, printable appointment letter after signing), HR marks the signed candidate joined (hired summary + payroll-ready line); F2.10: the joining gate refuses while formalities are outstanding, then passes once complete; R8: the funnel panel shows stage metrics + the offer accept rate; P0-6: a duplicate rejection email on the same day is blocked, HR sees the mail-config warning while no provider is configured |
 | `payroll.feature` (6) | HR sees the seeded runs (LOCKED + OPEN) and structures; payslip list shows the LOP hint; payslip editor shows the live net; HR edits loss-of-pay days and saves; HR creates next month's run and locks it (the lock transaction also flips encashments PAID and writes benefit accruals); managers never see the Payroll leaf |

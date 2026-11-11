@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["onboardingChecklist", "onboardingTask", "onboardingTemplateTask", "user", "auditLog", "notification"];
+  const models = ["onboardingChecklist", "onboardingTask", "onboardingTemplateTask", "user", "employeeProfile", "holidayCalendarEntry", "auditLog", "notification"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -88,6 +88,9 @@ beforeEach(() => {
   db.onboardingTask.count.mockResolvedValue(0);
   db.user.findUnique.mockResolvedValue(null);
   db.user.findMany.mockResolvedValue([]);
+  // P35 — the start-date profile lookup + the holiday-calendar walk window.
+  db.employeeProfile.findUnique.mockResolvedValue(null);
+  db.holidayCalendarEntry.findMany.mockResolvedValue([]);
   // F2.10 — empty template table: instantiation falls back to the canonical
   // constants (the 5-task default the previous code copied inline).
   db.onboardingTemplateTask.findMany.mockResolvedValue([]);
@@ -123,7 +126,9 @@ describe("createChecklist", () => {
     expect(createCall.data.tasks.create).toHaveLength(5);
     expect(db.onboardingTask.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ checklistId: "c-new", assigneeId: null }),
+        // P35 — role-scoped rows are deliberately excluded from the manager
+        // pass (assigneeRole stays "" on manager-default rows).
+        where: expect.objectContaining({ checklistId: "c-new", assigneeId: null, assigneeRole: "" }),
         data: { assigneeId: "u-mgr" },
       }),
     );
@@ -427,7 +432,7 @@ describe("F2.10 — table-driven template instantiation", () => {
     ]);
     expect(db.onboardingTask.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ checklistId: "c-new", assigneeId: null }),
+        where: expect.objectContaining({ checklistId: "c-new", assigneeId: null, assigneeRole: "" }),
         data: { assigneeId: "u-mgr" },
       }),
     );
@@ -500,5 +505,217 @@ describe("F2.10 — template CRUD (onboarding:manage)", () => {
     const save = await saveOnboardingTemplateTask({ kind: "ONBOARDING", title: "X", dueOffsetDays: 3 });
     const del = await deleteOnboardingTemplateTask({ id: "tt-1" });
     expect(read.ok || save.ok || del.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P35 (EM-12/EM-B06/EM-11) — template depth: the user-XOR-role assignee,
+// the required flag, the holiday-aware due dates and the derived
+// completion status, end to end through the actions.
+// ---------------------------------------------------------------------------
+
+describe("P35 — user XOR role assignee + required flag + holiday-aware dates", () => {
+  it("a ROLE template row instantiates role-scoped: assigneeId null, the role key carried, manager pass skips it", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique
+      .mockResolvedValueOnce({ id: "u-diego", name: "Diego Morales", deletedAt: null })
+      .mockResolvedValueOnce({ managerId: "u-mgr" });
+    db.onboardingTemplateTask.findMany.mockResolvedValue([
+      { id: "tt-1", kind: "ONBOARDING", title: "File the tax forms", dueOffsetDays: 2, assignSelf: false, assigneeUserId: null, assigneeRole: "HR", isRequired: true, isActive: true, sortOrder: 10 },
+    ]);
+    const res = await createChecklist({ newHireId: "u-diego", title: "Nov onboarding", useTemplate: true, startDate: "2026-11-09" });
+    expect(res.ok).toBe(true);
+    const createCall = db.onboardingChecklist.create.mock.calls[0][0];
+    expect(createCall.data.startDate).toEqual(new Date("2026-11-09T00:00:00.000Z"));
+    expect(createCall.data.tasks.create).toEqual([
+      expect.objectContaining({
+        title: "File the tax forms",
+        assigneeId: null,
+        assigneeRole: "HR",
+        isRequired: true,
+        // Mon 2026-11-09 + 2 working days = Wed 2026-11-11 (no holidays mocked).
+        dueDate: new Date("2026-11-11T00:00:00.000Z"),
+      }),
+    ]);
+    // The manager pass still runs but its where-clause deliberately excludes
+    // role-scoped rows — assigneeRole: "" keeps the HR row out of it.
+    expect(db.onboardingTask.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ checklistId: "c-new", assigneeId: null, assigneeRole: "" }),
+      }),
+    );
+  });
+
+  it("a holiday-calendar entry pushes the due date past the closed day", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-diego", name: "Diego Morales", deletedAt: null });
+    db.holidayCalendarEntry.findMany.mockResolvedValue([
+      { date: new Date("2026-11-10T00:00:00.000Z"), isHalfDay: false },
+    ]);
+    db.onboardingTemplateTask.findMany.mockResolvedValue([
+      { id: "tt-1", kind: "ONBOARDING", title: "Desk setup", dueOffsetDays: 1, assignSelf: false, assigneeUserId: null, assigneeRole: "", isRequired: false, isActive: true, sortOrder: 10 },
+    ]);
+    const res = await createChecklist({ newHireId: "u-diego", title: "Nov onboarding", useTemplate: true, startDate: "2026-11-09" });
+    expect(res.ok).toBe(true);
+    const createCall = db.onboardingChecklist.create.mock.calls[0][0];
+    // Tue 11-10 is a full holiday → the first working day after Mon 11-09 is Wed 11-11.
+    expect(createCall.data.tasks.create[0].dueDate).toEqual(new Date("2026-11-11T00:00:00.000Z"));
+    // The holiday window read is capped and ordered from the start date.
+    expect(db.holidayCalendarEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 500 }),
+    );
+  });
+
+  it("a USER-pinned template row lands on that user, XOR-clean", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-diego", name: "Diego Morales", deletedAt: null });
+    db.onboardingTemplateTask.findMany.mockResolvedValue([
+      { id: "tt-1", kind: "ONBOARDING", title: "Laptop procurement", dueOffsetDays: 2, assignSelf: false, assigneeUserId: "u-it", assigneeRole: "", isRequired: false, isActive: true, sortOrder: 10 },
+    ]);
+    const res = await createChecklist({ newHireId: "u-diego", title: "Nov onboarding", useTemplate: true, startDate: "2026-11-09" });
+    expect(res.ok).toBe(true);
+    const createCall = db.onboardingChecklist.create.mock.calls[0][0];
+    expect(createCall.data.tasks.create[0]).toMatchObject({ assigneeId: "u-it", assigneeRole: "" });
+  });
+
+  it("the start anchor prefers the explicit date, then the profile fact, then today", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-diego", name: "Diego Morales", deletedAt: null });
+    db.employeeProfile.findUnique.mockResolvedValue({ hireDate: new Date("2026-11-02T00:00:00.000Z"), lastWorkingDay: null });
+    await createChecklist({ newHireId: "u-diego", title: "A", useTemplate: true, startDate: "2026-11-09" });
+    expect(db.onboardingChecklist.create.mock.calls[0][0].data.startDate).toEqual(new Date("2026-11-09T00:00:00.000Z"));
+
+    await createChecklist({ newHireId: "u-diego", title: "B", useTemplate: false });
+    expect(db.onboardingChecklist.create.mock.calls[1][0].data.startDate).toEqual(new Date("2026-11-02T00:00:00.000Z"));
+
+    db.employeeProfile.findUnique.mockResolvedValue({ hireDate: null, lastWorkingDay: new Date("2026-12-15T00:00:00.000Z") });
+    await createChecklist({ newHireId: "u-diego", title: "C", useTemplate: false, kind: "SEPARATION" });
+    expect(db.onboardingChecklist.create.mock.calls[2][0].data.startDate).toEqual(new Date("2026-12-15T00:00:00.000Z"));
+  });
+
+  it("addTask computes the same holiday-aware walk from the checklist's startDate", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findUnique.mockResolvedValue({
+      ...CHECKLIST, completedAt: null, startDate: new Date("2026-11-09T00:00:00.000Z"),
+    });
+    db.onboardingTask.findFirst.mockResolvedValue({ order: 4 });
+    const res = await addTask({ checklistId: "c-1", title: "Badge photo", dueOffsetDays: 1, isRequired: true });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTask.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          title: "Badge photo",
+          dueDate: new Date("2026-11-10T00:00:00.000Z"),
+          isRequired: true,
+        }),
+      }),
+    );
+  });
+
+  it("addTask on a pre-P35 (null startDate) checklist stays undated — no fabricated anchor", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findUnique.mockResolvedValue({ ...CHECKLIST, completedAt: null, startDate: null });
+    db.onboardingTask.findFirst.mockResolvedValue({ order: 4 });
+    const res = await addTask({ checklistId: "c-1", title: "Legacy add" });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTask.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ dueDate: null }) }),
+    );
+    expect(db.holidayCalendarEntry.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a role HOLDER can tick a role-scoped task (EM-B06: all holders see it)", async () => {
+    requirePermissionMock.mockResolvedValue({ ...HR_AUTH, userId: "u-hr-2" });
+    db.onboardingTask.findUnique.mockResolvedValue({ ...TASK, assigneeId: null, assigneeRole: "HR" });
+    db.onboardingChecklist.findUnique.mockResolvedValue({ ...CHECKLIST, newHireId: "u-diego" });
+    db.onboardingTask.count.mockResolvedValue(0);
+    const res = await setTaskDone({ taskId: "t-1", done: true });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTask.update).toHaveBeenCalled();
+  });
+
+  it("a NON-holder still cannot tick a role-scoped task", async () => {
+    requirePermissionMock.mockResolvedValue({ ...MEMBER_AUTH, userId: "u-stranger" });
+    db.onboardingTask.findUnique.mockResolvedValue({ ...TASK, assigneeId: null, assigneeRole: "HR" });
+    db.onboardingChecklist.findUnique.mockResolvedValue({ ...CHECKLIST, newHireId: "u-hana" });
+    const res = await setTaskDone({ taskId: "t-1", done: true });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/holder of its role/i);
+  });
+
+  it("getMyOnboardingTasks scopes by role too (role holders see those checklists)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.onboardingChecklist.findMany.mockResolvedValue([]);
+    const res = await getMyOnboardingTasks();
+    expect(res.ok).toBe(true);
+    const where = db.onboardingChecklist.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual(
+      expect.arrayContaining([{ tasks: { some: { assigneeRole: "HR" } } }]),
+    );
+  });
+
+  it("getOnboarding derives the completion status (EM-11) from the task rows", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    const t = (over: Record<string, unknown>) => ({
+      ...TASK, done: false, dueOffsetDays: 2, doneAt: null, doneById: null, assigneeRole: "",
+      dueDate: null, isRequired: false, notes: "", order: 0, createdAt: new Date(), updatedAt: new Date(), ...over,
+    });
+    db.onboardingChecklist.findMany.mockResolvedValue([
+      {
+        ...CHECKLIST, completedAt: null, startDate: new Date("2026-11-09T00:00:00.000Z"),
+        createdAt: new Date(), updatedAt: new Date(),
+        tasks: [t({ done: true }), t({ done: false, isRequired: true })],
+      },
+    ]);
+    db.user.findMany.mockResolvedValue([{ id: "u-diego", name: "Diego Morales" }]);
+    const res = await getOnboarding();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data[0].completion).toEqual({ done: 1, total: 2, percent: 50, status: "IN_PROGRESS", requiredOpen: 1 });
+      expect(res.data[0].startDate).toBe("2026-11-09T00:00:00.000Z");
+      expect(res.data[0].tasks[1]).toMatchObject({ assigneeRole: "", dueDate: null, isRequired: true });
+    }
+  });
+
+  it("saveOnboardingTemplateTask refuses BOTH a user and a role (the XOR)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    const res = await saveOnboardingTemplateTask({
+      kind: "ONBOARDING", title: "Impossible", dueOffsetDays: 3,
+      assigneeUserId: "u-it", assigneeRole: "HR",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/either one user or one role/i);
+    expect(db.onboardingTemplateTask.create).not.toHaveBeenCalled();
+  });
+
+  it("saveOnboardingTemplateTask validates the pinned user exists and persists the axes", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue({ id: "u-it", name: "IT Ops", deletedAt: null });
+    db.onboardingTemplateTask.findFirst.mockResolvedValue({ sortOrder: 50 });
+    const res = await saveOnboardingTemplateTask({
+      kind: "ONBOARDING", title: "Laptop procurement", dueOffsetDays: 2,
+      assigneeUserId: "u-it", isRequired: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(db.onboardingTemplateTask.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          assigneeUserId: "u-it",
+          assigneeRole: "",
+          isRequired: true,
+        }),
+      }),
+    );
+  });
+
+  it("saveOnboardingTemplateTask refuses a ghost pinned user (QA-12 discipline)", async () => {
+    requirePermissionMock.mockResolvedValue(HR_AUTH);
+    db.user.findUnique.mockResolvedValue(null);
+    const res = await saveOnboardingTemplateTask({
+      kind: "ONBOARDING", title: "Ghost task", dueOffsetDays: 3, assigneeUserId: "u-ghost",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/pinned assignee/i);
+    expect(db.onboardingTemplateTask.create).not.toHaveBeenCalled();
   });
 });

@@ -27,9 +27,30 @@ import { getDirectory } from "@/server-actions/hr-directory";
 import { useApp } from "@/store/app-store";
 
 function progressOf(c: OnboardingChecklistT): { done: number; total: number; pct: number } {
-  const total = c.tasks.length;
-  const done = c.tasks.filter((t) => t.done).length;
-  return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
+  // P35 — the server now derives completion (EM-11's boarding status) from
+  // the task rows; the local calc stays only as the shape adapter for the
+  // bar/card rendering below.
+  return { done: c.completion.done, total: c.completion.total, pct: c.completion.percent };
+}
+
+/** P35 — one label for a task's assignee axis (user / role / self /
+ *  manager / unassigned), the view twin of the server's audit label. */
+function taskAssigneeLabel(task: OnboardingChecklistT["tasks"][number]): string {
+  if (task.assigneeName) return `@${task.assigneeName}`;
+  if (task.assigneeRole) return `the ${task.assigneeRole} role`;
+  return "unassigned";
+}
+
+/** P35 (EM-12) — "Due 14 Nov" (holiday-aware date), or the raw offset for
+ *  undated rows; overdue open tasks render destructive. */
+function taskDueLabel(task: OnboardingChecklistT["tasks"][number]): { text: string; overdue: boolean } {
+  if (task.dueDate) {
+    const due = new Date(task.dueDate);
+    const today = new Date();
+    const overdue = !task.done && due.getTime() < today.getTime() - 24 * 60 * 60 * 1000;
+    return { text: `due ${due.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`, overdue };
+  }
+  return { text: `due day ${task.dueOffsetDays}`, overdue: false };
 }
 
 function TaskRow({
@@ -60,11 +81,23 @@ function TaskRow({
         {task.done && <Check size={12} />}
       </button>
       <div className="min-w-0 flex-1">
-        <div className={cn("text-sm truncate", task.done ? "text-muted-foreground line-through" : "text-foreground")}>
-          {task.title}
+        <div className={cn("text-sm truncate flex items-center gap-1.5", task.done ? "text-muted-foreground line-through" : "text-foreground")}>
+          <span className="truncate">{task.title}</span>
+          {task.isRequired && !task.done && (
+            <span
+              className="shrink-0 rounded bg-warning/15 text-warning text-[0.5625rem] font-semibold uppercase tracking-wider px-1 py-0.5"
+              title="A required task — flagged for the completion gate"
+              data-testid={`required-${task.title}`}
+            >
+              req
+            </span>
+          )}
         </div>
         <div className="text-[0.625rem] text-muted-foreground">
-          {task.assigneeName ? `@${task.assigneeName}` : "unassigned"} · due day {task.dueOffsetDays}
+          {taskAssigneeLabel(task)} ·{" "}
+          <span className={cn(taskDueLabel(task).overdue && "text-destructive font-medium")}>
+            {taskDueLabel(task).text}
+          </span>
           {task.doneBy ? ` · done by ${task.doneBy}` : ""}
         </div>
       </div>
@@ -136,7 +169,20 @@ export function OnboardingTab() {
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-foreground truncate">{c.title}</div>
                   <div className="text-[0.6875rem] text-muted-foreground">
-                    {c.hireName} · {done}/{total} tasks {c.completedAt ? "· complete" : ""}
+                    {c.hireName} · {done}/{total} tasks{" "}
+                    <span
+                      data-testid={`status-${c.title}`}
+                      className={cn(
+                        "rounded px-1 py-0.5 font-medium",
+                        c.completion.status === "COMPLETE" ? "bg-success/15 text-success"
+                          : c.completion.status === "IN_PROGRESS" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+                      )}
+                    >
+                      {c.completion.status === "COMPLETE" ? "complete" : c.completion.status === "IN_PROGRESS" ? `${c.completion.percent}% in progress` : "not started"}
+                    </span>
+                    {c.completion.requiredOpen > 0 && (
+                      <span className="text-warning" title="Required tasks still open"> · {c.completion.requiredOpen} required open</span>
+                    )}
                   </div>
                 </div>
                 {!c.completedAt && (
@@ -183,6 +229,7 @@ export function OnboardingTab() {
       />
       <TemplateTaskModal
         open={templateModalOpen}
+        roster={roster}
         onClose={() => setTemplateModalOpen(false)}
         onChanged={load}
       />
@@ -228,8 +275,10 @@ function TemplateEditor({
                 {rows.map((t) => (
                   <div key={t.id} className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm" data-testid={`template-task-${t.title}`}>
                     <span className={cn("min-w-0 grow truncate", !t.isActive && "text-muted-foreground line-through")}>{t.title}</span>
-                    <span className="text-[0.625rem] text-muted-foreground shrink-0">
-                      day {t.dueOffsetDays} · {t.assignSelf ? "hire" : "manager"}
+                    <span className="text-[0.625rem] text-muted-foreground shrink-0" data-testid={`template-chip-${t.title}`}>
+                      day {t.dueOffsetDays} ·{" "}
+                      {t.assigneeUserId ? "@user" : t.assigneeRole ? `${t.assigneeRole} role` : t.assignSelf ? "hire" : "manager"}
+                      {t.isRequired ? " · required" : ""}
                     </span>
                     <button
                       className="f-btn f-btn-ghost f-btn-sm shrink-0"
@@ -267,16 +316,22 @@ function TemplateEditor({
 }
 
 function TemplateTaskModal({
-  open, onClose, onChanged,
+  open, onClose, onChanged, roster,
 }: {
   open: boolean;
   onClose: () => void;
   onChanged: () => Promise<void>;
+  roster: { userId: string; name: string }[];
 }) {
   const [kind, setKind] = useState<"ONBOARDING" | "SEPARATION">("ONBOARDING");
   const [title, setTitle] = useState("");
   const [dueOffsetDays, setDueOffsetDays] = useState(3);
-  const [assignSelf, setAssignSelf] = useState(false);
+  // P35 — the assignee axis: MANAGER default / SELF / one USER / one ROLE
+  // (the last two are the XOR pair — picking one clears the other).
+  const [assigneeMode, setAssigneeMode] = useState<"MANAGER" | "SELF" | "USER" | "ROLE">("MANAGER");
+  const [assigneeUserId, setAssigneeUserId] = useState("");
+  const [assigneeRole, setAssigneeRole] = useState<"ADMIN" | "MANAGER" | "HR" | "MEMBER">("HR");
+  const [isRequired, setIsRequired] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -287,7 +342,18 @@ function TemplateTaskModal({
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
-          const res = await saveOnboardingTemplateTask({ kind, title, dueOffsetDays, assignSelf, isActive });
+          const res = await saveOnboardingTemplateTask({
+            kind,
+            title,
+            dueOffsetDays,
+            // The XOR pair collapses onto the mode: only one of the two is
+            // ever sent (assignSelf rides the SELF mode).
+            assignSelf: assigneeMode === "SELF",
+            assigneeUserId: assigneeMode === "USER" && assigneeUserId ? assigneeUserId : null,
+            assigneeRole: assigneeMode === "ROLE" ? assigneeRole : null,
+            isRequired,
+            isActive,
+          });
           setBusy(false);
           if (!res.ok) { toast.error(res.error); return; }
           toast.success("Template task saved.");
@@ -303,7 +369,7 @@ function TemplateTaskModal({
               <option value="SEPARATION">Separation (exits)</option>
             </select>
           </Field>
-          <Field label="Due day (days after the checklist starts)">
+          <Field label="Due day (working days after the checklist starts)">
             <input
               type="number" min={1} max={365} className="f-input"
               value={dueOffsetDays}
@@ -319,15 +385,56 @@ function TemplateTaskModal({
             data-testid="template-title-input"
           />
         </Field>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+        <FormRow>
+          <Field label="Assignee">
+            <select
+              className="f-input" value={assigneeMode}
+              onChange={(e) => setAssigneeMode(e.target.value as typeof assigneeMode)}
+              data-testid="template-assignee-mode"
+            >
+              <option value="MANAGER">The hire's manager</option>
+              <option value="SELF">The hire / leaver themself</option>
+              <option value="USER">One named user…</option>
+              <option value="ROLE">Everyone holding a role…</option>
+            </select>
+          </Field>
+          {assigneeMode === "USER" ? (
+            <Field label="User">
+              <select
+                className="f-input" value={assigneeUserId}
+                onChange={(e) => setAssigneeUserId(e.target.value)}
+                data-testid="template-assignee-user"
+                required
+              >
+                <option value="" disabled>Pick a user…</option>
+                {roster.map((p) => <option key={p.userId} value={p.userId}>{p.name}</option>)}
+              </select>
+            </Field>
+          ) : assigneeMode === "ROLE" ? (
+            <Field label="Role (every holder sees the task)">
+              <select
+                className="f-input" value={assigneeRole}
+                onChange={(e) => setAssigneeRole(e.target.value as typeof assigneeRole)}
+                data-testid="template-assignee-role"
+              >
+                <option value="HR">HR</option>
+                <option value="MANAGER">Manager</option>
+                <option value="ADMIN">Admin</option>
+                <option value="MEMBER">Member</option>
+              </select>
+            </Field>
+          ) : <div />}
+        </FormRow>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="accent-primary" checked={assignSelf} onChange={(e) => setAssignSelf(e.target.checked)} />
-            The hire/leaver ticks it themself
+            <input type="checkbox" className="accent-primary" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} data-testid="template-required" />
+            Required
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" className="accent-primary" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active (instantiated)
           </label>
+          <div className="text-[0.625rem] text-muted-foreground self-center">Due dates skip weekends & holidays</div>
         </div>
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost" onClick={onClose}>Close</button>
@@ -351,6 +458,9 @@ function CreateChecklistModal({
   const [newHireId, setNewHireId] = useState("");
   const [title, setTitle] = useState("");
   const [useTemplate, setUseTemplate] = useState(true);
+  // P35 — optional walk anchor; empty = the profile fact (hireDate /
+  // lastWorkingDay), else today.
+  const [startDate, setStartDate] = useState("");
   const [busy, setBusy] = useState(false);
 
   return (
@@ -360,11 +470,17 @@ function CreateChecklistModal({
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
-          const res = await createChecklist({ newHireId, title, useTemplate });
+          const res = await createChecklist({
+            newHireId,
+            title,
+            useTemplate,
+            ...(startDate ? { startDate } : {}),
+          });
           setBusy(false);
           if (res.ok) {
             toast.success("Onboarding checklist created");
             setTitle("");
+            setStartDate("");
             await onCreated();
           } else {
             toast.error(res.error);
@@ -380,9 +496,17 @@ function CreateChecklistModal({
         <Field label="Checklist title">
           <input className="f-input" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. November 2026 onboarding" required />
         </Field>
+        <Field label="Start date (due dates count working days from here)">
+          <input
+            type="date" className="f-input" value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            data-testid="checklist-start-date"
+          />
+          <p className="text-[0.625rem] text-muted-foreground">Empty = the hire date on file (today when none).</p>
+        </Field>
         <label className="flex items-center gap-2 text-sm text-foreground">
           <input type="checkbox" checked={useTemplate} onChange={(e) => setUseTemplate(e.target.checked)} />
-          Start from the default template (5 tasks, manager auto-assigned)
+          Start from the default template (manager tasks auto-assigned; due dates skip weekends & holidays)
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>
@@ -406,10 +530,12 @@ function AddTaskModal({
   const [title, setTitle] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [dueOffsetDays, setDueOffsetDays] = useState("7");
+  // P35 — the required flag on manual adds.
+  const [isRequired, setIsRequired] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setTitle(""); setAssigneeId(""); setDueOffsetDays("7"); }, [checklist?.id]);
+  useEffect(() => { setTitle(""); setAssigneeId(""); setDueOffsetDays("7"); setIsRequired(false); }, [checklist?.id]);
 
   if (!checklist) return null;
 
@@ -425,6 +551,7 @@ function AddTaskModal({
             title,
             assigneeId: assigneeId || null,
             dueOffsetDays: Number(dueOffsetDays) || 7,
+            isRequired,
           });
           setBusy(false);
           if (res.ok) {
@@ -445,10 +572,14 @@ function AddTaskModal({
               {roster.map((p) => <option key={p.userId} value={p.userId}>{p.name}</option>)}
             </select>
           </Field>
-          <Field label="Due (days after start)">
+          <Field label="Due (working days after start)">
             <input type="number" min={0} max={365} className="f-input" value={dueOffsetDays} onChange={(e) => setDueOffsetDays(e.target.value)} />
           </Field>
         </div>
+        <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+          <input type="checkbox" className="accent-primary" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} data-testid="add-task-required" />
+          Required task
+        </label>
         <div className="flex justify-end gap-2">
           <button type="button" className="f-btn f-btn-ghost f-btn-sm" onClick={onClose}>Cancel</button>
           <button type="submit" className="f-btn f-btn-primary f-btn-sm" disabled={busy || title.trim().length === 0}>
