@@ -2151,6 +2151,12 @@ model PayrollRun {
   // 0 = run created before F1.1 (column default) — readers fall back to the
   // calendar length of the month (lib/payroll-math.ts daysInPeriod).
   workingDays Float    @default(0)
+  // NZ statutory engine (Phase 0) — the StatutoryRateSet this run resolved
+  // at creation (latest set whose effectiveFrom <= the run's window start).
+  // Snapshot discipline: later edits to the set never rewrite a frozen
+  // run, and the payslip's statutory JSON carries the set's label for
+  // display. "" = pre-engine rows (no statutory computation was applied).
+  rateSetId   String   @default("")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -2217,6 +2223,17 @@ model Payslip {
   // WITHHELD_RELEASE adjustment in a later period (excluded here — the
   // money counts once, there).
   withholdStatus String @default("")
+  // NZ statutory engine (Phase 0) — the frozen statutory computation
+  // snapshot at creation: resolved tax code, rate-set id + label, the
+  // per-line amounts (PAYE income tax, ACC earners' levy, KiwiSaver
+  // employee/employer, ESCT, student loan repayment) and the inputs they
+  // derived from (annualised earnings, applied thresholds). Deduction
+  // lines ALSO ride the deductions JSON (keys "paye" / "acc" / "ks" /
+  // "sl") so gross/net math is untouched; employer-side lines (employer
+  // KiwiSaver, ESCT) live ONLY here — they never touch the employee's
+  // earnings array. null = pre-engine slips (read as: statutory lines were
+  // never computed for this slip).
+  statutory    Json?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
@@ -2435,4 +2452,251 @@ model GratuitySlab {
   updatedAt DateTime @updatedAt
 
   @@unique([fromYears])
+}
+
+// ---------------------------------------------------------------------------
+// NZ statutory payroll engine — Phase 0 (schema layer).
+//
+// Two concerns, both SUPER_ADMIN-managed through the Phase 3 admin UI
+// (permission statutory:manage):
+//
+//   1. RATE SETS — effective-dated master data for every NZ statutory
+//      deduction. One StatutoryRateSet row per named window (e.g. "NZ
+//      FY2026-27"); the child tables below carry the component parameters.
+//      A payroll run resolves the set covering its window start: the
+//      LATEST set whose effectiveFrom <= run start, within its half-open
+//      [effectiveFrom, effectiveTo) validity window. No covering set => the
+//      run is refused with a clear error — never a silent fallback to a
+//      stale set. Sets are seeded (scripts/seed-statutory.js) with IRD
+//      primary-source values and editable only by SUPER_ADMIN.
+//
+//   2. EMPLOYEE TAX PROFILES — per-employee IR330 elections (tax code,
+//      KiwiSaver, STC certificate rates) consumed by the Phase 1 pure
+//      engine alongside the resolved rate set.
+//
+// Calculation-method note (verified against IR341 Apr 2026 monthly tables):
+// PAYE for primary codes = income-tax slabs applied to ANNUALISED
+// period earnings, de-annualised, with the ACC earners' levy computed
+// SEPARATELY on period earnings (rate x min(earnings, cap /
+// windows-in-year) — e.g. monthly $15,000 -> $4,106.46 slab tax + $228.43
+// levy = $4,334.89, table-identical). Storing income tax and the levy as
+// separate parameters lets every statutory line round and display
+// independently (per-line 2dp half-up, user decision) while reproducing
+// the IRD table totals exactly.
+//
+// Secondary-code rates are stored income-tax-only — IRD publishes them
+// "before ACC levies" (verified FY2026-27: SB 10.5 / S 17.5 / SH 30 /
+// ST 33 / SA 39 / ND 45).
+// ---------------------------------------------------------------------------
+
+// The named, effective-dated bundle of statutory parameters. isCurrent is
+// the UI's spotlight (at most one true — seed + Phase 3 UI enforce); the
+// resolver itself works purely off effectiveFrom/effectiveTo.
+model StatutoryRateSet {
+  id            String    @id @default(cuid())
+  label         String    @unique // "NZ FY2026-27 (1 Apr 2026 - 31 Mar 2027)"
+  country       String    @default("NZ")
+  // Half-open validity window [effectiveFrom, effectiveTo); effectiveTo
+  // null = open-ended (the latest set). Seeded FY boundaries are UTC
+  // midnights of 1 April — NZ's tax year boundary.
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  isCurrent     Boolean   @default(false)
+  notes         String    @default("")
+  createdById   String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  payeTiers      StatutoryPayeTier[]
+  secondaryRates StatutorySecondaryRate[]
+  accLevy        StatutoryAccLevy?
+  ietc           StatutoryIetc?
+  kiwiSaver      StatutoryKiwiSaver?
+  esctTiers      StatutoryEsctTier[]
+  studentLoan    StatutoryStudentLoan?
+
+  @@index([effectiveFrom])
+}
+
+// Primary-code (M / ME) income-tax slabs — ANNUAL brackets, marginal
+// rates, income tax ONLY (the ACC levy is a separate line, see
+// StatutoryAccLevy). FY2026-27 seed: 10.5% to $15,600 / 17.5% to
+// $53,500 / 30% to $78,100 / 33% to $180,000 / 39% above.
+model StatutoryPayeTier {
+  id         String            @id @default(cuid())
+  setId      String
+  set        StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  // Tier applies to annualised income in [fromAnnual, toAnnual ?? inf).
+  // fromAnnual is the lower bound (= the previous tier's toAnnual); the
+  // first tier starts at 0.
+  fromAnnual Float
+  toAnnual   Float?
+  // Marginal income-tax rate (0.105 = 10.5%).
+  rate       Float
+  sortOrder  Int               @default(0)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([setId, fromAnnual])
+  @@index([setId])
+}
+
+// Secondary-code flat rates, income tax only (IRD: "before ACC levies").
+// FY2026-27 seed: SB 0.105 / S 0.175 / SH 0.30 / ST 0.33 / SA 0.39 /
+// ND 0.45. Codes beyond these (CAE / NSW / EDW) have no flat rate — they
+// are valid IR330 declarations but ride other treatments; the Phase 1
+// engine decides them explicitly instead of guessing here.
+// SH2 / ST2 were retired by IRD and are rejected at the zod boundary.
+model StatutorySecondaryRate {
+  id        String            @id @default(cuid())
+  setId     String
+  set       StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  code      String // SB | S | SH | ST | SA | ND
+  rate      Float // flat income-tax rate (0.45 = 45% for ND)
+  label     String            @default("")
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@unique([setId, code])
+  @@index([setId])
+}
+
+// ACC earners' levy — 1:1 with the set. Levy = rate x period liable
+// earnings, capped per period at maxEarnings / windows-in-year
+// (equivalently maxLevy annually). FY2026-27 seed: 1.75%, $156,641 cap,
+// $2,741.22 max — all three published by IRD/ACC and mutually consistent
+// (0.0175 x 156,641 = 2,741.2175 -> $2,741.22).
+model StatutoryAccLevy {
+  setId        String            @id @default(cuid())
+  set          StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  rate         Float // 0.0175
+  maxEarnings  Float // 156641 — annual liable-earnings cap
+  maxLevy      Float // 2741.22 — published annual maximum levy
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+// IETC (Independent Earner Tax Credit) — the ME-code adjustment, 1:1 with
+// the set. Full annualAmount for annualised income in [lowerBound,
+// abateFrom]; abates at abateRate per dollar above abateFrom; exhausted at
+// upperBound. FY2026-27 seed: $520 / $24,000 / $66,000 / $70,000 / 13c
+// (verified: IR341 monthly ME @ $2,000 = M - $43.33).
+model StatutoryIetc {
+  setId         String            @id @default(cuid())
+  set           StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  annualAmount  Float // 520
+  lowerBound    Float // 24000 — no credit below this annual income
+  abateFrom     Float // 66000 — credit starts abating above this
+  upperBound    Float // 70000 — credit fully abated at/above this
+  abateRate     Float // 0.13 — cents abated per dollar above abateFrom
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+// KiwiSaver parameters — 1:1 with the set. FY2026-27 seed: default
+// employee 3.5% (auto-enrolment default rose from 3% on 1 Apr 2026),
+// employer compulsory 3.5%, allowed employee elections [3, 3.5, 4, 6, 8,
+// 10] percent (3% remains legal for pre-existing elections; IR341's own
+// table prints 3.5/4/6/8/10 columns).
+model StatutoryKiwiSaver {
+  setId                String            @id @default(cuid())
+  set                  StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  defaultEmployeeRate  Float // 0.035 — applies when no election recorded (user decision)
+  // JSON array of allowed employee rates in PERCENT numbers, e.g.
+  // [3, 3.5, 4, 6, 8, 10] — validated at the zod boundary.
+  allowedEmployeeRates Json
+  employerRate         Float // 0.035 — compulsory employer contribution
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+}
+
+// ESCT tiers — employer superannuation contribution tax, banded on the
+// employee's annual income PLUS gross employer contributions (previous or
+// estimated year). FY2026-27 seed (verified, IR341 Apr 2026): 10.5% to
+// $18,720 / 17.5% to $64,200 / 30% to $93,720 / 33% to $216,000 / 39%
+// above.
+model StatutoryEsctTier {
+  id         String            @id @default(cuid())
+  setId      String
+  set        StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  // Tier applies to annual (income + employer contributions) in
+  // [fromAnnual, toAnnual ?? inf).
+  fromAnnual Float
+  toAnnual   Float?
+  rate       Float
+  sortOrder  Int               @default(0)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([setId, fromAnnual])
+  @@index([setId])
+}
+
+// Student loan — 1:1 with the set. Main job: rate over the per-period
+// threshold (annualThreshold / windows-in-year — monthly $24,128 / 12 =
+// $2,010.67, verified against the IR341 monthly SL column: $2,010.00 ->
+// $0.00, $2,015.00 -> $0.52). Secondary: rate of gross pay, NO threshold
+// (IRD: "the repayment threshold does not apply to secondary income").
+// FY2026-27 seed: 12% / $24,128.
+model StatutoryStudentLoan {
+  setId           String            @id @default(cuid())
+  set             StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  rate            Float // 0.12
+  annualThreshold Float // 24128
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// NZ statutory payroll engine — Task 0.2 (revised): the employee's tax
+// profile. One row per user (userId unique), owned by HR/ADMIN
+// (payroll:manage) through the payroll module; the Phase 1 pure engine
+// consumes it as input alongside the resolved rate set.
+//
+// Base fields (IRD number, tax code, casual flag, KiwiSaver election) were
+// reconstructed for this revision — confirm at the Phase 0 review; the
+// three STC fields below are verbatim per the user's Task 0.2-r1 spec.
+// ---------------------------------------------------------------------------
+model EmployeeTaxProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  // IRD number as declared on the IR330 (8-9 digits, stored plain — the
+  // Phase 1 engine checksum-validates before use; "" = not recorded).
+  irdNumber String   @default("")
+  // IR330 (Aug 2026) vocabulary: M | ME | SB | S | SH | ST | SA | ND | STC |
+  // CAE | NSW | EDW, optionally suffixed " SL" (e.g. "M SL", "SB SL").
+  // SH2 / ST2 were retired by IRD and are rejected. Validated at the zod
+  // boundary; "" never happens (default "M" — the no-declaration case is
+  // the explicit ND code).
+  taxCode   String   @default("M")
+  // Casual employment rules (Task 0.2): true marks irregular-hours casual
+  // employment (the CAE / NSW / EDW special-code family). The profile
+  // editor surfaces those codes only for casuals, and the engine's casual
+  // path taxes each payment on its own annualisation without IETC.
+  isCasual  Boolean  @default(false)
+  // KiwiSaver election. ACTIVE + null rate = no recorded election -> the
+  // rate set's defaultEmployeeRate applies (3.5% FY2026-27 — user
+  // decision). OPTED_OUT = no employee deduction and no employer
+  // contribution. ON_HOLIDAY = savings suspension (paused). NOT_ELIGIBLE
+  // = under-18 / 65+ etc.
+  kiwiSaverStatus       String    @default("ACTIVE")
+  kiwiSaverRate         Decimal?  @db.Decimal(6, 4) // null = rate-set default
+  employerKiwiSaverRate Decimal?  @db.Decimal(6, 4) // null = rate-set default
+
+  // --- STC support (Task 0.2-r1, verbatim per user spec) ---
+  // IR23 tailored tax code certificate: the special rate replaces PAYE
+  // (both the M/ME slab path and secondary flat rates) while every other
+  // statutory line keeps computing normally.
+  taxCodeSpecialRate Decimal? @db.Decimal(6, 4) // IR23 tailored rate, e.g. 0.18
+  // "INC" (rate includes ACC) | "PLUS" (rate excludes ACC, add separately)
+  stcAccTreatment    String?  @default("INC")
+  // IR23 special student-loan repayment deduction rate — overrides the
+  // standard 12% (null = standard rate applies).
+  stcStudentLoanRate Decimal? @db.Decimal(6, 4)
+
+  effectiveFrom DateTime @default(now())
+  notes        String   @default("")
+  createdById  String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { ROLE_LABELS, type Role } from "@/lib/rbac";
 
 const ROLE_STYLES: Record<Role, string> = {
+  SUPER_ADMIN: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
   ADMIN: "bg-destructive/10 text-destructive",
   MANAGER: "bg-primary/10 text-primary",
   MEMBER: "bg-muted text-muted-foreground",
@@ -12,9 +13,9 @@ const ROLE_STYLES: Record<Role, string> = {
 };
 
 /**
- * Badge that displays a user role (Admin / Manager / Member) with the
- * standard color scheme. Replaces 2+ copies across rbac-view, users-view,
- * and login-screen's inline roleColors.
+ * Badge that displays a user role (Super Admin / Admin / Manager / Member)
+ * with the standard color scheme. Replaces 2+ copies across rbac-view,
+ * users-view, and login-screen's inline roleColors.
  */
 export function RoleBadge({
   role,

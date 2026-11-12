@@ -2,7 +2,7 @@
 
 import {
   Shield, ShieldCheck, ShieldAlert, ShieldX,
-  UserCog, HeartHandshake,
+  UserCog, HeartHandshake, Crown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
@@ -136,12 +136,14 @@ export function RbacView({ currentUser }: { currentUser: { id: string; name: str
 
 function RoleIcon({ role, size = 24 }: { role: Role; size?: number }) {
   const icons: Record<Role, React.ComponentType<{ size?: number; className?: string }>> = {
+    SUPER_ADMIN: Crown,
     ADMIN: ShieldAlert,
     MANAGER: ShieldCheck,
     MEMBER: Shield,
     HR: HeartHandshake,
   };
   const colors: Record<Role, string> = {
+    SUPER_ADMIN: "text-violet-600 bg-violet-500/10",
     ADMIN: "text-destructive bg-destructive/10",
     MANAGER: "text-primary bg-primary/10",
     MEMBER: "text-muted-foreground bg-muted",

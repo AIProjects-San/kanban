@@ -13,7 +13,8 @@ import {
 } from "@/lib/rbac";
 
 describe("isValidRole", () => {
-  it("accepts the four canonical roles", () => {
+  it("accepts the five canonical roles", () => {
+    expect(isValidRole("SUPER_ADMIN")).toBe(true);
     expect(isValidRole("ADMIN")).toBe(true);
     expect(isValidRole("MANAGER")).toBe(true);
     expect(isValidRole("MEMBER")).toBe(true);
@@ -33,9 +34,17 @@ describe("hasPermission", () => {
     expect(hasPermission(undefined, "task:create")).toBe(false);
   });
 
-  it("grants ADMIN every declared permission", () => {
+  it("grants SUPER_ADMIN every declared permission (the only statutory:manage holder)", () => {
     for (const p of ALL_PERMISSIONS) {
-      expect(hasPermission("ADMIN", p.key)).toBe(true);
+      expect(hasPermission("SUPER_ADMIN", p.key)).toBe(true);
+    }
+    expect(hasPermission("SUPER_ADMIN", "statutory:manage")).toBe(true);
+  });
+
+  it("grants ADMIN every declared permission except statutory:manage (Phase 0)", () => {
+    for (const p of ALL_PERMISSIONS) {
+      const expected = p.key !== "statutory:manage";
+      expect(hasPermission("ADMIN", p.key), `ADMIN × ${p.key}`).toBe(expected);
     }
   });
 
@@ -133,6 +142,13 @@ describe("role matrix sanity", () => {
       expect(admin.has(p), `MANAGER-only permission: ${p}`).toBe(true);
     }
   });
+
+  it("ADMIN permissions are a subset of SUPER_ADMIN permissions (Phase 0)", () => {
+    const superAdmin = new Set(ROLE_PERMISSIONS.SUPER_ADMIN);
+    for (const p of ROLE_PERMISSIONS.ADMIN) {
+      expect(superAdmin.has(p), `ADMIN-only permission: ${p}`).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -140,9 +156,20 @@ describe("role matrix sanity", () => {
 // ---------------------------------------------------------------------------
 
 describe("roleRank", () => {
-  it("assigns ADMIN > MANAGER > MEMBER", () => {
+  it("assigns SUPER_ADMIN > ADMIN > MANAGER > MEMBER", () => {
+    expect(roleRank("SUPER_ADMIN")).toBeGreaterThan(roleRank("ADMIN"));
     expect(roleRank("ADMIN")).toBeGreaterThan(roleRank("MANAGER"));
     expect(roleRank("MANAGER")).toBeGreaterThan(roleRank("MEMBER"));
+  });
+
+  it("SUPER_ADMIN strictly outranks every other role (Phase 0)", () => {
+    expect(outranks("SUPER_ADMIN", "ADMIN")).toBe(true);
+    expect(outranks("SUPER_ADMIN", "HR")).toBe(true);
+    expect(outranks("SUPER_ADMIN", "MANAGER")).toBe(true);
+    expect(outranks("SUPER_ADMIN", "MEMBER")).toBe(true);
+    expect(outranks("SUPER_ADMIN", "SUPER_ADMIN")).toBe(false);
+    // ...and nobody reaches back up.
+    expect(outranks("ADMIN", "SUPER_ADMIN")).toBe(false);
   });
 
   it("ranks HR at MANAGER level (strict outranks keeps them mutually unmanaged)", () => {
@@ -189,57 +216,60 @@ describe("outranks", () => {
 // ---------------------------------------------------------------------------
 
 describe("permission matrix (full pin)", () => {
-  // ✓ = granted, ✗ = denied. Columns: ADMIN, HR, MANAGER, MEMBER.
-  const MATRIX: Record<Permission, [boolean, boolean, boolean, boolean]> = {
+  // ✓ = granted, ✗ = denied. Columns: SUPER_ADMIN, ADMIN, HR, MANAGER, MEMBER.
+  const MATRIX: Record<Permission, [boolean, boolean, boolean, boolean, boolean]> = {
     // Tasks & projects
-    "task:create":        [true, false, true, true],
-    "task:edit:own":      [true, false, true, true],
-    "task:edit:any":      [true, false, true, false],
-    "task:delete":        [true, false, false, false],
-    "project:create":     [true, false, true, false],
-    "project:edit":       [true, false, true, false],
-    "project:delete":     [true, false, false, false],
+    "task:create":        [true, true, false, true, true],
+    "task:edit:own":      [true, true, false, true, true],
+    "task:edit:any":      [true, true, false, true, false],
+    "task:delete":        [true, true, false, false, false],
+    "project:create":     [true, true, false, true, false],
+    "project:edit":       [true, true, false, true, false],
+    "project:delete":     [true, true, false, false, false],
     // Team
-    "member:invite":      [true, false, true, false],
-    "member:edit":        [true, false, false, false],
-    "member:delete":      [true, false, false, false],
+    "member:invite":      [true, true, false, true, false],
+    "member:edit":        [true, true, false, false, false],
+    "member:delete":      [true, true, false, false, false],
     // Communication & calendar
-    "message:send":       [true, true, true, true],
-    "event:create":       [true, false, true, false],
-    "event:delete":       [true, false, true, false],
+    "message:send":       [true, true, true, true, true],
+    "event:create":       [true, true, false, true, false],
+    "event:delete":       [true, true, false, true, false],
     // General
-    "settings:edit":      [true, true, true, true],
-    "role:manage":        [true, false, false, false],
-    "analytics:view":     [true, true, true, true],
-    "team:view":          [true, true, true, true],
-    "audit:view":         [true, false, true, false],
+    "settings:edit":      [true, true, true, true, true],
+    "role:manage":        [true, true, false, false, false],
+    "analytics:view":     [true, true, true, true, true],
+    "team:view":          [true, true, true, true, true],
+    "audit:view":         [true, true, false, true, false],
     // Bugs
-    "bug:create":         [true, false, true, true],
-    "bug:edit:own":       [true, false, true, true],
-    "bug:edit:any":       [true, false, true, false],
-    "bug:delete":         [true, false, false, false],
-    "bug:assign":         [true, false, true, false],
+    "bug:create":         [true, true, false, true, true],
+    "bug:edit:own":       [true, true, false, true, true],
+    "bug:edit:any":       [true, true, false, true, false],
+    "bug:delete":         [true, true, false, false, false],
+    "bug:assign":         [true, true, false, true, false],
     // HR module
-    "hr:view":            [true, true, true, false],
-    "hr:admin":           [true, true, false, false],
-    "leave:request":      [true, true, true, true],
-    "review:manage":      [true, true, true, false],
-    "onboarding:manage":  [true, true, false, false],
+    "hr:view":            [true, true, true, true, false],
+    "hr:admin":           [true, true, true, false, false],
+    "leave:request":      [true, true, true, true, true],
+    "review:manage":      [true, true, true, true, false],
+    "onboarding:manage":  [true, true, true, false, false],
     // Recruitment module (docs/RECRUITMENT_MODULE_PLAN.md §3)
-    "hiring:view":        [true, true, true, false],
-    "hiring:manage":      [true, true, false, false],
-    "hiring:config":      [true, true, false, false],
+    "hiring:view":        [true, true, true, true, false],
+    "hiring:manage":      [true, true, true, false, false],
+    "hiring:config":      [true, true, true, false, false],
     // F2.10 — the four-eyes approver: MANAGER yes, HR (the composer's
     // role) no. ADMIN may approve but never its own composition
     // (approveOffer's composer check).
-    "hiring:approve":     [true, false, true, false],
-    "payroll:manage":     [true, true, false, false],
+    "hiring:approve":     [true, true, false, true, false],
+    "payroll:manage":     [true, true, true, false, false],
     // F1.3 — attendance records: HR/admin marking (docs/Fernly_HR_Payroll_
     // Enhancement_Plan.md §7.1, decision §9.1: no member self-marking).
-    "attendance:manage":  [true, true, false, false],
+    "attendance:manage":  [true, true, true, false, false],
+    // NZ statutory engine (Phase 0) — SUPER_ADMIN only: plain ADMIN runs
+    // payroll but never rewrites the statutory rate tables it computes from.
+    "statutory:manage":    [true, false, false, false, false],
   };
 
-  const ROLES: Role[] = ["ADMIN", "HR", "MANAGER", "MEMBER"];
+  const ROLES: Role[] = ["SUPER_ADMIN", "ADMIN", "HR", "MANAGER", "MEMBER"];
 
   it("every declared permission has a pinned row", () => {
     const declared = ALL_PERMISSIONS.map((p) => p.key).sort();

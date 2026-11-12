@@ -1,7 +1,7 @@
 // Fernly RBAC — Role-Based Access Control
 // Defines roles, permissions, and helper functions for authorization.
 
-export type Role = "ADMIN" | "MANAGER" | "MEMBER" | "HR";
+export type Role = "SUPER_ADMIN" | "ADMIN" | "MANAGER" | "MEMBER" | "HR";
 
 export type Permission =
   | "task:create"
@@ -61,9 +61,35 @@ export type Permission =
   // Payroll (RECRUITMENT_MODULE_PLAN.md §5 R7) — salary data is sensitive:
   // ADMIN + HR only. MANAGERs (interviewers on the hiring board) and
   // MEMBERs never see structures, runs or payslips.
-  | "payroll:manage";
+  | "payroll:manage"
+  // NZ statutory payroll engine (Phase 0) — the statutory rate tables
+  // (StatutoryRateSet + children) and their seed/refresh operations.
+  // Deliberately SUPER_ADMIN ONLY: statutory master data drives every
+  // payslip's tax lines, so it sits above the ADMIN+HR payroll:manage
+  // ceiling — a plain ADMIN can run payroll but never rewrite the tax
+  // tables it computes from.
+  | "statutory:manage";
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
+  // NZ statutory engine (Phase 0) — SUPER_ADMIN: the workspace owner's
+  // owner. Holds EVERY permission including statutory:manage (the only
+  // role that does). Seeded, never granted through the plain role-assignment
+  // UI: promoting a user TO SUPER_ADMIN requires an existing SUPER_ADMIN
+  // (users.ts guard, mirroring the F-14 ADMIN rule one level up).
+  SUPER_ADMIN: [
+    "task:create", "task:edit:any", "task:edit:own", "task:delete",
+    "project:create", "project:edit", "project:delete",
+    "member:invite", "member:edit", "member:delete",
+    "message:send", "event:create", "event:delete",
+    "settings:edit", "role:manage", "analytics:view", "team:view",
+    "audit:view",
+    "bug:create", "bug:edit:any", "bug:edit:own", "bug:delete", "bug:assign",
+    "hr:view", "hr:admin", "leave:request", "review:manage", "onboarding:manage",
+    "hiring:view", "hiring:manage", "hiring:config", "hiring:approve",
+    "payroll:manage",
+    "attendance:manage",
+    "statutory:manage",
+  ],
   ADMIN: [
     "task:create", "task:edit:any", "task:edit:own", "task:delete",
     "project:create", "project:edit", "project:delete",
@@ -114,6 +140,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
 };
 
 export const ROLE_LABELS: Record<Role, string> = {
+  SUPER_ADMIN: "Super Admin",
   ADMIN: "Admin",
   MANAGER: "Manager",
   MEMBER: "Member",
@@ -121,6 +148,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
+  SUPER_ADMIN: "Workspace super admin — everything an admin can do, plus the NZ statutory rate tables (the only role that can edit them)",
   ADMIN: "Full access — can delete anything, manage roles, and configure the workspace",
   MANAGER: "Can create projects, invite members, and edit tasks. Cannot delete or manage roles.",
   MEMBER: "Can create/edit own tasks, send messages, and view analytics. Cannot create projects or invite members.",
@@ -162,6 +190,7 @@ export const ALL_PERMISSIONS: { key: Permission; label: string; description: str
   { key: "hiring:approve", label: "Approve offers", description: "Approve draft offers before they are sent (managers — the approver must differ from the HR composer)" },
   { key: "payroll:manage", label: "Manage payroll", description: "Maintain salary structures, run monthly payroll, edit and lock payslips" },
   { key: "attendance:manage", label: "Manage attendance", description: "Mark and edit daily attendance for everyone in the workspace" },
+  { key: "statutory:manage", label: "Manage statutory rates", description: "Edit the NZ statutory rate tables (PAYE slabs, ACC levy, KiwiSaver, ESCT, student loan) — super admin only" },
 ];
 
 export function hasPermission(role: Role | undefined | null, permission: Permission): boolean {
@@ -174,7 +203,7 @@ export function hasPermission(role: Role | undefined | null, permission: Permiss
  * helpers in `lib/hierarchy.ts` to answer "does A outrank B?" without
  * consulting the DB. Higher = more powerful.
  *
- *   ADMIN = 3, MANAGER = 2, MEMBER = 1, unknown/missing = 0.
+ *   SUPER_ADMIN = 4, ADMIN = 3, MANAGER = 2, MEMBER = 1, unknown/missing = 0.
  *
  * Note: hierarchy-aware RBAC uses BOTH `roleRank` (positional authority)
  * AND the manager-chain (`canManageUser` in `lib/hierarchy.ts`) — a
@@ -183,6 +212,7 @@ export function hasPermission(role: Role | undefined | null, permission: Permiss
  */
 export function roleRank(role: Role | string | undefined | null): number {
   switch (role) {
+    case "SUPER_ADMIN": return 4; // NZ statutory engine (Phase 0) — above ADMIN: outranks every role
     case "ADMIN": return 3;
     case "MANAGER": return 2;
     case "HR": return 2; // same rank as MANAGER — outranks() stays strict, so neither manages the other by rank
@@ -201,5 +231,5 @@ export function outranks(actorRole: Role | string | undefined | null, targetRole
 }
 
 export function isValidRole(role: string): role is Role {
-  return role === "ADMIN" || role === "MANAGER" || role === "MEMBER" || role === "HR";
+  return role === "SUPER_ADMIN" || role === "ADMIN" || role === "MANAGER" || role === "MEMBER" || role === "HR";
 }

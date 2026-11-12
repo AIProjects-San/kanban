@@ -69,7 +69,19 @@ if [[ -f "$SCHEMA" ]] && url_provider "${DATABASE_URL:-}" > /dev/null; then
       echo "// Local ${WANT} variant of prisma/schema.prisma (matches this environment's"
       echo "// DATABASE_URL protocol). Canonical schema: prisma/schema.prisma — see"
       echo "// docs/DECISIONS.md, ADR-008."
-      awk -v provider="$WANT" '
+      # NZ statutory engine (Phase 0): the canonical schema uses Postgres
+      # native types (@db.Decimal(p, s) on EmployeeTaxProfile rate fields).
+      # SQLite supports the Decimal scalar but NOT native type attributes
+      # (Prisma P1012), so the generated variant strips them. Models are
+      # still copied verbatim apart from the provider line and this strip.
+      if [[ "$WANT" == "sqlite" ]]; then
+        STRIP_NATIVE="-v strip_native=1"
+      else
+        STRIP_NATIVE=""
+      fi
+      awk -v provider="$WANT" $STRIP_NATIVE '
+        BEGIN { if (strip_native) do_strip = 1 }
+        do_strip { gsub(/[ \t]*@db\.Decimal\([0-9]+[ \t]*,[ \t]*[0-9]+\)/, "") }
         /^datasource[ \t]+db[ \t]*\{/ { inblock = 1 }
         inblock && !done && /^[ \t]*provider[ \t]*=/ {
           match($0, /provider[ \t]*=[ \t]*/)

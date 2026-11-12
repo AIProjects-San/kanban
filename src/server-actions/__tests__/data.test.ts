@@ -811,7 +811,7 @@ describe("createUser validation", () => {
 
   it("rejects unknown roles", async () => {
     signIn(ADMIN);
-    expectErr(await createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "SUPERUSER" }), /ADMIN, MANAGER, or MEMBER/i);
+    expectErr(await createUser({ name: "A", email: "a@b.co", password: "longenough1", role: "SUPERUSER" }), /SUPER_ADMIN, ADMIN, MANAGER, MEMBER, or HR/i);
   });
 
   it("rejects duplicate emails", async () => {

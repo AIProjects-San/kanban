@@ -363,7 +363,7 @@ export async function createUser(input: {
       throw new AuthorizationError(`Password must be at least ${minPasswordLength} characters.`);
     }
     if (!isValidRole(input.role)) {
-      throw new AuthorizationError("Invalid role. Must be ADMIN, MANAGER, or MEMBER.");
+      throw new AuthorizationError("Invalid role. Must be SUPER_ADMIN, ADMIN, MANAGER, MEMBER, or HR.");
     }
     // P1 (edge-case audit) — F-14 bypass closure. The P2-13 guard blocks
     // non-admins from granting `role:manage` via updateRole/createRole, but
@@ -372,6 +372,13 @@ export async function createUser(input: {
     // guard: only ADMIN may create ADMIN users.
     if (input.role === "ADMIN" && auth.role !== "ADMIN") {
       throw new AuthorizationError("Only an admin can grant the ADMIN role.");
+    }
+    // NZ statutory engine (Phase 0) — one level above the F-14 rule:
+    // SUPER_ADMIN is the only role holding statutory:manage (the statutory
+    // rate tables), so minting one requires an existing SUPER_ADMIN. A
+    // plain ADMIN with role:manage must NOT be able to escalate.
+    if (input.role === "SUPER_ADMIN" && auth.role !== "SUPER_ADMIN") {
+      throw new AuthorizationError("Only a super admin can grant the SUPER_ADMIN role.");
     }
     // P2 (edge-case audit) — max password length. bcrypt silently truncates
     // to 72 bytes; a 1MB password pins 1MB of memory per request. Cap at
@@ -486,6 +493,12 @@ export async function updateUser(userId: string, input: {
     // rule that MANAGER could then mint ADMIN accounts inside their subtree.
     if (input.role === "ADMIN" && auth.role !== "ADMIN") {
       throw new AuthorizationError("Only an admin can grant the ADMIN role.");
+    }
+    // NZ statutory engine (Phase 0) — mirror of the createUser guard: only
+    // a SUPER_ADMIN can promote a user TO SUPER_ADMIN (an ADMIN holding
+    // role:manage must not be able to mint a role they cannot hold back).
+    if (input.role === "SUPER_ADMIN" && auth.role !== "SUPER_ADMIN") {
+      throw new AuthorizationError("Only a super admin can grant the SUPER_ADMIN role.");
     }
     // Self-protection: cannot unmanage yourself (would let you escape the
     // hierarchy). Only an admin (who is above the hierarchy) can change

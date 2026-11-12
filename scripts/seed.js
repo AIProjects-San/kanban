@@ -130,6 +130,11 @@ async function main() {
   await db.offerRecord.deleteMany();
   await db.salaryStructure.deleteMany();
   await db.payrollRun.deleteMany(); // cascades payslips
+  // NZ statutory engine (Phase 0) — employee tax profiles wipe with the
+  // users (per-user election data). The StatutoryRateSet tables are
+  // deliberately NOT wiped: they are SUPER_ADMIN master data (seeded by
+  // scripts/seed-statutory.js) and must survive every demo reseed.
+  await db.employeeTaxProfile.deleteMany();
   await db.holidayCalendarEntry.deleteMany();
   await db.attendanceRecord.deleteMany();
   // P33 (EM-06) — the structured property history (reset before reseeding).
@@ -277,6 +282,10 @@ async function main() {
     { key: "analytics:view", label: "View analytics", description: "Access the analytics dashboard", group: "General", sortOrder: 15 },
     { key: "team:view", label: "View team", description: "See the team member directory", group: "Team", sortOrder: 16 },
     { key: "audit:view", label: "View audit log", description: "See the full history of who changed what", group: "General", sortOrder: 17 },
+    // NZ statutory engine (Phase 0) — SUPER_ADMIN-only permission (the
+    // mirror in lib/rbac.ts is the enforcement source; this row is the DB
+    // ceiling the RBAC view edits).
+    { key: "statutory:manage", label: "Manage statutory rates", description: "Edit the NZ statutory rate tables (PAYE slabs, ACC levy, KiwiSaver, ESCT, student loan) — super admin only", group: "Payroll", sortOrder: 18 },
   ];
   const permissionMap = {};
   for (const p of permissionDefs) {
@@ -287,19 +296,30 @@ async function main() {
   // Roles + RolePermission matrix
   // -----------------------------------------------------------------
   const roleDefs = [
+    // NZ statutory engine (Phase 0) — SUPER_ADMIN mirrors lib/rbac.ts: every
+    // permission including statutory:manage. Promoting TO this role requires
+    // an existing SUPER_ADMIN (users.ts guard), so the seed is the only
+    // bootstrap path. (The DB mirror here intentionally lags lib/rbac.ts for
+    // the other roles — HR's hr:/payroll: rows are pre-existing debt, not
+    // this feature's scope.)
+    {
+      key: "SUPER_ADMIN", label: "Super Admin", description: "Workspace super admin — everything an admin can do, plus the NZ statutory rate tables (the only role that can edit them)",
+      iconName: "Crown", badgeClass: "bg-violet-500/10 text-violet-600", isSystem: true, sortOrder: 0,
+      permissions: Object.keys(permissionMap), // all permissions incl. statutory:manage
+    },
     {
       key: "ADMIN", label: "Admin", description: "Full access — can delete anything, manage roles, and configure the workspace",
-      iconName: "ShieldAlert", badgeClass: "bg-destructive/10 text-destructive", isSystem: true, sortOrder: 0,
-      permissions: Object.keys(permissionMap), // all permissions
+      iconName: "ShieldAlert", badgeClass: "bg-destructive/10 text-destructive", isSystem: true, sortOrder: 1,
+      permissions: Object.keys(permissionMap).filter((k) => k !== "statutory:manage"),
     },
     {
       key: "MANAGER", label: "Manager", description: "Can create projects, invite members, and edit tasks. Cannot delete or manage roles.",
-      iconName: "ShieldCheck", badgeClass: "bg-primary/10 text-primary", isSystem: true, sortOrder: 1,
+      iconName: "ShieldCheck", badgeClass: "bg-primary/10 text-primary", isSystem: true, sortOrder: 2,
       permissions: ["task:create", "task:edit:any", "task:edit:own", "project:create", "project:edit", "member:invite", "message:send", "event:create", "event:delete", "settings:edit", "analytics:view", "team:view", "audit:view"],
     },
     {
       key: "MEMBER", label: "Member", description: "Can create/edit own tasks, send messages, and view analytics. Cannot create projects or invite members.",
-      iconName: "Shield", badgeClass: "bg-muted text-muted-foreground", isSystem: true, sortOrder: 2,
+      iconName: "Shield", badgeClass: "bg-muted text-muted-foreground", isSystem: true, sortOrder: 3,
       permissions: ["task:create", "task:edit:own", "message:send", "settings:edit", "analytics:view", "team:view"],
     },
   ];
@@ -329,6 +349,19 @@ async function main() {
   // Users — multiple roles for RBAC testing + realistic team
   // -----------------------------------------------------------------
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
+  // NZ statutory engine (Phase 0) — the super-admin demo account (the only
+  // bootstrap path to SUPER_ADMIN: promotions require an existing one).
+  const superAdminUser = await db.user.create({
+    data: {
+      email: "superadmin@fernly.app",
+      name: "Nova Kaur",
+      passwordHash,
+      role: "SUPER_ADMIN",
+      timezone: "Pacific/Auckland",
+      bio: "Workspace super admin. Owns the NZ statutory rate tables.",
+      avatarColor: "slate",
+    },
+  });
   const demoUser = await db.user.create({
     data: {
       email: "demo@fernly.app",
@@ -384,8 +417,9 @@ async function main() {
   for (const u of extraUsers) {
     await db.user.create({ data: { ...u, passwordHash } });
   }
-  console.log(`  ✓ ${3 + extraUsers.length} users (ADMIN, MANAGER, MEMBER) — all password: $NEXT_PUBLIC_DEMO_PASSWORD (from .env)`);
+  console.log(`  ✓ ${4 + extraUsers.length} users (SUPER_ADMIN, ADMIN, MANAGER, MEMBER, HR) — all password: $NEXT_PUBLIC_DEMO_PASSWORD (from .env)`);
   console.log(`  ✓ User: ${demoUser.email}`);
+  console.log(`  ✓ User: ${superAdminUser.email} (SUPER_ADMIN — statutory rate tables)`);
 
   // Name → user map for the stable-identity links below. Seed names are
   // unique, so a name map is deterministic here.
@@ -3027,6 +3061,50 @@ async function main() {
       },
     });
     console.log(`  ✓ Hiring R7: ${structures.length} salary structures + ${prevPeriod} run LOCKED + ${thisPeriod} run OPEN (${autoLopCount} auto-derived LOP day(s), Yuki's 1 day manual, 1 bonus line, Ingrid's half-pay study leave (P15: 2 taken → 1 charged)${clippedCount > 0 ? `, ${clippedCount} scaled to employment windows (S5)` : ""}) + F1.5 component catalog (7 definitions, 1 retired)`);
+
+    // ------------------------------------------------------------------
+    // NZ statutory engine (Phase 0) — demo tax profiles for the payroll
+    // population, covering the vocabulary the Phase 1 engine consumes:
+    // M / ME / M SL / SB SL / STC, the casual flag, KiwiSaver states
+    // (no election → rate-set default 3.5%, chosen rates, OPTED_OUT,
+    // NOT_ELIGIBLE) and all three STC certificate fields on Diego.
+    // IRD numbers carry valid mod-11 check digits (Phase 1 validates).
+    // ------------------------------------------------------------------
+    {
+      const TAX_PROFILES = [
+        { email: "manager@fernly.app", irdNumber: "583639136", taxCode: "M", kiwiSaverStatus: "ACTIVE" },
+        { email: "hana@fernly.app", irdNumber: "752783373", taxCode: "M SL", kiwiSaverStatus: "OPTED_OUT" },
+        { email: "yuki@fernly.app", irdNumber: "760841838", taxCode: "M", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.04 },
+        { email: "soren@fernly.app", irdNumber: "915801951", taxCode: "ME", kiwiSaverStatus: "NOT_ELIGIBLE" },
+        { email: "diego@fernly.app", irdNumber: "566400642", taxCode: "STC", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.03,
+          taxCodeSpecialRate: 0.18, stcAccTreatment: "PLUS", stcStudentLoanRate: 0.08,
+          notes: "IR23 tailored tax code certificate (demo): 18% excluding ACC, special SL rate 8%." },
+        { email: "kofi@fernly.app", irdNumber: "561381593", taxCode: "SB SL", isCasual: true, kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.035 },
+      ];
+      let taxProfileCount = 0;
+      for (const t of TAX_PROFILES) {
+        const user = await db.user.findUnique({ where: { email: t.email }, select: { id: true } });
+        if (!user) continue;
+        await db.employeeTaxProfile.create({
+          data: {
+            userId: user.id,
+            irdNumber: t.irdNumber,
+            taxCode: t.taxCode,
+            isCasual: t.isCasual ?? false,
+            kiwiSaverStatus: t.kiwiSaverStatus,
+            kiwiSaverRate: t.kiwiSaverRate ?? null,
+            employerKiwiSaverRate: t.employerKiwiSaverRate ?? null,
+            taxCodeSpecialRate: t.taxCodeSpecialRate ?? null,
+            stcAccTreatment: t.stcAccTreatment ?? "INC",
+            stcStudentLoanRate: t.stcStudentLoanRate ?? null,
+            notes: t.notes ?? "",
+            createdById: hrId,
+          },
+        });
+        taxProfileCount++;
+      }
+      console.log(`  ✓ NZ statutory: ${taxProfileCount} employee tax profiles (M / ME / M SL / SB SL / STC + casual + KiwiSaver states)`);
+    }
 
     // ------------------------------------------------------------------
     // P10 (PR-B05) — the cadence demo: Kofi holds a WEEKLY structure, so the
