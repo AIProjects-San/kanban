@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 //
 // Every case runs through calculateNzStatutoryWithSet — the same pure
 // aggregator the payroll run uses per payslip — against the FY2026-27
-// fixture rate set (the exact values scripts/seed-statutory.js seeds),
+// fixture rate set (the exact values prisma/seed/nz-statutory.ts seeds),
 // so a golden pass means the WHOLE engine (PAYE + ACC + KiwiSaver + ESCT
 // + SL + net) reproduces the accepted figures, not just one calculator.
 //

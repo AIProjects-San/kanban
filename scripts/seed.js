@@ -133,7 +133,7 @@ async function main() {
   // NZ statutory engine (Phase 0) — employee tax profiles wipe with the
   // users (per-user election data). The StatutoryRateSet tables are
   // deliberately NOT wiped: they are SUPER_ADMIN master data (seeded by
-  // scripts/seed-statutory.js) and must survive every demo reseed.
+  // prisma/seed/nz-statutory.ts) and must survive every demo reseed.
   await db.employeeTaxProfile.deleteMany();
   await db.holidayCalendarEntry.deleteMany();
   await db.attendanceRecord.deleteMany();
@@ -3095,16 +3095,16 @@ async function main() {
           employmentType: "PERMANENT", employmentStartDate: "2023-02-06" },
         { email: "hana@fernly.app", irdNumber: "752783373", taxCode: "M SL", kiwiSaverStatus: "OPTED_OUT",
           employmentType: "PERMANENT", employmentStartDate: "2024-07-15" },
-        { email: "yuki@fernly.app", irdNumber: "760841838", taxCode: "M", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.04,
+        { email: "yuki@fernly.app", irdNumber: "760841838", taxCode: "M", kiwiSaverStatus: "ACTIVE", kiwiSaverEmployeeRate: 0.04,
           employmentType: "PERMANENT", employmentStartDate: "2025-09-01" },
         { email: "soren@fernly.app", irdNumber: "915801951", taxCode: "ME", kiwiSaverStatus: "NOT_ELIGIBLE",
           employmentType: "PERMANENT", employmentStartDate: "2026-02-02" },
-        { email: "diego@fernly.app", irdNumber: "566400642", taxCode: "STC", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.03,
+        { email: "diego@fernly.app", irdNumber: "566400642", taxCode: "STC", kiwiSaverStatus: "ACTIVE", kiwiSaverEmployeeRate: 0.03,
           taxCodeSpecialRate: 0.18, stcAccTreatment: "PLUS", stcStudentLoanRate: 0.08,
           stcCertificateExpiry: "2027-03-31", taxCodeEffectiveFrom: "2026-10-01",
           employmentType: "PERMANENT", employmentStartDate: "2026-06-01",
           notes: "IR23 tailored tax code certificate (demo): 18% excluding ACC, special SL rate 8%." },
-        { email: "kofi@fernly.app", irdNumber: "561381593", taxCode: "SB SL", isCasual: true, kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.035,
+        { email: "kofi@fernly.app", irdNumber: "561381593", taxCode: "SB SL", isCasual: true, kiwiSaverStatus: "ACTIVE", kiwiSaverEmployeeRate: 0.035,
           employmentType: "CASUAL", casualHolidayPayInWages: true, employmentStartDate: "2026-08-10",
           notes: "Casual (irregular shifts, holiday pay in wages) — KiwiSaver exempt, opted in at 3.5%." },
       ];
@@ -3119,8 +3119,8 @@ async function main() {
             taxCode: t.taxCode,
             isCasual: t.isCasual ?? false,
             kiwiSaverStatus: t.kiwiSaverStatus,
-            kiwiSaverRate: t.kiwiSaverRate ?? null,
-            employerKiwiSaverRate: t.employerKiwiSaverRate ?? null,
+            kiwiSaverEmployeeRate: t.kiwiSaverEmployeeRate ?? null,
+            kiwiSaverEmployerRate: t.kiwiSaverEmployerRate ?? null,
             taxCodeSpecialRate: t.taxCodeSpecialRate ?? null,
             stcAccTreatment: t.stcAccTreatment ?? "INC",
             stcStudentLoanRate: t.stcStudentLoanRate ?? null,

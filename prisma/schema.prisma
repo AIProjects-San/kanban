@@ -2176,6 +2176,11 @@ model PayrollRun {
   // run, and the payslip's statutory JSON carries the set's label for
   // display. "" = pre-engine rows (no statutory computation was applied).
   rateSetId   String   @default("")
+  // Phase 1A — the TaxYear row covering this run's window (the NZ
+  // April–March year), stored at creation so YTD-by-tax-year queries
+  // group without re-deriving the boundary per row. "" = pre-Phase-1A
+  // rows (readers fall back to fiscalYearOf on the window end).
+  taxYearId   String   @default("")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -2253,6 +2258,17 @@ model Payslip {
   // earnings array. null = pre-engine slips (read as: statutory lines were
   // never computed for this slip).
   statutory    Json?
+  // Phase 1A — the statutory snapshot's key facts as REAL columns so
+  // SQL-level aggregation (employer-contribution YTD, tax-code reporting)
+  // never has to parse JSON. Populated from the snapshot at creation and
+  // on updatePayslip recomputes; defaults = pre-engine slips.
+  taxCodeApplied         String   @default("")
+  statutoryRuleVersion   String   @default("")
+  // Employer-side KiwiSaver money (never docks net pay — display + IRD
+  // filing only). Null = not computed / pre-engine.
+  employerKiwiSaverGross Decimal? @db.Decimal(12, 2)
+  employerEsct           Decimal? @db.Decimal(12, 2)
+  employerKiwiSaverNet   Decimal? @db.Decimal(12, 2)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
@@ -2511,7 +2527,11 @@ model GratuitySlab {
 // The named, effective-dated bundle of statutory parameters. isCurrent is
 // the UI's spotlight (at most one true — seed + Phase 3 UI enforce); the
 // resolver itself works purely off effectiveFrom/effectiveTo.
-model StatutoryRateSet {
+// Phase 1A — the versioned statutory rule (ADR-015: rule versioning IS
+// rate-set versioning). Renamed from StatutoryRateSet for the Phase 1A
+// vocabulary (the /settings/tax/rules admin page); @@map keeps the
+// canonical table name so the migration history is untouched.
+model StatutoryRule {
   id            String    @id @default(cuid())
   label         String    @unique // "NZ FY2026-27 (1 Apr 2026 - 31 Mar 2027)"
   country       String    @default("NZ")
@@ -2526,7 +2546,7 @@ model StatutoryRateSet {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  payeTiers      StatutoryPayeTier[]
+  payeTiers      TaxSlab[]
   secondaryRates StatutorySecondaryRate[]
   accLevy        StatutoryAccLevy?
   ietc           StatutoryIetc?
@@ -2535,16 +2555,33 @@ model StatutoryRateSet {
   studentLoan    StatutoryStudentLoan?
 
   @@index([effectiveFrom])
+  @@map("StatutoryRateSet")
+}
+
+// Phase 1A — the NZ tax-year registry (1 April → 31 March). PayrollRun
+// stores taxYearId at creation so YTD and statutory aggregation can group
+// by the IRD tax year (the April boundary, not the calendar year).
+model TaxYear {
+  id        String   @id @default(cuid())
+  // "2026-27" — the IRD label for the year starting 1 April 2026.
+  label     String   @unique
+  startDate DateTime // UTC midnight, 1 April
+  endDate   DateTime // UTC midnight of 31 March (inclusive last day)
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Primary-code (M / ME) income-tax slabs — ANNUAL brackets, marginal
 // rates, income tax ONLY (the ACC levy is a separate line, see
 // StatutoryAccLevy). FY2026-27 seed: 10.5% to $15,600 / 17.5% to
 // $53,500 / 30% to $78,100 / 33% to $180,000 / 39% above.
-model StatutoryPayeTier {
+// Renamed from StatutoryPayeTier for the Phase 1A vocabulary (the
+// /settings/tax/slabs admin page); @@map keeps the table name.
+model TaxSlab {
   id         String            @id @default(cuid())
   setId      String
-  set        StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  set        StatutoryRule     @relation(fields: [setId], references: [id], onDelete: Cascade)
   // Tier applies to annualised income in [fromAnnual, toAnnual ?? inf).
   // fromAnnual is the lower bound (= the previous tier's toAnnual); the
   // first tier starts at 0.
@@ -2558,6 +2595,7 @@ model StatutoryPayeTier {
 
   @@unique([setId, fromAnnual])
   @@index([setId])
+  @@map("StatutoryPayeTier")
 }
 
 // Secondary-code flat rates, income tax only (IRD: "before ACC levies").
@@ -2569,7 +2607,7 @@ model StatutoryPayeTier {
 model StatutorySecondaryRate {
   id        String            @id @default(cuid())
   setId     String
-  set       StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  set       StatutoryRule     @relation(fields: [setId], references: [id], onDelete: Cascade)
   code      String // SB | S | SH | ST | SA | ND
   rate      Float // flat income-tax rate (0.45 = 45% for ND)
   label     String            @default("")
@@ -2593,7 +2631,7 @@ model StatutorySecondaryRate {
 // (0.0175 x 156,641 = 2,741.2175 -> $2,741.22).
 model StatutoryAccLevy {
   setId        String            @id @default(cuid())
-  set          StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  set          StatutoryRule     @relation(fields: [setId], references: [id], onDelete: Cascade)
   rate         Float // 0.0175
   maxEarnings  Float // 156641 — annual liable-earnings cap
   maxLevy      Float // 2741.22 — published annual maximum levy
@@ -2608,7 +2646,7 @@ model StatutoryAccLevy {
 // (verified: IR341 monthly ME @ $2,000 = M - $43.33).
 model StatutoryIetc {
   setId         String            @id @default(cuid())
-  set           StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  set           StatutoryRule     @relation(fields: [setId], references: [id], onDelete: Cascade)
   annualAmount  Float // 520
   lowerBound    Float // 24000 — no credit below this annual income
   abateFrom     Float // 66000 — credit starts abating above this
@@ -2625,7 +2663,7 @@ model StatutoryIetc {
 // table prints 3.5/4/6/8/10 columns).
 model StatutoryKiwiSaver {
   setId                String            @id @default(cuid())
-  set                  StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  set                  StatutoryRule     @relation(fields: [setId], references: [id], onDelete: Cascade)
   defaultEmployeeRate  Float // 0.035 — applies when no election recorded (user decision)
   // JSON array of allowed employee rates in PERCENT numbers, e.g.
   // [3, 3.5, 4, 6, 8, 10] — validated at the zod boundary.
@@ -2643,7 +2681,7 @@ model StatutoryKiwiSaver {
 model StatutoryEsctTier {
   id         String            @id @default(cuid())
   setId      String
-  set        StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  set        StatutoryRule     @relation(fields: [setId], references: [id], onDelete: Cascade)
   // Tier applies to annual (income + employer contributions) in
   // [fromAnnual, toAnnual ?? inf).
   fromAnnual Float
@@ -2665,7 +2703,7 @@ model StatutoryEsctTier {
 // FY2026-27 seed: 12% / $24,128.
 model StatutoryStudentLoan {
   setId           String            @id @default(cuid())
-  set             StatutoryRateSet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+  set             StatutoryRule     @relation(fields: [setId], references: [id], onDelete: Cascade)
   rate            Float // 0.12
   annualThreshold Float // 24128
   createdAt       DateTime          @default(now())
@@ -2707,9 +2745,21 @@ model EmployeeTaxProfile {
   // ON_HOLIDAY = savings suspension (paused). NOT_ELIGIBLE = under-18 /
   // 65+ etc. (opt-in members keep an elected rate — employer side is
   // voluntary for them).
-  kiwiSaverStatus       String    @default("ACTIVE")
-  kiwiSaverRate         Decimal?  @db.Decimal(6, 4) // null = rate-set default
-  employerKiwiSaverRate Decimal?  @db.Decimal(6, 4) // null = rate-set default
+  kiwiSaverStatus          String    @default("ACTIVE")
+  // Phase 1A vocabulary: kiwiSaverEmployeeRate / kiwiSaverEmployerRate
+  // (renamed from kiwiSaverRate / employerKiwiSaverRate). Null = no
+  // recorded election → the rate set's defaultEmployeeRate applies
+  // (3.5% FY2026-27 — user decision); a persisted value is the sticky
+  // evidence of an election or an auto-enrolment (Task 1.2 design).
+  kiwiSaverEmployeeRate   Decimal?  @db.Decimal(6, 4)
+  kiwiSaverEmployerRate   Decimal?  @db.Decimal(6, 4)
+  // Phase 1A — explicit student-loan declaration flag (the IR330 SL
+  // suffix is the primary source; this records the box the employee
+  // ticked, OR'd with the suffix by the engine adapter).
+  studentLoan             Boolean   @default(false)
+  // Phase 1A — where the tax code came from: IR330 | ADMIN | IMPORTED
+  // (audit trail for the declaration's provenance).
+  taxCodeSource           String    @default("")
 
   // --- STC support (Task 0.2-r1, verbatim per user spec) ---
   // IR23 tailored tax code certificate: the special rate replaces PAYE
@@ -2746,6 +2796,16 @@ model EmployeeTaxProfile {
   casualHolidayPayInWages   Boolean   @default(true)
   employmentStartDate       DateTime?
   employmentEndDate         DateTime?
+  // Phase 1A — a recorded KiwiSaver auto-enrolment EXEMPTION reason code
+  // (e.g. "CASUAL_HOLIDAY_PAY_IN_WAGES", "ADMIN_RECORDED"). Non-empty
+  // blocks the 28-day / 3-month time rules from auto-enrolling.
+  autoEnrolExemption        String    @default("")
+  // Phase 1A — the materialised auto-enrolment due date (TEMPORARY:
+  // start + TEMP_MAX_DAYS; CASUAL_AGRICULTURAL: the day after
+  // CASUAL_AGRI_MAX_MONTHS). Written by the profile save action so the
+  // admin list shows it without recomputation; the engine recomputes at
+  // pay time regardless (the source of truth is the category + dates).
+  autoEnrolDueDate          DateTime?
 
   effectiveFrom DateTime @default(now())
   notes        String   @default("")

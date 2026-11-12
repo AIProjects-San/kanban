@@ -7,7 +7,7 @@
 // clock, no filesystem — `today` is always a parameter.
 // ---------------------------------------------------------------------------
 
-import { autoEnrolDueDate, resolveKiwiSaverStatus } from "@/lib/payroll/nz/kiwisaver";
+import { autoEnrolDueDate, resolveKiwiSaverDecision } from "@/lib/payroll/nz/kiwisaver";
 import { parseNzTaxCode } from "@/lib/payroll/nz/types";
 import type { EmployeeTaxProfileT, TaxProfilePreviewT } from "@/lib/types";
 
@@ -69,7 +69,7 @@ export function isValidIrdNumber(raw: string): boolean {
 export function buildTaxProfilePreview(p: EmployeeTaxProfileT, today: Date): TaxProfilePreviewT {
   const start = p.employmentStartDate ? utcMidnight(p.employmentStartDate) : null;
   const due = autoEnrolDueDate(p.employmentType, start);
-  const resolution = resolveKiwiSaverStatus(
+  const decision = resolveKiwiSaverDecision(
     {
       taxCode: p.studentLoan ? `${p.taxCodeBase} SL` : p.taxCodeBase,
       isCasual: p.employmentType === "CASUAL" || p.employmentType === "CASUAL_AGRICULTURAL",
@@ -88,9 +88,9 @@ export function buildTaxProfilePreview(p: EmployeeTaxProfileT, today: Date): Tax
     today,
   );
   return {
-    resolvedStatus: resolution.status,
-    reason: resolution.reason,
-    autoEnrolTriggered: resolution.autoEnrolTriggered,
+    resolvedStatus: decision.status,
+    reason: decision.reason,
+    autoEnrolTriggered: decision.autoEnrolTriggered,
     dueDate: isoDay(due),
   };
 }

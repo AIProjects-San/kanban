@@ -16,7 +16,7 @@ const db = vi.hoisted(() => {
     "salaryComponent", "payrollRun", "payslip", "payAdjustment", "auditLog", "holidayCalendarEntry",
     "attendanceRecord", "leaveRequest", "leaveType", "salaryWithholding",
     // Phase 2 (engine wiring) — the statutory reads createPayrollRun makes.
-    "statutoryRateSet", "employeeTaxProfile",
+    "statutoryRule", "employeeTaxProfile", "taxYear",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",

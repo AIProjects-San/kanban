@@ -185,6 +185,13 @@ export interface NzTaxProfileInput {
    * every dollar (secondary). Main-employment default: true.
    */
   stcStudentLoanThresholdApplies: boolean;
+  /**
+   * Phase 1A — a recorded KiwiSaver auto-enrolment EXEMPTION reason code
+   * (EmployeeTaxProfile.autoEnrolExemption). Non-empty blocks the 28-day /
+   * 3-month time rules from auto-enrolling (an explicit opt-in election
+   * still wins). Null/empty = no exemption.
+   */
+  autoEnrolExemption?: string | null;
 }
 
 // ---------------------------------------------------------------------------

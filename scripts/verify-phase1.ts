@@ -2,7 +2,7 @@
 // NZ statutory payroll engine — Phase 1 integration verification.
 //
 // Runs the REAL engine (src/lib/payroll/nz) against the SEEDED database
-// rate set (scripts/seed-statutory.js): proves the resolver picks the
+// rate set (prisma/seed/nz-statutory.ts): proves the resolver picks the
 // FY2026-27 set, and that the seeded values reproduce the IRD-verified
 // known-answer rows end-to-end — the same rows the pure unit tests check
 // against hand-built fixtures, closing the loop fixture ↔ seed.
@@ -139,8 +139,8 @@ async function main() {
     taxCode: "M SL",
     isCasual: false,
     kiwiSaverStatus: "ACTIVE",
-    kiwiSaverRate: null,
-    employerKiwiSaverRate: null,
+    kiwiSaverEmployeeRate: null,
+    kiwiSaverEmployerRate: null,
     taxCodeSpecialRate: null,
     stcAccTreatment: null,
     stcStudentLoanRate: null,

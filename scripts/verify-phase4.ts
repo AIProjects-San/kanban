@@ -151,7 +151,7 @@ function check(ok: boolean, label: string, detail = ""): void {
 async function stagePre(): Promise<void> {
   console.log("🇳🇿 Phase 4 (Task 4.2) — stage PRE (before db:seed:statutory)\n");
 
-  const rateSets = await db.statutoryRateSet.count();
+  const rateSets = await db.statutoryRule.count();
   if (rateSets > 0) {
     console.error(`  ✗ ${rateSets} StatutoryRateSet row(s) already exist — the PRE snapshot must be`);
     console.error("    taken BEFORE `bun run db:seed:statutory`. Reset and reseed:");
@@ -311,8 +311,8 @@ async function stagePost(): Promise<void> {
           taxCode: "M",
           isCasual: false,
           kiwiSaverStatus: "ACTIVE",
-          kiwiSaverRate: null,
-          employerKiwiSaverRate: null,
+          kiwiSaverEmployeeRate: null,
+          kiwiSaverEmployerRate: null,
           taxCodeSpecialRate: null,
           stcAccTreatment: "INC",
           stcStudentLoanRate: null,
@@ -373,6 +373,12 @@ async function stagePost(): Promise<void> {
           lopDays: 0,
           lopSource: "AUTO" as const,
           statutory: plan.snapshot,
+          // Phase 1A — the promoted snapshot columns (mirrors the action).
+          taxCodeApplied: plan.snapshot.taxCode,
+          statutoryRuleVersion: plan.snapshot.ruleVersion,
+          employerKiwiSaverGross: plan.snapshot.kiwiSaver.employerGross || null,
+          employerEsct: plan.snapshot.kiwiSaver.esct || null,
+          employerKiwiSaverNet: plan.snapshot.kiwiSaver.employerNet || null,
           paidDays: runWorkingDays,
           gross,
           net,
@@ -390,6 +396,10 @@ async function stagePost(): Promise<void> {
     };
 
     const enrolled: Array<{ entry: SlipAutoEnrolment; slipNo: string }> = [];
+    // Phase 1A — the covering TaxYear, same lookup the action makes.
+    const taxYear = await db.taxYear.findFirst({
+      where: { startDate: { lte: window.start }, endDate: { gte: window.start } },
+    });
     const run = await db.$transaction(async (tx) => {
       const created = await tx.payrollRun.create({
         data: {
@@ -401,6 +411,7 @@ async function stagePost(): Promise<void> {
           createdById: actor.userId,
           workingDays: runWorkingDays,
           rateSetId: rateSet.id,
+          taxYearId: taxYear?.id ?? "",
           payslips: { create: plans.map((p) => p.data) },
         },
       });
@@ -408,8 +419,8 @@ async function stagePost(): Promise<void> {
       for (const p of plans) {
         if (p.autoEnrol) {
           const res = await tx.employeeTaxProfile.updateMany({
-            where: { userId: p.autoEnrol.userId, kiwiSaverStatus: "ACTIVE", kiwiSaverRate: null },
-            data: { kiwiSaverRate: p.autoEnrol.rate },
+            where: { userId: p.autoEnrol.userId, kiwiSaverStatus: "ACTIVE", kiwiSaverEmployeeRate: null },
+            data: { kiwiSaverEmployeeRate: p.autoEnrol.rate },
           });
           if ((res?.count ?? 0) > 0) enrolled.push({ entry: p.autoEnrol, slipNo: p.data.slipNo });
         }
@@ -456,6 +467,27 @@ async function stagePost(): Promise<void> {
   check(runRateSet != null, `rate set resolves at the run's own window start`);
 
   check(run.rateSetId === (runRateSet?.id ?? ""), `run.rateSetId frozen to the resolved set (${run.rateSetId})`);
+  // Phase 1A — the tax-year + promoted-column wiring.
+  const coveringYear = await db.taxYear.findFirst({
+    where: { startDate: { lte: run.startDate }, endDate: { gte: run.startDate } },
+  });
+  check(
+    coveringYear != null && run.taxYearId === coveringYear.id,
+    `run.taxYearId pinned to the covering TaxYear (${run.taxYearId || "—"} vs ${coveringYear?.id ?? "—"})`,
+  );
+  const colSample = run.payslips[0];
+  check(
+    colSample != null && colSample.taxCodeApplied !== "" && colSample.statutoryRuleVersion.startsWith("nz1:"),
+    `payslip columns promoted (taxCodeApplied "${colSample?.taxCodeApplied ?? ""}", ruleVersion "${colSample?.statutoryRuleVersion ?? ""}")`,
+  );
+  check(
+    run.payslips.every(
+      (p) =>
+        p.employerKiwiSaverGross == null ||
+        Math.abs(Number(p.employerKiwiSaverGross) - Number(p.employerKiwiSaverNet ?? 0) - Number(p.employerEsct ?? 0)) < 0.005,
+    ),
+    `employer columns sum (gross = net + esct) where present`,
+  );
   check(run.rateSetId !== "", "rateSetId is not the pre-engine \"\"");
 
   const profileByUser = new Map<string, NzTaxProfileRow>(
@@ -576,7 +608,7 @@ async function stagePost(): Promise<void> {
   if (tempProfile) {
     // SQLite hands Prisma Decimal columns back as Decimal objects — compare
     // numerically (0.035 === Decimal(0.035) is false).
-    const persistedRate = tempProfile.kiwiSaverRate == null ? null : Number(tempProfile.kiwiSaverRate);
+    const persistedRate = tempProfile.kiwiSaverEmployeeRate == null ? null : Number(tempProfile.kiwiSaverEmployeeRate);
     check(
       persistedRate === 0.035,
       `TEMPORARY profile — sticky election persisted at 3.5% (got ${persistedRate})`,

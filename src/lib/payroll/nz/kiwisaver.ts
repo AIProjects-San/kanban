@@ -63,6 +63,81 @@ export type NzKsStatus =
   | "ON_HOLIDAY" // savings suspension — employee 0%, employer continues
   | "NOT_ELIGIBLE"; // under-18/65+ without an election, or NSW
 
+// ---------------------------------------------------------------------------
+// Phase 1A time-rule constants (IRD "Opting in and enrolling temporary and
+// casual employees") — the seed file and the admin UI import these so the
+// rules live in exactly one place.
+// ---------------------------------------------------------------------------
+
+/** Temporary employment: auto-enrol from day 29 (start + 28 days). */
+export const TEMP_MAX_DAYS = 28;
+
+/** Casual agricultural: exempt for fewer than 3 months, enrolled beyond. */
+export const CASUAL_AGRI_MAX_MONTHS = 3;
+
+/**
+ * Phase 1A legacy profile shape (verify-phase-1a.sh): employmentType (the
+ * DB column name) instead of the engine's employmentCategory, percent-unit
+ * employee/employer rates that are NOT election evidence, and
+ * kiwiSaverStatus "NOT_ENROLLED" meaning PRE-enrolment (no election yet —
+ * still eligible for the time rules) rather than the admin-recorded
+ * "not in the scheme" reading the DB column carries.
+ */
+export interface NzLegacyTaxProfile {
+  taxCode: string;
+  studentLoan?: boolean;
+  kiwiSaverStatus: string;
+  kiwiSaverEmployeeRate?: number | null;
+  kiwiSaverEmployerRate?: number | null;
+  esctRateOverride?: number | null;
+  taxCodeSpecialRate?: number | null;
+  stcAccTreatment?: "INC" | "PLUS" | null;
+  stcStudentLoanRate?: number | null;
+  employmentType: string;
+  casualHolidayPayInWages?: boolean;
+  employmentStartDate?: Date | null;
+  employmentEndDate?: Date | null;
+}
+
+/** Canonical profiles carry employmentCategory — the engine's own shape. */
+function isCanonicalProfile(
+  p: NzTaxProfileInput | NzLegacyTaxProfile,
+): p is NzTaxProfileInput {
+  return "employmentCategory" in p;
+}
+
+/** Normalize either profile shape into the engine's decision input. */
+function toDecisionInput(profile: NzTaxProfileInput | NzLegacyTaxProfile): NzTaxProfileInput {
+  if (isCanonicalProfile(profile)) return profile;
+  const legacy = profile as NzLegacyTaxProfile;
+  const category = ["PERMANENT", "CASUAL", "TEMPORARY", "CASUAL_AGRICULTURAL"].includes(
+    legacy.employmentType,
+  )
+    ? (legacy.employmentType as NzTaxProfileInput["employmentCategory"])
+    : "PERMANENT";
+  return {
+    taxCode: legacy.taxCode,
+    isCasual: category === "CASUAL" || category === "CASUAL_AGRICULTURAL",
+    employmentCategory: category,
+    employmentStartDate: legacy.employmentStartDate ?? null,
+    casualHolidayPayInWages: legacy.casualHolidayPayInWages ?? false,
+    // Legacy NOT_ENROLLED = the pre-enrolment posture (the ACTIVE election
+    // vocabulary); the time rules stay live. Unknown strings fall through
+    // the decision switch to the ACTIVE posture — same as the row adapter.
+    kiwiSaverStatus: (legacy.kiwiSaverStatus === "NOT_ENROLLED"
+      ? "ACTIVE"
+      : legacy.kiwiSaverStatus) as NzTaxProfileInput["kiwiSaverStatus"],
+    // Percent-unit rates are scheme parameters here, NOT election evidence.
+    kiwiSaverRate: null,
+    employerKiwiSaverRate: null,
+    esctRateOverride: legacy.esctRateOverride ?? null,
+    taxCodeSpecialRate: legacy.taxCodeSpecialRate ?? null,
+    stcAccTreatment: legacy.stcAccTreatment ?? "INC",
+    stcStudentLoanRate: legacy.stcStudentLoanRate ?? null,
+    stcStudentLoanThresholdApplies: true,
+  };
+}
+
 export interface NzKsResolution {
   status: NzKsStatus;
   /** True when a time rule (28-day / 3-month) enrolment fired THIS period —
@@ -107,8 +182,9 @@ function exceedsWholeMonths(end: Date, start: Date, wholeMonths: number): boolea
  * The calendar date a pending auto-enrolment trigger fires (the admin
  * profile editor's preview line — Phase 3). Null when the category has no
  * time rule or the start date is missing:
- *   TEMPORARY           day 29 = employment start + 28 days
- *   CASUAL_AGRICULTURAL the day after 3 whole calendar months
+ *   TEMPORARY           day 29 = employment start + TEMP_MAX_DAYS (28)
+ *   CASUAL_AGRICULTURAL the day after CASUAL_AGRI_MAX_MONTHS (3) whole
+ *                       calendar months
  */
 export function autoEnrolDueDate(
   category: NzTaxProfileInput["employmentCategory"],
@@ -117,20 +193,38 @@ export function autoEnrolDueDate(
   if (!employmentStartDate) return null;
   switch (category) {
     case "TEMPORARY":
-      return addDays(employmentStartDate, 28);
+      return addDays(employmentStartDate, TEMP_MAX_DAYS);
     case "CASUAL_AGRICULTURAL":
-      return addDays(addMonthsClamped(employmentStartDate, 3), 1);
+      return addDays(addMonthsClamped(employmentStartDate, CASUAL_AGRI_MAX_MONTHS), 1);
     default:
       return null;
   }
 }
 
 /**
- * Resolve the effective KiwiSaver status for a pay period. Pure; the
- * employment facts arrive on the profile (Phase 2 wires them from the HR
- * profile when it persists enrolment transitions).
+ * Phase 1A — resolve the effective KiwiSaver STATUS as a bare string
+ * ("ENROLLED" | "NOT_ENROLLED" | …). Accepts BOTH the engine's canonical
+ * NzTaxProfileInput AND the Phase 1A legacy profile shape
+ * (employmentType + percent-unit kiwiSaverEmployeeRate, where
+ * kiwiSaverStatus "NOT_ENROLLED" means PRE-enrolment — no election yet,
+ * still eligible for the time rules — not the admin-recorded "not in the
+ * scheme"). Rich callers (audit reasons, the autoEnrolTriggered flag) use
+ * resolveKiwiSaverDecision.
  */
 export function resolveKiwiSaverStatus(
+  taxProfile: NzTaxProfileInput | NzLegacyTaxProfile,
+  payPeriodEnd: Date,
+): NzKsStatus {
+  return resolveKiwiSaverDecision(toDecisionInput(taxProfile), payPeriodEnd).status;
+}
+
+/**
+ * Resolve the full KiwiSaver decision for a pay period: the effective
+ * status, whether a time rule FIRED this period (the payroll action
+ * persists it with an audit entry), and the human-readable reason. Pure;
+ * the employment facts arrive on the profile.
+ */
+export function resolveKiwiSaverDecision(
   taxProfile: NzTaxProfileInput,
   payPeriodEnd: Date,
 ): NzKsResolution {
@@ -197,6 +291,17 @@ export function resolveKiwiSaverStatus(
       status: "ENROLLED",
       autoEnrolTriggered: false,
       reason: "Explicit rate election on record — member (opt-in or persisted enrolment)",
+    };
+  }
+
+  // Phase 1A — a recorded auto-enrolment EXEMPTION blocks the time rules
+  // (an admin-recorded reason this employee must not be auto-enrolled;
+  // a voluntary opt-in election above still wins).
+  if (taxProfile.autoEnrolExemption) {
+    return {
+      status: "NOT_ENROLLED",
+      autoEnrolTriggered: false,
+      reason: `Auto-enrolment exemption on record: ${taxProfile.autoEnrolExemption}`,
     };
   }
 
@@ -328,9 +433,54 @@ export interface CalculateKiwiSaverInput {
  * KiwiSaver money for one pay period. Pure. Line discipline: esct is
  * rounded from its exact product, then employerNet = employerGross − the
  * ROUNDED esct, so esct + employerNet always equals employerGross.
+ *
+ * Two input shapes:
+ *   canonical — { gross, frequency, taxProfile, resolution, kiwiSaver,
+ *                esctTiers } (the payroll run's path) → full result.
+ *   Phase 1A legacy flat — { gross, employeeRate, employerRate, esctRate,
+ *                status } → the four money lines only.
  */
-export function calculateKiwiSaver(input: CalculateKiwiSaverInput): NzKiwiSaverResult {
-  const { gross, frequency, taxProfile, resolution, kiwiSaver } = input;
+export interface NzKsFlatInput {
+  gross: number;
+  employeeRate?: number;
+  employerRate?: number;
+  esctRate?: number;
+  status: NzKsStatus;
+}
+
+/** Phase 1A legacy flat result — the four money lines, nothing else. */
+export interface NzKsFlatResult {
+  employee: number;
+  employerGross: number;
+  esct: number;
+  employerNet: number;
+}
+
+export function calculateKiwiSaver(input: CalculateKiwiSaverInput): NzKiwiSaverResult;
+export function calculateKiwiSaver(input: NzKsFlatInput): NzKsFlatResult;
+export function calculateKiwiSaver(
+  input: CalculateKiwiSaverInput | NzKsFlatInput,
+): NzKiwiSaverResult | NzKsFlatResult {
+  // ---- Phase 1A legacy flat shape: rates + status handed in directly. ----
+  if ("status" in input) {
+    const flat = input as NzKsFlatInput;
+    if (flat.status !== "ENROLLED" && flat.status !== "ON_HOLIDAY") {
+      return { employee: 0, employerGross: 0, esct: 0, employerNet: 0 };
+    }
+    const employeeRate = flat.status === "ON_HOLIDAY" ? 0 : (flat.employeeRate ?? 0);
+    const employerRate = flat.employerRate ?? 0;
+    const employee = roundMoney2(flat.gross * employeeRate);
+    const employerGross = roundMoney2(flat.gross * employerRate);
+    const esct = roundMoney2(employerGross * (flat.esctRate ?? 0));
+    return {
+      employee,
+      employerGross,
+      esct,
+      employerNet: roundMoney2(employerGross - esct),
+    };
+  }
+
+  const { gross, frequency, taxProfile, resolution, kiwiSaver } = input as CalculateKiwiSaverInput;
   const zero: NzKiwiSaverResult = {
     status: resolution.status,
     autoEnrolTriggered: resolution.autoEnrolTriggered,
@@ -398,6 +548,6 @@ export function calculateKiwiSaver(input: CalculateKiwiSaverInput): NzKiwiSaverR
 export function resolveAndCalculateKiwiSaver(
   input: Omit<CalculateKiwiSaverInput, "resolution"> & { payPeriodEnd: Date },
 ): NzKiwiSaverResult {
-  const resolution = resolveKiwiSaverStatus(input.taxProfile, input.payPeriodEnd);
+  const resolution = resolveKiwiSaverDecision(input.taxProfile, input.payPeriodEnd);
   return calculateKiwiSaver({ ...input, resolution });
 }

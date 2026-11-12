@@ -29,7 +29,7 @@ import { db } from "@/lib/db";
 import { calculatePaye } from "./paye";
 import {
   calculateKiwiSaver,
-  resolveKiwiSaverStatus,
+  resolveKiwiSaverDecision,
   type NzKsResolution,
 } from "./kiwisaver";
 import { calculateStudentLoan } from "./student-loan";
@@ -161,7 +161,7 @@ export function calculateNzStatutoryWithSet(input: CalculateNzStatutoryInput): N
     ietc: rateSet.ietc,
   });
 
-  const ksResolution: NzKsResolution = resolveKiwiSaverStatus(taxProfile, payPeriodEnd);
+  const ksResolution: NzKsResolution = resolveKiwiSaverDecision(taxProfile, payPeriodEnd);
   const kiwisaver = calculateKiwiSaver({
     gross,
     frequency,
@@ -211,14 +211,21 @@ export interface NzTaxProfileRow {
   isCasual: boolean;
   kiwiSaverStatus: string;
   /** Prisma Decimal | null. */
-  kiwiSaverRate: unknown;
+  kiwiSaverEmployeeRate: unknown;
   /** Prisma Decimal | null. */
-  employerKiwiSaverRate: unknown;
+  kiwiSaverEmployerRate: unknown;
   /** Prisma Decimal | null. */
   taxCodeSpecialRate: unknown;
   stcAccTreatment: string | null;
   /** Prisma Decimal | null. */
   stcStudentLoanRate: unknown;
+  // --- Phase 1A: the explicit SL declaration box (OR'd with the code
+  // suffix) and the recorded auto-enrolment exemption. ---
+  /** True = the IR330 student-loan box was ticked (OR's " SL" onto the
+   *  code when the suffix is missing). */
+  studentLoan?: boolean | null;
+  /** Non-empty = a recorded auto-enrolment exemption reason code. */
+  autoEnrolExemption?: string | null;
   // --- Phase 3 (Task 3.4-r1): employment facts live on the profile row
   // itself. Each is optional so pre-migration callers still work; when set
   // they take precedence over the employment parameter. ---
@@ -287,16 +294,25 @@ export function toNzTaxProfile(
   const employmentCategory =
     rowCategory ?? employment.employmentCategory ?? (row.isCasual ? "CASUAL" : "PERMANENT");
 
+  // Phase 1A — the explicit SL declaration box ORs " SL" onto the code
+  // (the suffix stays the engine's single source; a code that already
+  // carries it is left alone).
+  const slDeclared = row.studentLoan === true;
+  const codeWithSl =
+    slDeclared && !/\s*SL$/i.test(taxCode) && !/(ND|CAE|EDW|NSW)/i.test(taxCode)
+      ? `${taxCode} SL`
+      : taxCode;
+
   return {
-    taxCode,
+    taxCode: codeWithSl,
     isCasual: row.isCasual,
     employmentCategory,
     employmentStartDate: row.employmentStartDate ?? employment.hireDate ?? null,
     casualHolidayPayInWages:
       row.casualHolidayPayInWages ?? employment.casualHolidayPayInWages ?? true,
     kiwiSaverStatus: status as NzTaxProfileInput["kiwiSaverStatus"],
-    kiwiSaverRate: toNumOrNull(row.kiwiSaverRate),
-    employerKiwiSaverRate: toNumOrNull(row.employerKiwiSaverRate),
+    kiwiSaverRate: toNumOrNull(row.kiwiSaverEmployeeRate),
+    employerKiwiSaverRate: toNumOrNull(row.kiwiSaverEmployerRate),
     // Phase 3 — the DB column finally exists (Task 3.4-r1); the engine has
     // honoured the override since Phase 1.
     esctRateOverride: toNumOrNull(row.esctRateOverride),
@@ -306,6 +322,8 @@ export function toNzTaxProfile(
     // IR23 main-employment default (spec §5.9 example one); a certificate
     // that states secondary treatment flips this — Phase 2 schema candidate.
     stcStudentLoanThresholdApplies: true,
+    // Phase 1A — a recorded exemption blocks the auto-enrolment time rules.
+    autoEnrolExemption: row.autoEnrolExemption || null,
   };
 }
 
@@ -390,11 +408,11 @@ export async function resolveNzRateSet(
   explicitId?: string,
 ): Promise<NzRateSetParams | null> {
   const row = explicitId
-    ? await db.statutoryRateSet.findUnique({
+    ? await db.statutoryRule.findUnique({
         where: { id: explicitId },
         include: RATE_SET_INCLUDE,
       })
-    : await db.statutoryRateSet.findFirst({
+    : await db.statutoryRule.findFirst({
         where: {
           effectiveFrom: { lte: at },
           OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }],

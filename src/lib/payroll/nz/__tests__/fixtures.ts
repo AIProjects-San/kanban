@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Phase 1 test fixtures — the FY2026-27 rate set exactly as
-// scripts/seed-statutory.js seeds it (values verified against IRD primary
+// prisma/seed/nz-statutory.ts seeds it (values verified against IRD primary
 // sources in Phase 0). Hand-built here so the pure engine tests need no
 // database.
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ const { PrismaClient, Prisma } = require("@prisma/client");
 const db = new PrismaClient();
 
 async function main() {
-  const sets = await db.statutoryRateSet.findMany({
+  const sets = await db.statutoryRule.findMany({
     include: {
       payeTiers: { orderBy: { fromAnnual: "asc" } },
       secondaryRates: { orderBy: { code: "asc" } },
@@ -30,7 +30,7 @@ async function main() {
   console.log(`\nTAX PROFILES (${profiles.length}):`);
   for (const p of profiles) {
     const u = await db.user.findUnique({ where: { id: p.userId }, select: { email: true } });
-    console.log(`  ${u.email.padEnd(22)} code=${p.taxCode.padEnd(6)} casual=${p.isCasual ? "Y" : "n"} KS=${p.kiwiSaverStatus}/${p.kiwiSaverRate ?? "default"} STC=${p.taxCodeSpecialRate ?? "-"}/${p.stcAccTreatment}/${p.stcStudentLoanRate ?? "-"} ird=${p.irdNumber}`);
+    console.log(`  ${u.email.padEnd(22)} code=${p.taxCode.padEnd(6)} casual=${p.isCasual ? "Y" : "n"} KS=${p.kiwiSaverStatus}/${p.kiwiSaverEmployeeRate ?? "default"} STC=${p.taxCodeSpecialRate ?? "-"}/${p.stcAccTreatment}/${p.stcStudentLoanRate ?? "-"} ird=${p.irdNumber}`);
   }
 
   const superAdmin = await db.user.findFirst({ where: { role: "SUPER_ADMIN" }, select: { email: true, name: true } });

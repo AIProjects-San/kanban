@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => ({
-  statutoryRateSet: { findFirst: vi.fn(), findUnique: vi.fn() },
+  statutoryRule: { findFirst: vi.fn(), findUnique: vi.fn() },
 }));
 
 vi.mock("@/lib/db", () => ({ db }));
@@ -38,8 +38,8 @@ function profileRow(overrides: Record<string, unknown> = {}): Record<string, unk
     taxCode: "M",
     isCasual: false,
     kiwiSaverStatus: "ACTIVE",
-    kiwiSaverRate: null,
-    employerKiwiSaverRate: null,
+    kiwiSaverEmployeeRate: null,
+    kiwiSaverEmployerRate: null,
     taxCodeSpecialRate: null,
     stcAccTreatment: "INC",
     stcStudentLoanRate: null,

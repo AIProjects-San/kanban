@@ -19,6 +19,7 @@ import {
   autoEnrolDueDate,
   calculateKiwiSaver,
   esctRateForAnnual,
+  resolveKiwiSaverDecision,
   resolveKiwiSaverStatus,
 } from "@/lib/payroll/nz/kiwisaver";
 import { baseProfile, fy2026RateSet, utc } from "./fixtures";
@@ -33,7 +34,7 @@ function ks(
   payPeriodEnd: Date = PERIOD_END,
 ) {
   const profile = baseProfile(profileOverrides);
-  const resolution = resolveKiwiSaverStatus(profile, payPeriodEnd);
+  const resolution = resolveKiwiSaverDecision(profile, payPeriodEnd);
   const result = calculateKiwiSaver({
     gross,
     frequency,
@@ -45,7 +46,7 @@ function ks(
   return { resolution, result };
 }
 
-describe("Task 1.2 — resolveKiwiSaverStatus acceptance scenarios", () => {
+describe("Task 1.2 — resolveKiwiSaverDecision acceptance scenarios", () => {
   it("Permanent employee, no election — ENROLLED (auto-enrolled at hire posture)", () => {
     const { resolution } = ks(1_000, {});
     expect(resolution.status).toBe("ENROLLED");
@@ -276,12 +277,12 @@ describe("Task 3.4 — autoEnrolDueDate (the profile editor's preview line)", ()
 
   it("the TEMPORARY due date drives the resolution — enrolled only from that date", () => {
     const start = utc("2026-11-02"); // day 29 = 2026-11-30
-    const before = resolveKiwiSaverStatus(
+    const before = resolveKiwiSaverDecision(
       baseProfile({ employmentCategory: "TEMPORARY", employmentStartDate: start }),
       utc("2026-11-29"),
     );
     expect(before.status).toBe("NOT_ENROLLED");
-    const on = resolveKiwiSaverStatus(
+    const on = resolveKiwiSaverDecision(
       baseProfile({ employmentCategory: "TEMPORARY", employmentStartDate: start }),
       utc("2026-11-30"),
     );
@@ -357,7 +358,7 @@ describe("Task 1.2 — money calculation and ESCT", () => {
 
   it("a rate set without KiwiSaver parameters degrades to zeros", () => {
     const profile = baseProfile({});
-    const resolution = resolveKiwiSaverStatus(profile, PERIOD_END);
+    const resolution = resolveKiwiSaverDecision(profile, PERIOD_END);
     const result = calculateKiwiSaver({
       gross: 1_000,
       frequency: "MONTHLY",
@@ -369,5 +370,84 @@ describe("Task 1.2 — money calculation and ESCT", () => {
     expect(result.employee).toBe(0);
     expect(result.employerGross).toBe(0);
     expect(result.reason).toContain("no KiwiSaver parameters");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1A — the string status API + the legacy profile/flat input shapes
+// (verify-phase-1a.sh).
+// ---------------------------------------------------------------------------
+describe("Phase 1A — resolveKiwiSaverStatus string API + legacy shapes", () => {
+  it("returns the bare status string for canonical profiles", () => {
+    expect(resolveKiwiSaverStatus(baseProfile({}), PERIOD_END)).toBe("ENROLLED");
+    expect(
+      resolveKiwiSaverStatus(baseProfile({ kiwiSaverStatus: "OPTED_OUT" }), PERIOD_END),
+    ).toBe("OPT_OUT");
+  });
+
+  it("legacy profiles: employmentType + NOT_ENROLLED-as-pre-enrolment", () => {
+    const pEnd = utc("2027-01-31");
+    // kiwiSaverStatus NOT_ENROLLED in the legacy shape = no election yet —
+    // the time rules stay live (the ACTIVE posture).
+    const legacy = (o: Record<string, unknown> = {}) => ({
+      taxCode: "M",
+      studentLoan: false,
+      kiwiSaverStatus: "NOT_ENROLLED",
+      kiwiSaverEmployeeRate: 3.5, // percent units — NOT election evidence
+      kiwiSaverEmployerRate: 3.5,
+      esctRateOverride: null,
+      taxCodeSpecialRate: null,
+      stcAccTreatment: "INC" as const,
+      stcStudentLoanRate: null,
+      employmentType: "PERMANENT",
+      casualHolidayPayInWages: false,
+      employmentStartDate: null,
+      employmentEndDate: null,
+      ...o,
+    });
+    expect(
+      resolveKiwiSaverStatus(legacy({ employmentType: "TEMPORARY", employmentStartDate: utc("2027-01-11") }), pEnd),
+    ).toBe("NOT_ENROLLED"); // 20 days — inside the 28-day window
+    expect(
+      resolveKiwiSaverStatus(legacy({ employmentType: "TEMPORARY", employmentStartDate: utc("2027-01-01") }), pEnd),
+    ).toBe("ENROLLED"); // day 29 = Jan 29 ≤ Jan 31
+    expect(
+      resolveKiwiSaverStatus(
+        legacy({ employmentType: "CASUAL_AGRICULTURAL", employmentStartDate: utc("2026-11-30") }),
+        pEnd,
+      ),
+    ).toBe("NOT_ENROLLED"); // 2 months
+    expect(
+      resolveKiwiSaverStatus(
+        legacy({ employmentType: "CASUAL_AGRICULTURAL", employmentStartDate: utc("2026-09-15") }),
+        pEnd,
+      ),
+    ).toBe("ENROLLED"); // past 3 months
+  });
+
+  it("the flat calculateKiwiSaver shape returns the four money lines", () => {
+    const enrolled = calculateKiwiSaver({
+      gross: 5_000,
+      employeeRate: 0.035,
+      employerRate: 0.035,
+      esctRate: 0.175,
+      status: "ENROLLED",
+    });
+    expect(enrolled).toEqual({ employee: 175.0, employerGross: 175.0, esct: 30.63, employerNet: 144.37 });
+    expect(
+      calculateKiwiSaver({ gross: 5_000, employeeRate: 0.035, employerRate: 0.035, esctRate: 0.175, status: "NOT_ENROLLED" }),
+    ).toEqual({ employee: 0, employerGross: 0, esct: 0, employerNet: 0 });
+  });
+
+  it("a recorded auto-enrolment exemption blocks the time rules (canonical)", () => {
+    const p = baseProfile({
+      employmentCategory: "TEMPORARY",
+      employmentStartDate: utc("2027-01-01"),
+      autoEnrolExemption: "ADMIN_RECORDED",
+    });
+    const decision = resolveKiwiSaverDecision(p, utc("2027-01-31"));
+    expect(decision.status).toBe("NOT_ENROLLED");
+    expect(decision.autoEnrolTriggered).toBe(false);
+    expect(decision.reason).toContain("ADMIN_RECORDED");
   });
 });

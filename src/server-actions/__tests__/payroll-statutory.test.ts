@@ -15,7 +15,7 @@ const db = vi.hoisted(() => {
     "payrollRun", "payslip", "payAdjustment", "auditLog", "holidayCalendarEntry",
     "attendanceRecord", "leaveRequest", "leaveType", "salaryWithholding",
     "fullAndFinalStatement", "mailOutbox", "leaveBalance",
-    "statutoryRateSet", "employeeTaxProfile",
+    "statutoryRule", "employeeTaxProfile", "taxYear",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -111,7 +111,7 @@ function taxProfileRow(userId: string, overrides: Record<string, unknown> = {}) 
     taxCode: "M",
     isCasual: false,
     kiwiSaverStatus: "ACTIVE",
-    kiwiSaverRate: null,
+    kiwiSaverEmployeeRate: null,
     employerKiwiSaverRate: null,
     taxCodeSpecialRate: null,
     stcAccTreatment: "INC",
@@ -169,8 +169,8 @@ beforeEach(() => {
   db.employeeTaxProfile.findMany.mockResolvedValue([]);
   db.employeeTaxProfile.findUnique.mockResolvedValue(null);
   db.employeeTaxProfile.updateMany.mockResolvedValue({ count: 1 });
-  db.statutoryRateSet.findFirst.mockResolvedValue(null);
-  db.statutoryRateSet.findUnique.mockResolvedValue(null);
+  db.statutoryRule.findFirst.mockResolvedValue(null);
+  db.statutoryRule.findUnique.mockResolvedValue(null);
   db.payAdjustment.findMany.mockResolvedValue([]);
   db.salaryWithholding.findMany.mockResolvedValue([]);
   db.fullAndFinalStatement.findFirst.mockResolvedValue(null);
@@ -197,7 +197,7 @@ beforeEach(() => {
 
 describe("createPayrollRun — statutory wiring", () => {
   it("resolves the rate set, stores rateSetId, and snapshots statutory lines + JSON per slip", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findMany.mockResolvedValue([taxProfileRow("u-yuki")]);
     db.salaryStructure.findMany.mockResolvedValue([structureRow("u-yuki")]);
 
@@ -205,7 +205,7 @@ describe("createPayrollRun — statutory wiring", () => {
     expect(res.ok).toBe(true);
 
     // The resolver looked for the set covering the window START (2026-11-01).
-    const rsWhere = db.statutoryRateSet.findFirst.mock.calls[0][0].where;
+    const rsWhere = db.statutoryRule.findFirst.mock.calls[0][0].where;
     expect(rsWhere.effectiveFrom.lte).toEqual(new Date("2026-11-01T00:00:00Z"));
 
     const createArg = db.payrollRun.create.mock.calls[0][0] as {
@@ -248,7 +248,7 @@ describe("createPayrollRun — statutory wiring", () => {
   });
 
   it("resolves by the window START (a set effective mid-window does not cover it)", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(null);
+    db.statutoryRule.findFirst.mockResolvedValue(null);
     db.salaryStructure.findMany.mockResolvedValue([structureRow("u-yuki")]);
     const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
     expect(res.ok).toBe(true);
@@ -265,13 +265,13 @@ describe("createPayrollRun — statutory wiring", () => {
     db.salaryStructure.findMany.mockResolvedValue([{ ...structureRow("u-yuki"), frequency: "DAILY" }]);
     const res = await createPayrollRun({ frequency: "DAILY", anchorDate: "2026-11-09" });
     expect(res.ok).toBe(true);
-    expect(db.statutoryRateSet.findFirst).not.toHaveBeenCalled();
+    expect(db.statutoryRule.findFirst).not.toHaveBeenCalled();
     const createArg = db.payrollRun.create.mock.calls[0][0] as { data: { rateSetId: string } };
     expect(createArg.data.rateSetId).toBe("");
   });
 
   it("flags system-default profiles when the employee has no tax profile row", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findMany.mockResolvedValue([]); // no rows at all
     db.salaryStructure.findMany.mockResolvedValue([structureRow("u-yuki")]);
     const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-11-01" });
@@ -292,7 +292,7 @@ describe("createPayrollRun — statutory wiring", () => {
 
 describe("createPayrollRun — KiwiSaver auto-enrolment", () => {
   it("persists the 28-day TEMPORARY enrolment in the run transaction and audits it after commit", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findMany.mockResolvedValue([
       taxProfileRow("u-yuki"),
       taxProfileRow("u-temp", {
@@ -308,8 +308,8 @@ describe("createPayrollRun — KiwiSaver auto-enrolment", () => {
 
     // The guarded write: ACTIVE + no election → the default rate, sticky.
     expect(db.employeeTaxProfile.updateMany).toHaveBeenCalledWith({
-      where: { userId: "u-temp", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: null },
-      data: { kiwiSaverRate: 0.035 },
+      where: { userId: "u-temp", kiwiSaverStatus: "ACTIVE", kiwiSaverEmployeeRate: null },
+      data: { kiwiSaverEmployeeRate: 0.035 },
     });
     // Exactly one enrolment write (the permanent employee never triggers).
     expect(db.employeeTaxProfile.updateMany).toHaveBeenCalledTimes(1);
@@ -330,7 +330,7 @@ describe("createPayrollRun — KiwiSaver auto-enrolment", () => {
   });
 
   it("skips a broken STC profile loudly: slip created WITHOUT statutory lines, reason surfaced", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findMany.mockResolvedValue([
       taxProfileRow("u-yuki", { taxCode: "STC", taxCodeSpecialRate: null }),
     ]);
@@ -391,7 +391,7 @@ describe("updatePayslip — statutory recompute", () => {
   };
 
   it("recomputes statutory lines from the EDITED earnings against the run's frozen set", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findUnique.mockResolvedValue(taxProfileRow("u-yuki"));
     db.payslip.findUnique.mockResolvedValue({ ...SLIP, run: RUN });
 
@@ -407,7 +407,7 @@ describe("updatePayslip — statutory recompute", () => {
     expect(res.ok).toBe(true);
 
     // The rate set was resolved EXPLICITLY by the run's frozen id.
-    expect(db.statutoryRateSet.findUnique).toHaveBeenCalledWith(
+    expect(db.statutoryRule.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "rs-fy2026" } }),
     );
 
@@ -435,7 +435,7 @@ describe("updatePayslip — statutory recompute", () => {
   });
 
   it("refuses the save when the engine cannot re-derive (broken STC) — nothing stored", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findUnique.mockResolvedValue(taxProfileRow("u-yuki", { taxCode: "STC" }));
     db.payslip.findUnique.mockResolvedValue({ ...SLIP, run: RUN });
 
@@ -470,7 +470,7 @@ describe("updatePayslip — statutory recompute", () => {
       note: "",
     });
     expect(res.ok).toBe(true);
-    expect(db.statutoryRateSet.findUnique).not.toHaveBeenCalled();
+    expect(db.statutoryRule.findUnique).not.toHaveBeenCalled();
     const updateArg = db.payslip.update.mock.calls[0][0] as { data: { deductions: string; statutory?: unknown } };
     expect(JSON.parse(updateArg.data.deductions)).toEqual([{ key: "union", label: "Union fees", amount: 10 }]);
     expect(updateArg.data.statutory).toBeUndefined();
@@ -495,7 +495,7 @@ describe("addPayslip — joiner statutory wiring", () => {
   };
 
   it("computes the joiner's statutory lines + snapshot and persists a triggered enrolment", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findUnique.mockResolvedValue(
       taxProfileRow("u-temp", {
         employmentType: "TEMPORARY",
@@ -522,8 +522,8 @@ describe("addPayslip — joiner statutory wiring", () => {
 
     // The enrolment landed inside the slip's transaction, audited after.
     expect(db.employeeTaxProfile.updateMany).toHaveBeenCalledWith({
-      where: { userId: "u-temp", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: null },
-      data: { kiwiSaverRate: 0.035 },
+      where: { userId: "u-temp", kiwiSaverStatus: "ACTIVE", kiwiSaverEmployeeRate: null },
+      data: { kiwiSaverEmployeeRate: 0.035 },
     });
     const enrol = logAuditMock.mock.calls.find((c) => c[0].action === "payroll.kiwisaver_auto_enrolled");
     expect(enrol).toBeDefined();
@@ -532,7 +532,7 @@ describe("addPayslip — joiner statutory wiring", () => {
   });
 
   it("fails loudly when the joiner's profile cannot compute (broken STC)", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.employeeTaxProfile.findUnique.mockResolvedValue(taxProfileRow("u-temp", { taxCode: "STC" }));
     db.payrollRun.findUnique.mockResolvedValue(RUN);
     db.salaryStructure.findFirst.mockResolvedValue(structureRow("u-temp"));

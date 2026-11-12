@@ -328,3 +328,74 @@ describe("Task 1.1 — guards", () => {
     expect(slabTaxAnnual(180_000, SET.payeTiers)).toBe(49_277.5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 1A — the legacy flat-slab input shape (verify-phase-1a.sh): slabs +
+// accRule instead of the resolved rate-set family. The PRIMARY rows carry
+// COMBINED accInclusive rates (income tax + levy); the conversion strips the
+// levy back out so the split lines are identical to the canonical path. The
+// SECONDARY rows are the total deduction rate for the code (the Phase 1A
+// contract: no separate levy line), ND falls back to the statutory 45%, and
+// STC certificate rates arrive in percent units.
+// ---------------------------------------------------------------------------
+describe("Phase 1A — legacy slabs/accRule input shape", () => {
+  const LEGACY_SLABS = [
+    { taxCodeGroup: "PRIMARY" as const, lowerBound: 0, upperBound: 15600, rate: 0.1225, accInclusive: true, sortOrder: 1 },
+    { taxCodeGroup: "PRIMARY" as const, lowerBound: 15601, upperBound: 53500, rate: 0.1925, accInclusive: true, sortOrder: 2 },
+    { taxCodeGroup: "PRIMARY" as const, lowerBound: 53501, upperBound: 78100, rate: 0.3175, accInclusive: true, sortOrder: 3 },
+    { taxCodeGroup: "PRIMARY" as const, lowerBound: 78101, upperBound: 156641, rate: 0.3475, accInclusive: true, sortOrder: 4 },
+    { taxCodeGroup: "PRIMARY" as const, lowerBound: 156642, upperBound: 180000, rate: 0.33, accInclusive: false, sortOrder: 5 },
+    { taxCodeGroup: "PRIMARY" as const, lowerBound: 180001, upperBound: null, rate: 0.39, accInclusive: false, sortOrder: 6 },
+    { taxCodeGroup: "SECONDARY" as const, code: "SB", rate: 0.105 },
+    { taxCodeGroup: "SECONDARY" as const, code: "S", rate: 0.175 },
+    { taxCodeGroup: "SECONDARY" as const, code: "ND", rate: 0.45 },
+  ];
+  const ACC_RULE = { rate: 0.0175, cap: 156641, maxLevy: 2741.22 };
+
+  function legacyPaye(gross: number, frequency: "WEEKLY" | "FORTNIGHTLY" | "MONTHLY" | "ANNUAL", code: string, extra: Record<string, unknown> = {}) {
+    return calculatePaye({
+      gross,
+      frequency,
+      taxProfile: baseProfile({ taxCode: code, ...extra }),
+      slabs: LEGACY_SLABS,
+      accRule: ACC_RULE,
+    });
+  }
+
+  it("combined primary slabs reproduce the canonical split exactly (M rows)", () => {
+    // The combined rates (12.25/19.25/31.75/34.75%) minus the levy equal the
+    // income-only tiers — every canonical acceptance value reappears.
+    expect(legacyPaye(1_000, "WEEKLY", "M")).toMatchObject({ tax: 154.0, acc: 17.5, total: 171.5 });
+    expect(legacyPaye(2_000, "FORTNIGHTLY", "M")).toMatchObject({ tax: 308.0, acc: 35.0, total: 343.0 });
+    expect(legacyPaye(5_000, "MONTHLY", "M")).toMatchObject({ tax: 851.71, acc: 87.5, total: 939.21 });
+    expect(legacyPaye(15_600, "ANNUAL", "M")).toMatchObject({ tax: 1_638.0, acc: 273.0 });
+    expect(legacyPaye(53_500, "ANNUAL", "M")).toMatchObject({ tax: 8_270.5, acc: 936.25 });
+    expect(legacyPaye(78_100, "ANNUAL", "M")).toMatchObject({ tax: 15_650.5, acc: 1_366.75 });
+    expect(legacyPaye(156_641, "ANNUAL", "M")).toMatchObject({ tax: 41_569.03, acc: 2_741.22, total: 44_310.25 });
+    expect(legacyPaye(200_000, "ANNUAL", "M")).toMatchObject({ tax: 57_077.5, acc: 2_741.22, total: 59_818.72 });
+  });
+
+  it("secondary rows are the total deduction rate (no separate levy line)", () => {
+    expect(legacyPaye(1_000, "WEEKLY", "SB")).toMatchObject({ tax: 105.0, acc: 0, total: 105.0 });
+    expect(legacyPaye(3_000, "MONTHLY", "S")).toMatchObject({ tax: 525.0, acc: 0, total: 525.0 });
+  });
+
+  it("ND falls back to the statutory 45% non-notified rate when absent", () => {
+    const noNd = LEGACY_SLABS.filter((s) => s.code !== "ND");
+    const r = calculatePaye({
+      gross: 5_000,
+      frequency: "MONTHLY",
+      taxProfile: baseProfile({ taxCode: "ND" }),
+      slabs: noNd,
+      accRule: ACC_RULE,
+    });
+    expect(r).toMatchObject({ tax: 2_250.0, acc: 0, total: 2_250.0, method: "ND" });
+  });
+
+  it("STC certificate rates arrive in percent units and convert", () => {
+    expect(legacyPaye(5_000, "MONTHLY", "STC", { taxCodeSpecialRate: 18, stcAccTreatment: "INC" }))
+      .toMatchObject({ tax: 900.0, acc: 0, total: 900.0 });
+    expect(legacyPaye(5_000, "MONTHLY", "STC", { taxCodeSpecialRate: 18, stcAccTreatment: "PLUS" }))
+      .toMatchObject({ tax: 900.0, acc: 87.5, total: 987.5 });
+  });
+});

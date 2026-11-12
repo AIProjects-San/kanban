@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => {
   const models = [
     "user", "employeeTaxProfile", "salaryComponent", "payrollRun", "auditLog",
-    "statutoryRateSet", "statutoryPayeTier", "statutorySecondaryRate",
+    "statutoryRule", "taxSlab", "statutorySecondaryRate", "taxYear",
     "statutoryEsctTier", "statutoryAccLevy", "statutoryIetc",
     "statutoryKiwiSaver", "statutoryStudentLoan",
   ];
@@ -204,7 +204,7 @@ describe("Phase 3 — statutory:manage gate", () => {
 
 describe("Task 3.1 — getTaxYears", () => {
   it("serialises sets with percent rates and locked-run counts", async () => {
-    db.statutoryRateSet.findMany.mockResolvedValue([RATE_SET_ROW]);
+    db.statutoryRule.findMany.mockResolvedValue([RATE_SET_ROW]);
     db.payrollRun.groupBy.mockResolvedValue([{ rateSetId: "set-fy2026", _count: { _all: 2 } }]);
     const res = await getTaxYears();
     expect(res.ok).toBe(true);
@@ -222,12 +222,12 @@ describe("Task 3.1 — getTaxYears", () => {
 
 describe("Task 3.1 — saveTaxYearSlabs", () => {
   it("rewrites the child tables and audits when no locked run references the set", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.payrollRun.groupBy.mockResolvedValue([]);
     const res = await saveTaxYearSlabs(slabPayload());
     expect(res.ok).toBe(true);
-    expect(db.statutoryPayeTier.deleteMany).toHaveBeenCalledWith({ where: { setId: "set-fy2026" } });
-    expect(db.statutoryPayeTier.createMany).toHaveBeenCalled();
+    expect(db.taxSlab.deleteMany).toHaveBeenCalledWith({ where: { setId: "set-fy2026" } });
+    expect(db.taxSlab.createMany).toHaveBeenCalled();
     expect(db.statutorySecondaryRate.createMany).toHaveBeenCalled();
     // percent → decimal conversion on the wire
     const secondary = db.statutorySecondaryRate.createMany.mock.calls[0][0].data as Array<{ code: string; rate: number }>;
@@ -238,7 +238,7 @@ describe("Task 3.1 — saveTaxYearSlabs", () => {
   });
 
   it("refuses when a locked payroll run references the set", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.payrollRun.groupBy.mockResolvedValue([{ rateSetId: "set-fy2026", _count: { _all: 1 } }]);
     const res = await saveTaxYearSlabs(slabPayload());
     expect(res.ok).toBe(false);
@@ -247,11 +247,11 @@ describe("Task 3.1 — saveTaxYearSlabs", () => {
       expect(res.error).toContain("locked payroll run");
       expect(res.error).toContain("new version");
     }
-    expect(db.statutoryPayeTier.deleteMany).not.toHaveBeenCalled();
+    expect(db.taxSlab.deleteMany).not.toHaveBeenCalled();
   });
 
   it("rejects non-contiguous PAYE tiers", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.payrollRun.groupBy.mockResolvedValue([]);
     const res = await saveTaxYearSlabs(
       slabPayload({
@@ -268,7 +268,7 @@ describe("Task 3.1 — saveTaxYearSlabs", () => {
   });
 
   it("rejects a secondary table missing a canonical IRD code", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.payrollRun.groupBy.mockResolvedValue([]);
     const res = await saveTaxYearSlabs(
       slabPayload({ slabs: slabPayload().slabs.filter((s) => !(s.group === "SECONDARY" && s.code === "SH")) }),
@@ -278,7 +278,7 @@ describe("Task 3.1 — saveTaxYearSlabs", () => {
   });
 
   it("rejects a closed top PAYE tier", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.payrollRun.groupBy.mockResolvedValue([]);
     const res = await saveTaxYearSlabs(
       slabPayload({
@@ -294,7 +294,7 @@ describe("Task 3.1 — saveTaxYearSlabs", () => {
 
 describe("Task 3.1 — simulateTax (the Simulate button)", () => {
   it("M, weekly $1,000 — the IRD-verified split 154.00 / 17.50 / 171.50", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     const res = await simulateTax({ rateSetId: "set-fy2026", code: "M", gross: 1000, frequency: "WEEKLY" });
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -307,7 +307,7 @@ describe("Task 3.1 — simulateTax (the Simulate button)", () => {
   });
 
   it("STC without a certificate rate surfaces the engine guardrail as validation", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     const res = await simulateTax({ rateSetId: "set-fy2026", code: "STC", gross: 5000, frequency: "MONTHLY" });
     expect(res.ok).toBe(false);
     if (!res.ok) {
@@ -317,7 +317,7 @@ describe("Task 3.1 — simulateTax (the Simulate button)", () => {
   });
 
   it("SB, weekly $1,000 — flat 10.5% + levy on top (IRD spec §5.6)", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     const res = await simulateTax({ rateSetId: "set-fy2026", code: "SB", gross: 1000, frequency: "WEEKLY" });
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -336,11 +336,11 @@ describe("Task 3.2 — createRuleVersion", () => {
   it("clones the untouched categories, writes the edited one and closes the source window", async () => {
     // First findUnique = loadRateSet (the source); second = the label
     // uniqueness probe (free).
-    db.statutoryRateSet.findUnique
+    db.statutoryRule.findUnique
       .mockResolvedValueOnce(RATE_SET_ROW)
       .mockResolvedValueOnce(null);
-    db.statutoryRateSet.findFirst.mockResolvedValue(null); // no colliding set
-    db.statutoryRateSet.create.mockResolvedValue({ id: "set-new", label: "ACC change" });
+    db.statutoryRule.findFirst.mockResolvedValue(null); // no colliding set
+    db.statutoryRule.create.mockResolvedValue({ id: "set-new", label: "ACC change" });
     const res = await createRuleVersion({
       sourceSetId: "set-fy2026",
       category: "ACC",
@@ -351,7 +351,7 @@ describe("Task 3.2 — createRuleVersion", () => {
     });
     expect(res.ok).toBe(true);
     // New set created with the new window + edited ACC values.
-    expect(db.statutoryRateSet.create).toHaveBeenCalledWith(
+    expect(db.statutoryRule.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           label: "ACC levy mid-year change",
@@ -361,7 +361,7 @@ describe("Task 3.2 — createRuleVersion", () => {
       }),
     );
     // Untouched categories cloned…
-    expect(db.statutoryPayeTier.createMany).toHaveBeenCalled();
+    expect(db.taxSlab.createMany).toHaveBeenCalled();
     expect(db.statutorySecondaryRate.createMany).toHaveBeenCalled();
     // …edited ACC written from the percent wire values…
     expect(db.statutoryAccLevy.create).toHaveBeenCalledWith(
@@ -370,7 +370,7 @@ describe("Task 3.2 — createRuleVersion", () => {
       }),
     );
     // …and the source window closed at the new date.
-    expect(db.statutoryRateSet.update).toHaveBeenCalledWith(
+    expect(db.statutoryRule.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "set-fy2026" },
         data: expect.objectContaining({ effectiveTo: new Date("2026-07-01T00:00:00.000Z") }),
@@ -382,7 +382,7 @@ describe("Task 3.2 — createRuleVersion", () => {
   });
 
   it("refuses an effective date before the source set's start", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     const res = await createRuleVersion({
       sourceSetId: "set-fy2026",
       category: "ACC",
@@ -398,8 +398,8 @@ describe("Task 3.2 — createRuleVersion", () => {
   });
 
   it("refuses a date that would overlap another set's window", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
-    db.statutoryRateSet.findFirst.mockResolvedValue({
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue({
       label: "NZ FY2027-28",
       effectiveFrom: new Date("2026-06-15T00:00:00.000Z"),
     });
@@ -417,7 +417,7 @@ describe("Task 3.2 — createRuleVersion", () => {
 
 describe("Task 3.2 — archive / delete (the archive-only guard)", () => {
   it("delete is blocked for a set referenced by locked runs", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.payrollRun.groupBy.mockResolvedValue([{ rateSetId: "set-fy2026", _count: { _all: 3 } }]);
     const res = await deleteTaxYear({ setId: "set-fy2026" });
     expect(res.ok).toBe(false);
@@ -426,35 +426,35 @@ describe("Task 3.2 — archive / delete (the archive-only guard)", () => {
       expect(res.error).toContain("3 locked payroll runs");
       expect(res.error).toContain("Archive it instead");
     }
-    expect(db.statutoryRateSet.delete).not.toHaveBeenCalled();
+    expect(db.statutoryRule.delete).not.toHaveBeenCalled();
   });
 
   it("delete proceeds for unreferenced sets and audits", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
     db.payrollRun.groupBy.mockResolvedValue([]);
     db.payrollRun.count.mockResolvedValue(0);
     const res = await deleteTaxYear({ setId: "set-fy2026" });
     expect(res.ok).toBe(true);
-    expect(db.statutoryRateSet.delete).toHaveBeenCalledWith({ where: { id: "set-fy2026" } });
+    expect(db.statutoryRule.delete).toHaveBeenCalledWith({ where: { id: "set-fy2026" } });
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({ action: "statutory.rate_set_deleted" }),
     );
   });
 
   it("archive refuses when it would leave no set covering today", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
-    db.statutoryRateSet.findFirst.mockResolvedValue(null); // no other set covers now
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(null); // no other set covers now
     const res = await archiveTaxYear({ setId: "set-fy2026" });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("create a new version first");
   });
 
   it("archive closes the window when another set covers today", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(RATE_SET_ROW);
-    db.statutoryRateSet.findFirst.mockResolvedValue({ id: "other" });
+    db.statutoryRule.findUnique.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue({ id: "other" });
     const res = await archiveTaxYear({ setId: "set-fy2026" });
     expect(res.ok).toBe(true);
-    expect(db.statutoryRateSet.update).toHaveBeenCalledWith(
+    expect(db.statutoryRule.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "set-fy2026" },
         data: expect.objectContaining({ isCurrent: false }),
@@ -536,7 +536,7 @@ describe("Task 3.4 — getEmployeeTaxProfileAdmin", () => {
   it("returns defaults for an employee with no profile yet", async () => {
     db.user.findUnique.mockResolvedValue({ id: "u-1", name: "Ada", email: "ada@x.co" });
     db.employeeTaxProfile.findUnique.mockResolvedValue(null);
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     const res = await getEmployeeTaxProfileAdmin("u-1");
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -555,8 +555,8 @@ describe("Task 3.4 — getEmployeeTaxProfileAdmin", () => {
       irdNumber: "583639136",
       isCasual: false,
       kiwiSaverStatus: "ACTIVE",
-      kiwiSaverRate: 0.035,
-      employerKiwiSaverRate: null,
+      kiwiSaverEmployeeRate: 0.035,
+      kiwiSaverEmployerRate: null,
       taxCodeSpecialRate: null,
       stcAccTreatment: "INC",
       stcStudentLoanRate: null,
@@ -569,7 +569,7 @@ describe("Task 3.4 — getEmployeeTaxProfileAdmin", () => {
       employmentEndDate: null,
       notes: "",
     });
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     const res = await getEmployeeTaxProfileAdmin("u-1");
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -612,7 +612,7 @@ describe("Task 3.4 — saveEmployeeTaxProfile guardrails", () => {
     const payload = db.employeeTaxProfile.upsert.mock.calls[0][0].update as Record<string, unknown>;
     expect(payload.taxCode).toBe("M SL");
     expect(payload.isCasual).toBe(true);
-    expect(payload.kiwiSaverRate).toBeCloseTo(0.035, 6);
+    expect(payload.kiwiSaverEmployeeRate).toBeCloseTo(0.035, 6);
     expect(logAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({ action: "tax.profile_updated" }),
     );
@@ -638,7 +638,7 @@ describe("Task 3.4 — saveEmployeeTaxProfile guardrails", () => {
     db.employeeTaxProfile.findUnique.mockResolvedValue({
       employmentType: "TEMPORARY",
       employmentStartDate: new Date(Date.now() - 40 * 86_400_000),
-      kiwiSaverRate: null,
+      kiwiSaverEmployeeRate: null,
       createdById: "u-hr",
     });
     const res = await saveEmployeeTaxProfile(profilePayload({ employmentType: "PERMANENT" }));
@@ -656,7 +656,7 @@ describe("Task 3.4 — saveEmployeeTaxProfile guardrails", () => {
     db.employeeTaxProfile.findUnique.mockResolvedValue({
       employmentType: "TEMPORARY",
       employmentStartDate: new Date(Date.now() - 10 * 86_400_000),
-      kiwiSaverRate: null,
+      kiwiSaverEmployeeRate: null,
       createdById: "u-hr",
     });
     const res = await saveEmployeeTaxProfile(profilePayload({ employmentType: "PERMANENT" }));
@@ -669,7 +669,7 @@ describe("Task 3.4 — saveEmployeeTaxProfile guardrails", () => {
   it("a KiwiSaver rate outside the allowed elections is rejected (3% is pre-existing only)", async () => {
     db.user.findUnique.mockResolvedValue({ id: "u-1", name: "Ada", email: "ada@x.co" });
     db.employeeTaxProfile.findUnique.mockResolvedValue(null);
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     const res = await saveEmployeeTaxProfile(profilePayload({ kiwiSaverEmployeeRate: 5 }));
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("KiwiSaver employee rate");
@@ -678,8 +678,8 @@ describe("Task 3.4 — saveEmployeeTaxProfile guardrails", () => {
   it("an unchanged 3% election passes the membership check (pre-existing elections stay legal)", async () => {
     db.user.findUnique.mockResolvedValue({ id: "u-1", name: "Ada", email: "ada@x.co" });
     // Stored 3% (a pre-Phase-3 election) — resubmitting it unchanged is fine.
-    db.employeeTaxProfile.findUnique.mockResolvedValue({ kiwiSaverRate: 0.03, employmentType: "PERMANENT", employmentStartDate: null, createdById: "u-hr" });
-    db.statutoryRateSet.findFirst.mockResolvedValue(RATE_SET_ROW);
+    db.employeeTaxProfile.findUnique.mockResolvedValue({ kiwiSaverEmployeeRate: 0.03, employmentType: "PERMANENT", employmentStartDate: null, createdById: "u-hr" });
+    db.statutoryRule.findFirst.mockResolvedValue(RATE_SET_ROW);
     const res = await saveEmployeeTaxProfile(profilePayload({ kiwiSaverEmployeeRate: 3 }));
     expect(res.ok).toBe(true);
   });

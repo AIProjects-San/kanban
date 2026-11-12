@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => ({
-  statutoryRateSet: {
+  statutoryRule: {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
   },
@@ -218,8 +218,8 @@ describe("Task 1.4 — toNzTaxProfile (row adapter)", () => {
     taxCode: "M SL",
     isCasual: false,
     kiwiSaverStatus: "ACTIVE",
-    kiwiSaverRate: 0.035, // Prisma Decimal coerces via Number()
-    employerKiwiSaverRate: null,
+    kiwiSaverEmployeeRate: 0.035, // Prisma Decimal coerces via Number()
+    kiwiSaverEmployerRate: null,
     taxCodeSpecialRate: null,
     stcAccTreatment: null,
     stcStudentLoanRate: null,
@@ -234,7 +234,7 @@ describe("Task 1.4 — toNzTaxProfile (row adapter)", () => {
       employmentStartDate: utc("2026-05-01"),
       casualHolidayPayInWages: true, // adapter default
       kiwiSaverStatus: "ACTIVE",
-      kiwiSaverRate: 0.035,
+      kiwiSaverRate: 0.035, // engine name for the row's kiwiSaverEmployeeRate
       employerKiwiSaverRate: null,
       esctRateOverride: null,
       taxCodeSpecialRate: null,
@@ -253,7 +253,7 @@ describe("Task 1.4 — toNzTaxProfile (row adapter)", () => {
   });
 
   it("string decimals (SQLite / JSON round-trips) coerce to numbers", () => {
-    const p = toNzTaxProfile({ ...ROW, kiwiSaverRate: "0.04", taxCodeSpecialRate: "0.18", stcStudentLoanRate: "0.08" });
+    const p = toNzTaxProfile({ ...ROW, kiwiSaverEmployeeRate: "0.04", taxCodeSpecialRate: "0.18", stcStudentLoanRate: "0.08" });
     expect(p.kiwiSaverRate).toBe(0.04);
     expect(p.taxCodeSpecialRate).toBe(0.18);
     expect(p.stcStudentLoanRate).toBe(0.08);
@@ -271,8 +271,8 @@ describe("Task 3.4 — toNzTaxProfile (Phase 3 profile-row employment facts)", (
     taxCode: "M SL",
     isCasual: false,
     kiwiSaverStatus: "ACTIVE",
-    kiwiSaverRate: 0.035,
-    employerKiwiSaverRate: null,
+    kiwiSaverEmployeeRate: 0.035,
+    kiwiSaverEmployerRate: null,
     taxCodeSpecialRate: null,
     stcAccTreatment: null,
     stcStudentLoanRate: null,
@@ -312,17 +312,16 @@ describe("Task 3.4 — toNzTaxProfile (Phase 3 profile-row employment facts)", (
   });
 
   it("the NOT_ENROLLED election passes the adapter and resolves to zero contributions", () => {
-    const p = toNzTaxProfile({ ...ROW3, kiwiSaverStatus: "NOT_ENROLLED", kiwiSaverRate: null });
-    const resolution = resolveKiwiSaverStatus(p, PERIOD_END);
-    expect(resolution.status).toBe("NOT_ENROLLED");
+    const p = toNzTaxProfile({ ...ROW3, kiwiSaverStatus: "NOT_ENROLLED", kiwiSaverEmployeeRate: null });
+    expect(resolveKiwiSaverStatus(p, PERIOD_END)).toBe("NOT_ENROLLED");
   });
 });
 
 describe("Task 1.4 — resolveNzRateSet (DB resolver)", () => {
   it("finds the latest set covering the pay-period end", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(rateSetRow());
+    db.statutoryRule.findFirst.mockResolvedValue(rateSetRow());
     const set = await resolveNzRateSet(PERIOD_END);
-    expect(db.statutoryRateSet.findFirst).toHaveBeenCalledWith(
+    expect(db.statutoryRule.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           effectiveFrom: { lte: PERIOD_END },
@@ -337,28 +336,28 @@ describe("Task 1.4 — resolveNzRateSet (DB resolver)", () => {
   });
 
   it("an explicit id goes through findUnique", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(rateSetRow({ id: "explicit" }));
+    db.statutoryRule.findUnique.mockResolvedValue(rateSetRow({ id: "explicit" }));
     const set = await resolveNzRateSet(PERIOD_END, "explicit");
-    expect(db.statutoryRateSet.findUnique).toHaveBeenCalledWith(
+    expect(db.statutoryRule.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "explicit" } }),
     );
     expect(set!.id).toBe("explicit");
   });
 
   it("returns null when nothing covers the date", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(null);
+    db.statutoryRule.findFirst.mockResolvedValue(null);
     expect(await resolveNzRateSet(utc("2020-01-01"))).toBeNull();
   });
 
   it("throws on unusable rows (no ACC levy / no PAYE tiers)", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(rateSetRow({ accLevy: null }));
+    db.statutoryRule.findFirst.mockResolvedValue(rateSetRow({ accLevy: null }));
     await expect(resolveNzRateSet(PERIOD_END)).rejects.toThrowError(NzStatutoryError);
-    db.statutoryRateSet.findFirst.mockResolvedValue(rateSetRow({ payeTiers: [] }));
+    db.statutoryRule.findFirst.mockResolvedValue(rateSetRow({ payeTiers: [] }));
     await expect(resolveNzRateSet(PERIOD_END)).rejects.toThrowError(NzStatutoryError);
   });
 
   it("unsorted tier rows come back sorted", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(
+    db.statutoryRule.findFirst.mockResolvedValue(
       rateSetRow({ payeTiers: [...rateSetRow().payeTiers].reverse(), esctTiers: [...rateSetRow().esctTiers].reverse() }),
     );
     const set = await resolveNzRateSet(PERIOD_END);
@@ -369,7 +368,7 @@ describe("Task 1.4 — resolveNzRateSet (DB resolver)", () => {
 
 describe("Task 1.4 — calculateNzStatutory (async entry point)", () => {
   it("resolves the set for the period and delegates to the pure core", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(rateSetRow());
+    db.statutoryRule.findFirst.mockResolvedValue(rateSetRow());
     const r = await calculateNzStatutory({
       gross: 5_000,
       frequency: "MONTHLY",
@@ -377,8 +376,8 @@ describe("Task 1.4 — calculateNzStatutory (async entry point)", () => {
         taxCode: "M SL",
         isCasual: false,
         kiwiSaverStatus: "ACTIVE",
-        kiwiSaverRate: null,
-        employerKiwiSaverRate: null,
+        kiwiSaverEmployeeRate: null,
+        kiwiSaverEmployerRate: null,
         taxCodeSpecialRate: null,
         stcAccTreatment: null,
         stcStudentLoanRate: null,
@@ -392,7 +391,7 @@ describe("Task 1.4 — calculateNzStatutory (async entry point)", () => {
   });
 
   it("an explicit rateSetId is honoured (run snapshots pin the set)", async () => {
-    db.statutoryRateSet.findUnique.mockResolvedValue(rateSetRow({ id: "pinned" }));
+    db.statutoryRule.findUnique.mockResolvedValue(rateSetRow({ id: "pinned" }));
     const r = await calculateNzStatutory({
       gross: 1_000,
       frequency: "WEEKLY",
@@ -405,7 +404,7 @@ describe("Task 1.4 — calculateNzStatutory (async entry point)", () => {
   });
 
   it("throws a clear error when no set covers the pay period", async () => {
-    db.statutoryRateSet.findFirst.mockResolvedValue(null);
+    db.statutoryRule.findFirst.mockResolvedValue(null);
     await expect(
       calculateNzStatutory({
         gross: 1_000,

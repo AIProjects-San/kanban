@@ -57,6 +57,30 @@ import {
   type NzTaxProfileInput,
 } from "./types";
 
+/**
+ * Phase 1A legacy flat-slab row (the original plan's slab table — the
+ * shape verify-phase-1a.sh feeds the calculator). PRIMARY rows carry
+ * inclusive integer bounds + a combined accInclusive rate; SECONDARY
+ * rows carry a flat code rate.
+ */
+export interface NzLegacySlab {
+  taxCodeGroup: "PRIMARY" | "SECONDARY";
+  lowerBound?: number;
+  upperBound?: number | null;
+  rate: number;
+  accInclusive?: boolean;
+  sortOrder?: number;
+  code?: string;
+}
+
+/** Phase 1A legacy ACC rule: rate + liable-earnings cap + annual max levy. */
+export interface NzLegacyAccRule {
+  rate: number;
+  cap?: number;
+  maxEarnings?: number;
+  maxLevy?: number;
+}
+
 /** Calculation method that produced the PAYE lines. */
 export type NzPayeMethod =
   | "PRIMARY" // M / ME
@@ -90,8 +114,8 @@ const SECONDARY_CODES = new Set(["SB", "S", "SH", "ST", "SA"]);
  * computation min(gross × periods, cap) × rate / periods (the min and the
  * scaling commute), and it is the table-exact form — monthly $15,000 →
  * 1.75% × min(15,000, 156,641/12 = 13,053.4167) = $228.43, matching the
- * IR341 monthly table where the annually-capped form (2,741.22/12 =
- * $228.435 → $228.44) is one cent high.
+ * IR341 monthly table where the annually-capped form (maxLevy $2,741.22
+ * ÷ 12 = $228.435 → $228.44) is one cent high.
  */
 export function accLevyForPeriod(
   gross: number,
@@ -99,7 +123,12 @@ export function accLevyForPeriod(
   levy: NzAccLevyParam,
 ): number {
   const perPeriodCap = levy.maxEarnings / periodsPerYear(frequency);
-  return levy.rate * Math.min(gross, perPeriodCap);
+  // Belt-and-braces: never exceed the published annual maximum levy
+  // (maxLevy, $2,741.22 FY2026-27) even if a rate/cap edit disagrees.
+  return Math.min(
+    levy.rate * Math.min(gross, perPeriodCap),
+    levy.maxLevy > 0 ? levy.maxLevy : Number.POSITIVE_INFINITY,
+  );
 }
 
 /**
@@ -155,10 +184,90 @@ export interface CalculatePayeInput {
   gross: number;
   frequency: NzPayFrequency;
   taxProfile: NzTaxProfileInput;
+  /** Canonical shape: the resolved rate-set family (required UNLESS the
+   *  Phase 1A legacy slabs/accRule shape is used instead). */
+  payeTiers?: NzPayeTierParam[];
+  secondaryRates?: NzSecondaryRateParam[];
+  accLevy?: NzAccLevyParam;
+  ietc?: NzIetcParam | null;
+  /** Phase 1A legacy input shape (verify-phase-1a.sh): the flat slab
+   *  table + one ACC rule instead of the resolved rate-set family. */
+  slabs?: NzLegacySlab[];
+  accRule?: NzLegacyAccRule;
+}
+
+/** Input shape after legacy normalization — what the body consumes. */
+interface NormalizedPayeParams {
+  taxProfile: NzTaxProfileInput;
   payeTiers: NzPayeTierParam[];
   secondaryRates: NzSecondaryRateParam[];
   accLevy: NzAccLevyParam;
   ietc: NzIetcParam | null;
+}
+
+/**
+ * Normalize a CalculatePayeInput into the canonical parameter family.
+ * The Phase 1A legacy shape (slabs + accRule) converts as follows:
+ *
+ *   • PRIMARY accInclusive rows carry COMBINED rates (income tax + levy,
+ *     e.g. the IRD lump-sum table's 12.25% first tier): the levy rate is
+ *     subtracted back out so the slab math runs on income tax only and the
+ *     levy stays its own line — algebraically identical to the split form.
+ *   • Inclusive integer bounds (15601–53500) become the half-open form the
+ *     slabs use ([15600, 53500)) — identical for whole-dollar incomes.
+ *   • SECONDARY rows are the TOTAL deduction rate for the code (the Phase
+ *     1A contract puts the whole secondary deduction in the tax line — no
+ *     separate levy line), so they map to accInclusive rate rows.
+ *   • ND falls back to the statutory 45% non-notified rate when the table
+ *     carries no ND row.
+ *   • STC certificate rates arrive in PERCENT units (18 = 18%) and are
+ *     converted to the engine's decimal form.
+ */
+function normalizePayeInput(input: CalculatePayeInput): NormalizedPayeParams {
+  if (input.slabs == null && input.accRule == null) {
+    return {
+      taxProfile: input.taxProfile,
+      payeTiers: input.payeTiers ?? [],
+      secondaryRates: input.secondaryRates ?? [],
+      accLevy: input.accLevy ?? { rate: 0, maxEarnings: 0, maxLevy: 0 },
+      ietc: input.ietc ?? null,
+    };
+  }
+  const accRule: NzLegacyAccRule =
+    input.accRule ??
+    (input.accLevy
+      ? {
+          rate: input.accLevy.rate,
+          maxEarnings: input.accLevy.maxEarnings,
+          maxLevy: input.accLevy.maxLevy,
+        }
+      : { rate: 0 });
+  const accLevy: NzAccLevyParam = {
+    rate: accRule.rate,
+    maxEarnings: accRule.maxEarnings ?? accRule.cap ?? 0,
+    maxLevy: accRule.maxLevy ?? 0,
+  };
+  const slabs = input.slabs ?? [];
+  const payeTiers: NzPayeTierParam[] = slabs
+    .filter((s) => s.taxCodeGroup === "PRIMARY")
+    .sort((a, b) => (a.lowerBound ?? 0) - (b.lowerBound ?? 0))
+    .map((s) => ({
+      fromAnnual: (s.lowerBound ?? 0) === 0 ? 0 : (s.lowerBound ?? 0) - 1,
+      toAnnual: s.upperBound ?? null,
+      rate: s.accInclusive ? s.rate - accRule.rate : s.rate,
+    }));
+  const secondaryRates: NzSecondaryRateParam[] = slabs
+    .filter((s) => s.taxCodeGroup === "SECONDARY")
+    .map((s) => ({ code: s.code ?? "", rate: s.rate, accInclusive: true }));
+  if (!secondaryRates.some((s) => s.code === "ND")) {
+    secondaryRates.push({ code: "ND", rate: 0.45, accInclusive: true });
+  }
+  const special = input.taxProfile.taxCodeSpecialRate;
+  const taxProfile =
+    special != null && special > 1
+      ? { ...input.taxProfile, taxCodeSpecialRate: special / 100 }
+      : input.taxProfile;
+  return { taxProfile, payeTiers, secondaryRates, accLevy, ietc: null };
 }
 
 /**
@@ -167,10 +276,11 @@ export interface CalculatePayeInput {
  * database or the environment.
  */
 export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
-  const { gross, frequency, taxProfile } = input;
+  const { gross, frequency } = input;
   if (!Number.isFinite(gross) || gross < 0) {
     throw new NzStatutoryError(`Gross must be a finite non-negative amount (got ${gross})`);
   }
+  const { taxProfile, payeTiers, secondaryRates, accLevy, ietc } = normalizePayeInput(input);
 
   const { base } = parseNzTaxCode(taxProfile.taxCode);
 
@@ -193,54 +303,54 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
     // is for certificates that state the rate excludes it.
     const acc =
       taxProfile.stcAccTreatment === "PLUS"
-        ? roundMoney2(accLevyForPeriod(gross, frequency, input.accLevy))
+        ? roundMoney2(accLevyForPeriod(gross, frequency, accLevy))
         : 0;
     return { tax, acc, total: roundMoney2(tax + acc), method: "STC", ietc: 0, annualised: gross };
   }
 
   // ---- ND: no IR330 — flat 45% plus the levy (spec §5.8) ----
   if (base === "ND") {
-    const row = secondaryRateRowFor("ND", input.secondaryRates);
+    const row = secondaryRateRowFor("ND", secondaryRates);
     if (row == null) {
       throw new NzStatutoryError("No ND rate seeded in the secondary-rate table");
     }
     const tax = roundMoney2(gross * row.rate);
-    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
+    const acc = levyForRateRow(gross, frequency, accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "ND", ietc: 0, annualised: gross };
   }
 
   // ---- NSW: recognised seasonal worker — SB-band flat rate plus the
   //      levy, no thresholds (spec §5.5: (0.105 + levy) × pay) ----
   if (base === "NSW") {
-    const row = secondaryRateRowFor("SB", input.secondaryRates);
+    const row = secondaryRateRowFor("SB", secondaryRates);
     if (row == null) {
       throw new NzStatutoryError("No SB rate seeded for the NSW calculation");
     }
     const tax = roundMoney2(gross * row.rate);
-    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
+    const acc = levyForRateRow(gross, frequency, accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "NSW", ietc: 0, annualised: gross };
   }
 
   // ---- CAE / EDW: casual agricultural / election day — S-band flat rate
   //      plus the levy (spec §5.7: (0.175 + levy) × pay) ----
   if (base === "CAE" || base === "EDW") {
-    const row = secondaryRateRowFor("S", input.secondaryRates);
+    const row = secondaryRateRowFor("S", secondaryRates);
     if (row == null) {
       throw new NzStatutoryError("No S rate seeded for the CAE/EDW calculation");
     }
     const tax = roundMoney2(gross * row.rate);
-    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
+    const acc = levyForRateRow(gross, frequency, accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "CAE_EDW", ietc: 0, annualised: gross };
   }
 
   // ---- Secondary codes: flat rate on every dollar + levy (spec §5.6) ----
   if (SECONDARY_CODES.has(base)) {
-    const row = secondaryRateRowFor(base, input.secondaryRates);
+    const row = secondaryRateRowFor(base, secondaryRates);
     if (row == null) {
       throw new NzStatutoryError(`No ${base} rate seeded in the secondary-rate table`);
     }
     const tax = roundMoney2(gross * row.rate);
-    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
+    const acc = levyForRateRow(gross, frequency, accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "SECONDARY", ietc: 0, annualised: gross };
   }
 
@@ -248,16 +358,16 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
   if (base === "M" || base === "ME") {
     const ppy = periodsPerYear(frequency);
     const annual = gross * ppy;
-    const taxAnnual = slabTaxAnnual(annual, input.payeTiers);
+    const taxAnnual = slabTaxAnnual(annual, payeTiers);
     // IETC rides the ME code only, and never for casual employment (the
     // engine's casual path taxes each payment on its own annualisation
     // without the credit — Phase 0 schema contract).
     const ietcAnnual =
-      base === "ME" && !taxProfile.isCasual && input.ietc
-        ? ietcForAnnual(annual, input.ietc)
+      base === "ME" && !taxProfile.isCasual && ietc
+        ? ietcForAnnual(annual, ietc)
         : 0;
     const tax = roundMoney2((taxAnnual - ietcAnnual) / ppy);
-    const acc = roundMoney2(accLevyForPeriod(gross, frequency, input.accLevy));
+    const acc = roundMoney2(accLevyForPeriod(gross, frequency, accLevy));
     return {
       tax,
       acc,

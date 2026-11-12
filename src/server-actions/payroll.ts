@@ -113,6 +113,7 @@ import {
   withoutStatutoryLines,
   type ComponentTaxClassification,
   type SlipAutoEnrolment,
+  type SlipStatutoryPlan,
 } from "@/lib/payroll/nz/slip-statutory";
 // ---------------------------------------------------------------------------
 // Serialization helpers
@@ -252,16 +253,72 @@ async function loadTaxProfileRows(userIds: string[]): Promise<Map<string, NzTaxP
  * election — sticky, the time rules never re-trigger (Task 1.2 design).
  * Guarded to ACTIVE rows with no election so a concurrent run (or a
  * recorded election) can never be overwritten. True when the election
- * landed (count > 0) — the audit entry only fires then. */
+ * landed (count > 0) — the audit entry only fires then.
+ *
+ * The caller hands us the plan's autoEnrol — non-null exactly when the
+ * snapshot's kiwiSaver.autoEnrolTriggered flag fired (a 28-day TEMPORARY
+ * or 3-month CASUAL_AGRICULTURAL time rule). */
 async function persistAutoEnrolment(
   tx: Pick<Prisma.TransactionClient, "employeeTaxProfile">,
   entry: SlipAutoEnrolment,
 ): Promise<boolean> {
   const res = await tx.employeeTaxProfile.updateMany({
-    where: { userId: entry.userId, kiwiSaverStatus: "ACTIVE", kiwiSaverRate: null },
-    data: { kiwiSaverRate: entry.rate },
+    where: { userId: entry.userId, kiwiSaverStatus: "ACTIVE", kiwiSaverEmployeeRate: null },
+    data: { kiwiSaverEmployeeRate: entry.rate },
   });
   return (res?.count ?? 0) > 0;
+}
+
+/**
+ * Phase 1A (Task 2.2) — persist the SYSTEM-GENERATED statutory lines onto
+ * a slip's deduction set: the plan's lines — PAYE income tax, the ACC earner's
+ * levy ("ACC earners' levy" on the slip) persisted as its own SEPARATE line
+ * (never merged into PAYE), the KiwiSaver employee deduction and the
+ * student-loan repayment — replace any stale statutory keys wholesale (the
+ * isSystemGenerated discipline: these line keys are engine-owned, the
+ * editor never submits them). Employer-side money (employer KiwiSaver +
+ * ESCT) does NOT ride the deductions; it persists only in the statutory
+ * snapshot and the Payslip columns (employerKiwiSaverGross /
+ * employerEsct / employerKiwiSaverNet).
+ */
+function persistStatutoryLines(
+  baseDeductions: PayslipLine[],
+  plan: Pick<SlipStatutoryPlan, "lines"> | null,
+): PayslipLine[] {
+  const cleaned = withoutStatutoryLines(baseDeductions);
+  if (!plan || plan.lines.length === 0) return cleaned;
+  return [...cleaned, ...plan.lines];
+}
+
+/** Phase 1A — the Payslip columns that promote the statutory snapshot's
+ * key facts for SQL-level aggregation (taxCodeApplied, statutoryRuleVersion
+ * and the employer-contribution trio). Empty/null when no plan landed. */
+function statutorySnapshotColumns(
+  plan: SlipStatutoryPlan | null,
+): {
+  taxCodeApplied: string;
+  statutoryRuleVersion: string;
+  employerKiwiSaverGross: number | null;
+  employerEsct: number | null;
+  employerKiwiSaverNet: number | null;
+} {
+  if (!plan) {
+    return {
+      taxCodeApplied: "",
+      statutoryRuleVersion: "",
+      employerKiwiSaverGross: null,
+      employerEsct: null,
+      employerKiwiSaverNet: null,
+    };
+  }
+  const ks = plan.snapshot.kiwiSaver;
+  return {
+    taxCodeApplied: plan.snapshot.taxCode,
+    statutoryRuleVersion: plan.snapshot.ruleVersion,
+    employerKiwiSaverGross: ks.employerGross || null,
+    employerEsct: ks.esct || null,
+    employerKiwiSaverNet: ks.employerNet || null,
+  };
 }
 
 /** The audit entries for enrolments that actually landed (after commit —
@@ -933,6 +990,11 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // resolve: IRD publishes no daily table (nz/types.ts). No covering set
     // → rateSetId "" and no statutory lines (pre-engine behaviour).
     const rateSet = window.frequency !== "DAILY" ? await resolveNzRateSet(window.start) : null;
+    // Phase 1A — the TaxYear row covering the run's window (the NZ
+    // April–March year), stored for YTD-by-tax-year grouping.
+    const taxYear = await db.taxYear.findFirst({
+      where: { startDate: { lte: window.start }, endDate: { gte: window.start } },
+    });
     const statutoryClassification = rateSet
       ? await loadStatutoryClassification()
       : classifyComponentsForStatutory([]);
@@ -1101,11 +1163,15 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       // Phase 2 (engine wiring) — the statutory pass: employee-side lines
       // ride the deductions JSON (keys paye/acc/ks/sl) BETWEEN the
       // adjustment kernel and the rounding line, so gross/net math is
-      // untouched and rounding wraps the FINAL net. Employer-side money
-      // (employer KiwiSaver, ESCT) lives only in the snapshot. A KiwiSaver
-      // time rule that fires rides the plan for in-transaction persistence.
+      // untouched and rounding wraps the FINAL net. planSlipStatutory runs
+      // the pure aggregator calculateNzStatutoryWithSet — the core behind
+      // the calculateNzStatutory entry point — against the run's frozen
+      // rate set. Employer-side money (employer KiwiSaver, ESCT) lives only
+      // in the snapshot + the Phase 1A Payslip columns. A KiwiSaver time
+      // rule that fires rides the plan for in-transaction persistence.
       let statutorySnapshot: Prisma.InputJsonValue | undefined;
       let autoEnrol: SlipAutoEnrolment | null = null;
+      let statutoryPlan: SlipStatutoryPlan | null = null;
       let deductionsPreRounding = withoutStatutoryLines(applied.deductions);
       if (rateSet) {
         try {
@@ -1121,10 +1187,11 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           });
           statutorySnapshot = plan.snapshot as unknown as Prisma.InputJsonValue;
           autoEnrol = plan.autoEnrol;
+          statutoryPlan = plan;
           if (plan.snapshot.defaultedProfile) statutoryDefaulted++;
-          if (plan.lines.length > 0) {
-            deductionsPreRounding = [...deductionsPreRounding, ...plan.lines];
-          }
+          // Task 2.2 — the system-generated lines persist through the
+          // shared helper (also used by updatePayslip).
+          deductionsPreRounding = persistStatutoryLines(applied.deductions, plan);
         } catch (e) {
           // The slip still gets created — without statutory lines, loudly:
           // the reason is user-facing (engine guardrails) and updatePayslip
@@ -1148,6 +1215,8 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           lopSource: "AUTO",
           lopDetail: facts.lopDetail ? (facts.lopDetail as unknown as Prisma.InputJsonValue) : undefined,
           statutory: statutorySnapshot,
+          // Phase 1A — the snapshot's key facts as real columns.
+          ...statutorySnapshotColumns(statutoryPlan),
           paidDays: facts.paidDays,
           gross,
           net,
@@ -1182,6 +1251,8 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           // Phase 2 — the run's frozen statutory rate set ("" = none
           // resolved: pre-engine rows keep this forever).
           rateSetId: rateSet?.id ?? "",
+          // Phase 1A — the covering TaxYear ("" = none registered).
+          taxYearId: taxYear?.id ?? "",
           payslips: {
             create: firstChunk.map((p) => p.data),
           },
@@ -1587,6 +1658,7 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     let statutoryLines: PayslipLine[] = [];
     let statutorySnapshot: Prisma.InputJsonValue | undefined;
     let autoEnrol: SlipAutoEnrolment | null = null;
+    let statutoryPlan: SlipStatutoryPlan | null = null;
     const runFrequency = (slip.run.frequency || "MONTHLY") as PayrollFrequency;
     const periodEnd = runWindowEnd(slip.run.period, slip.run.endDate);
     if (slip.run.rateSetId && runFrequency !== "DAILY" && periodEnd) {
@@ -1610,6 +1682,7 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
           statutoryLines = plan.lines;
           statutorySnapshot = plan.snapshot as unknown as Prisma.InputJsonValue;
           autoEnrol = plan.autoEnrol;
+          statutoryPlan = plan;
         } catch (e) {
           // Fail loud, with the engine's own user-facing guardrail message:
           // the slip already carries statutory lines, so a save that cannot
@@ -1651,6 +1724,9 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
         // Phase 2 — the recomputed statutory snapshot (undefined = the rate
         // set vanished mid-run; the stored snapshot stays).
         ...(statutorySnapshot !== undefined ? { statutory: statutorySnapshot } : {}),
+        // Phase 1A — the promoted snapshot columns ride every recompute
+        // (undefined plan = the rate set vanished: leave the stored columns).
+        ...(statutoryPlan ? statutorySnapshotColumns(statutoryPlan) : {}),
       },
     });
     // Phase 2 — an enrolment that fired on the recompute persists here too
@@ -1812,6 +1888,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
     // with the engine's user-facing message beats creating an untaxed slip.
     let statutorySnapshot: Prisma.InputJsonValue | undefined;
     let autoEnrol: SlipAutoEnrolment | null = null;
+    let statutoryPlan: SlipStatutoryPlan | null = null;
     let deductionsPreRounding = withoutStatutoryLines(applied.deductions);
     if (run.rateSetId && runFrequency !== "DAILY" && windowEnd) {
       const rateSet = await resolveNzRateSet(windowEnd, run.rateSetId);
@@ -1833,9 +1910,8 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
           });
           statutorySnapshot = plan.snapshot as unknown as Prisma.InputJsonValue;
           autoEnrol = plan.autoEnrol;
-          if (plan.lines.length > 0) {
-            deductionsPreRounding = [...deductionsPreRounding, ...plan.lines];
-          }
+          statutoryPlan = plan;
+          deductionsPreRounding = persistStatutoryLines(applied.deductions, plan);
         } catch (e) {
           throw new AuthorizationError(
             `Statutory lines could not be computed for this employee — fix the tax profile first. ${e instanceof Error ? e.message : "Unknown statutory error"}`,
@@ -1856,6 +1932,7 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       lopSource: "AUTO",
       lopDetail: facts.lopDetail ? (facts.lopDetail as unknown as Prisma.InputJsonValue) : undefined,
       statutory: statutorySnapshot,
+      ...statutorySnapshotColumns(statutoryPlan),
       paidDays: facts.paidDays,
       gross,
       net,

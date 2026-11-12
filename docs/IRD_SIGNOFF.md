@@ -9,10 +9,10 @@ compare the published figure against the "Seeded value" column, and record
 the date they checked.
 
 - **What is being signed off:** every statutory parameter the engine consumes,
-  as seeded by `scripts/seed-statutory.js` for the tax year
+  as seeded by `prisma/seed/nz-statutory.ts` for the tax year
   **1 April 2026 – 31 March 2027** and frozen per pay run via
   `PayrollRun.rateSetId` + `Payslip.statutory`.
-- **Where the values live:** `scripts/seed-statutory.js` (seed),
+- **Where the values live:** `prisma/seed/nz-statutory.ts` (seed),
   `prisma/schema.prisma` (StatutoryRateSet family), `src/lib/payroll/nz/`
   (engine), `src/lib/payroll/nz/__tests__/golden.test.ts` (acceptance).
 - **Machine verification already done (2026-11-12, not a substitute for the

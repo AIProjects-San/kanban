@@ -76,10 +76,10 @@ const RATE_SET_INCLUDE = {
   studentLoan: true,
 } as const;
 
-type RateSetRow = Prisma.StatutoryRateSetGetPayload<{ include: typeof RATE_SET_INCLUDE }>;
+type RateSetRow = Prisma.StatutoryRuleGetPayload<{ include: typeof RATE_SET_INCLUDE }>;
 
 async function loadRateSet(id: string): Promise<RateSetRow | null> {
-  return db.statutoryRateSet.findUnique({ where: { id }, include: RATE_SET_INCLUDE });
+  return db.statutoryRule.findUnique({ where: { id }, include: RATE_SET_INCLUDE });
 }
 
 /** Locked-run counts per rate-set id (the Task 3.2 archive-only guard). */
@@ -176,7 +176,7 @@ function serializeRateSet(row: RateSetRow, lockedCount: number): TaxYearAdminT {
 export async function getTaxYears(): Promise<ActionResult<TaxYearAdminT[]>> {
   return toResult(async () => {
     await requirePermission("statutory:manage");
-    const rows = await db.statutoryRateSet.findMany({
+    const rows = await db.statutoryRule.findMany({
       orderBy: { effectiveFrom: "desc" },
       include: RATE_SET_INCLUDE,
     });
@@ -279,7 +279,7 @@ export async function saveTaxYearSlabs(input: unknown): Promise<ActionResult<{ s
     const esctRows = data.slabs.filter((s) => s.group === "ESCT").sort((a, b) => a.order - b.order);
 
     await db.$transaction(async (tx) => {
-      await tx.statutoryPayeTier.deleteMany({ where: { setId: set.id } });
+      await tx.taxSlab.deleteMany({ where: { setId: set.id } });
       await tx.statutorySecondaryRate.deleteMany({ where: { setId: set.id } });
       await tx.statutoryEsctTier.deleteMany({ where: { setId: set.id } });
       await tx.statutoryAccLevy.deleteMany({ where: { setId: set.id } });
@@ -287,7 +287,7 @@ export async function saveTaxYearSlabs(input: unknown): Promise<ActionResult<{ s
       await tx.statutoryKiwiSaver.deleteMany({ where: { setId: set.id } });
       await tx.statutoryStudentLoan.deleteMany({ where: { setId: set.id } });
 
-      await tx.statutoryPayeTier.createMany({
+      await tx.taxSlab.createMany({
         data: payeRows.map((r) => ({
           setId: set.id,
           fromAnnual: r.lower ?? 0,
@@ -353,7 +353,7 @@ export async function saveTaxYearSlabs(input: unknown): Promise<ActionResult<{ s
           },
         });
       }
-      await tx.statutoryRateSet.update({
+      await tx.statutoryRule.update({
         where: { id: set.id },
         data: { notes: data.notes },
       });
@@ -466,7 +466,7 @@ export async function createRuleVersion(
     }
     // No other set may start between the source's start and the new date —
     // the new version splits the source's window and must not overlap it.
-    const colliding = await db.statutoryRateSet.findFirst({
+    const colliding = await db.statutoryRule.findFirst({
       where: {
         id: { not: source.id },
         effectiveFrom: { gt: source.effectiveFrom, lte: newFrom },
@@ -478,7 +478,7 @@ export async function createRuleVersion(
         `"${colliding.label}" already starts on ${colliding.effectiveFrom.toISOString().slice(0, 10)} — the new version's effective date must precede it.`,
       );
     }
-    const labelTaken = await db.statutoryRateSet.findUnique({ where: { label: data.label } });
+    const labelTaken = await db.statutoryRule.findUnique({ where: { label: data.label } });
     if (labelTaken) {
       throw validationError(`A tax year labelled "${data.label}" already exists.`);
     }
@@ -507,7 +507,7 @@ export async function createRuleVersion(
 
     const newId = await db.$transaction(async (tx) => {
       // The new set inherits the rest of the source's window.
-      const created = await tx.statutoryRateSet.create({
+      const created = await tx.statutoryRule.create({
         data: {
           label: data.label,
           country: source.country,
@@ -521,7 +521,7 @@ export async function createRuleVersion(
 
       // Clone every untouched category…
       if (data.category !== "PAYE" && source.payeTiers.length > 0) {
-        await tx.statutoryPayeTier.createMany({
+        await tx.taxSlab.createMany({
           data: source.payeTiers.map((t) => ({
             setId: created.id, fromAnnual: t.fromAnnual, toAnnual: t.toAnnual, rate: t.rate, sortOrder: t.sortOrder,
           })),
@@ -586,7 +586,7 @@ export async function createRuleVersion(
       // …and write the edited category from the submitted values.
       if (data.category === "PAYE" && v.slabs) {
         const rows = v.slabs.filter((s) => s.group === "PAYE").sort((a, b) => a.order - b.order);
-        await tx.statutoryPayeTier.createMany({
+        await tx.taxSlab.createMany({
           data: rows.map((r) => ({
             setId: created.id, fromAnnual: r.lower ?? 0, toAnnual: r.upper, rate: dec(r.rate), sortOrder: r.order,
           })),
@@ -642,7 +642,7 @@ export async function createRuleVersion(
       }
 
       // Close the source set's window at the new date.
-      await tx.statutoryRateSet.update({
+      await tx.statutoryRule.update({
         where: { id: source.id },
         data: { effectiveTo: newFrom, isCurrent: source.effectiveFrom.getTime() <= now.getTime() },
       });
@@ -669,11 +669,11 @@ export async function archiveTaxYear(input: unknown): Promise<ActionResult<{ set
   return toResult(async () => {
     const auth = await requirePermission("statutory:manage");
     const data = parseOrThrow(taxYearActionSchema, input);
-    const set = await db.statutoryRateSet.findUnique({ where: { id: data.setId } });
+    const set = await db.statutoryRule.findUnique({ where: { id: data.setId } });
     if (!set) throw new AuthorizationError("Tax year not found.");
 
     const now = new Date();
-    const coversNow = await db.statutoryRateSet.findFirst({
+    const coversNow = await db.statutoryRule.findFirst({
       where: {
         id: { not: set.id },
         effectiveFrom: { lte: now },
@@ -687,7 +687,7 @@ export async function archiveTaxYear(input: unknown): Promise<ActionResult<{ set
       );
     }
 
-    await db.statutoryRateSet.update({
+    await db.statutoryRule.update({
       where: { id: set.id },
       data: { effectiveTo: now, isCurrent: false },
     });
@@ -711,7 +711,7 @@ export async function deleteTaxYear(input: unknown): Promise<ActionResult<{ setI
   return toResult(async () => {
     const auth = await requirePermission("statutory:manage");
     const data = parseOrThrow(taxYearActionSchema, input);
-    const set = await db.statutoryRateSet.findUnique({ where: { id: data.setId } });
+    const set = await db.statutoryRule.findUnique({ where: { id: data.setId } });
     if (!set) throw new AuthorizationError("Tax year not found.");
 
     const locked = await lockedRunCounts([set.id]);
@@ -725,7 +725,7 @@ export async function deleteTaxYear(input: unknown): Promise<ActionResult<{ setI
       where: { rateSetId: set.id, status: { not: "LOCKED" } },
     });
 
-    await db.statutoryRateSet.delete({ where: { id: set.id } });
+    await db.statutoryRule.delete({ where: { id: set.id } });
     await logAudit({
       actor: auth,
       action: "statutory.rate_set_deleted",
@@ -911,8 +911,8 @@ export async function getEmployeeTaxProfileAdmin(
       stcStudentLoanRate: pct(profile ? Number(profile.stcStudentLoanRate) : null),
       stcCertificateExpiry: isoDay(profile?.stcCertificateExpiry) ?? "",
       kiwiSaverStatus: (profile?.kiwiSaverStatus ?? "ACTIVE") as EmployeeTaxProfileT["kiwiSaverStatus"],
-      kiwiSaverEmployeeRate: pct(profile ? Number(profile.kiwiSaverRate) : null),
-      kiwiSaverEmployerRate: pct(profile ? Number(profile.employerKiwiSaverRate) : null),
+      kiwiSaverEmployeeRate: pct(profile ? Number(profile.kiwiSaverEmployeeRate) : null),
+      kiwiSaverEmployerRate: pct(profile ? Number(profile.kiwiSaverEmployerRate) : null),
       esctRateOverride: pct(profile ? Number(profile.esctRateOverride) : null),
       employmentType: (profile?.employmentType ??
         (profile?.isCasual ? "CASUAL" : "PERMANENT")) as EmployeeTaxProfileT["employmentType"],
@@ -968,7 +968,7 @@ export async function saveEmployeeTaxProfile(
       const rateSet = await resolveNzRateSet(new Date());
       const allowed = rateSet?.kiwiSaver?.allowedEmployeeRates ?? [3, 3.5, 4, 6, 8, 10];
       const unchanged =
-        existing != null && pct(Number(existing.kiwiSaverRate)) === data.kiwiSaverEmployeeRate;
+        existing != null && pct(Number(existing.kiwiSaverEmployeeRate)) === data.kiwiSaverEmployeeRate;
       const ok = allowed.some((a) => Number(a) === data.kiwiSaverEmployeeRate);
       if (!ok && !unchanged) {
         throw validationError(
@@ -986,9 +986,13 @@ export async function saveEmployeeTaxProfile(
       irdNumber: irdDigits,
       taxCode,
       isCasual,
+      // Phase 1A — the explicit declaration box + provenance + the
+      // materialised auto-enrolment due date.
+      studentLoan: data.studentLoan,
+      taxCodeSource: existing?.taxCodeSource || "ADMIN",
       kiwiSaverStatus: data.kiwiSaverStatus,
-      kiwiSaverRate: data.kiwiSaverEmployeeRate == null ? null : dec(data.kiwiSaverEmployeeRate),
-      employerKiwiSaverRate: data.kiwiSaverEmployerRate == null ? null : dec(data.kiwiSaverEmployerRate),
+      kiwiSaverEmployeeRate: data.kiwiSaverEmployeeRate == null ? null : dec(data.kiwiSaverEmployeeRate),
+      kiwiSaverEmployerRate: data.kiwiSaverEmployerRate == null ? null : dec(data.kiwiSaverEmployerRate),
       taxCodeSpecialRate: data.stcCertificateRate == null ? null : dec(data.stcCertificateRate),
       stcAccTreatment: data.taxCodeBase === "STC" ? data.stcAccTreatment : "INC",
       stcStudentLoanRate: data.stcStudentLoanRate == null ? null : dec(data.stcStudentLoanRate),
@@ -999,6 +1003,11 @@ export async function saveEmployeeTaxProfile(
       casualHolidayPayInWages: data.casualHolidayPayInWages,
       employmentStartDate: data.employmentStartDate ? utcMidnight(data.employmentStartDate) : null,
       employmentEndDate: data.employmentEndDate ? utcMidnight(data.employmentEndDate) : null,
+      autoEnrolExemption: "",
+      autoEnrolDueDate: autoEnrolDueDate(
+        data.employmentType,
+        data.employmentStartDate ? utcMidnight(data.employmentStartDate) : null,
+      ),
       notes: data.notes,
       createdById: existing?.createdById ?? auth.userId,
     };
