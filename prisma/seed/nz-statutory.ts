@@ -12,10 +12,13 @@
 // Source of every seeded number (all verified 2026-11-12 against IRD
 // primary sources for the tax year 1 April 2026 – 31 March 2027):
 //   - PAYE income-tax slabs ......... IRD "Tax rates for individuals"
-//   - Secondary code rates ........... IRD "Tax rates for individuals"
-//                                     (table header: "before ACC levies");
-//                                     the COMBINED lump-sum reference rate
-//                                     is SB 0.1225 = 10.5% + 1.75% levy
+//   - Secondary code rates ........... IR340 Apr 2026 combined (PAYE + ACC)
+//                                     deduction rates — the ONLY correct
+//                                     values at source: SB 12.25 / S 19.25 /
+//                                     SH 31.75 / ST 34.75 / SA 40.75 /
+//                                     ND 46.75 / CAE 19.25 (CAE rides the
+//                                     S row). Seeded accInclusive: the rate
+//                                     already carries the 1.75% levy.
 //   - ACC earners' levy ............. IRD "ACC earners' levy rates"
 //                                     (1.75% / $156,641 / $2,741.22)
 //   - IETC .......................... $520/yr, $24,000–$70,000, 13c
@@ -40,9 +43,8 @@ import { CASUAL_AGRI_MAX_MONTHS, TEMP_MAX_DAYS } from "../../src/lib/payroll/nz/
 
 const LABEL = "NZ FY2026-27 (1 Apr 2026 – 31 Mar 2027)";
 
-/** The IRD lump-sum table's combined first-tier rate (SB 0.1225 = 10.5%
- * income tax + 1.75% ACC levy) — reference for the accInclusive combined
- * rate rows an admin can record. NOT seeded as a split row. */
+/** The IR340 combined first-tier secondary rate (SB 0.1225 = 10.5% income
+ * tax + 1.75% ACC levy) — the value the seed stores for SB. */
 export const SB_COMBINED_RATE = 0.1225;
 
 // [fromAnnual, toAnnual (null = ∞), rate] — half-open tiers on annualised
@@ -55,16 +57,19 @@ const PAYE_TIERS: Array<[number, number | null, number]> = [
   [180000, null, 0.39],
 ];
 
-// Secondary codes — flat income-tax rates "before ACC levies" (IRD).
-// accInclusive stays false: these are the split rates; a combined-rate
-// row (e.g. the lump-sum table's 0.1225 SB) is a Phase 3 admin edit.
+// Secondary codes — the IR340 Apr 2026 COMBINED (PAYE + ACC) deduction
+// rates at source, seeded as accInclusive rows: the stored rate already
+// carries the 1.75% earners' levy, so the calculator puts the whole
+// deduction in the tax line and leaves the levy line at $0 (the IR340
+// printed-table behaviour). CAE/EDW borrow the S row (19.25%); NSW borrows
+// the SB row (12.25%).
 const SECONDARY_RATES = [
-  { code: "SB", rate: 0.105, label: "Secondary bottom ($0–$15,600)", accInclusive: false },
-  { code: "S", rate: 0.175, label: "Secondary ($15,601–$53,500)", accInclusive: false },
-  { code: "SH", rate: 0.3, label: "Secondary high ($53,501–$78,100)", accInclusive: false },
-  { code: "ST", rate: 0.33, label: "Secondary top ($78,101–$180,000)", accInclusive: false },
-  { code: "SA", rate: 0.39, label: "Secondary all ($180,001+)", accInclusive: false },
-  { code: "ND", rate: 0.45, label: "No declaration (IR330 not given)", accInclusive: false },
+  { code: "SB", rate: 0.1225, label: "Secondary bottom ($0–$15,600) — combined 12.25% (10.5% + levy)", accInclusive: true },
+  { code: "S", rate: 0.1925, label: "Secondary ($15,601–$53,500) — combined 19.25% (17.5% + levy)", accInclusive: true },
+  { code: "SH", rate: 0.3175, label: "Secondary high ($53,501–$78,100) — combined 31.75% (30% + levy)", accInclusive: true },
+  { code: "ST", rate: 0.3475, label: "Secondary top ($78,101–$180,000) — combined 34.75% (33% + levy)", accInclusive: true },
+  { code: "SA", rate: 0.4075, label: "Secondary all ($180,001+) — combined 40.75% (39% + levy)", accInclusive: true },
+  { code: "ND", rate: 0.4675, label: "No declaration (IR330 not given) — combined 46.75% (45% + levy)", accInclusive: true },
 ];
 
 const ACC_LEVY = { rate: 0.0175, maxEarnings: 156641, maxLevy: 2741.22 };
@@ -186,7 +191,7 @@ async function seedWithClient(db: PrismaClient): Promise<void> {
   await db.statutoryStudentLoan.create({ data: { setId: set.id, ...STUDENT_LOAN } });
 
   console.log(`  ✓ Rate set: ${LABEL}`);
-  console.log(`    PAYE slabs: ${PAYE_TIERS.length} (10.5/17.5/30/33/39) · secondary: ${SECONDARY_RATES.length} (SB/S/SH/ST/SA/ND; combined lump-sum ref SB ${SB_COMBINED_RATE})`);
+  console.log(`    PAYE slabs: ${PAYE_TIERS.length} (10.5/17.5/30/33/39) · secondary: ${SECONDARY_RATES.length} (SB/S/SH/ST/SA/ND; IR340 combined rates 12.25–46.75%, accInclusive — SB ${SB_COMBINED_RATE})`);
   console.log(`    ACC 1.75% cap $156,641 max $2,741.22 · IETC $520 ($24k–$66k, 13c abate) · KiwiSaver 3.5%/3.5% · ESCT ${ESCT_TIERS.length} tiers · SL 12% over $24,128`);
   console.log(`    effective [2026-04-01, 2027-04-01) — isCurrent: true`);
   console.log(`    tax years: ${TAX_YEARS.map((y) => y.label).join(", ")} · auto-enrol rules: TEMP_MAX_DAYS=${TEMP_MAX_DAYS}, CASUAL_AGRI_MAX_MONTHS=${CASUAL_AGRI_MAX_MONTHS}`);

@@ -22,12 +22,14 @@ export function fy2026RateSet(): NzRateSetParams {
       { fromAnnual: 180000, toAnnual: null, rate: 0.39 },
     ],
     secondaryRates: [
-      { code: "SB", rate: 0.105 },
-      { code: "S", rate: 0.175 },
-      { code: "SH", rate: 0.3 },
-      { code: "ST", rate: 0.33 },
-      { code: "SA", rate: 0.39 },
-      { code: "ND", rate: 0.45 },
+      // The IR340 combined (PAYE + ACC) deduction rates, exactly as the
+      // seed stores them (accInclusive: the levy rides in the rate).
+      { code: "SB", rate: 0.1225, accInclusive: true },
+      { code: "S", rate: 0.1925, accInclusive: true },
+      { code: "SH", rate: 0.3175, accInclusive: true },
+      { code: "ST", rate: 0.3475, accInclusive: true },
+      { code: "SA", rate: 0.4075, accInclusive: true },
+      { code: "ND", rate: 0.4675, accInclusive: true },
     ],
     accLevy: { rate: 0.0175, maxEarnings: 156641, maxLevy: 2741.22 },
     ietc: { annualAmount: 520, lowerBound: 24000, abateFrom: 66000, upperBound: 70000, abateRate: 0.13 },

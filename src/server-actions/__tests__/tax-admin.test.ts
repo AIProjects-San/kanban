@@ -67,8 +67,10 @@ import { isValidIrdNumber } from "@/lib/tax-profile-preview";
 const SUPER = { userId: "u-super", role: "SUPER_ADMIN" as const, name: "Nova Kaur", email: "super@x.co" };
 
 // ---------------------------------------------------------------------------
-// Fixtures — a Prisma-shaped FY2026-27 rate set (children included), the
-// same values the seed writes (verified against IRD primary sources).
+// Fixtures — a Prisma-shaped FY2026-27 rate set (children included) in the
+// SPLIT secondary form (accInclusive false — an admin-editable row shape;
+// the canonical seed stores the IR340 combined rates). Split rows keep this
+// action test exercising the levy-on-top path through the admin UI.
 // ---------------------------------------------------------------------------
 
 const RATE_SET_ROW = {

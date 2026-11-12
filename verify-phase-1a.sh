@@ -117,7 +117,10 @@ section "Task 0.4 — Seed script"
 SEED_FILE="prisma/seed/nz-statutory.ts"
 if [ -f "$SEED_FILE" ]; then
   pass "seed file exists ($SEED_FILE)"
-  for token in "2026-27" "156641" "2741.22" "0.0175" "0.1225" "0.035" \
+  # The tokens pin the seed to the IR340 combined secondary rates the
+  # dynamic block below constructs — seed and verify values cannot drift.
+  for token in "2026-27" "156641" "2741.22" "0.0175" "0.1225" "0.1925" \
+               "0.3175" "0.3475" "0.4075" "0.4675" "accInclusive" "0.035" \
                "24128" "TEMP_MAX_DAYS" "CASUAL_AGRI_MAX_MONTHS"; do
     grep -q "$token" "$SEED_FILE" \
       && pass "seed contains '$token'" \
@@ -153,6 +156,18 @@ if [ -f "$PAYE_FILE" ]; then
   grep -qE "maxLevy|2741\.22|accCap" "$PAYE_FILE" \
     && pass "ACC cap referenced" \
     || fail "ACC cap not referenced in paye.ts"
+  # The Phase 1A legacy flat-slab compat layer is GONE: no slabs/accRule
+  # inputs, no taxCodeGroup shape anywhere in the engine.
+  if grep -qE "slabs\?:|accRule\?:|NzLegacySlab|NzLegacyAccRule" "$PAYE_FILE"; then
+    fail "paye.ts still accepts the legacy slabs/accRule input shape"
+  else
+    pass "paye.ts accepts only the production rate-set shape"
+  fi
+  if grep -rq "taxCodeGroup" src/lib/payroll/nz/ 2>/dev/null; then
+    fail "legacy flat-slab shape (taxCodeGroup) still referenced under src/lib/payroll/nz"
+  else
+    pass "no legacy flat-slab shape under src/lib/payroll/nz"
+  fi
 else
   fail "paye.ts missing ($PAYE_FILE)"
 fi
@@ -316,7 +331,7 @@ run_dynamic_tests() {
     echo "        Expected values are listed below for manual verification."
     echo ""
     echo "        ┌─────────────────────────────────────────────────────────────┐"
-    echo "        │ GOLDEN PAYE VALUES (NZ 2026-27, annualise-divide method)   │"
+    echo "        │ GOLDEN PAYE VALUES (NZ 2026-27, production rate-set path)  │"
     echo "        │ M, weekly      \$1,000  → tax \$154.00   + ACC \$17.50      │"
     echo "        │ M, fortnightly \$2,000  → tax \$308.00   + ACC \$35.00      │"
     echo "        │ M, monthly     \$5,000  → tax \$851.71   + ACC \$87.50      │"
@@ -327,9 +342,16 @@ run_dynamic_tests() {
     echo "        │ M, annual      \$200,000→ tax \$57,077.50+ ACC \$2,741.22*  │"
     echo "        │  (* = ACC capped at max levy)                              │"
     echo "        │                                                            │"
-    echo "        │ SB, weekly \$1,000 → tax \$105.00, no ACC                  │"
-    echo "        │ S,  monthly \$3,000 → tax \$525.00, no ACC                 │"
-    echo "        │ ND, monthly \$5,000 → tax \$2,250.00, no ACC               │"
+    echo "        │ Secondary/ND/CAE — IR340 COMBINED rates (levy in the tax   │"
+    echo "        │ line, separate ACC line \$0):                               │"
+    echo "        │ SB  weekly \$1,000 → combined 12.25% = \$122.50             │"
+    echo "        │ S   monthly \$3,000 → combined 19.25% = \$577.50             │"
+    echo "        │ SH  weekly \$1,000 → combined 31.75% = \$317.50             │"
+    echo "        │ ST  weekly \$1,000 → combined 34.75% = \$347.50             │"
+    echo "        │ SA  weekly \$1,000 → combined 40.75% = \$407.50             │"
+    echo "        │ ND  weekly \$1,000 → combined 46.75% = \$467.50             │"
+    echo "        │ ND  monthly \$5,000 → combined 46.75% = \$2,337.50           │"
+    echo "        │ CAE weekly \$1,000 → combined 19.25% = \$192.50             │"
     echo "        │ STC 18% INC  monthly \$5,000 → tax \$900.00, no ACC        │"
     echo "        │ STC 18% PLUS monthly \$5,000 → tax \$900.00 + ACC \$87.50  │"
     echo "        │                                                            │"
@@ -348,32 +370,57 @@ run_dynamic_tests() {
   tmpdir=$(mktemp -d)
   cat > "$tmpdir/test.ts" <<'TS_EOF'
 import { calculatePaye } from "@/lib/payroll/nz/paye";
-import { calculateKiwiSaver, resolveKiwiSaverStatus } from "@/lib/payroll/nz/kiwisaver";
+import { calculateKiwiSaver, resolveKiwiSaverDecision, resolveKiwiSaverStatus } from "@/lib/payroll/nz/kiwisaver";
 import { calculateStudentLoan } from "@/lib/payroll/nz/student-loan";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
-const SLABS = [
-  { taxCodeGroup: "PRIMARY", lowerBound: 0,      upperBound: 15600,  rate: 0.1225, accInclusive: true,  sortOrder: 1 },
-  { taxCodeGroup: "PRIMARY", lowerBound: 15601,  upperBound: 53500,  rate: 0.1925, accInclusive: true,  sortOrder: 2 },
-  { taxCodeGroup: "PRIMARY", lowerBound: 53501,  upperBound: 78100,  rate: 0.3175, accInclusive: true,  sortOrder: 3 },
-  { taxCodeGroup: "PRIMARY", lowerBound: 78101,  upperBound: 156641, rate: 0.3475, accInclusive: true,  sortOrder: 4 },
-  { taxCodeGroup: "PRIMARY", lowerBound: 156642, upperBound: 180000, rate: 0.3300, accInclusive: false, sortOrder: 5 },
-  { taxCodeGroup: "PRIMARY", lowerBound: 180001, upperBound: null,   rate: 0.3900, accInclusive: false, sortOrder: 6 },
-  { taxCodeGroup: "SECONDARY", code: "SB", rate: 0.1050 },
-  { taxCodeGroup: "SECONDARY", code: "S",  rate: 0.1750 },
-  { taxCodeGroup: "SECONDARY", code: "SH", rate: 0.3000 },
-  { taxCodeGroup: "SECONDARY", code: "ST", rate: 0.3300 },
-  { taxCodeGroup: "SECONDARY", code: "SA", rate: 0.3900 },
-  { taxCodeGroup: "SECONDARY", code: "CAE", rate: 0.1925 },
-];
-const ACC = { rate: 0.0175, cap: 156641, maxLevy: 2741.22 };
 
+// The PRODUCTION rate-set shape — exactly the family prisma/seed/nz-
+// statutory.ts seeds and calculate.ts resolveNzRateSet hands the engine
+// (the static checks above pin the seed file to these same values):
+//   payeTiers      income-tax slabs, tax-only (primary codes M/ME)
+//   secondaryRates the IR340 COMBINED (PAYE + ACC) deduction rates,
+//                  accInclusive — the levy rides in the rate
+//   accLevy        1.75% / $156,641 liable cap / $2,741.22 annual max
+//   ietc           the ME independent-earner tax credit
+//   studentLoan    12% over the $24,128 annual threshold
+const RATE_SET = {
+  payeTiers: [
+    { fromAnnual: 0, toAnnual: 15600, rate: 0.105 },
+    { fromAnnual: 15600, toAnnual: 53500, rate: 0.175 },
+    { fromAnnual: 53500, toAnnual: 78100, rate: 0.3 },
+    { fromAnnual: 78100, toAnnual: 180000, rate: 0.33 },
+    { fromAnnual: 180000, toAnnual: null, rate: 0.39 },
+  ],
+  secondaryRates: [
+    { code: "SB", rate: 0.1225, accInclusive: true }, // 10.5% + 1.75% levy
+    { code: "S", rate: 0.1925, accInclusive: true },  // 17.5% + 1.75%
+    { code: "SH", rate: 0.3175, accInclusive: true }, // 30% + 1.75%
+    { code: "ST", rate: 0.3475, accInclusive: true }, // 33% + 1.75%
+    { code: "SA", rate: 0.4075, accInclusive: true }, // 39% + 1.75%
+    { code: "ND", rate: 0.4675, accInclusive: true }, // 45% + 1.75%
+  ],
+  accLevy: { rate: 0.0175, maxEarnings: 156641, maxLevy: 2741.22 },
+  ietc: { annualAmount: 520, lowerBound: 24000, abateFrom: 66000, upperBound: 70000, abateRate: 0.13 },
+  kiwiSaver: { defaultEmployeeRate: 0.035, allowedEmployeeRates: [3, 3.5, 4, 6, 8, 10], employerRate: 0.035 },
+  esctTiers: [
+    { fromAnnual: 0, toAnnual: 18720, rate: 0.105 },
+    { fromAnnual: 18720, toAnnual: 64200, rate: 0.175 },
+    { fromAnnual: 64200, toAnnual: 93720, rate: 0.3 },
+    { fromAnnual: 93720, toAnnual: 216000, rate: 0.33 },
+    { fromAnnual: 216000, toAnnual: null, rate: 0.39 },
+  ],
+  studentLoan: { rate: 0.12, annualThreshold: 24128 },
+};
+
+// The engine's canonical NzTaxProfileInput (the shape toNzTaxProfile
+// adapts EmployeeTaxProfile rows into).
 const mk = (o: any = {}) => ({
-  taxCode: "M", studentLoan: false, kiwiSaverStatus: "NOT_ENROLLED",
-  kiwiSaverEmployeeRate: 3.5, kiwiSaverEmployerRate: 3.5,
+  taxCode: "M", isCasual: false, employmentCategory: "PERMANENT",
+  employmentStartDate: null, casualHolidayPayInWages: false,
+  kiwiSaverStatus: "ACTIVE", kiwiSaverRate: null, employerKiwiSaverRate: null,
   esctRateOverride: null, taxCodeSpecialRate: null, stcAccTreatment: "INC",
-  stcStudentLoanRate: null, employmentType: "PERMANENT",
-  casualHolidayPayInWages: false, employmentStartDate: null, employmentEndDate: null, ...o,
+  stcStudentLoanRate: null, stcStudentLoanThresholdApplies: true, ...o,
 });
 
 let pass = 0, fail = 0;
@@ -384,43 +431,71 @@ const t = (label: string, actual: any, expected: any) => {
 };
 
 const paye = (gross: number, freq: string, p: any = mk()) => {
-  const r = calculatePaye({ gross, frequency: freq, taxProfile: p, slabs: SLABS, accRule: ACC });
+  const r = calculatePaye({
+    gross, frequency: freq, taxProfile: p,
+    payeTiers: RATE_SET.payeTiers,
+    secondaryRates: RATE_SET.secondaryRates,
+    accLevy: RATE_SET.accLevy,
+    ietc: RATE_SET.ietc,
+  });
   return { tax: r2(r.tax), acc: r2(r.acc), total: r2(r.total) };
 };
 
-t("M weekly $1,000",       paye(1000, "WEEKLY"),      { tax: 154.00,  acc: 17.50,   total: 171.50 });
-t("M fortnightly $2,000",  paye(2000, "FORTNIGHTLY"), { tax: 308.00,  acc: 35.00,   total: 343.00 });
-t("M monthly $5,000",      paye(5000, "MONTHLY"),     { tax: 851.71,  acc: 87.50,   total: 939.21 });
-t("M annual $15,600",      paye(15600, "ANNUAL"),     { tax: 1638.00, acc: 273.00,  total: 1911.00 });
-t("M annual $53,500",      paye(53500, "ANNUAL"),     { tax: 8270.50, acc: 936.25,  total: 9206.75 });
-t("M annual $78,100",      paye(78100, "ANNUAL"),     { tax: 15650.50,acc: 1366.75, total: 17017.25 });
-t("M annual $156,641",     paye(156641, "ANNUAL"),    { tax: 41569.03,acc: 2741.22, total: 44310.25 });
-t("M annual $200,000",     paye(200000, "ANNUAL"),    { tax: 57077.50,acc: 2741.22, total: 59818.72 });
-t("SB weekly $1,000",      paye(1000, "WEEKLY", mk({ taxCode: "SB" })),     { tax: 105.00,  acc: 0, total: 105.00 });
-t("S monthly $3,000",      paye(3000, "MONTHLY", mk({ taxCode: "S" })),     { tax: 525.00,  acc: 0, total: 525.00 });
-t("ND monthly $5,000",     paye(5000, "MONTHLY", mk({ taxCode: "ND" })),    { tax: 2250.00, acc: 0, total: 2250.00 });
-t("STC 18% INC $5,000",    paye(5000, "MONTHLY", mk({ taxCode: "STC", taxCodeSpecialRate: 18, stcAccTreatment: "INC" })),  { tax: 900.00, acc: 0,      total: 900.00 });
-t("STC 18% PLUS $5,000",   paye(5000, "MONTHLY", mk({ taxCode: "STC", taxCodeSpecialRate: 18, stcAccTreatment: "PLUS" })), { tax: 900.00, acc: 87.50,  total: 987.50 });
+// ---- Primary M: tax-only slabs + the capped levy line (UNCHANGED) ----
+t("M weekly $1,000",       paye(1000, "WEEKLY"),      { tax: 154.00,   acc: 17.50,   total: 171.50 });
+t("M fortnightly $2,000",  paye(2000, "FORTNIGHTLY"), { tax: 308.00,   acc: 35.00,   total: 343.00 });
+t("M monthly $5,000",      paye(5000, "MONTHLY"),     { tax: 851.71,   acc: 87.50,   total: 939.21 });
+t("M annual $15,600",      paye(15600, "ANNUAL"),     { tax: 1638.00,  acc: 273.00,  total: 1911.00 });
+t("M annual $53,500",      paye(53500, "ANNUAL"),     { tax: 8270.50,  acc: 936.25,  total: 9206.75 });
+t("M annual $78,100",      paye(78100, "ANNUAL"),     { tax: 15650.50, acc: 1366.75, total: 17017.25 });
+t("M annual $156,641",     paye(156641, "ANNUAL"),    { tax: 41569.03, acc: 2741.22, total: 44310.25 });
+t("M annual $200,000",     paye(200000, "ANNUAL"),    { tax: 57077.50, acc: 2741.22, total: 59818.72 });
 
-// KiwiSaver
-const ks = calculateKiwiSaver({ gross: 5000, employeeRate: 0.035, employerRate: 0.035, esctRate: 0.175, status: "ENROLLED" });
-t("KS 3.5% enrolled",      { employee: r2(ks.employee), employerGross: r2(ks.employerGross), esct: r2(ks.esct), employerNet: r2(ks.employerNet) },
-                            { employee: 175.00, employerGross: 175.00, esct: 30.63, employerNet: 144.37 });
-t("KS not enrolled zeroes", calculateKiwiSaver({ gross: 5000, employeeRate: 0.035, employerRate: 0.035, esctRate: 0.175, status: "NOT_ENROLLED" }),
-                            { employee: 0, employerGross: 0, esct: 0, employerNet: 0 });
+// ---- Secondary / ND / CAE: the IR340 COMBINED rates — the whole
+//      deduction in the tax line, separate ACC line $0 ----
+t("SB weekly $1,000 (combined 12.25%)",  paye(1000, "WEEKLY",  mk({ taxCode: "SB" })), { tax: 122.50,  acc: 0, total: 122.50 });
+t("S monthly $3,000 (combined 19.25%)",  paye(3000, "MONTHLY", mk({ taxCode: "S" })),  { tax: 577.50,  acc: 0, total: 577.50 });
+t("SH weekly $1,000 (combined 31.75%)",  paye(1000, "WEEKLY",  mk({ taxCode: "SH" })), { tax: 317.50,  acc: 0, total: 317.50 });
+t("ST weekly $1,000 (combined 34.75%)",  paye(1000, "WEEKLY",  mk({ taxCode: "ST" })), { tax: 347.50,  acc: 0, total: 347.50 });
+t("SA weekly $1,000 (combined 40.75%)",  paye(1000, "WEEKLY",  mk({ taxCode: "SA" })), { tax: 407.50,  acc: 0, total: 407.50 });
+t("ND weekly $1,000 (combined 46.75%)",  paye(1000, "WEEKLY",  mk({ taxCode: "ND" })), { tax: 467.50,  acc: 0, total: 467.50 });
+t("ND monthly $5,000 (combined 46.75%)", paye(5000, "MONTHLY", mk({ taxCode: "ND" })), { tax: 2337.50, acc: 0, total: 2337.50 });
+t("CAE weekly $1,000 (combined 19.25%)", paye(1000, "WEEKLY",  mk({ taxCode: "CAE" })), { tax: 192.50, acc: 0, total: 192.50 });
+t("STC 18% INC $5,000",    paye(5000, "MONTHLY", mk({ taxCode: "STC", taxCodeSpecialRate: 0.18, stcAccTreatment: "INC" })),  { tax: 900.00, acc: 0,     total: 900.00 });
+t("STC 18% PLUS $5,000",   paye(5000, "MONTHLY", mk({ taxCode: "STC", taxCodeSpecialRate: 0.18, stcAccTreatment: "PLUS" })), { tax: 900.00, acc: 87.50, total: 987.50 });
 
-// Casual auto-enrolment
+// KiwiSaver — the CANONICAL engine form (the payroll run's path):
+// resolution from resolveKiwiSaverDecision + rate-set params.
+const ksProfile = mk({ kiwiSaverRate: 0.035, employerKiwiSaverRate: 0.035 });
+const ks = calculateKiwiSaver({
+  gross: 5000, frequency: "MONTHLY", taxProfile: ksProfile,
+  resolution: resolveKiwiSaverDecision(ksProfile, new Date("2026-11-30")),
+  kiwiSaver: RATE_SET.kiwiSaver, esctTiers: RATE_SET.esctTiers,
+});
+t("KS 3.5% elected, ESCT 17.5% band",
+  { employee: r2(ks.employee), employerGross: r2(ks.employerGross), esct: r2(ks.esct), employerNet: r2(ks.employerNet) },
+  { employee: 175.00, employerGross: 175.00, esct: 30.63, employerNet: 144.37 });
+const ksOptedOut = mk({ kiwiSaverStatus: "OPTED_OUT" });
+const ksZero = calculateKiwiSaver({
+  gross: 5000, frequency: "MONTHLY", taxProfile: ksOptedOut,
+  resolution: resolveKiwiSaverDecision(ksOptedOut, new Date("2026-11-30")),
+  kiwiSaver: RATE_SET.kiwiSaver, esctTiers: RATE_SET.esctTiers,
+});
+t("KS opted-out zeroes",
+  { employee: r2(ksZero.employee), employerGross: r2(ksZero.employerGross), esct: r2(ksZero.esct), employerNet: r2(ksZero.employerNet) },
+  { employee: 0, employerGross: 0, esct: 0, employerNet: 0 });
+
+// Casual auto-enrolment (canonical profile shape)
 const pEnd = new Date("2027-01-31");
-t("Temp 20 days",   resolveKiwiSaverStatus(mk({ employmentType: "TEMPORARY", employmentStartDate: new Date("2027-01-11") }), pEnd), "NOT_ENROLLED");
-t("Temp 30 days",   resolveKiwiSaverStatus(mk({ employmentType: "TEMPORARY", employmentStartDate: new Date("2027-01-01") }), pEnd), "ENROLLED");
-t("Casual 2 months", resolveKiwiSaverStatus(mk({ employmentType: "CASUAL_AGRICULTURAL", employmentStartDate: new Date("2026-11-30") }), pEnd), "NOT_ENROLLED");
-t("Casual 4 months", resolveKiwiSaverStatus(mk({ employmentType: "CASUAL_AGRICULTURAL", employmentStartDate: new Date("2026-09-15") }), pEnd), "ENROLLED");
+t("Temp 20 days",        resolveKiwiSaverStatus(mk({ employmentCategory: "TEMPORARY", employmentStartDate: new Date("2027-01-11") }), pEnd), "NOT_ENROLLED");
+t("Temp 30 days",        resolveKiwiSaverStatus(mk({ employmentCategory: "TEMPORARY", employmentStartDate: new Date("2027-01-01") }), pEnd), "ENROLLED");
+t("Casual agri 2 months", resolveKiwiSaverStatus(mk({ employmentCategory: "CASUAL_AGRICULTURAL", employmentStartDate: new Date("2026-11-30") }), pEnd), "NOT_ENROLLED");
+t("Casual agri 4 months", resolveKiwiSaverStatus(mk({ employmentCategory: "CASUAL_AGRICULTURAL", employmentStartDate: new Date("2026-09-15") }), pEnd), "ENROLLED");
 
-// Student loan
-const th = { WEEKLY: 464, FORTNIGHTLY: 928, MONTHLY: 2010.6667 };
-t("M SL monthly $3,000", r2(calculateStudentLoan({ gross: 3000, frequency: "MONTHLY", taxProfile: mk({ taxCode: "M SL", studentLoan: true }), periodThresholds: th, standardRate: 0.12 })), 118.72);
-t("M SL weekly $500",    r2(calculateStudentLoan({ gross: 500,  frequency: "WEEKLY",  taxProfile: mk({ taxCode: "M SL", studentLoan: true }), periodThresholds: th, standardRate: 0.12 })), 4.32);
-t("S SL monthly $3,000", r2(calculateStudentLoan({ gross: 3000, frequency: "MONTHLY", taxProfile: mk({ taxCode: "S SL", studentLoan: true }), periodThresholds: th, standardRate: 0.12 })), 360.00);
+// Student loan (production studentLoan rate-set parameter)
+t("M SL monthly $3,000", r2(calculateStudentLoan({ gross: 3000, frequency: "MONTHLY", taxProfile: mk({ taxCode: "M SL" }), studentLoan: RATE_SET.studentLoan })), 118.72);
+t("M SL weekly $500",    r2(calculateStudentLoan({ gross: 500,  frequency: "WEEKLY",  taxProfile: mk({ taxCode: "M SL" }), studentLoan: RATE_SET.studentLoan })), 4.32);
+t("S SL monthly $3,000", r2(calculateStudentLoan({ gross: 3000, frequency: "MONTHLY", taxProfile: mk({ taxCode: "S SL" }), studentLoan: RATE_SET.studentLoan })), 360.00);
 
 console.log("");
 console.log(`  DYNAMIC: PASS=${pass} FAIL=${fail}`);

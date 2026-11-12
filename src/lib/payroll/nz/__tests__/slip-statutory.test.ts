@@ -231,7 +231,7 @@ describe("planSlipStatutory", () => {
     ).toThrow(NzStatutoryError);
   });
 
-  it("omits zero lines (casual SB with no KiwiSaver → paye + acc only)", () => {
+  it("omits zero lines (casual SB with no KiwiSaver → single combined PAYE line)", () => {
     const plan = planSlipStatutory({
       userId: "u-5",
       frequency: "MONTHLY",
@@ -247,10 +247,11 @@ describe("planSlipStatutory", () => {
       deductions: [],
       classification: NO_CLASSIFICATION,
     });
-    // SB flat 10.5% of 1000 = 105; levy 17.50; no KS (casual exemption), no SL.
+    // The seeded SB row is the IR340 combined 12.25% rate (accInclusive):
+    // the whole deduction is the tax line, the levy line is $0 and omitted;
+    // no KS (casual exemption), no SL.
     expect(plan.lines).toEqual([
-      { key: "paye", label: "PAYE income tax (SB)", amount: 105 },
-      { key: "acc", label: "ACC earners' levy", amount: 17.5 },
+      { key: "paye", label: "PAYE income tax (SB)", amount: 122.5 },
     ]);
   });
 

@@ -641,3 +641,72 @@ live net preview. Demo/e2e seeds that create runs directly (not through
 the action) remain pre-engine rows by construction; the statutory seed
 (`db:seed:statutory`) opts a database into engine pricing for every run
 created afterwards.
+
+## ADR-017 — NZ statutory Phase 1A gap closure: the IR340 combined secondary rates are canonical; the flat-slab compat layer is deleted
+
+**Date:** 2026-11-12 · **Status:** accepted · **Phase:** 1A gap closure
+
+**Context.** Phase 1A conformance (commit 8de2d4f) passed 80/0/0, but the
+dynamic tests exercised a COMPAT layer in `calculatePaye` that accepted the
+original plan's legacy flat-slab shape (`slabs` + `accRule`). Research
+against the IRD IR340 Apr 2026 tables confirmed the secondary-code rates
+at source are the COMBINED (PAYE + ACC earners' levy) deduction rates:
+
+| Code | Tax  | ACC    | COMBINED (source) |
+|------|------|--------|-------------------|
+| SB   | 10.5% | +1.75% | 12.25%            |
+| S    | 17.5% | +1.75% | 19.25%            |
+| SH   | 30%   | +1.75% | 31.75%            |
+| ST   | 33%   | +1.75% | 34.75%            |
+| SA   | 39%   | +1.75% | 40.75%            |
+| ND   | 45%   | +1.75% | 46.75%            |
+| CAE  | 17.5% | +1.75% | 19.25% (rides the S row) |
+
+The compat layer treated the tax-only rates as total deduction rates
+(SB $1,000 → $105.00 instead of $122.50), so the 11 Phase 1A compat tests
+asserted wrong values against a wrong path. The production path (the
+rate-set-resolved `calculatePaye` with `accInclusive` rows, shipped in
+Phase 3) was already correct.
+
+**Decision.**
+1. The canonical rate table (`prisma/seed/nz-statutory.ts`
+   `SECONDARY_RATES`) stores the IR340 COMBINED rates as `accInclusive:
+   true` rows: the whole deduction lands in the tax line and the separate
+   levy line is $0 — the IR340 printed-table shape. CAE/EDW borrow the S
+   row (19.25%), NSW borrows the SB row (12.25%). The split form
+   (`accInclusive: false`, tax rate + levy-on-top) remains a Phase 3
+   admin-editable row shape with identical totals.
+2. The flat-slab compat layer is DELETED from `calculatePaye` (the
+   `slabs`/`accRule` inputs, `NzLegacySlab`/`NzLegacyAccRule`, and the
+   normalizer). The engine accepts only the production rate-set family.
+   The 11 compat tests asserting wrong values are deleted with it.
+3. Primary codes (M/ME) and STC are UNCHANGED: tax-only slabs + the
+   separate capped ACC levy line (1.75% / $156,641 / $2,741.22), as
+   verified against IR341.
+4. `verify-phase-1a.sh` now tests the PRODUCTION path: it constructs the
+   production rate-set shape (pinned to the seed by static token checks)
+   and asserts the combined rates (SB $1,000 → tax $122.50, acc $0 …
+   ND $1,000 → $467.50, CAE $1,000 → $192.50).
+
+**Deferred capability.** YTD ACC-levy cap tracking for secondary codes
+(the deduction dropping back to the tax-only rate once the employee's
+year-to-date liable earnings pass $156,641 — IRD's "stop deducting the
+levy" rule) is NOT implemented: `calculatePaye` takes no year-to-date
+levy input, and a combined `accInclusive` row carries no separable levy
+component. The two verify cases that would exercise it (ND and SA at
+$1,000 weekly with YTD ACC already at cap → $450.00 / $390.00 tax-only)
+are deferred until the engine grows a YTD parameter.
+
+**Provenance (STEP 4 of the gap-closure task).** `StatutoryRateSet` and
+`StatutoryPayeTier` are PRIOR WORK, not Phase 1A creations: they were
+introduced as physical tables by Phase 0 (commit c7ef3f6, migration
+`20261201000000_nz_statutory_payroll`) and the Phase 1A conformance
+commit renamed the Prisma MODELS to `StatutoryRule`/`TaxSlab` while
+keeping the tables via `@@map("StatutoryRateSet")`/`@@map
+("StatutoryPayeTier")` — zero data migration. Per the task's decision
+tree (git log returns commits → prior work → do not rename), the table
+names stand. Row counts verified against the seed (2026-11-12):
+StatutoryRateSet 1 (= model StatutoryRule), StatutoryPayeTier 5 (=
+model TaxSlab), StatutorySecondaryRate 6 (the combined rates above),
+StatutoryAccLevy 1, StatutoryIetc 1, StatutoryKiwiSaver 1,
+StatutoryEsctTier 5, StatutoryStudentLoan 1.

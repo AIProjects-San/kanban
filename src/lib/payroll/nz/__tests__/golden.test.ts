@@ -154,28 +154,29 @@ describe("Task 4.1 golden — the 12 PAYE acceptance cases (FY2026-27)", () => {
     expect(r.paye.total).toBe(59_818.72);
   });
 
-  it("08 · SB, weekly $1,000 — flat 10.5% + levy on top (spec §5.6)", () => {
-    // IRD's secondary deduction is (0.105 + 0.0175) × pay → 105.00 + 17.50.
-    // IR340 Apr 2026 weekly secondary $1,000 SB prints 122.50 — exact match.
+  it("08 · SB, weekly $1,000 — combined 12.25% in the tax line, levy $0", () => {
+    // The seeded SB row is the IR340 combined rate 12.25% (10.5% income
+    // tax + 1.75% levy), accInclusive. IR340 Apr 2026 weekly secondary
+    // $1,000 SB prints 122.50 — exact match, as one combined line.
     const r = payeOnly(1_000, "WEEKLY", "SB");
-    expect(r.paye.tax).toBe(105.0);
-    expect(r.paye.acc).toBe(17.5);
+    expect(r.paye.tax).toBe(122.5);
+    expect(r.paye.acc).toBe(0);
     expect(r.paye.total).toBe(122.5);
     expect(r.paye.method).toBe("SECONDARY");
   });
 
-  it("09 · S, monthly $3,000 — flat 17.5% + levy on top", () => {
+  it("09 · S, monthly $3,000 — combined 19.25% in the tax line", () => {
     const r = payeOnly(3_000, "MONTHLY", "S");
-    expect(r.paye.tax).toBe(525.0);
-    expect(r.paye.acc).toBe(52.5);
+    expect(r.paye.tax).toBe(577.5);
+    expect(r.paye.acc).toBe(0);
     expect(r.paye.total).toBe(577.5);
     expect(r.paye.method).toBe("SECONDARY");
   });
 
-  it("10 · ND, monthly $5,000 — flat 45% + levy (IRD: 45% plus earners' levy)", () => {
+  it("10 · ND, monthly $5,000 — combined 46.75% non-notified rate (45% + levy)", () => {
     const r = payeOnly(5_000, "MONTHLY", "ND");
-    expect(r.paye.tax).toBe(2_250.0);
-    expect(r.paye.acc).toBe(87.5);
+    expect(r.paye.tax).toBe(2_337.5);
+    expect(r.paye.acc).toBe(0);
     expect(r.paye.total).toBe(2_337.5);
     expect(r.paye.method).toBe("ND");
   });
@@ -305,12 +306,12 @@ describe("Task 4.1 golden — ACC cap and special codes", () => {
     expect(payeOnly(13_053.41, "MONTHLY", "M").paye.acc).toBe(228.43); // 13,053.41 × 1.75% = 228.4347 → 228.43
   });
 
-  it("ND, monthly $5,000 — PAYE $2,250.00 (the 45% non-notified rate)", () => {
-    // The golden row asks for the PAYE (income tax) line: 45% flat.
+  it("ND, monthly $5,000 — PAYE line $2,337.50 (the combined 46.75% non-notified rate)", () => {
     // IRD: "deduct PAYE at the non-notified rate of 45% plus ACC earners'
-    // levy" — the engine keeps the levy as its own line (87.50, case 10).
+    // levy" — the canonical table stores the COMBINED 46.75% (45% + 1.75%)
+    // as one accInclusive row, so the whole deduction is the tax line.
     const r = payeOnly(5_000, "MONTHLY", "ND");
-    expect(r.paye.tax).toBe(2_250.0);
+    expect(r.paye.tax).toBe(2_337.5);
     expect(r.paye.method).toBe("ND");
   });
 

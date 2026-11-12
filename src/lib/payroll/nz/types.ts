@@ -60,11 +60,12 @@ export interface NzPayeTierParam {
   rate: number;
 }
 
-/** Secondary-code flat income-tax rate ("before ACC levies", IRD).
- * accInclusive (Phase 3): true = the stored rate ALREADY includes the ACC
- * earners' levy (a combined rate, e.g. the IRD lump-sum table's 12.25% SB)
- * and the calculator must not add the levy again. Default false — the
- * seeded rates are income tax only. */
+/** Secondary-code flat rate row. accInclusive: true = the stored rate is
+ * the IR340 COMBINED deduction rate (income tax + ACC levy, e.g. SB
+ * 12.25% = 10.5% + 1.75%) — the calculator puts the whole deduction in
+ * the tax line and adds no levy. false (the admin-editable split form) =
+ * income tax only, with the levy added as its own capped line. The seeded
+ * canonical rows are combined (accInclusive: true). */
 export interface NzSecondaryRateParam {
   code: string; // SB | S | SH | ST | SA | ND
   rate: number;

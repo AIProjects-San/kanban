@@ -45,7 +45,7 @@ const SECONDARY_CODES = new Set(["SB", "S", "SH", "ST", "SA"]);
 
 /**
  * The per-period repayment threshold: annualThreshold ÷ pays-per-year,
- * truncated to whole cents — the periodThresholds the IR341 columns bake
+ * truncated to whole cents — the values the IR341 columns bake
  * in: weekly $464.00, fortnightly $928.00, four-weekly $1,856.00,
  * monthly $2,010.66 (= $24,128/12).
  */
@@ -62,12 +62,6 @@ export interface CalculateStudentLoanInput {
   taxProfile: NzTaxProfileInput;
   /** Rate-set student loan parameters (null = no scheme configured). */
   studentLoan?: NzStudentLoanParam | null;
-  /** Phase 1A legacy shape (verify-phase-1a.sh): the per-period thresholds
-   *  handed in directly (e.g. { WEEKLY: 464, MONTHLY: 2010.6667 }) instead
-   *  of deriving them from the annual threshold. */
-  periodThresholds?: Partial<Record<NzPayFrequency, number>>;
-  /** Phase 1A legacy shape: the standard repayment rate (0.12). */
-  standardRate?: number;
 }
 
 /**
@@ -77,14 +71,11 @@ export interface CalculateStudentLoanInput {
  */
 export function calculateStudentLoan(input: CalculateStudentLoanInput): number {
   const { gross, frequency, taxProfile } = input;
-  const legacy = input.periodThresholds != null || input.standardRate != null;
-  const params =
-    input.studentLoan ??
-    (input.standardRate != null ? { rate: input.standardRate, annualThreshold: 0 } : null);
+  const params = input.studentLoan ?? null;
   if (params == null) return 0;
   if (!Number.isFinite(gross) || gross <= 0) return 0;
 
-  const rate = input.standardRate ?? params.rate;
+  const rate = params.rate;
   const { base, studentLoan } = parseNzTaxCode(taxProfile.taxCode);
 
   // The loan applies when the declaration carries the SL suffix, or when
@@ -111,16 +102,12 @@ export function calculateStudentLoan(input: CalculateStudentLoanInput): number {
     if (!taxProfile.stcStudentLoanThresholdApplies) {
       return roundMoney2(gross * stcRate);
     }
-    const threshold = legacy
-      ? (input.periodThresholds?.[frequency] ?? 0)
-      : studentLoanPeriodThreshold(frequency, params);
+    const threshold = studentLoanPeriodThreshold(frequency, params);
     return roundMoney2(Math.max(0, gross - threshold) * stcRate);
   }
 
   // Main employment (M SL / ME SL, and the STC fallback): 12% above the
   // per-period threshold.
-  const threshold = legacy
-    ? (input.periodThresholds?.[frequency] ?? 0)
-    : studentLoanPeriodThreshold(frequency, params);
+  const threshold = studentLoanPeriodThreshold(frequency, params);
   return roundMoney2(Math.max(0, gross - threshold) * rate);
 }

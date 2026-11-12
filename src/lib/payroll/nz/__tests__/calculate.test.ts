@@ -142,7 +142,7 @@ describe("Task 1.4 — pure core (calculateNzStatutoryWithSet)", () => {
     expect(r.netPay).toBe(5_000 - 987.5 - 175 - 239.15); // 3,598.35
   });
 
-  it("NSW, weekly $1,000 — flat code with levy, no KiwiSaver, no student loan", () => {
+  it("NSW, weekly $1,000 — combined SB row, no KiwiSaver, no student loan", () => {
     const r = calculateNzStatutoryWithSet({
       gross: 1_000,
       frequency: "WEEKLY",
@@ -150,7 +150,7 @@ describe("Task 1.4 — pure core (calculateNzStatutoryWithSet)", () => {
       payPeriodEnd: PERIOD_END,
       rateSet: SET,
     });
-    expect(r.paye).toMatchObject({ tax: 105.0, acc: 17.5, total: 122.5, method: "NSW" });
+    expect(r.paye).toMatchObject({ tax: 122.5, acc: 0, total: 122.5, method: "NSW" });
     expect(r.kiwisaver.status).toBe("NOT_ELIGIBLE");
     expect(r.kiwisaver.employee).toBe(0);
     expect(r.kiwisaver.employerGross).toBe(0);

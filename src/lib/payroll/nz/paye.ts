@@ -19,22 +19,22 @@
 //                     maxEarnings / periods-in-year (algebraically the
 //                     annual cap for uniform pay, and table-exact: monthly
 //                     $15,000 → levy $228.43, IR341).
-//   SB S SH ST SA     Flat code rate on every dollar ("before ACC
-//   (secondary)       levies", IRD) PLUS the levy on top — spec §5.6:
-//                     the deduction is (code rate + levy rate) × pay.
-//                     A rate row marked accInclusive (Phase 3) already
-//                     carries the levy (a combined rate such as the IRD
-//                     lump-sum table's 12.25% SB) and adds nothing.
-//   ND                No IR330 given: flat 45% plus the levy (spec §5.8:
-//                     (0.45 + levy) × pay; IRD: "45% plus ACC earners'
-//                     levy").
-//   NSW               Recognised seasonal worker: flat SB-band rate
-//                     (10.5%) plus the levy, no thresholds (spec §5.5).
+//   SB S SH ST SA     Secondary codes: the seeded rate row carries the
+//   (secondary)       IR340 COMBINED deduction rate (code rate + levy,
+//   ND                e.g. SB 12.25% = 10.5% + 1.75%) flagged accInclusive,
+//                     so the whole deduction lands in the tax line and the
+//                     levy line stays $0 — the IR340 printed-table shape.
+//                     A split row (accInclusive false, the Phase 3 admin
+//                     editable form) taxes at the code rate with the levy
+//                     added as its own line.
+//   ND                No IR330 given: the combined 46.75% non-notified
+//                     rate (45% + levy).
+//   NSW               Recognised seasonal worker: borrows the SB row
+//                     (combined 12.25%), no thresholds (spec §5.5).
 //                     KiwiSaver and student loan never apply (enforced in
 //                     their calculators).
-//   CAE / EDW         Casual agricultural / election-day worker: flat
-//                     S-band rate (17.5%) plus the levy (spec §5.7:
-//                     (0.175 + levy) × pay).
+//   CAE / EDW         Casual agricultural / election-day worker: borrows
+//                     the S row (combined 19.25%, spec §5.7).
 //   STC               IR23 tailored code: the certificate's flat rate on
 //                     every dollar. IRD certificates INCLUDE the levy in
 //                     the rate (spec §5.9) — stcAccTreatment "INC" (the
@@ -56,30 +56,6 @@ import {
   type NzSecondaryRateParam,
   type NzTaxProfileInput,
 } from "./types";
-
-/**
- * Phase 1A legacy flat-slab row (the original plan's slab table — the
- * shape verify-phase-1a.sh feeds the calculator). PRIMARY rows carry
- * inclusive integer bounds + a combined accInclusive rate; SECONDARY
- * rows carry a flat code rate.
- */
-export interface NzLegacySlab {
-  taxCodeGroup: "PRIMARY" | "SECONDARY";
-  lowerBound?: number;
-  upperBound?: number | null;
-  rate: number;
-  accInclusive?: boolean;
-  sortOrder?: number;
-  code?: string;
-}
-
-/** Phase 1A legacy ACC rule: rate + liable-earnings cap + annual max levy. */
-export interface NzLegacyAccRule {
-  rate: number;
-  cap?: number;
-  maxEarnings?: number;
-  maxLevy?: number;
-}
 
 /** Calculation method that produced the PAYE lines. */
 export type NzPayeMethod =
@@ -184,90 +160,11 @@ export interface CalculatePayeInput {
   gross: number;
   frequency: NzPayFrequency;
   taxProfile: NzTaxProfileInput;
-  /** Canonical shape: the resolved rate-set family (required UNLESS the
-   *  Phase 1A legacy slabs/accRule shape is used instead). */
+  /** The resolved rate-set family (calculate.ts resolveNzRateSet output). */
   payeTiers?: NzPayeTierParam[];
   secondaryRates?: NzSecondaryRateParam[];
   accLevy?: NzAccLevyParam;
   ietc?: NzIetcParam | null;
-  /** Phase 1A legacy input shape (verify-phase-1a.sh): the flat slab
-   *  table + one ACC rule instead of the resolved rate-set family. */
-  slabs?: NzLegacySlab[];
-  accRule?: NzLegacyAccRule;
-}
-
-/** Input shape after legacy normalization — what the body consumes. */
-interface NormalizedPayeParams {
-  taxProfile: NzTaxProfileInput;
-  payeTiers: NzPayeTierParam[];
-  secondaryRates: NzSecondaryRateParam[];
-  accLevy: NzAccLevyParam;
-  ietc: NzIetcParam | null;
-}
-
-/**
- * Normalize a CalculatePayeInput into the canonical parameter family.
- * The Phase 1A legacy shape (slabs + accRule) converts as follows:
- *
- *   • PRIMARY accInclusive rows carry COMBINED rates (income tax + levy,
- *     e.g. the IRD lump-sum table's 12.25% first tier): the levy rate is
- *     subtracted back out so the slab math runs on income tax only and the
- *     levy stays its own line — algebraically identical to the split form.
- *   • Inclusive integer bounds (15601–53500) become the half-open form the
- *     slabs use ([15600, 53500)) — identical for whole-dollar incomes.
- *   • SECONDARY rows are the TOTAL deduction rate for the code (the Phase
- *     1A contract puts the whole secondary deduction in the tax line — no
- *     separate levy line), so they map to accInclusive rate rows.
- *   • ND falls back to the statutory 45% non-notified rate when the table
- *     carries no ND row.
- *   • STC certificate rates arrive in PERCENT units (18 = 18%) and are
- *     converted to the engine's decimal form.
- */
-function normalizePayeInput(input: CalculatePayeInput): NormalizedPayeParams {
-  if (input.slabs == null && input.accRule == null) {
-    return {
-      taxProfile: input.taxProfile,
-      payeTiers: input.payeTiers ?? [],
-      secondaryRates: input.secondaryRates ?? [],
-      accLevy: input.accLevy ?? { rate: 0, maxEarnings: 0, maxLevy: 0 },
-      ietc: input.ietc ?? null,
-    };
-  }
-  const accRule: NzLegacyAccRule =
-    input.accRule ??
-    (input.accLevy
-      ? {
-          rate: input.accLevy.rate,
-          maxEarnings: input.accLevy.maxEarnings,
-          maxLevy: input.accLevy.maxLevy,
-        }
-      : { rate: 0 });
-  const accLevy: NzAccLevyParam = {
-    rate: accRule.rate,
-    maxEarnings: accRule.maxEarnings ?? accRule.cap ?? 0,
-    maxLevy: accRule.maxLevy ?? 0,
-  };
-  const slabs = input.slabs ?? [];
-  const payeTiers: NzPayeTierParam[] = slabs
-    .filter((s) => s.taxCodeGroup === "PRIMARY")
-    .sort((a, b) => (a.lowerBound ?? 0) - (b.lowerBound ?? 0))
-    .map((s) => ({
-      fromAnnual: (s.lowerBound ?? 0) === 0 ? 0 : (s.lowerBound ?? 0) - 1,
-      toAnnual: s.upperBound ?? null,
-      rate: s.accInclusive ? s.rate - accRule.rate : s.rate,
-    }));
-  const secondaryRates: NzSecondaryRateParam[] = slabs
-    .filter((s) => s.taxCodeGroup === "SECONDARY")
-    .map((s) => ({ code: s.code ?? "", rate: s.rate, accInclusive: true }));
-  if (!secondaryRates.some((s) => s.code === "ND")) {
-    secondaryRates.push({ code: "ND", rate: 0.45, accInclusive: true });
-  }
-  const special = input.taxProfile.taxCodeSpecialRate;
-  const taxProfile =
-    special != null && special > 1
-      ? { ...input.taxProfile, taxCodeSpecialRate: special / 100 }
-      : input.taxProfile;
-  return { taxProfile, payeTiers, secondaryRates, accLevy, ietc: null };
 }
 
 /**
@@ -280,7 +177,7 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
   if (!Number.isFinite(gross) || gross < 0) {
     throw new NzStatutoryError(`Gross must be a finite non-negative amount (got ${gross})`);
   }
-  const { taxProfile, payeTiers, secondaryRates, accLevy, ietc } = normalizePayeInput(input);
+  const { taxProfile, payeTiers = [], secondaryRates = [], accLevy = { rate: 0, maxEarnings: 0, maxLevy: 0 }, ietc = null } = input;
 
   const { base } = parseNzTaxCode(taxProfile.taxCode);
 
@@ -308,7 +205,7 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
     return { tax, acc, total: roundMoney2(tax + acc), method: "STC", ietc: 0, annualised: gross };
   }
 
-  // ---- ND: no IR330 — flat 45% plus the levy (spec §5.8) ----
+  // ---- ND: no IR330 — the seeded combined 46.75% non-notified rate ----
   if (base === "ND") {
     const row = secondaryRateRowFor("ND", secondaryRates);
     if (row == null) {
@@ -319,8 +216,8 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
     return { tax, acc, total: roundMoney2(tax + acc), method: "ND", ietc: 0, annualised: gross };
   }
 
-  // ---- NSW: recognised seasonal worker — SB-band flat rate plus the
-  //      levy, no thresholds (spec §5.5: (0.105 + levy) × pay) ----
+  // ---- NSW: recognised seasonal worker — borrows the SB row (combined
+  //      12.25%), no thresholds (spec §5.5) ----
   if (base === "NSW") {
     const row = secondaryRateRowFor("SB", secondaryRates);
     if (row == null) {
@@ -331,8 +228,8 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
     return { tax, acc, total: roundMoney2(tax + acc), method: "NSW", ietc: 0, annualised: gross };
   }
 
-  // ---- CAE / EDW: casual agricultural / election day — S-band flat rate
-  //      plus the levy (spec §5.7: (0.175 + levy) × pay) ----
+  // ---- CAE / EDW: casual agricultural / election day — borrows the S row
+  //      (combined 19.25%, spec §5.7) ----
   if (base === "CAE" || base === "EDW") {
     const row = secondaryRateRowFor("S", secondaryRates);
     if (row == null) {
@@ -343,7 +240,8 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
     return { tax, acc, total: roundMoney2(tax + acc), method: "CAE_EDW", ietc: 0, annualised: gross };
   }
 
-  // ---- Secondary codes: flat rate on every dollar + levy (spec §5.6) ----
+  // ---- Secondary codes: the seeded combined-rate row (spec §5.6); a split
+  //      row (accInclusive false) taxes at the code rate + levy on top ----
   if (SECONDARY_CODES.has(base)) {
     const row = secondaryRateRowFor(base, secondaryRates);
     if (row == null) {

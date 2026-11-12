@@ -374,69 +374,16 @@ describe("Task 1.2 — money calculation and ESCT", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 1A — the string status API + the legacy profile/flat input shapes
-// (verify-phase-1a.sh).
+// The bare-string status API + the auto-enrolment exemption guardrail —
+// canonical production behaviour (the profile editor's preview and the
+// payroll run both rely on these).
 // ---------------------------------------------------------------------------
-describe("Phase 1A — resolveKiwiSaverStatus string API + legacy shapes", () => {
+describe("resolveKiwiSaverStatus — bare-string API + exemption guardrail (canonical)", () => {
   it("returns the bare status string for canonical profiles", () => {
     expect(resolveKiwiSaverStatus(baseProfile({}), PERIOD_END)).toBe("ENROLLED");
     expect(
       resolveKiwiSaverStatus(baseProfile({ kiwiSaverStatus: "OPTED_OUT" }), PERIOD_END),
     ).toBe("OPT_OUT");
-  });
-
-  it("legacy profiles: employmentType + NOT_ENROLLED-as-pre-enrolment", () => {
-    const pEnd = utc("2027-01-31");
-    // kiwiSaverStatus NOT_ENROLLED in the legacy shape = no election yet —
-    // the time rules stay live (the ACTIVE posture).
-    const legacy = (o: Record<string, unknown> = {}) => ({
-      taxCode: "M",
-      studentLoan: false,
-      kiwiSaverStatus: "NOT_ENROLLED",
-      kiwiSaverEmployeeRate: 3.5, // percent units — NOT election evidence
-      kiwiSaverEmployerRate: 3.5,
-      esctRateOverride: null,
-      taxCodeSpecialRate: null,
-      stcAccTreatment: "INC" as const,
-      stcStudentLoanRate: null,
-      employmentType: "PERMANENT",
-      casualHolidayPayInWages: false,
-      employmentStartDate: null,
-      employmentEndDate: null,
-      ...o,
-    });
-    expect(
-      resolveKiwiSaverStatus(legacy({ employmentType: "TEMPORARY", employmentStartDate: utc("2027-01-11") }), pEnd),
-    ).toBe("NOT_ENROLLED"); // 20 days — inside the 28-day window
-    expect(
-      resolveKiwiSaverStatus(legacy({ employmentType: "TEMPORARY", employmentStartDate: utc("2027-01-01") }), pEnd),
-    ).toBe("ENROLLED"); // day 29 = Jan 29 ≤ Jan 31
-    expect(
-      resolveKiwiSaverStatus(
-        legacy({ employmentType: "CASUAL_AGRICULTURAL", employmentStartDate: utc("2026-11-30") }),
-        pEnd,
-      ),
-    ).toBe("NOT_ENROLLED"); // 2 months
-    expect(
-      resolveKiwiSaverStatus(
-        legacy({ employmentType: "CASUAL_AGRICULTURAL", employmentStartDate: utc("2026-09-15") }),
-        pEnd,
-      ),
-    ).toBe("ENROLLED"); // past 3 months
-  });
-
-  it("the flat calculateKiwiSaver shape returns the four money lines", () => {
-    const enrolled = calculateKiwiSaver({
-      gross: 5_000,
-      employeeRate: 0.035,
-      employerRate: 0.035,
-      esctRate: 0.175,
-      status: "ENROLLED",
-    });
-    expect(enrolled).toEqual({ employee: 175.0, employerGross: 175.0, esct: 30.63, employerNet: 144.37 });
-    expect(
-      calculateKiwiSaver({ gross: 5_000, employeeRate: 0.035, employerRate: 0.035, esctRate: 0.175, status: "NOT_ENROLLED" }),
-    ).toEqual({ employee: 0, employerGross: 0, esct: 0, employerNet: 0 });
   });
 
   it("a recorded auto-enrolment exemption blocks the time rules (canonical)", () => {

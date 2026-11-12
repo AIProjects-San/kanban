@@ -39,19 +39,19 @@ const ROWS: Row[] = [
     paye: { tax: 215.67, acc: 35.0, total: 250.67 },
   },
   {
-    name: "SB weekly $1,000 — flat + levy = 122.50 (spec §5.6)",
+    name: "SB weekly $1,000 — IR340 combined 12.25% = 122.50 (spec §5.6)",
     gross: 1_000, frequency: "WEEKLY", profile: { taxCode: "SB" },
-    paye: { tax: 105.0, acc: 17.5, total: 122.5 },
+    paye: { tax: 122.5, acc: 0, total: 122.5 },
   },
   {
-    name: "ND monthly $5,000 — 45% + levy = 2,337.50",
+    name: "ND monthly $5,000 — combined 46.75% = 2,337.50",
     gross: 5_000, frequency: "MONTHLY", profile: { taxCode: "ND" },
-    paye: { tax: 2_250.0, acc: 87.5, total: 2_337.5 },
+    paye: { tax: 2_337.5, acc: 0, total: 2_337.5 },
   },
   {
-    name: "CAE weekly $1,000 — S-band + levy = 192.50 (spec §5.7)",
+    name: "CAE weekly $1,000 — S-row combined 19.25% = 192.50 (spec §5.7)",
     gross: 1_000, frequency: "WEEKLY", profile: { taxCode: "CAE" },
-    paye: { tax: 175.0, acc: 17.5, total: 192.5 },
+    paye: { tax: 192.5, acc: 0, total: 192.5 },
   },
   {
     name: "STC 18% PLUS monthly $5,000 — 900.00 + 87.50",
@@ -66,7 +66,7 @@ const ROWS: Row[] = [
     netPay: 3_527.07,
   },
   {
-    name: "NSW weekly $1,000 — SB-band + levy, no KS/SL, net 877.50",
+    name: "NSW weekly $1,000 — SB-row combined 12.25%, no KS/SL, net 877.50",
     gross: 1_000, frequency: "WEEKLY", profile: { taxCode: "NSW" },
     netPay: 877.5,
   },
