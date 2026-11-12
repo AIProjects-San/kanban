@@ -1844,17 +1844,37 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       throw new AuthorizationError("The run's period is not a parseable payroll window — recreate the run.");
     }
     // Phase 1B (G8) — the assignment in force at the run's window start
-    // decides which structure prices this joiner's slip; the legacy
-    // active-structure read remains the fallback for employees whose
-    // timeline was never materialised (the backfill makes that path dead
-    // code in practice). The assignment's structure is authoritative even
-    // when retired — history pays from the timeline, never from isActive.
+    // decides which structure prices this joiner's slip; the assignment's
+    // structure is authoritative even when retired — history pays from the
+    // timeline, never from isActive. Hygiene (mirrors the createPayrollRun
+    // guard): the legacy active-structure read is reserved for employees
+    // whose timeline was NEVER materialised (zero SalaryStructureAssignment
+    // rows of any date — never-backfilled workspaces). An employee with
+    // rows but none in force at the window start (a future-dated first
+    // assignment, the run predating the hire) is REFUSED — never paid from
+    // the active structure for a pre-hire period.
     const assignment = await resolveAssignmentAt(db, data.userId, windowStart);
-    const structure = assignment
-      ? await db.salaryStructure.findUnique({ where: { id: assignment.structureId } })
-      : await db.salaryStructure.findFirst({
-          where: { userId: data.userId, isActive: true },
+    let structure: SalaryStructure | null;
+    if (assignment) {
+      structure = await db.salaryStructure.findUnique({ where: { id: assignment.structureId } });
+    } else {
+      const anyAssignmentRows = await db.salaryStructureAssignment.findMany({
+        where: { employeeId: data.userId },
+        select: { id: true },
+      });
+      if (anyAssignmentRows.length > 0) {
+        const joiner = await db.user.findUnique({
+          where: { id: data.userId },
+          select: { name: true },
         });
+        throw new AuthorizationError(
+          `No salary assignment in force for ${joiner?.name ?? data.userId} at ${windowStart.toISOString().slice(0, 10)} — cannot add payslip for this period`,
+        );
+      }
+      structure = await db.salaryStructure.findFirst({
+        where: { userId: data.userId, isActive: true },
+      });
+    }
     if (!structure) throw new AuthorizationError("No active salary structure for this employee — create one first.");
     // P10 — the joiner's structure cadence must match the run's (the same
     // frequency-matched rule run creation applies).

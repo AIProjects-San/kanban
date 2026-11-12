@@ -1189,6 +1189,86 @@ describe("R7 — payslips", () => {
     expect(db.payslip.create).not.toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------------
+  // Post-1B hygiene — addPayslip mirrors the createPayrollRun guard: the
+  // legacy active-structure fallback is ONLY for employees with ZERO
+  // SalaryStructureAssignment rows of any date. Rows exist but none in force
+  // at the window start (future-dated first assignment) → refuse; never a
+  // pre-hire payslip priced from the active structure.
+  // -------------------------------------------------------------------------
+
+  it("addPayslip refuses a joiner whose only assignments start after the run period (no pre-hire payslips)", async () => {
+    // The run is APRIL (window start 2026-04-01); the employee's first
+    // assignment begins 2026-06-01 — none in force, but the timeline EXISTS.
+    db.payrollRun.findUnique.mockResolvedValue({ ...OPEN_RUN, period: "2026-04" });
+    db.payslip.findUnique.mockResolvedValue(null);
+    db.salaryStructureAssignment.findFirst.mockResolvedValue(null); // none in force at 2026-04-01
+    db.salaryStructureAssignment.findMany.mockResolvedValue([
+      { id: "ssa-future", employeeId: "u-yuki" }, // ...but rows exist (future-dated)
+    ]);
+    const res = await addPayslip({ runId: "run-1", userId: "u-yuki" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toBe(
+        "No salary assignment in force for Yuki Tanaka at 2026-04-01 — cannot add payslip for this period",
+      );
+    }
+    expect(db.payslip.create).not.toHaveBeenCalled();
+  });
+
+  it("addPayslip pays from the assignment in force once the run period reaches its startDate", async () => {
+    // The run is JUNE (window start 2026-06-01); the assignment began
+    // exactly 2026-06-01 — in force at the window start (boundary inclusive).
+    db.payrollRun.findUnique.mockResolvedValue({ ...OPEN_RUN, period: "2026-06" });
+    db.payslip.findUnique.mockResolvedValue(null);
+    db.payslip.count.mockResolvedValue(0);
+    db.salaryStructureAssignment.findFirst.mockResolvedValue({
+      id: "ssa-rev",
+      employeeId: "u-yuki",
+      structureId: "ss-rev",
+      fromDate: new Date("2026-06-01T00:00:00Z"),
+      toDate: null,
+    });
+    db.salaryStructure.findUnique.mockResolvedValue({
+      ...STRUCTURE_ROW,
+      id: "ss-rev",
+      components: JSON.stringify([
+        { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 84_000 },
+      ]),
+    });
+    const res = await addPayslip({ runId: "run-1", userId: "u-yuki" });
+    expect(res.ok).toBe(true);
+    expect(db.salaryStructure.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ss-rev" } }),
+    );
+    // The legacy active-structure read never fired.
+    expect(db.salaryStructure.findFirst).not.toHaveBeenCalled();
+    const createArg = db.payslip.create.mock.calls[0][0] as { data: { slipNo: string; gross: number; net: number } };
+    expect(createArg.data.slipNo).toBe("PS-2026-06-001");
+    // The assignment's structure prices the slip: 84,000 / 12 = 7,000.
+    expect(createArg.data.gross).toBe(7_000);
+    expect(createArg.data.net).toBe(7_000);
+    expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "payroll.payslip_added" }));
+  });
+
+  it("addPayslip keeps the legacy active-structure fallback for never-backfilled employees (zero assignment rows)", async () => {
+    db.payrollRun.findUnique.mockResolvedValue(OPEN_RUN);
+    db.payslip.findUnique.mockResolvedValue(null);
+    db.payslip.count.mockResolvedValue(0);
+    db.salaryStructureAssignment.findFirst.mockResolvedValue(null); // none in force
+    db.salaryStructureAssignment.findMany.mockResolvedValue([]);    // ...and none exist at all
+    db.salaryStructure.findFirst.mockResolvedValue(STRUCTURE_ROW);
+    const res = await addPayslip({ runId: "run-1", userId: "u-yuki" });
+    expect(res.ok).toBe(true);
+    // The any-assignment probe ran and permitted the fallback.
+    expect(db.salaryStructureAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { employeeId: "u-yuki" } }),
+    );
+    const createArg = db.payslip.create.mock.calls[0][0] as { data: { slipNo: string; gross: number } };
+    expect(createArg.data.slipNo).toBe("PS-2026-11-001");
+    expect(createArg.data.gross).toBe(6_700);
+  });
+
   it("lockPayrollRun freezes the period with the payer + total in the audit", async () => {
     db.payrollRun.findUnique.mockResolvedValue({
       ...OPEN_RUN,
