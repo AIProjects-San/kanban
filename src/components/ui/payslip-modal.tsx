@@ -18,7 +18,7 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { PayslipT, PayslipLineT } from "@/lib/types";
 import { updatePayslip } from "@/server-actions/payroll";
-import { computeLop, payslipTotals, lopBasisGross, withRoundingLine, LOP_LINE_KEY, ROUNDING_LINE_KEY, type PayrollRoundingMode } from "@/lib/payroll-math";
+import { computeLop, payslipTotals, lopBasisGross, withRoundingLine, isStatutoryLineKey, round2, LOP_LINE_KEY, ROUNDING_LINE_KEY, type PayrollRoundingMode } from "@/lib/payroll-math";
 import { componentYtdAmount } from "@/lib/payslip-aggregates";
 // P16 (PR-11) — the fiscal-year label for the YTD chip ("2026/27" when the
 // workspace basis isn't the calendar year).
@@ -26,6 +26,11 @@ import { fiscalYearLabel, fiscalYearOf, parsePayrollPeriodKey } from "@/lib/payr
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Percent label for the statutory box ("3.5%", "10%"). */
+function pct(rate: number): string {
+  return `${(rate * 100).toLocaleString("en-NZ", { maximumFractionDigits: 2 })}%`;
 }
 
 function newLine(): PayslipLineT {
@@ -90,11 +95,21 @@ export function PayslipModal({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (payslip) { setEarnings(payslip.earnings.filter((l) => l.key !== ROUNDING_LINE_KEY && !l.statistical).map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY && l.key !== ROUNDING_LINE_KEY).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDaysInput(String(payslip.lopDays)); setNote(payslip.note); }
+    if (payslip) { setEarnings(payslip.earnings.filter((l) => l.key !== ROUNDING_LINE_KEY && !l.statistical).map((l) => ({ ...l }))); setDeductions(payslip.runStatus === "OPEN" ? payslip.deductions.filter((l) => l.key !== LOP_LINE_KEY && l.key !== ROUNDING_LINE_KEY && !isStatutoryLineKey(l.key)).map((l) => ({ ...l })) : payslip.deductions.map((l) => ({ ...l }))); setLopDaysInput(String(payslip.lopDays)); setNote(payslip.note); }
   }, [payslip]);
 
   const editable = payslip?.runStatus === "OPEN";
   const lopDays = Math.max(0, Math.min(31, Math.round((Number(lopDaysInput) || 0) * 100) / 100));
+
+  // Phase 2 — the auto-managed statutory lines, frozen as loaded. On OPEN
+  // runs they are stripped from the editable set (the server recomputes them
+  // from the run's frozen tax year on save); on LOCKED slips they already
+  // render in the read-only editor below.
+  const statutoryLines = useMemo(
+    () => (payslip?.deductions ?? []).filter((l) => isStatutoryLineKey(l.key)),
+    [payslip],
+  );
+  const statutoryTotal = round2(statutoryLines.reduce((s, l) => s + l.amount, 0));
 
   const totals = useMemo(() => {
     if (!editable && payslip) {
@@ -105,7 +120,7 @@ export function PayslipModal({
         .reduce((s, l) => s + l.amount, 0);
       const roundingAdj = payslip.earnings.find((l) => l.key === ROUNDING_LINE_KEY)?.amount
         ?? payslip.deductions.find((l) => l.key === ROUNDING_LINE_KEY)?.amount ?? 0;
-      return { gross: payslip.gross, lop, manualDeductions: manual, roundingAdj, net: payslip.net };
+      return { gross: payslip.gross, lop, manualDeductions: manual, statutory: statutoryTotal, roundingAdj, net: payslip.net };
     }
     // S6 — the LOP basis excludes window-exempt lines (the server's
     // lopBasisGross); the live preview matches the stored math exactly.
@@ -124,14 +139,14 @@ export function PayslipModal({
     // S7 — the auto rounding line rides the preview exactly as saved.
     const rounded = withRoundingLine(
       [...earnings, ...(lop > 0 ? [{ key: LOP_LINE_KEY, label: "Loss of pay", amount: lop }] : [])],
-      deductions,
+      [...deductions, ...statutoryLines],
       roundingMode,
     );
     const roundingAdj = rounded.earnings.find((l) => l.key === ROUNDING_LINE_KEY)?.amount
       ?? rounded.deductions.find((l) => l.key === ROUNDING_LINE_KEY)?.amount ?? 0;
-    const net = Math.round((gross - lop - manualDeductions) * 100) / 100;
-    return { gross, lop, manualDeductions, roundingAdj, net: Math.round((net + roundingAdj) * 100) / 100 };
-  }, [editable, payslip, earnings, deductions, lopDays, roundingMode]);
+    const net = Math.round((gross - lop - manualDeductions - statutoryTotal) * 100) / 100;
+    return { gross, lop, manualDeductions, statutory: statutoryTotal, roundingAdj, net: Math.round((net + roundingAdj) * 100) / 100 };
+  }, [editable, payslip, earnings, deductions, lopDays, roundingMode, statutoryLines, statutoryTotal]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -349,6 +364,47 @@ export function PayslipModal({
 
         {lineEditor(deductions, setDeductions, "deductions")}
 
+        {/* Phase 2 (engine wiring) — the NZ statutory block: employee-side
+            lines (visible here only while OPEN — the read-only editor above
+            already shows them on LOCKED slips) plus the employer-side money
+            that lives ONLY in the frozen snapshot (employer KiwiSaver +
+            ESCT), the applied tax code and the rate set that priced it. */}
+        {(p.statutory || statutoryLines.length > 0) && (
+          <div
+            className="rounded-md border border-teal-500/30 bg-teal-500/5 px-3 py-2 space-y-1 print-detailed"
+            data-testid="payslip-statutory"
+          >
+            <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Statutory (auto — NZ tax engine{editable ? ", recomputed on save" : ", frozen at payment"})
+            </div>
+            {editable && statutoryLines.map((l) => (
+              <div key={l.key} className="flex items-baseline justify-between gap-3 text-xs">
+                <span>{l.label}</span>
+                <span className="tabular-nums">{money(l.amount)}</span>
+              </div>
+            ))}
+            {p.statutory && p.statutory.kiwiSaver.employerGross > 0 && (
+              <>
+                <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+                  <span>Employer KiwiSaver ({pct(p.statutory.kiwiSaver.employerRate)}) — not deducted from pay</span>
+                  <span className="tabular-nums">{money(p.statutory.kiwiSaver.employerGross)}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+                  <span>ESCT on the employer contribution ({pct(p.statutory.kiwiSaver.esctRate)})</span>
+                  <span className="tabular-nums">−{money(p.statutory.kiwiSaver.esct)}</span>
+                </div>
+              </>
+            )}
+            {p.statutory && (
+              <div className="text-[0.6875rem] text-muted-foreground" data-testid="payslip-statutory-meta">
+                Tax code {p.statutory.taxCode} · tax year {p.statutory.rateSetLabel} · taxable gross {money(p.statutory.taxableGross)}
+                {p.statutory.defaultedProfile ? " · computed on system defaults (no tax profile recorded for this employee)" : ""}
+                {editable ? " · auto-managed: editing earnings or loss-of-pay recomputes these lines when the slip is saved" : ""}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Totals — P11 (PR-B09): the period aggregates ride the same box
             (YTD gross/net through this period + the month-to-date net, which
             sums this calendar month's slips — meaningful when several runs
@@ -356,7 +412,7 @@ export function PayslipModal({
             the fiscal basis when it isn't the calendar year. */}
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 grid grid-cols-3 gap-2 text-xs" data-testid="payslip-totals">
           <div><div className="text-muted-foreground">Gross</div><div className="font-semibold tabular-nums">{money(totals.gross)}</div></div>
-          <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions)}</div></div>
+          <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions + totals.statutory)}</div></div>
           <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
           <div className="print-detailed"><div className="text-muted-foreground">YTD gross{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{money(p.ytdGross)}</div></div>
           <div className="print-detailed"><div className="text-muted-foreground">YTD net{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{money(p.ytdNet)}</div></div>

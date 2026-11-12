@@ -569,3 +569,75 @@ and `PayrollRun.rateSetId` pins; every admin mutation writes an audit entry
 (`statutory.*`, `tax.*` actions in `lib/audit-meta.ts`), and the
 TEMPORARY→PERMANENT conversion past day 28 writes the REQUIRED
 `tax.auto_enrolment_audited` entry.
+
+## ADR-016 — NZ statutory Phase 2: the run freezes the rate set; the slip owns the snapshot; enrolments persist in-transaction
+
+**Context.** Phase 1 left the pure engine (`src/lib/payroll/nz/`) unwired:
+`PayrollRun.rateSetId` defaulted to `""`, `Payslip.statutory` stayed null,
+and the Task 1.2 design required the PAYROLL ACTION (not the engine) to
+persist KiwiSaver auto-enrolments. This phase wires the engine into
+`createPayrollRun` / `addPayslip` / `updatePayslip`.
+
+**Decision.**
+1. *The run resolves its rate set at creation, by window START* — the
+   latest set whose `effectiveFrom <= run.startDate` (the Phase 0 schema
+   comment's discipline). Later set edits never rewrite a run: every
+   downstream read (slip recompute included) resolves EXPLICITLY by
+   `run.rateSetId`. No covering set, or a DAILY cadence (IRD publishes no
+   daily table), → `rateSetId ""` and no statutory lines, byte-identical
+   to pre-engine behaviour — existing workspaces and e2e fixtures stay
+   stable until `db:seed:statutory` runs.
+2. *Employee-side statutory lines are payslip deduction lines* with the
+   reserved keys `paye`/`acc`/`ks`/`sl` (`lib/payroll-math.ts`, alongside
+   `lop`/`rounding`), inserted BETWEEN the adjustment kernel and the
+   rounding pass so gross/net math is untouched and rounding wraps the
+   final net. Employer-side money (employer KiwiSaver, ESCT) lives only in
+   the `Payslip.statutory` JSON snapshot (`PayslipStatutoryT`), together
+   with the resolved code, rate-set label, `ruleVersion` hash and the
+   `taxableGross` the engine saw.
+3. *Taxable gross, not raw gross* (kernel
+   `src/lib/payroll/nz/slip-statutory.ts`): the engine taxes
+   `Σ taxable earnings − the LOP dock's taxable share − pre-tax
+   deductions`, where "taxable" comes from the Task 3.3 component mapping
+   (`taxApplicable && wageBaseRef GROSS && category TAXABLE_EARNING`;
+   unmapped lines default taxable — the conservative posture). The LOP
+   dock splits proportionally over the payment-day basis so a non-taxable
+   allowance's dock never leaves the tax base. Money not received is not
+   taxed; money that is not taxable income never enters a wage base.
+4. *A missing EmployeeTaxProfile is not ND.* ND is an explicit IR330
+   failure record; a missing row is an onboarding gap, so the plan applies
+   the model's own defaults (M / ACTIVE / PERMANENT — auto-enrolled at
+   hire, default rate) and flags `defaultedProfile: true` in the snapshot,
+   the run audit and the create result. A RECORDED profile the engine
+   rejects (STC without certificate rate, unknown election) skips that
+   slip's statutory lines loudly (`statutorySkipped` in the result, a
+   toast, an audit reason) instead of aborting the payroll; the slip is
+   created untaxed and `updatePayslip` computes statutory once HR fixes
+   the profile — EXCEPT on updatePayslip/addPayslip, where a refusal
+   fails the save (an explicitly-edited/joined slip must never silently
+   lose its tax lines).
+5. *Auto-enrolment persistence is transactional and sticky.* When the
+   engine's resolution fires a time rule (casual without holiday-pay,
+   TEMPORARY day 29, casual-agricultural 3 months), the action writes
+   `kiwiSaverRate = the default that applied` onto EmployeeTaxProfile
+   INSIDE the same transaction as the slip (guarded to `ACTIVE` +
+   no-election rows, so concurrent runs and recorded elections are never
+   overwritten), then audits `payroll.kiwisaver_auto_enrolled` after
+   commit. The explicit election makes the transition sticky — the time
+   rules never re-trigger.
+6. *OPEN-run edits recompute; the rate set stays frozen.* `updatePayslip`
+   strips submitted statutory keys (auto-managed, like LOP/rounding),
+   recomputes from the edited earnings against `run.rateSetId` with a LIVE
+   profile read (a mid-run IR330 fix applies), re-snapshots, and
+   re-persists any enrolment the recompute triggers. If the run's set was
+   deleted while OPEN (the archive guard only covers LOCKED runs), the
+   STORED lines + snapshot ride along untouched rather than silently
+   dropping tax lines.
+
+**Consequences.** The payslip modal shows the statutory block (frozen
+lines while OPEN — recomputed on save; employer KiwiSaver/ESCT, code and
+tax year from the snapshot) and counts the frozen statutory lines in its
+live net preview. Demo/e2e seeds that create runs directly (not through
+the action) remain pre-engine rows by construction; the statutory seed
+(`db:seed:statutory`) opts a database into engine pricing for every run
+created afterwards.

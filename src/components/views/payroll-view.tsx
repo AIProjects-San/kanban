@@ -184,6 +184,16 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         { duration: 10_000 },
       );
     }
+    // Phase 2 (engine wiring) — slips created WITHOUT statutory lines (a
+    // broken tax profile skipped the engine for that employee): loud, with
+    // the engine's user-facing reason and the fix path.
+    const statutorySkipped = res.data.statutorySkipped ?? [];
+    if (statutorySkipped.length > 0) {
+      toast.warning(
+        `${statutorySkipped.length} payslip(s) created without statutory lines: ${statutorySkipped.map((f) => `${f.slipNo} — ${f.reason}`).join("; ")}. Fix the tax profile, then re-save the payslip to compute them.`,
+        { duration: 10_000 },
+      );
+    }
     setSelectedRunId(null);
     await load();
     // Select the fresh run (the newest one for that window).

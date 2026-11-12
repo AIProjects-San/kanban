@@ -15,7 +15,7 @@ import {
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
-  ArrowUpRight, Upload, FileX, Archive,
+  ArrowUpRight, Upload, FileX, Archive, PiggyBank,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -231,6 +231,9 @@ export type AuditAction =
   // P8 (PR-19/PR-B13, F3.3) — salary withholding.
   | "payroll.withholding_created"
   | "payroll.withholding_released"
+  // Phase 2 (engine wiring) — a KiwiSaver time rule (28-day / 3-month)
+  // fired while paying a run and the election was persisted.
+  | "payroll.kiwisaver_auto_enrolled"
   | "leave.encashment_requested"
   | "leave.encashment_approved"
   | "leave.encashment_rejected"
@@ -441,6 +444,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.gratuity_rule_saved": { icon: Scale, cls: "text-violet-500 bg-violet-500/10" },
   "payroll.withholding_created": { icon: Clock, cls: "text-orange-500 bg-orange-500/10" },
   "payroll.withholding_released": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.kiwisaver_auto_enrolled": { icon: PiggyBank, cls: "text-teal-500 bg-teal-500/10" },
   "leave.encashment_requested": { icon: CircleDollarSign, cls: "text-amber-500 bg-amber-500/10" },
   "leave.encashment_approved": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "leave.encashment_rejected": { icon: CircleDollarSign, cls: "text-rose-500 bg-rose-500/10" },

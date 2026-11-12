@@ -1077,6 +1077,57 @@ export interface TaxProfilePreviewT {
   dueDate: string | null;
 }
 
+/** Phase 2 (engine wiring) — the frozen statutory computation snapshot on a
+ * payslip (Payslip.statutory). Everything the NZ engine derived for this
+ * slip's period: the resolved tax code, the rate set that priced it, the
+ * per-line amounts, and the inputs they came from. Employee-side lines also
+ * ride the deductions JSON (keys paye/acc/ks/sl); employer-side money
+ * (employer KiwiSaver, ESCT) lives ONLY here. null = pre-engine slip. */
+export interface PayslipStatutoryT {
+  /** The declared IR330 code as applied (SL suffix included). */
+  taxCode: string;
+  rateSetId: string;
+  rateSetLabel: string;
+  /** Content hash of every rate consumed (see nzRuleVersion). */
+  ruleVersion: string;
+  frequency: string;
+  /** ISO date the enrolment rules were evaluated at (the window end). */
+  payPeriodEnd: string;
+  /** The gross the engine saw: taxable earnings after the LOP dock and the
+   *  Task 3.3 component-mapping exclusions / pre-tax deductions. */
+  taxableGross: number;
+  /** True = no EmployeeTaxProfile row existed — the system defaults (M /
+   *  ACTIVE / PERMANENT) were applied. Honest display + audit signal. */
+  defaultedProfile: boolean;
+  paye: {
+    tax: number;
+    acc: number;
+    total: number;
+    method: string;
+    /** IETC credited through the tax line (ME only). */
+    ietc: number;
+    /** Annualised gross the slabs saw (primary codes). */
+    annualised: number;
+  };
+  kiwiSaver: {
+    status: string;
+    reason: string;
+    autoEnrolTriggered: boolean;
+    employee: number;
+    employerGross: number;
+    esct: number;
+    employerNet: number;
+    employeeRate: number;
+    employerRate: number;
+    esctRate: number;
+  };
+  studentLoan: number;
+  /** taxableGross − PAYE total − employee KiwiSaver − student loan (the
+   *  engine's statutory net; the slip's net additionally carries LOP,
+   *  structure deductions, adjustments and rounding). */
+  statutoryNet: number;
+}
+
 /** R7 — one monthly payroll period. status: OPEN (editable) → LOCKED (paid,
  * immutable). Totals are aggregated across the run's payslips. workingDays
  * (F1.1) is the holiday-aware LOP denominator denormalized at creation
@@ -1155,6 +1206,10 @@ export interface PayslipT {
    * excluded from YTD) | RELEASED (paid via a WITHHELD_RELEASE adjustment
    * in a later period). */
   withholdStatus: "" | "WITHHELD" | "RELEASED";
+  /** Phase 2 (engine wiring) — the frozen statutory computation snapshot
+   *  (PAYE/ACC/KiwiSaver/student loan lines + employer-side money). Absent
+   *  or null = pre-engine slip or the run had no covering rate set. */
+  statutory?: PayslipStatutoryT | null;
 }
 
 /** P15 (PR-06) — one leave row of the payslip's frozen LOP breakdown:

@@ -58,6 +58,7 @@ import {
   lineSum,
   parsePayslipLines,
   round2,
+  isStatutoryLineKey,
   type PayslipLine,
 } from "@/lib/payroll-math";
 // P1 (PR-12/PR-B10, F2.3) — the universal adjustment adapter kernel.
@@ -100,6 +101,19 @@ import {
 // P22 (PR-C01–04, PR-N01–06) — the pure analytics kernel behind the Payroll
 // view's charts + cards panel.
 import { buildPayrollAnalytics, type PayrollAnalytics } from "@/lib/payroll-analytics";
+// Phase 2 (engine wiring) — the NZ statutory engine meets the payroll run:
+// the slip kernel (pure), the rate-set resolver (impure seam) and the error
+// type every statutory failure surfaces as.
+import { resolveNzRateSet, type NzTaxProfileRow } from "@/lib/payroll/nz/calculate";
+import { NzStatutoryError, type NzPayFrequency } from "@/lib/payroll/nz/types";
+import {
+  classifyComponentsForStatutory,
+  parseStatutorySnapshot,
+  planSlipStatutory,
+  withoutStatutoryLines,
+  type ComponentTaxClassification,
+  type SlipAutoEnrolment,
+} from "@/lib/payroll/nz/slip-statutory";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -204,6 +218,74 @@ async function openingEntriesForUsers(
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 (engine wiring) — statutory context loading + auto-enrolment.
+// ---------------------------------------------------------------------------
+
+/** The active component catalog flattened into the engine's classification
+ * (Task 3.3 mapping: which earning keys leave the taxable gross, which
+ * deduction keys dock it pre-tax). `?? []` keeps the read robust against
+ * partial mocks / resiliency paths. */
+async function loadStatutoryClassification(): Promise<ComponentTaxClassification> {
+  const rows = (await db.salaryComponent.findMany({
+    where: { isActive: true },
+    select: { code: true, taxApplicable: true, statutoryCategory: true, wageBaseRef: true },
+  })) ?? [];
+  return classifyComponentsForStatutory(rows);
+}
+
+/** EmployeeTaxProfile rows for the given users. Missing rows are FINE — the
+ * slip plan falls back to the system-default posture (M / ACTIVE /
+ * PERMANENT) and flags it in the snapshot. */
+async function loadTaxProfileRows(userIds: string[]): Promise<Map<string, NzTaxProfileRow>> {
+  if (userIds.length === 0) return new Map();
+  const rows = (await db.employeeTaxProfile.findMany({
+    where: { userId: { in: userIds } },
+  })) ?? [];
+  return new Map(rows.map((r) => [r.userId, r as unknown as NzTaxProfileRow]));
+}
+
+/** Persist one KiwiSaver auto-enrolment INSIDE the caller's transaction:
+ * write the rate that applied (the rate-set default) as the explicit
+ * election — sticky, the time rules never re-trigger (Task 1.2 design).
+ * Guarded to ACTIVE rows with no election so a concurrent run (or a
+ * recorded election) can never be overwritten. True when the election
+ * landed (count > 0) — the audit entry only fires then. */
+async function persistAutoEnrolment(
+  tx: Pick<Prisma.TransactionClient, "employeeTaxProfile">,
+  entry: SlipAutoEnrolment,
+): Promise<boolean> {
+  const res = await tx.employeeTaxProfile.updateMany({
+    where: { userId: entry.userId, kiwiSaverStatus: "ACTIVE", kiwiSaverRate: null },
+    data: { kiwiSaverRate: entry.rate },
+  });
+  return (res?.count ?? 0) > 0;
+}
+
+/** The audit entries for enrolments that actually landed (after commit —
+ * the log must never describe money that rolled back). */
+async function auditAutoEnrolments(
+  actor: { userId: string; name: string; role: string },
+  entries: Array<{ entry: SlipAutoEnrolment; slipNo: string; period: string }>,
+): Promise<void> {
+  if (entries.length === 0) return;
+  const users = (await db.user.findMany({
+    where: { id: { in: entries.map((e) => e.entry.userId) } },
+    select: { id: true, name: true },
+  })) ?? [];
+  const nameById = new Map(users.map((u) => [u.id, u.name]));
+  for (const { entry, slipNo, period } of entries) {
+    await logAudit({
+      actor,
+      action: "payroll.kiwisaver_auto_enrolled",
+      entityType: "EMPLOYEE_TAX_PROFILE",
+      entityId: entry.userId,
+      entityLabel: nameById.get(entry.userId) ?? slipNo,
+      detail: `KiwiSaver auto-enrolment triggered while paying the ${period} run (payslip ${slipNo}): ${entry.reason}. Election persisted at ${(entry.rate * 100).toLocaleString("en-NZ", { maximumFractionDigits: 2 })}% — sticky, the time rule never re-triggers.`,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -770,6 +852,19 @@ export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
  * are pre-derived from attendance + unpaid leave over the run's real window
  * (lopSource AUTO) and the LOP deduction line is materialized at creation.
  *
+ * Phase 2 (engine wiring): the run resolves its statutory rate set at
+ * creation (latest set whose effectiveFrom <= the window START — snapshot
+ * discipline, later edits never rewrite a frozen run) and stores it on
+ * PayrollRun.rateSetId. Every slip then gets its statutory computation
+ * frozen at creation: employee-side deduction lines (paye/acc/ks/sl) ride
+ * the deductions JSON between the adjustment kernel and the rounding line,
+ * and the full result (incl. employer-side KiwiSaver + ESCT) snapshots onto
+ * Payslip.statutory. A KiwiSaver time rule that fires (28-day / 3-month)
+ * persists the default-rate election on EmployeeTaxProfile inside the SAME
+ * transaction as the slip, with an audit entry after commit. No covering
+ * set, or a DAILY cadence (IRD publishes no daily table) → rateSetId "" and
+ * no statutory lines — byte-identical to the pre-engine behaviour.
+ *
  * P13 (PR-B14/PR-09) — chunked batch processing with per-slip error
  * isolation: the FIRST 30 slips ride the run-creation transaction exactly
  * as before (≤30-employee workspaces are byte-identical: one transaction,
@@ -782,7 +877,7 @@ export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
  * the joiner path (addPayslip) can create the slip once the cause is fixed
  * (slip numbers are unique per structure order, so the retry takes the next
  * free number). No queue infra — the locked chunked-lite decision. */
-export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number; adjustmentsApplied: number; adjustmentsSkipped: number; failures: Array<{ userId: string; slipNo: string; reason: string }> }>> {
+export async function createPayrollRun(input: unknown): Promise<ActionResult<{ id: string; payslipCount: number; adjustmentsApplied: number; adjustmentsSkipped: number; failures: Array<{ userId: string; slipNo: string; reason: string }>; statutorySkipped: Array<{ userId: string; slipNo: string; reason: string }>; autoEnrolled: number; statutoryDefaulted: number }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
     const data = parseOrThrow(createPayrollRunSchema, input);
@@ -830,6 +925,22 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     const workspaceConfig = await getWorkspaceConfig();
     const roundingMode = workspaceConfig.workspace.payrollRoundingMode;
     const overtimePayEnabled = workspaceConfig.workspace.overtimePayEnabled;
+
+    // Phase 2 (engine wiring) — resolve the run's statutory rate set (the
+    // latest set whose effectiveFrom <= the window START, the PayrollRun
+    // schema discipline) and load the per-employee tax profiles + the
+    // component tax mapping ONCE for the whole run. DAILY cadences never
+    // resolve: IRD publishes no daily table (nz/types.ts). No covering set
+    // → rateSetId "" and no statutory lines (pre-engine behaviour).
+    const rateSet = window.frequency !== "DAILY" ? await resolveNzRateSet(window.start) : null;
+    const statutoryClassification = rateSet
+      ? await loadStatutoryClassification()
+      : classifyComponentsForStatutory([]);
+    const taxProfileByUser = rateSet
+      ? await loadTaxProfileRows(structures.map((s) => s.userId))
+      : new Map<string, NzTaxProfileRow>();
+    const statutorySkips: Array<{ userId: string; slipNo: string; reason: string }> = [];
+    let statutoryDefaulted = 0;
 
     // F1.4 — derive each payslip's loss-of-pay days from attendance marks
     // (ABSENT / HALF_DAY) + unpaid approved leave, charged only on working
@@ -916,13 +1027,19 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // P13 — compute EVERY slip's data purely first (the map never throws:
     // the kernels are guarded), keeping each slip's adjustment consumption
     // attached so the chunked writes below can commit them per slip (S17).
+    // Phase 2 — the statutory pass also plans here: one engine failure
+    // (e.g. a broken STC certificate) skips that slip's statutory lines with
+    // a visible reason instead of aborting the whole payroll; HR fixes the
+    // profile and re-saves the slip while the run is OPEN.
     type SlipPlan = {
       data: {
         userId: string; slipNo: string; earnings: string; deductions: string;
         lopDays: number; lopSource: string; paidDays: number; gross: number; net: number; withholdStatus: string;
         lopDetail: Prisma.InputJsonValue | undefined;
+        statutory: Prisma.InputJsonValue | undefined;
       };
       consumed: ConsumedEntry[];
+      autoEnrol: SlipAutoEnrolment | null;
     };
     const slipPlans: SlipPlan[] = structures.map((s, i) => {
       const facts = lopByUser.get(s.userId)
@@ -981,7 +1098,45 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       // Synthetic struct: ids never match a stored row — filtered out so
       // the run's failure summary stays about real adapter rows.
       kernelSkips.push(...applied.skipped.filter((sk) => !sk.id.startsWith("struct:")));
-      const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
+      // Phase 2 (engine wiring) — the statutory pass: employee-side lines
+      // ride the deductions JSON (keys paye/acc/ks/sl) BETWEEN the
+      // adjustment kernel and the rounding line, so gross/net math is
+      // untouched and rounding wraps the FINAL net. Employer-side money
+      // (employer KiwiSaver, ESCT) lives only in the snapshot. A KiwiSaver
+      // time rule that fires rides the plan for in-transaction persistence.
+      let statutorySnapshot: Prisma.InputJsonValue | undefined;
+      let autoEnrol: SlipAutoEnrolment | null = null;
+      let deductionsPreRounding = withoutStatutoryLines(applied.deductions);
+      if (rateSet) {
+        try {
+          const plan = planSlipStatutory({
+            userId: s.userId,
+            frequency: window.frequency as NzPayFrequency,
+            payPeriodEnd: window.end,
+            rateSet,
+            profileRow: taxProfileByUser.get(s.userId) ?? null,
+            earnings: applied.earnings,
+            deductions: applied.deductions,
+            classification: statutoryClassification,
+          });
+          statutorySnapshot = plan.snapshot as unknown as Prisma.InputJsonValue;
+          autoEnrol = plan.autoEnrol;
+          if (plan.snapshot.defaultedProfile) statutoryDefaulted++;
+          if (plan.lines.length > 0) {
+            deductionsPreRounding = [...deductionsPreRounding, ...plan.lines];
+          }
+        } catch (e) {
+          // The slip still gets created — without statutory lines, loudly:
+          // the reason is user-facing (engine guardrails) and updatePayslip
+          // recomputes statutory once the profile is fixed.
+          statutorySkips.push({
+            userId: s.userId,
+            slipNo: slipNumber(window.periodKey, i + 1),
+            reason: e instanceof NzStatutoryError || e instanceof Error ? e.message : "unknown statutory error",
+          });
+        }
+      }
+      const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, deductionsPreRounding, roundingMode);
       const { gross, net } = payslipTotals(finalEarnings, deductions);
       return {
         data: {
@@ -992,12 +1147,14 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           lopDays,
           lopSource: "AUTO",
           lopDetail: facts.lopDetail ? (facts.lopDetail as unknown as Prisma.InputJsonValue) : undefined,
+          statutory: statutorySnapshot,
           paidDays: facts.paidDays,
           gross,
           net,
           withholdStatus: heldUserIds.has(s.userId) ? "WITHHELD" : "",
         },
         consumed,
+        autoEnrol,
       };
     });
 
@@ -1008,6 +1165,9 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     const firstChunk = slipPlans.slice(0, CHUNK);
     const overflow = slipPlans.slice(CHUNK);
     const consumedEntries: ConsumedEntry[] = firstChunk.flatMap((p) => p.consumed);
+    // Phase 2 — enrolments that LANDED (filled by the transactions below;
+    // audited only after commit).
+    const enrolledInRun: Array<{ entry: SlipAutoEnrolment; slipNo: string }> = [];
 
     const run = await db.$transaction(async (tx) => {
       const created = await tx.payrollRun.create({
@@ -1019,6 +1179,9 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           status: "OPEN",
           createdById: auth.userId,
           workingDays: runWorkingDays,
+          // Phase 2 — the run's frozen statutory rate set ("" = none
+          // resolved: pre-engine rows keep this forever).
+          rateSetId: rateSet?.id ?? "",
           payslips: {
             create: firstChunk.map((p) => p.data),
           },
@@ -1046,6 +1209,14 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       for (const [id, reason] of skipById) {
         await tx.payAdjustment.update({ where: { id }, data: { status: "SKIPPED", skipReason: reason } });
       }
+      // Phase 2 — persist the KiwiSaver auto-enrolments the statutory pass
+      // triggered, atomically with the slips they price (the election and
+      // the money land together or not at all).
+      for (const plan of firstChunk) {
+        if (plan.autoEnrol && (await persistAutoEnrolment(tx, plan.autoEnrol))) {
+          enrolledInRun.push({ entry: plan.autoEnrol, slipNo: plan.data.slipNo });
+        }
+      }
       return created;
     });
 
@@ -1069,6 +1240,10 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
                 consumedRunId: run.id,
               },
             });
+          }
+          // Phase 2 — the overflow slip's auto-enrolment, same atomic rule.
+          if (plan.autoEnrol && (await persistAutoEnrolment(tx, plan.autoEnrol))) {
+            enrolledInRun.push({ entry: plan.autoEnrol, slipNo: plan.data.slipNo });
           }
         });
         overflowApplied += plan.consumed.length;
@@ -1100,10 +1275,13 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${payslipCount} payslips from the active ${window.frequency.toLowerCase()} salary structures${data.userIds && data.userIds.length > 0 ? ` (filtered to ${data.userIds.length} selected employee(s))` : ""}${overflow.length > 0 ? ` (${firstChunk.length} in the creation batch + ${overflow.length - failures.length} chunked beyond 30)` : ""}${failures.length > 0 ? ` — ${failures.length} payslip(s) FAILED with reasons: ${failures.map((f) => `${f.slipNo} (${f.reason})`).join("; ")}` : ""}${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}`,
+      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${payslipCount} payslips from the active ${window.frequency.toLowerCase()} salary structures${data.userIds && data.userIds.length > 0 ? ` (filtered to ${data.userIds.length} selected employee(s))` : ""}${overflow.length > 0 ? ` (${firstChunk.length} in the creation batch + ${overflow.length - failures.length} chunked beyond 30)` : ""}${failures.length > 0 ? ` — ${failures.length} payslip(s) FAILED with reasons: ${failures.map((f) => `${f.slipNo} (${f.reason})`).join("; ")}` : ""}${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}${rateSet ? ` Statutory: priced on "${rateSet.label}"${statutoryDefaulted > 0 ? `, ${statutoryDefaulted} slip(s) on system-default tax profiles (no IR330 recorded)` : ""}${statutorySkips.length > 0 ? `, ${statutorySkips.length} slip(s) created WITHOUT statutory lines (${statutorySkips.map((f) => `${f.slipNo}: ${f.reason}`).join("; ")})` : ""}${enrolledInRun.length > 0 ? `, ${enrolledInRun.length} KiwiSaver auto-enrolment(s) persisted` : ""}.` : " No statutory rate set covers the window — statutory lines were not computed."}`,
     });
+    // Phase 2 — the enrolment audit entries (after commit: the log never
+    // describes money that rolled back).
+    await auditAutoEnrolments(auth, enrolledInRun.map((e) => ({ ...e, period: run.period })));
     revalidatePath("/");
-    return { id: run.id, payslipCount, adjustmentsApplied, adjustmentsSkipped, failures };
+    return { id: run.id, payslipCount, adjustmentsApplied, adjustmentsSkipped, failures, statutorySkipped: statutorySkips, autoEnrolled: enrolledInRun.length, statutoryDefaulted };
   });
 }
 
@@ -1263,6 +1441,8 @@ export async function getPayrollRun(
         // P17 — live balances when the toggle is on.
         ...(showLeaveBalances ? { leaveBalances: balancesByUser.get(p.userId) ?? [] } : {}),
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
+        // Phase 2 — the frozen statutory snapshot (null = pre-engine slip).
+        statutory: parseStatutorySnapshot(p.statutory),
       }));
 
     return {
@@ -1301,14 +1481,22 @@ export async function getPayrollRun(
  * auto-managed from lopDays (gross × days / days-in-period); manual
  * deduction lines are kept as entered. gross/net recomputed server-side.
  * F1.4: changing lopDays flips lopSource to MANUAL (an audited override of
- * the run-creation derivation); saving the same value keeps the provenance. */
+ * the run-creation derivation); saving the same value keeps the provenance.
+ *
+ * Phase 2 (engine wiring): on an engine run (rateSetId set) the statutory
+ * lines are auto-managed EXACTLY like LOP — stripped from the submission,
+ * recomputed from the edited earnings + the run's FROZEN rate set (a live
+ * profile read, so a mid-run IR330 fix applies), re-inserted before the
+ * rounding pass and re-snapshotted. The recompute refusing (broken STC
+ * certificate etc.) refuses the SAVE: a slip whose tax lines cannot be
+ * derived must never be silently stored without them. */
 export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: true }>> {
   return toResult(async () => {
     const auth = await requirePermission("payroll:manage");
     const data = parseOrThrow(updatePayslipSchema, input);
     const slip = await db.payslip.findUnique({
       where: { id: data.payslipId },
-      include: { run: { select: { id: true, period: true, status: true, workingDays: true } } },
+      include: { run: { select: { id: true, period: true, status: true, workingDays: true, frequency: true, startDate: true, endDate: true, rateSetId: true } } },
     });
     if (!slip) throw new AuthorizationError("Payslip not found.");
     if (slip.run.status !== "OPEN") {
@@ -1378,8 +1566,11 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     const grossBefore = slip.gross;
     const netBefore = slip.net;
     // S6 — the LOP basis excludes window-exempt lines (flags ride the
-    // submitted lines' snapshots).
-    const lopDeductions = withLopLine(data.deductions, lopBasisGross(data.earnings), lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
+    // submitted lines' snapshots). Phase 2 — the statutory keys are
+    // auto-managed: strip them from the submission (a stale client must
+    // never duplicate them) and let the recompute below replace them.
+    const submittedDeductions = withoutStatutoryLines(data.deductions);
+    const lopDeductions = withLopLine(submittedDeductions, lopBasisGross(data.earnings), lopDays, slip.run.period, runWorkingDays > 0 ? runWorkingDays : undefined);
     // S8 — statistical lines are display-only and never editable: the
     // stored snapshot's statistical rows ride along untouched (the editor
     // never submits them).
@@ -1388,7 +1579,56 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
     // S7 — the rounding line is auto-managed on save too (replaced, never
     // duplicated); the editor never submits it.
     const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
-    const { earnings: finalEarnings, deductions } = withRoundingLine([...submittedEarnings, ...statisticalLines], lopDeductions, roundingMode);
+    // Phase 2 — recompute the statutory lines + snapshot from the EDITED
+    // earnings: HR's changes (bonus, LOP) flow into PAYE/ACC/KiwiSaver/SL
+    // before the run locks. The rate set stays the run's FROZEN one
+    // (run.rateSetId — later rate edits never rewrite a run); the profile is
+    // read live so a mid-run IR330 fix applies.
+    let statutoryLines: PayslipLine[] = [];
+    let statutorySnapshot: Prisma.InputJsonValue | undefined;
+    let autoEnrol: SlipAutoEnrolment | null = null;
+    const runFrequency = (slip.run.frequency || "MONTHLY") as PayrollFrequency;
+    const periodEnd = runWindowEnd(slip.run.period, slip.run.endDate);
+    if (slip.run.rateSetId && runFrequency !== "DAILY" && periodEnd) {
+      const rateSet = await resolveNzRateSet(periodEnd, slip.run.rateSetId);
+      if (rateSet) {
+        const [classification, profileRow] = await Promise.all([
+          loadStatutoryClassification(),
+          db.employeeTaxProfile.findUnique({ where: { userId: slip.userId } }),
+        ]);
+        try {
+          const plan = planSlipStatutory({
+            userId: slip.userId,
+            frequency: runFrequency as NzPayFrequency,
+            payPeriodEnd: periodEnd,
+            rateSet,
+            profileRow: (profileRow ?? null) as NzTaxProfileRow | null,
+            earnings: [...submittedEarnings, ...statisticalLines],
+            deductions: lopDeductions,
+            classification,
+          });
+          statutoryLines = plan.lines;
+          statutorySnapshot = plan.snapshot as unknown as Prisma.InputJsonValue;
+          autoEnrol = plan.autoEnrol;
+        } catch (e) {
+          // Fail loud, with the engine's own user-facing guardrail message:
+          // the slip already carries statutory lines, so a save that cannot
+          // re-derive them must never land.
+          throw new AuthorizationError(
+            `Statutory lines could not be recomputed for ${slip.slipNo} — fix the tax profile first. ${e instanceof Error ? e.message : "Unknown statutory error"}`,
+          );
+        }
+      } else {
+        // The run's rate set was deleted while the run was OPEN (the
+        // archive-only guard covers LOCKED runs only): keep the STORED
+        // statutory lines + snapshot untouched rather than silently dropping
+        // the tax lines a frozen slip was priced with.
+        statutoryLines = parsePayslipLines(slip.deductions).filter((l) => isStatutoryLineKey(l.key));
+        statutorySnapshot = undefined; // undefined = column unchanged
+      }
+    }
+    const deductionsPreRounding = statutoryLines.length > 0 ? [...lopDeductions, ...statutoryLines] : lopDeductions;
+    const { earnings: finalEarnings, deductions } = withRoundingLine([...submittedEarnings, ...statisticalLines], deductionsPreRounding, roundingMode);
     const { gross, net } = payslipTotals(finalEarnings, deductions);
     if (net < 0) {
       const totalDeductions = gross - net;
@@ -1408,15 +1648,23 @@ export async function updatePayslip(input: unknown): Promise<ActionResult<{ ok: 
         gross,
         net,
         version: slip.version + 1,
+        // Phase 2 — the recomputed statutory snapshot (undefined = the rate
+        // set vanished mid-run; the stored snapshot stays).
+        ...(statutorySnapshot !== undefined ? { statutory: statutorySnapshot } : {}),
       },
     });
+    // Phase 2 — an enrolment that fired on the recompute persists here too
+    // (same guarded write, same audit vocabulary as run creation).
+    if (autoEnrol && (await persistAutoEnrolment(db, autoEnrol))) {
+      await auditAutoEnrolments(auth, [{ entry: autoEnrol, slipNo: slip.slipNo, period: slip.run.period }]);
+    }
     await logAudit({
       actor: auth,
       action: "payroll.payslip_updated",
       entityType: "PAYSLIP",
       entityId: slip.id,
       entityLabel: slip.slipNo,
-      detail: `${auth.name} updated payslip ${slip.slipNo}${lopDays > 0 ? ` (LOP ${lopDays} day${lopDays === 1 ? "" : "s"}${lopDaysChanged ? `, manually set — the ${slip.lopSource === "MANUAL" ? "previous" : "auto-derived"} value was ${slip.lopDays} day${slip.lopDays === 1 ? "" : "s"}` : ""})` : ""}: gross ${grossBefore.toFixed(2)} → ${gross.toFixed(2)}, net ${netBefore.toFixed(2)} → ${net.toFixed(2)}.`,
+      detail: `${auth.name} updated payslip ${slip.slipNo}${lopDays > 0 ? ` (LOP ${lopDays} day${lopDays === 1 ? "" : "s"}${lopDaysChanged ? `, manually set — the ${slip.lopSource === "MANUAL" ? "previous" : "auto-derived"} value was ${slip.lopDays} day${slip.lopDays === 1 ? "" : "s"}` : ""})` : ""}: gross ${grossBefore.toFixed(2)} → ${gross.toFixed(2)}, net ${netBefore.toFixed(2)} → ${net.toFixed(2)}.${statutorySnapshot ? ` Statutory lines recomputed (${statutoryLines.map((l) => `${l.key} ${l.amount.toFixed(2)}`).join(", ")}).` : ""}`,
     });
     revalidatePath("/");
     return { ok: true };
@@ -1557,7 +1805,47 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       [...structureNetDeductionRows(components), ...due],
       run.period,
     );
-    const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
+    // Phase 2 (engine wiring) — the joiner's statutory lines: priced on the
+    // run's FROZEN rate set (run.rateSetId — "" = pre-engine run, none),
+    // same pass as run creation. An engine refusal (broken STC certificate
+    // etc.) FAILS LOUDLY: the joiner is one explicit employee, so blocking
+    // with the engine's user-facing message beats creating an untaxed slip.
+    let statutorySnapshot: Prisma.InputJsonValue | undefined;
+    let autoEnrol: SlipAutoEnrolment | null = null;
+    let deductionsPreRounding = withoutStatutoryLines(applied.deductions);
+    if (run.rateSetId && runFrequency !== "DAILY" && windowEnd) {
+      const rateSet = await resolveNzRateSet(windowEnd, run.rateSetId);
+      if (rateSet) {
+        const [classification, profileRow] = await Promise.all([
+          loadStatutoryClassification(),
+          db.employeeTaxProfile.findUnique({ where: { userId: data.userId } }),
+        ]);
+        try {
+          const plan = planSlipStatutory({
+            userId: data.userId,
+            frequency: runFrequency as NzPayFrequency,
+            payPeriodEnd: windowEnd,
+            rateSet,
+            profileRow: (profileRow ?? null) as NzTaxProfileRow | null,
+            earnings: applied.earnings,
+            deductions: applied.deductions,
+            classification,
+          });
+          statutorySnapshot = plan.snapshot as unknown as Prisma.InputJsonValue;
+          autoEnrol = plan.autoEnrol;
+          if (plan.lines.length > 0) {
+            deductionsPreRounding = [...deductionsPreRounding, ...plan.lines];
+          }
+        } catch (e) {
+          throw new AuthorizationError(
+            `Statutory lines could not be computed for this employee — fix the tax profile first. ${e instanceof Error ? e.message : "Unknown statutory error"}`,
+          );
+        }
+      }
+      // A deleted rate set (OPEN-run edge) → no statutory lines; the audit
+      // note below says so explicitly.
+    }
+    const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, deductionsPreRounding, roundingMode);
     const { gross, net } = payslipTotals(finalEarnings, deductions);
     const createData = {
       runId: run.id,
@@ -1567,11 +1855,17 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       lopDays,
       lopSource: "AUTO",
       lopDetail: facts.lopDetail ? (facts.lopDetail as unknown as Prisma.InputJsonValue) : undefined,
+      statutory: statutorySnapshot,
       paidDays: facts.paidDays,
       gross,
       net,
       withholdStatus: withheld ? "WITHHELD" : "",
     };
+    // Phase 2 — the joiner's auto-enrolment lands with the slip (guarded,
+    // in-transaction); audited after commit. Holder object: the assignment
+    // happens inside the transaction closure, invisible to outer flow
+    // analysis.
+    const joinerEnrol: { value: { entry: SlipAutoEnrolment; slipNo: string } | null } = { value: null };
     const createSlipWithAdjustments = async (seq: number) =>
       db.$transaction(async (tx) => {
         const slip = await tx.payslip.create({ data: { ...createData, slipNo: slipNumber(run.period, seq) } });
@@ -1589,6 +1883,9 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
         }
         for (const s of applied.skipped) {
           await tx.payAdjustment.update({ where: { id: s.id }, data: { status: "SKIPPED", skipReason: s.reason } });
+        }
+        if (autoEnrol && (await persistAutoEnrolment(tx, autoEnrol))) {
+          joinerEnrol.value = { entry: autoEnrol, slipNo: slip.slipNo };
         }
         return slip;
       });
@@ -1610,8 +1907,12 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       entityType: "PAYSLIP",
       entityId: slip.id,
       entityLabel: slip.slipNo,
-      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run${applied.consumed.length > 0 ? ` (${applied.consumed.length} adjustment(s) consumed)` : ""}${otPayout ? ` — includes ${otPayout.amount > 0 ? `overtime of $${otPayout.amount.toLocaleString("en-NZ")}` : "overtime"}` : ""}${withheld ? " — WITHHELD under an active salary hold (net not disbursed until released)" : ""}.`,
+      detail: `${auth.name} added payslip ${slip.slipNo} to the ${run.period} run${applied.consumed.length > 0 ? ` (${applied.consumed.length} adjustment(s) consumed)` : ""}${otPayout ? ` — includes ${otPayout.amount > 0 ? `overtime of $${otPayout.amount.toLocaleString("en-NZ")}` : "overtime"}` : ""}${withheld ? " — WITHHELD under an active salary hold (net not disbursed until released)" : ""}.${statutorySnapshot ? ` Statutory lines computed (${JSON.parse(createData.deductions).filter((l: PayslipLine) => isStatutoryLineKey(l.key)).map((l: PayslipLine) => `${l.key} ${l.amount.toFixed(2)}`).join(", ")}).` : run.rateSetId ? " No statutory lines — the run's rate set is no longer available." : ""}`,
     });
+    // Phase 2 — the joiner's enrolment audit entry (after commit).
+    if (joinerEnrol.value) {
+      await auditAutoEnrolments(auth, [{ ...joinerEnrol.value, period: run.period }]);
+    }
     revalidatePath("/");
     return { id: slip.id };
   });
@@ -2001,6 +2302,8 @@ export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
         // P17 — the employee's own live balances when the toggle is on.
         ...(showLeaveBalances ? { leaveBalances: myBalances } : {}),
         withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
+        // Phase 2 — the frozen statutory snapshot (null = pre-engine slip).
+        statutory: parseStatutorySnapshot(p.statutory),
       }));
   });
 }

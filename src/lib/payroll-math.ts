@@ -164,6 +164,27 @@ export function computeLop(gross: number, lopDays: number, period: string, worki
 /** The auto-managed LOP deduction line key (replaced, never duplicated). */
 export const LOP_LINE_KEY = "lop";
 
+/** Phase 2 (engine wiring) — the auto-managed statutory deduction line keys
+ * (the NZ engine's employee-side lines; employer-side money lives only in
+ * the Payslip.statutory snapshot). Like LOP and rounding they are replaced,
+ * never duplicated, and never submitted by the editor: the server recomputes
+ * them from the run's frozen rate set on every save while the run is OPEN. */
+export const PAYE_LINE_KEY = "paye";
+export const ACC_LEVY_LINE_KEY = "acc";
+export const KIWISAVER_LINE_KEY = "ks";
+export const STUDENT_LOAN_LINE_KEY = "sl";
+export const STATUTORY_LINE_KEYS = [
+  PAYE_LINE_KEY,
+  ACC_LEVY_LINE_KEY,
+  KIWISAVER_LINE_KEY,
+  STUDENT_LOAN_LINE_KEY,
+] as const;
+
+/** True when the line is one of the auto-managed statutory lines. */
+export function isStatutoryLineKey(key: string): boolean {
+  return (STATUTORY_LINE_KEYS as readonly string[]).includes(key);
+}
+
 /** PR-B23 (S7) — the auto-managed rounding line key (the benchmark's
  * rounded-total row, as a visible line so net always equals Σ lines). */
 export const ROUNDING_LINE_KEY = "rounding";
