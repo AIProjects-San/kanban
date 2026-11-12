@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 // ---------------------------------------------------------------------------
 
 import {
+  autoEnrolDueDate,
   calculateKiwiSaver,
   esctRateForAnnual,
   resolveKiwiSaverStatus,
@@ -108,17 +109,22 @@ describe("Task 1.2 — resolveKiwiSaverStatus acceptance scenarios", () => {
   });
 
   it("The 28-day boundary is exact: day 28 exempt, day 29 enrolled", () => {
+    // Day 1 is the employment start date, so day 29 = start + 28 days
+    // (Phase 3 correction — a 1 March start auto-enrols on 29 March).
+    // Pay period ending 2026-11-30: a 2026-11-03 start is only at day 28
+    // (exempt); a 2026-11-02 start reaches day 29 (enrolled).
     const day28 = ks(1_000, {
       employmentCategory: "TEMPORARY",
-      employmentStartDate: utc("2026-11-02"),
+      employmentStartDate: utc("2026-11-03"),
     });
     expect(day28.resolution.status).toBe("NOT_ENROLLED");
     const day29 = ks(1_000, {
       employmentCategory: "TEMPORARY",
-      employmentStartDate: utc("2026-11-01"),
+      employmentStartDate: utc("2026-11-02"),
     });
     expect(day29.resolution.status).toBe("ENROLLED");
     expect(day29.resolution.autoEnrolTriggered).toBe(true);
+    expect(day29.resolution.reason).toContain("day 29");
   });
 
   it("Temporary employee whose contract extended to 40 days — ENROLLED from day 29", () => {
@@ -188,6 +194,18 @@ describe("Task 1.2 — resolveKiwiSaverStatus acceptance scenarios", () => {
 });
 
 describe("Task 1.2 — election statuses", () => {
+  it("NOT_ENROLLED (Phase 3) — nothing deducted on either side, no auto-enrolment at hire", () => {
+    // The admin-recorded "not in the scheme" election: even a PERMANENT
+    // employee with no rate election stays NOT_ENROLLED (user matrix row
+    // "Permanent, NOT_ENROLLED → $0").
+    const { resolution, result } = ks(1_000, { kiwiSaverStatus: "NOT_ENROLLED" });
+    expect(resolution.status).toBe("NOT_ENROLLED");
+    expect(resolution.autoEnrolTriggered).toBe(false);
+    expect(result.employee).toBe(0);
+    expect(result.employerGross).toBe(0);
+    expect(result.esct).toBe(0);
+  });
+
   it("OPTED_OUT — nothing deducted on either side", () => {
     const { resolution, result } = ks(1_000, { kiwiSaverStatus: "OPTED_OUT" });
     expect(resolution.status).toBe("OPT_OUT");
@@ -230,6 +248,45 @@ describe("Task 1.2 — election statuses", () => {
     });
     expect(withVoluntary.result.employerGross).toBe(60.0);
     expect(withVoluntary.result.employerRate).toBe(0.03);
+  });
+});
+
+describe("Task 3.4 — autoEnrolDueDate (the profile editor's preview line)", () => {
+  it("Temporary: day 29 = start + 28 days (1 March 2027 → 29 March 2027)", () => {
+    const due = autoEnrolDueDate("TEMPORARY", utc("2027-03-01"));
+    expect(due && due.toISOString().slice(0, 10)).toBe("2027-03-29");
+  });
+
+  it("Casual agricultural: the day after 3 whole calendar months", () => {
+    const due = autoEnrolDueDate("CASUAL_AGRICULTURAL", utc("2026-08-30"));
+    expect(due && due.toISOString().slice(0, 10)).toBe("2026-12-01");
+  });
+
+  it("Month-end starts clamp (31 Aug + 3 months → 30 Nov, +1 day → 1 Dec)", () => {
+    const due = autoEnrolDueDate("CASUAL_AGRICULTURAL", utc("2026-08-31"));
+    expect(due && due.toISOString().slice(0, 10)).toBe("2026-12-01");
+  });
+
+  it("Permanent and casual have no time rule; a missing start date has no due date", () => {
+    expect(autoEnrolDueDate("PERMANENT", utc("2026-01-01"))).toBeNull();
+    expect(autoEnrolDueDate("CASUAL", utc("2026-01-01"))).toBeNull();
+    expect(autoEnrolDueDate("TEMPORARY", null)).toBeNull();
+    expect(autoEnrolDueDate("CASUAL_AGRICULTURAL", null)).toBeNull();
+  });
+
+  it("the TEMPORARY due date drives the resolution — enrolled only from that date", () => {
+    const start = utc("2026-11-02"); // day 29 = 2026-11-30
+    const before = resolveKiwiSaverStatus(
+      baseProfile({ employmentCategory: "TEMPORARY", employmentStartDate: start }),
+      utc("2026-11-29"),
+    );
+    expect(before.status).toBe("NOT_ENROLLED");
+    const on = resolveKiwiSaverStatus(
+      baseProfile({ employmentCategory: "TEMPORARY", employmentStartDate: start }),
+      utc("2026-11-30"),
+    );
+    expect(on.status).toBe("ENROLLED");
+    expect(on.autoEnrolTriggered).toBe(true);
   });
 });
 

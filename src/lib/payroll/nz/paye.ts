@@ -22,6 +22,9 @@
 //   SB S SH ST SA     Flat code rate on every dollar ("before ACC
 //   (secondary)       levies", IRD) PLUS the levy on top — spec §5.6:
 //                     the deduction is (code rate + levy rate) × pay.
+//                     A rate row marked accInclusive (Phase 3) already
+//                     carries the levy (a combined rate such as the IRD
+//                     lump-sum table's 12.25% SB) and adds nothing.
 //   ND                No IR330 given: flat 45% plus the levy (spec §5.8:
 //                     (0.45 + levy) × pay; IRD: "45% plus ACC earners'
 //                     levy").
@@ -127,13 +130,25 @@ export function ietcForAnnual(annual: number, ietc: NzIetcParam): number {
   return Math.max(0, ietc.annualAmount - (annual - ietc.abateFrom) * ietc.abateRate);
 }
 
-/** Find a seeded secondary flat rate by code (income tax only). */
-function secondaryRateFor(
+/** Find a seeded secondary rate row by code (rate + the Phase 3
+ * accInclusive combined-rate flag). */
+function secondaryRateRowFor(
   code: string,
   secondaryRates: NzSecondaryRateParam[],
-): number | null {
-  const row = secondaryRates.find((s) => s.code === code);
-  return row ? row.rate : null;
+): NzSecondaryRateParam | null {
+  return secondaryRates.find((s) => s.code === code) ?? null;
+}
+
+/** Levy line for a flat-rate code: the per-period levy, or 0 when the rate
+ * row itself already includes it (combined rate — Phase 3). */
+function levyForRateRow(
+  gross: number,
+  frequency: NzPayFrequency,
+  levy: NzAccLevyParam,
+  row: NzSecondaryRateParam,
+): number {
+  if (row.accInclusive) return 0;
+  return roundMoney2(accLevyForPeriod(gross, frequency, levy));
 }
 
 export interface CalculatePayeInput {
@@ -185,47 +200,47 @@ export function calculatePaye(input: CalculatePayeInput): NzPayeResult {
 
   // ---- ND: no IR330 — flat 45% plus the levy (spec §5.8) ----
   if (base === "ND") {
-    const rate = secondaryRateFor("ND", input.secondaryRates);
-    if (rate == null) {
+    const row = secondaryRateRowFor("ND", input.secondaryRates);
+    if (row == null) {
       throw new NzStatutoryError("No ND rate seeded in the secondary-rate table");
     }
-    const tax = roundMoney2(gross * rate);
-    const acc = roundMoney2(accLevyForPeriod(gross, frequency, input.accLevy));
+    const tax = roundMoney2(gross * row.rate);
+    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "ND", ietc: 0, annualised: gross };
   }
 
   // ---- NSW: recognised seasonal worker — SB-band flat rate plus the
   //      levy, no thresholds (spec §5.5: (0.105 + levy) × pay) ----
   if (base === "NSW") {
-    const rate = secondaryRateFor("SB", input.secondaryRates);
-    if (rate == null) {
+    const row = secondaryRateRowFor("SB", input.secondaryRates);
+    if (row == null) {
       throw new NzStatutoryError("No SB rate seeded for the NSW calculation");
     }
-    const tax = roundMoney2(gross * rate);
-    const acc = roundMoney2(accLevyForPeriod(gross, frequency, input.accLevy));
+    const tax = roundMoney2(gross * row.rate);
+    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "NSW", ietc: 0, annualised: gross };
   }
 
   // ---- CAE / EDW: casual agricultural / election day — S-band flat rate
   //      plus the levy (spec §5.7: (0.175 + levy) × pay) ----
   if (base === "CAE" || base === "EDW") {
-    const rate = secondaryRateFor("S", input.secondaryRates);
-    if (rate == null) {
+    const row = secondaryRateRowFor("S", input.secondaryRates);
+    if (row == null) {
       throw new NzStatutoryError("No S rate seeded for the CAE/EDW calculation");
     }
-    const tax = roundMoney2(gross * rate);
-    const acc = roundMoney2(accLevyForPeriod(gross, frequency, input.accLevy));
+    const tax = roundMoney2(gross * row.rate);
+    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "CAE_EDW", ietc: 0, annualised: gross };
   }
 
   // ---- Secondary codes: flat rate on every dollar + levy (spec §5.6) ----
   if (SECONDARY_CODES.has(base)) {
-    const rate = secondaryRateFor(base, input.secondaryRates);
-    if (rate == null) {
+    const row = secondaryRateRowFor(base, input.secondaryRates);
+    if (row == null) {
       throw new NzStatutoryError(`No ${base} rate seeded in the secondary-rate table`);
     }
-    const tax = roundMoney2(gross * rate);
-    const acc = roundMoney2(accLevyForPeriod(gross, frequency, input.accLevy));
+    const tax = roundMoney2(gross * row.rate);
+    const acc = levyForRateRow(gross, frequency, input.accLevy, row);
     return { tax, acc, total: roundMoney2(tax + acc), method: "SECONDARY", ietc: 0, annualised: gross };
   }
 

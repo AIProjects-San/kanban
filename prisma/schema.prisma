@@ -1354,8 +1354,27 @@ model SalaryComponent {
   effectiveTo   DateTime?
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  // --- Phase 3 (Task 3.3) — the statutory tax mapping. The payroll run
+  // (Phase 2 wiring) consults these to decide which structure lines feed
+  // the engine's gross; the super-admin component-mapping editor owns
+  // them. ---
+  // Does money from this component count as taxable income?
+  taxApplicable     Boolean @default(true)
+  // How the statutory engine classifies the line:
+  //   TAXABLE_EARNING | NON_TAXABLE | PRE_TAX_DEDUCTION |
+  //   POST_TAX_DEDUCTION | EMPLOYER_CONTRIBUTION | STATISTICAL
+  statutoryCategory String  @default("TAXABLE_EARNING")
+  // The statutory wage base the component feeds: GROSS (the engine's
+  // taxable gross — PAYE / ACC levy / student loan / KiwiSaver base) or
+  // NONE (excluded from every wage base: reimbursements, employer lines,
+  // deductions, statistical rows).
+  wageBaseRef       String  @default("GROSS")
+  // True = a system-seeded row (the demo catalog / future engine-internal
+  // components). Read-only in the mapping editor — the engine or the seed
+  // owns it, not the workspace admin.
+  isSystemGenerated Boolean @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([isActive])
   @@index([sortOrder])
@@ -2554,6 +2573,12 @@ model StatutorySecondaryRate {
   code      String // SB | S | SH | ST | SA | ND
   rate      Float // flat income-tax rate (0.45 = 45% for ND)
   label     String            @default("")
+  // Phase 3 (Task 3.1) — true = the stored rate ALREADY includes the ACC
+  // earners' levy (a combined rate, e.g. the IRD lump-sum table's 12.25%
+  // SB). The calculator then leaves the levy line at $0 instead of adding
+  // it on top. Default false: the seeded rows are income tax only
+  // ("before ACC levies", IRD).
+  accInclusive Boolean        @default(false)
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 
@@ -2676,9 +2701,12 @@ model EmployeeTaxProfile {
   isCasual  Boolean  @default(false)
   // KiwiSaver election. ACTIVE + null rate = no recorded election -> the
   // rate set's defaultEmployeeRate applies (3.5% FY2026-27 — user
-  // decision). OPTED_OUT = no employee deduction and no employer
-  // contribution. ON_HOLIDAY = savings suspension (paused). NOT_ELIGIBLE
-  // = under-18 / 65+ etc.
+  // decision). NOT_ENROLLED (Phase 3) = recorded as not in the scheme —
+  // no employee deduction, no employer contribution, no auto-enrolment.
+  // OPTED_OUT = no employee deduction and no employer contribution.
+  // ON_HOLIDAY = savings suspension (paused). NOT_ELIGIBLE = under-18 /
+  // 65+ etc. (opt-in members keep an elected rate — employer side is
+  // voluntary for them).
   kiwiSaverStatus       String    @default("ACTIVE")
   kiwiSaverRate         Decimal?  @db.Decimal(6, 4) // null = rate-set default
   employerKiwiSaverRate Decimal?  @db.Decimal(6, 4) // null = rate-set default
@@ -2693,6 +2721,31 @@ model EmployeeTaxProfile {
   // IR23 special student-loan repayment deduction rate — overrides the
   // standard 12% (null = standard rate applies).
   stcStudentLoanRate Decimal? @db.Decimal(6, 4)
+  // Phase 3 (Task 3.4-r1) — the IR23 certificate's expiry date. The
+  // profile editor warns when it has passed; a renewed certificate is a
+  // new effectiveFrom save.
+  stcCertificateExpiry DateTime?
+
+  // --- Phase 3 (Task 3.4-r1) — Section A/C fields ---
+  // The date this tax code declaration applies from (IR330 start date).
+  // Null = unknown; the profile-level effectiveFrom stays the record date.
+  taxCodeEffectiveFrom DateTime?
+  // Fixed ESCT rate override (the engine has honoured one since Phase 1 —
+  // the column finally exists). Null = the ESCT tier lookup applies.
+  esctRateOverride     Decimal?  @db.Decimal(6, 4)
+
+  // --- Phase 3 (Task 3.4-r1) — Section C: employment / casual status.
+  // The employment facts KiwiSaver auto-enrolment needs, now on the row
+  // itself (the engine adapter prefers them over call-site facts). ---
+  // PERMANENT | CASUAL | TEMPORARY | CASUAL_AGRICULTURAL. Null = derive
+  // from isCasual (the Phase 0/1 behaviour).
+  employmentType            String?
+  // Casual holiday pay is paid WITH wages (the 8% on top arrangement) —
+  // the statutory casual definition. Default true: the typical NZ casual
+  // arrangement and the conservative no-deduction posture.
+  casualHolidayPayInWages   Boolean   @default(true)
+  employmentStartDate       DateTime?
+  employmentEndDate         DateTime?
 
   effectiveFrom DateTime @default(now())
   notes        String   @default("")

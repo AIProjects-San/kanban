@@ -43,6 +43,18 @@ import {
   type NzTaxProfileInput,
 } from "./types";
 
+/** The employment-category vocabulary (mirrors NzEmploymentCategory). */
+const EMPLOYMENT_CATEGORIES = new Set([
+  "PERMANENT",
+  "CASUAL",
+  "TEMPORARY",
+  "CASUAL_AGRICULTURAL",
+]);
+
+function isNzEmploymentCategory(v: unknown): v is NzEmploymentCategory {
+  return typeof v === "string" && EMPLOYMENT_CATEGORIES.has(v);
+}
+
 // ---------------------------------------------------------------------------
 // Result shape.
 // ---------------------------------------------------------------------------
@@ -207,6 +219,18 @@ export interface NzTaxProfileRow {
   stcAccTreatment: string | null;
   /** Prisma Decimal | null. */
   stcStudentLoanRate: unknown;
+  // --- Phase 3 (Task 3.4-r1): employment facts live on the profile row
+  // itself. Each is optional so pre-migration callers still work; when set
+  // they take precedence over the employment parameter. ---
+  /** PERMANENT | CASUAL | TEMPORARY | CASUAL_AGRICULTURAL (null = derive
+   *  from isCasual, the Phase 0/1 behaviour). */
+  employmentType?: string | null;
+  /** Casual holiday pay paid with wages (8% on top). */
+  casualHolidayPayInWages?: boolean | null;
+  /** Employment start (hire) date. */
+  employmentStartDate?: Date | null;
+  /** Fixed ESCT rate override (IR23/employer election). */
+  esctRateOverride?: unknown;
 }
 
 /** Employment facts KiwiSaver auto-enrolment needs (Phase 2 supplies them). */
@@ -223,7 +247,13 @@ export interface NzEmploymentFacts {
   casualHolidayPayInWages?: boolean;
 }
 
-const KS_ELECTIONS = new Set(["ACTIVE", "OPTED_OUT", "ON_HOLIDAY", "NOT_ELIGIBLE"]);
+const KS_ELECTIONS = new Set([
+  "ACTIVE",
+  "NOT_ENROLLED", // Phase 3 — admin-recorded "not in the scheme"
+  "OPTED_OUT",
+  "ON_HOLIDAY",
+  "NOT_ELIGIBLE",
+]);
 
 /** Adapt a DB EmployeeTaxProfile row (+ optional employment facts) into the
  *  engine's NzTaxProfileInput. */
@@ -234,7 +264,7 @@ export function toNzTaxProfile(
   const status = row.kiwiSaverStatus;
   if (!KS_ELECTIONS.has(status)) {
     throw new NzStatutoryError(
-      `Unknown KiwiSaver election "${status}" — the vocabulary is ACTIVE, OPTED_OUT, ON_HOLIDAY, NOT_ELIGIBLE`,
+      `Unknown KiwiSaver election "${status}" — the vocabulary is ACTIVE, NOT_ENROLLED, OPTED_OUT, ON_HOLIDAY, NOT_ELIGIBLE`,
     );
   }
   const taxCode = row.taxCode.trim();
@@ -248,19 +278,28 @@ export function toNzTaxProfile(
     );
   }
 
+  // Phase 3 — employment facts from the profile row (Task 3.4-r1) win over
+  // the call-site parameter; the parameter stays as the fallback for
+  // pre-migration callers.
+  const rowCategory = isNzEmploymentCategory(row.employmentType)
+    ? (row.employmentType as NzEmploymentCategory)
+    : null;
+  const employmentCategory =
+    rowCategory ?? employment.employmentCategory ?? (row.isCasual ? "CASUAL" : "PERMANENT");
+
   return {
     taxCode,
     isCasual: row.isCasual,
-    employmentCategory:
-      employment.employmentCategory ?? (row.isCasual ? "CASUAL" : "PERMANENT"),
-    employmentStartDate: employment.hireDate ?? null,
-    casualHolidayPayInWages: employment.casualHolidayPayInWages ?? true,
+    employmentCategory,
+    employmentStartDate: row.employmentStartDate ?? employment.hireDate ?? null,
+    casualHolidayPayInWages:
+      row.casualHolidayPayInWages ?? employment.casualHolidayPayInWages ?? true,
     kiwiSaverStatus: status as NzTaxProfileInput["kiwiSaverStatus"],
     kiwiSaverRate: toNumOrNull(row.kiwiSaverRate),
     employerKiwiSaverRate: toNumOrNull(row.employerKiwiSaverRate),
-    // No Phase 0 column — the engine supports the override, the DB field
-    // is a Phase 2 candidate.
-    esctRateOverride: null,
+    // Phase 3 — the DB column finally exists (Task 3.4-r1); the engine has
+    // honoured the override since Phase 1.
+    esctRateOverride: toNumOrNull(row.esctRateOverride),
     taxCodeSpecialRate: toNumOrNull(row.taxCodeSpecialRate),
     stcAccTreatment: accTreatment ?? "INC",
     stcStudentLoanRate: toNumOrNull(row.stcStudentLoanRate),
@@ -279,7 +318,8 @@ interface NzRateSetRow {
   id: string;
   label: string;
   payeTiers: Array<{ fromAnnual: number; toAnnual: number | null; rate: number }>;
-  secondaryRates: Array<{ code: string; rate: number }>;
+  // Phase 3 — rows may carry the combined-rate flag (omitted = false).
+  secondaryRates: Array<{ code: string; rate: number; accInclusive?: boolean }>;
   accLevy: { rate: number; maxEarnings: number; maxLevy: number } | null;
   ietc: {
     annualAmount: number;

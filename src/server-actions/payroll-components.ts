@@ -55,6 +55,10 @@ function serialize(r: {
   effectiveTo: Date | null;
   isActive: boolean;
   sortOrder: number;
+  taxApplicable: boolean;
+  statutoryCategory: string;
+  wageBaseRef: string;
+  isSystemGenerated: boolean;
   createdAt: Date;
 }): SalaryComponentT {
   return {
@@ -71,6 +75,12 @@ function serialize(r: {
     effectiveTo: r.effectiveTo ? r.effectiveTo.toISOString().slice(0, 10) : null,
     isActive: r.isActive,
     sortOrder: r.sortOrder,
+    // Phase 3 (Task 3.3) — the statutory tax mapping rides along for
+    // display; the super-admin mapping editor owns the values.
+    taxApplicable: r.taxApplicable,
+    statutoryCategory: r.statutoryCategory as SalaryComponentT["statutoryCategory"],
+    wageBaseRef: r.wageBaseRef as SalaryComponentT["wageBaseRef"],
+    isSystemGenerated: r.isSystemGenerated,
     createdAt: r.createdAt.toISOString(),
   };
 }

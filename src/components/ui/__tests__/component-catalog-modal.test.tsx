@@ -32,7 +32,9 @@ function row(overrides: Partial<SalaryComponentT> = {}): SalaryComponentT {
     id: "sc-1", code: "basic", label: "Basic Salary",
     kind: "EARNING", mode: "FIXED", defaultAmount: 84_000,
     dependsOnPaymentDays: true, effectiveFrom: null, effectiveTo: null,
-    isActive: true, sortOrder: 10, createdAt: "2026-01-01T00:00:00.000Z",
+    isActive: true, sortOrder: 10,
+    taxApplicable: true, statutoryCategory: "TAXABLE_EARNING", wageBaseRef: "GROSS", isSystemGenerated: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }

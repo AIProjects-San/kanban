@@ -249,6 +249,57 @@ describe("Task 1.1 — levy capping and special codes", () => {
   });
 });
 
+describe("Task 3.1 — accInclusive secondary rates (combined-rate rows)", () => {
+  // A rate row flagged accInclusive already carries the levy — the IRD
+  // lump-sum tables publish these combined rates (SB 12.25% = 10.5% +
+  // 1.75%). The equivalence must be exact: the combined row and the split
+  // row produce the same total deduction.
+  function payeWithSecondary(
+    secondaryRates: Array<{ code: string; rate: number; accInclusive?: boolean }>,
+    code: string,
+  ) {
+    return calculatePaye({
+      gross: 1_000,
+      frequency: "WEEKLY",
+      taxProfile: baseProfile({ taxCode: code }),
+      payeTiers: SET.payeTiers,
+      secondaryRates,
+      accLevy: SET.accLevy,
+      ietc: SET.ietc,
+    });
+  }
+
+  it("an accInclusive SB row (12.25%) reproduces the split row's total with acc $0", () => {
+    const combined = payeWithSecondary([{ code: "SB", rate: 0.1225, accInclusive: true }], "SB");
+    expect(combined.tax).toBe(122.5);
+    expect(combined.acc).toBe(0);
+    expect(combined.total).toBe(122.5);
+    // Equivalence with the seeded split form: 10.5% + 1.75% levy.
+    expect(paye(1_000, "WEEKLY", "SB").total).toBe(122.5);
+  });
+
+  it("an accInclusive ND row (46.75%) carries no levy line", () => {
+    const combined = payeWithSecondary([{ code: "ND", rate: 0.4675, accInclusive: true }], "ND");
+    expect(combined.tax).toBe(467.5);
+    expect(combined.acc).toBe(0);
+    expect(combined.method).toBe("ND");
+  });
+
+  it("the flag rides along for code families that borrow another code's row (NSW → SB)", () => {
+    const combined = payeWithSecondary([{ code: "SB", rate: 0.1225, accInclusive: true }], "NSW");
+    expect(combined.tax).toBe(122.5);
+    expect(combined.acc).toBe(0);
+    expect(combined.method).toBe("NSW");
+  });
+
+  it("a row without the flag keeps the levy-on-top behaviour (default false)", () => {
+    const split = payeWithSecondary([{ code: "S", rate: 0.175 }], "S");
+    expect(split.tax).toBe(175.0);
+    expect(split.acc).toBe(17.5);
+    expect(split.total).toBe(192.5);
+  });
+});
+
 describe("Task 1.1 — guards", () => {
   it("STC without a certificate rate throws (no default exists)", () => {
     expect(() => paye(5_000, "MONTHLY", "STC")).toThrowError(NzStatutoryError);

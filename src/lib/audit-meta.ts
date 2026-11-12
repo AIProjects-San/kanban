@@ -15,7 +15,7 @@ import {
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
-  ArrowUpRight, Upload, FileX,
+  ArrowUpRight, Upload, FileX, Archive,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -242,7 +242,19 @@ export type AuditAction =
   // P24 (PL-01) — the notification template master (Settings →
   // Notifications): customize / reset one event's override row.
   | "notification.template_updated"
-  | "notification.template_reset";
+  | "notification.template_reset"
+  // NZ statutory engine — Phase 3 (super-admin admin UI): the rate-set
+  // lifecycle (direct slab edits, versioned rule changes, archive and
+  // delete), the component tax mapping, and the employee tax profile
+  // (including the required auto-enrolment audit entry when a temporary
+  // employment converts to permanent past the 28-day rule).
+  | "statutory.rate_set_updated"
+  | "statutory.rate_set_version_created"
+  | "statutory.rate_set_archived"
+  | "statutory.rate_set_deleted"
+  | "tax.component_mapping_updated"
+  | "tax.profile_updated"
+  | "tax.auto_enrolment_audited";
 
 // ---------------------------------------------------------------------------
 // Action → { icon, color class } mapping
@@ -438,6 +450,14 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "leave.comp_rejected": { icon: CalendarClock, cls: "text-rose-500 bg-rose-500/10" },
   "notification.template_updated": { icon: MessageSquareText, cls: "text-violet-500 bg-violet-500/10" },
   "notification.template_reset": { icon: RotateCcw, cls: "text-violet-500 bg-violet-500/10" },
+
+  "statutory.rate_set_updated": { icon: Landmark, cls: "text-violet-500 bg-violet-500/10" },
+  "statutory.rate_set_version_created": { icon: FilePlus2, cls: "text-violet-500 bg-violet-500/10" },
+  "statutory.rate_set_archived": { icon: Archive, cls: "text-amber-500 bg-amber-500/10" },
+  "statutory.rate_set_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
+  "tax.component_mapping_updated": { icon: ArrowRightLeft, cls: "text-blue-500 bg-blue-500/10" },
+  "tax.profile_updated": { icon: FilePenLine, cls: "text-blue-500 bg-blue-500/10" },
+  "tax.auto_enrolment_audited": { icon: ShieldCheck, cls: "text-amber-500 bg-amber-500/10" },
 };
 
 /** Fallback for any action string not in the map (should never happen with

@@ -516,3 +516,56 @@ without superseding this ADR. The banner text is tested
 (`payroll-view.test.tsx`) so the positioning cannot silently regress. The
 India-CTC research in `RECRUITMENT_MODULE_PLAN.md` remains background for the
 future build, not a promise.
+
+## ADR-015 — NZ statutory Phase 3: rule versioning is rate-set versioning; the admin UI owns the tables the engine reads
+
+**Context.** Phase 0/1 built the NZ statutory engine on the
+`StatutoryRateSet` family (typed child tables per rate family) with the pure
+calculators in `src/lib/payroll/nz/`. Phase 3 adds the super-admin UI
+(`src/app/(admin)/*`, guarded by `statutory:manage` — SUPER_ADMIN only).
+The task spec spoke of a flat "TaxSlab" table (group/code/lower/upper/rate/
+accInclusive/order) and per-rule versioning with `effectiveFrom`.
+
+**Decision.**
+1. *No parallel slab store.* The Task 3.1 editor edits the Phase 0 child
+   tables through one unified row view (group = PAYE/SECONDARY/ESCT); the
+   engine keeps a single source of truth. `accInclusive` is a real new column
+   on `StatutorySecondaryRate` (combined-rate rows such as the IRD lump-sum
+   table's 12.25% SB) honoured by `calculatePaye`.
+2. *A rule version is a new rate set.* Task 3.2's "editing creates a new
+   version with effectiveFrom" is implemented as `createRuleVersion`: clone
+   the source set, change ONE category, split the window. This mirrors how
+   IRD publishes (rates move as effective-dated bundles) and keeps
+   `resolveNzRateSet` — the engine's only DB seam — unchanged. Direct
+   in-place editing (`saveTaxYearSlabs`) is allowed only while no LOCKED run
+   references the set; referenced sets are archive-only (delete refused
+   server-side AND in the UI).
+3. *Employment facts live on `EmployeeTaxProfile`* (Task 3.4-r1):
+   `employmentType`, `casualHolidayPayInWages`, start/end dates, plus
+   `taxCodeEffectiveFrom`, `stcCertificateExpiry` and the `esctRateOverride`
+   the engine has honoured since Phase 1. The `toNzTaxProfile` adapter
+   prefers row facts over call-site facts (pre-migration rows still work).
+4. *KiwiSaver vocabulary extended, not replaced*: `NOT_ENROLLED` joins
+   ACTIVE/OPTED_OUT/ON_HOLIDAY/NOT_ELIGIBLE as a stored election (an
+   explicit "not in the scheme" record — no auto-enrolment at hire), so the
+   editor's three headline options (ENROLLED/NOT_ENROLLED/OPT_OUT) map onto
+   the engine without breaking Phase 1 semantics.
+5. *The 28-day rule is day-29-exact*: auto-enrolment fires when the pay
+   period ends on/after start + 28 days (a 1 March start auto-enrols on
+   29 March — IRD "this applies from day 29"). The Phase 1 `> 28`
+   comparison was one day late; the boundary tests moved with it.
+
+**Test-matrix adjudication (carried from Phase 1).** Where the task-spec
+matrix disagreed with the seeded-bracket arithmetic, the arithmetic wins and
+the deviation is documented in the tests (e.g. SB weekly $1,000 is
+$105.00 + $17.50 levy = $122.50 per IRD spec §5.6 — the draft's "$0 ACC" for
+secondary codes contradicts IRD's levy-on-top rule; M annual $156,641 slabs
+to $41,569.03, not $41,067.67). The Simulate button therefore shows
+IRD-verified values, cross-checked against IR341 table rows
+(monthly $15,000 M → $4,106.46 + $228.43).
+
+**Consequences.** Locked payslips keep their `Payslip.statutory` snapshots
+and `PayrollRun.rateSetId` pins; every admin mutation writes an audit entry
+(`statutory.*`, `tax.*` actions in `lib/audit-meta.ts`), and the
+TEMPORARY→PERMANENT conversion past day 28 writes the REQUIRED
+`tax.auto_enrolment_audited` entry.

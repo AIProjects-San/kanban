@@ -6,8 +6,9 @@
 //
 //   resolveKiwiSaverStatus(profile, payPeriodEnd) — the STATUS TRANSITION
 //   check, never a calculation. Maps the DB election vocabulary (Phase 0:
-//   ACTIVE / OPTED_OUT / ON_HOLIDAY / NOT_ELIGIBLE) onto the engine's
-//   effective statuses and applies IRD's auto-enrolment exemptions
+//   ACTIVE / OPTED_OUT / ON_HOLIDAY / NOT_ELIGIBLE; Phase 3 adds
+//   NOT_ENROLLED — recorded by the admin as "not in the scheme") onto the
+//   engine's effective statuses and applies IRD's auto-enrolment exemptions
 //   ("Opting in and enrolling temporary and casual employees", verified
 //   2026-11-12):
 //
@@ -19,7 +20,9 @@
 //     • Temporary employees: "You must automatically enrol employees if
 //       their employment is for more than 28 days in a row. This applies
 //       from day 29." The 28 days is the PERIOD OF EMPLOYMENT, not days
-//       worked.
+//       worked — day 1 is the employment start date, so day 29 falls
+//       exactly 28 days after it (a 1 March start auto-enrols on
+//       29 March).
 //     • Casual agricultural workers "on a day-to-day basis for fewer than
 //       3 months" are exempt; beyond 3 months they must be enrolled.
 //     • NSW (recognised seasonal workers) are not eligible for KiwiSaver
@@ -76,6 +79,11 @@ function diffInDays(later: Date, earlier: Date): number {
   return Math.round((a - b) / 86_400_000);
 }
 
+/** Add whole days to a UTC date. */
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 86_400_000);
+}
+
 /** Shift a date by whole calendar months, clamping the day to the target
  *  month's length (Jan 31 + 1 month → Feb 28/29 — date-fns semantics). */
 function addMonthsClamped(date: Date, months: number): Date {
@@ -93,6 +101,28 @@ function addMonthsClamped(date: Date, months: number): Date {
  *  difference alone would miss). */
 function exceedsWholeMonths(end: Date, start: Date, wholeMonths: number): boolean {
   return end.getTime() > addMonthsClamped(start, wholeMonths).getTime();
+}
+
+/**
+ * The calendar date a pending auto-enrolment trigger fires (the admin
+ * profile editor's preview line — Phase 3). Null when the category has no
+ * time rule or the start date is missing:
+ *   TEMPORARY           day 29 = employment start + 28 days
+ *   CASUAL_AGRICULTURAL the day after 3 whole calendar months
+ */
+export function autoEnrolDueDate(
+  category: NzTaxProfileInput["employmentCategory"],
+  employmentStartDate: Date | null,
+): Date | null {
+  if (!employmentStartDate) return null;
+  switch (category) {
+    case "TEMPORARY":
+      return addDays(employmentStartDate, 28);
+    case "CASUAL_AGRICULTURAL":
+      return addDays(addMonthsClamped(employmentStartDate, 3), 1);
+    default:
+      return null;
+  }
 }
 
 /**
@@ -121,6 +151,17 @@ export function resolveKiwiSaverStatus(
         status: "OPT_OUT",
         autoEnrolTriggered: false,
         reason: "Employee opted out — no employee deduction, no employer contribution",
+      };
+
+    // Phase 3 — the admin-recorded "not in the scheme" election (the
+    // profile editor's NOT_ENROLLED option). Unlike the ACTIVE posture it
+    // never auto-enrols at hire: it is an explicit record that this
+    // employee is not a member, and neither side contributes.
+    case "NOT_ENROLLED":
+      return {
+        status: "NOT_ENROLLED",
+        autoEnrolTriggered: false,
+        reason: "Recorded as not enrolled — no employee deduction, no employer contribution",
       };
 
     case "ON_HOLIDAY":
@@ -176,7 +217,9 @@ export function resolveKiwiSaverStatus(
         reason: "Casual without the holiday-pay-in-wages condition — does not meet the statutory exemption, auto-enrolled",
       };
 
-    // Temporary: auto-enrol from day 29 of continuous employment.
+    // Temporary: auto-enrol from day 29 of continuous employment. Day 1
+    // is the start date, so day 29 is start + 28 days — the enrolment
+    // fires when a pay period ENDS on or after that date.
     case "TEMPORARY": {
       if (!taxProfile.employmentStartDate) {
         return {
@@ -185,18 +228,19 @@ export function resolveKiwiSaverStatus(
           reason: "Temporary employment — no start date on record, the 28-day rule cannot trigger",
         };
       }
-      const days = diffInDays(payPeriodEnd, taxProfile.employmentStartDate);
-      if (days > 28) {
+      const dueDate = autoEnrolDueDate("TEMPORARY", taxProfile.employmentStartDate)!;
+      if (payPeriodEnd.getTime() >= dueDate.getTime()) {
         return {
           status: "ENROLLED",
           autoEnrolTriggered: true,
-          reason: `Temporary employment reached day ${days} (> 28 days in a row) — auto-enrolled from day 29`,
+          reason: "Temporary employment passed 28 days in a row — auto-enrolled from day 29",
         };
       }
+      const remaining = diffInDays(dueDate, payPeriodEnd);
       return {
         status: "NOT_ENROLLED",
         autoEnrolTriggered: false,
-        reason: `Temporary employment — day ${days} of 28; auto-enrolment triggers on day 29`,
+        reason: `Temporary — 28-day rule: auto-enrol on ${dueDate.toISOString().slice(0, 10)} (${remaining} day${remaining === 1 ? "" : "s"} away)`,
       };
     }
 
@@ -216,10 +260,11 @@ export function resolveKiwiSaverStatus(
           reason: "Casual agricultural employment passed 3 months — auto-enrolled",
         };
       }
+      const due = autoEnrolDueDate("CASUAL_AGRICULTURAL", taxProfile.employmentStartDate);
       return {
         status: "NOT_ENROLLED",
         autoEnrolTriggered: false,
-        reason: "Casual agricultural employment — within 3 months; exempt while day-to-day",
+        reason: `Casual agricultural employment — 3-month rule: auto-enrol on ${due ? due.toISOString().slice(0, 10) : "(no start date)"}`,
       };
     }
 

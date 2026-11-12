@@ -2724,6 +2724,12 @@ async function main() {
       // (the run's two-pass kernel, sequential on the docked running net).
       { code: "variable_pay", label: "Variable Pay Allowance", kind: "EARNING", mode: "PERCENT_OF_GROSS", defaultAmount: 8, sortOrder: 75 },
       { code: "advance_recovery", label: "Advance Recovery", kind: "DEDUCTION", mode: "PERCENT_OF_NET", defaultAmount: 6, sortOrder: 80 },
+      // Phase 3 (Task 3.3) — one admin-created row so the tax-mapping
+      // editor has an EDITABLE demo: a home-office cost reimbursement is
+      // non-taxable income (actual-cost reimbursement, not an allowance)
+      // and excluded from every statutory wage base.
+      { code: "home_office_reimbursement", label: "Home Office Reimbursement", kind: "EARNING", mode: "FIXED", defaultAmount: 600, sortOrder: 85,
+        taxApplicable: false, statutoryCategory: "NON_TAXABLE", wageBaseRef: "NONE", isSystemGenerated: false },
     ];
     await db.salaryComponent.createMany({
       data: CATALOG_SEEDS.map((c) => ({
@@ -2737,6 +2743,19 @@ async function main() {
         // P16 — the optional catalog validity window (null = unbounded).
         effectiveFrom: c.effectiveFrom ? new Date(`${c.effectiveFrom}T00:00:00Z`) : null,
         effectiveTo: c.effectiveTo ? new Date(`${c.effectiveTo}T00:00:00Z`) : null,
+        // Phase 3 (Task 3.3) — the statutory tax mapping. The catalog seed
+        // IS the system source of these rows, so they are read-only in the
+        // mapping editor; categories follow the kind (earnings are taxable
+        // and feed the engine gross; deductions / employer lines do not).
+        taxApplicable: c.taxApplicable ?? c.kind === "EARNING",
+        statutoryCategory:
+          c.statutoryCategory ??
+          (c.kind === "EARNING" ? "TAXABLE_EARNING"
+            : c.kind === "DEDUCTION" ? "POST_TAX_DEDUCTION"
+              : c.kind === "EMPLOYER_CONTRIBUTION" ? "EMPLOYER_CONTRIBUTION"
+                : "STATISTICAL"),
+        wageBaseRef: c.wageBaseRef ?? (c.kind === "EARNING" ? "GROSS" : "NONE"),
+        isSystemGenerated: c.isSystemGenerated ?? true,
       })),
     });
     const round2 = (n) => Math.round(n * 100) / 100;
@@ -3072,14 +3091,22 @@ async function main() {
     // ------------------------------------------------------------------
     {
       const TAX_PROFILES = [
-        { email: "manager@fernly.app", irdNumber: "583639136", taxCode: "M", kiwiSaverStatus: "ACTIVE" },
-        { email: "hana@fernly.app", irdNumber: "752783373", taxCode: "M SL", kiwiSaverStatus: "OPTED_OUT" },
-        { email: "yuki@fernly.app", irdNumber: "760841838", taxCode: "M", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.04 },
-        { email: "soren@fernly.app", irdNumber: "915801951", taxCode: "ME", kiwiSaverStatus: "NOT_ELIGIBLE" },
+        { email: "manager@fernly.app", irdNumber: "583639136", taxCode: "M", kiwiSaverStatus: "ACTIVE",
+          employmentType: "PERMANENT", employmentStartDate: "2023-02-06" },
+        { email: "hana@fernly.app", irdNumber: "752783373", taxCode: "M SL", kiwiSaverStatus: "OPTED_OUT",
+          employmentType: "PERMANENT", employmentStartDate: "2024-07-15" },
+        { email: "yuki@fernly.app", irdNumber: "760841838", taxCode: "M", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.04,
+          employmentType: "PERMANENT", employmentStartDate: "2025-09-01" },
+        { email: "soren@fernly.app", irdNumber: "915801951", taxCode: "ME", kiwiSaverStatus: "NOT_ELIGIBLE",
+          employmentType: "PERMANENT", employmentStartDate: "2026-02-02" },
         { email: "diego@fernly.app", irdNumber: "566400642", taxCode: "STC", kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.03,
           taxCodeSpecialRate: 0.18, stcAccTreatment: "PLUS", stcStudentLoanRate: 0.08,
+          stcCertificateExpiry: "2027-03-31", taxCodeEffectiveFrom: "2026-10-01",
+          employmentType: "PERMANENT", employmentStartDate: "2026-06-01",
           notes: "IR23 tailored tax code certificate (demo): 18% excluding ACC, special SL rate 8%." },
-        { email: "kofi@fernly.app", irdNumber: "561381593", taxCode: "SB SL", isCasual: true, kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.035 },
+        { email: "kofi@fernly.app", irdNumber: "561381593", taxCode: "SB SL", isCasual: true, kiwiSaverStatus: "ACTIVE", kiwiSaverRate: 0.035,
+          employmentType: "CASUAL", casualHolidayPayInWages: true, employmentStartDate: "2026-08-10",
+          notes: "Casual (irregular shifts, holiday pay in wages) — KiwiSaver exempt, opted in at 3.5%." },
       ];
       let taxProfileCount = 0;
       for (const t of TAX_PROFILES) {
@@ -3097,6 +3124,12 @@ async function main() {
             taxCodeSpecialRate: t.taxCodeSpecialRate ?? null,
             stcAccTreatment: t.stcAccTreatment ?? "INC",
             stcStudentLoanRate: t.stcStudentLoanRate ?? null,
+            stcCertificateExpiry: t.stcCertificateExpiry ? new Date(`${t.stcCertificateExpiry}T00:00:00Z`) : null,
+            taxCodeEffectiveFrom: t.taxCodeEffectiveFrom ? new Date(`${t.taxCodeEffectiveFrom}T00:00:00Z`) : null,
+            employmentType: t.employmentType ?? null,
+            casualHolidayPayInWages: t.casualHolidayPayInWages ?? true,
+            employmentStartDate: t.employmentStartDate ? new Date(`${t.employmentStartDate}T00:00:00Z`) : null,
+            employmentEndDate: t.employmentEndDate ? new Date(`${t.employmentEndDate}T00:00:00Z`) : null,
             notes: t.notes ?? "",
             createdById: hrId,
           },

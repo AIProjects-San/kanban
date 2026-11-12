@@ -46,13 +46,15 @@ const PAYE_TIERS = [
 ];
 
 // Secondary codes — flat income-tax rates "before ACC levies" (IRD).
+// accInclusive stays false: these are the split rates; a combined-rate
+// row (e.g. the lump-sum table's 12.25% SB) is a Phase 3 admin edit.
 const SECONDARY_RATES = [
-  { code: "SB", rate: 0.105, label: "Secondary bottom ($0–$15,600)" },
-  { code: "S", rate: 0.175, label: "Secondary ($15,601–$53,500)" },
-  { code: "SH", rate: 0.3, label: "Secondary high ($53,501–$78,100)" },
-  { code: "ST", rate: 0.33, label: "Secondary top ($78,101–$180,000)" },
-  { code: "SA", rate: 0.39, label: "Secondary all ($180,001+)" },
-  { code: "ND", rate: 0.45, label: "No declaration (IR330 not given)" },
+  { code: "SB", rate: 0.105, label: "Secondary bottom ($0–$15,600)", accInclusive: false },
+  { code: "S", rate: 0.175, label: "Secondary ($15,601–$53,500)", accInclusive: false },
+  { code: "SH", rate: 0.3, label: "Secondary high ($53,501–$78,100)", accInclusive: false },
+  { code: "ST", rate: 0.33, label: "Secondary top ($78,101–$180,000)", accInclusive: false },
+  { code: "SA", rate: 0.39, label: "Secondary all ($180,001+)", accInclusive: false },
+  { code: "ND", rate: 0.45, label: "No declaration (IR330 not given)", accInclusive: false },
 ];
 
 const ACC_LEVY = { rate: 0.0175, maxEarnings: 156641, maxLevy: 2741.22 };

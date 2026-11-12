@@ -33,7 +33,9 @@ function catalogRow(overrides: Partial<SalaryComponentT> = {}): SalaryComponentT
     id: "sc-1", code: "study_support", label: "Study Support Payment",
     kind: "EARNING", mode: "FIXED", defaultAmount: 3_000,
     dependsOnPaymentDays: true, effectiveFrom: null, effectiveTo: null,
-    isActive: true, sortOrder: 65, createdAt: "2026-01-01T00:00:00.000Z",
+    isActive: true, sortOrder: 65,
+    taxApplicable: true, statutoryCategory: "TAXABLE_EARNING", wageBaseRef: "GROSS", isSystemGenerated: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }

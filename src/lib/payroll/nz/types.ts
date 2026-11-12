@@ -60,10 +60,15 @@ export interface NzPayeTierParam {
   rate: number;
 }
 
-/** Secondary-code flat income-tax rate ("before ACC levies", IRD). */
+/** Secondary-code flat income-tax rate ("before ACC levies", IRD).
+ * accInclusive (Phase 3): true = the stored rate ALREADY includes the ACC
+ * earners' levy (a combined rate, e.g. the IRD lump-sum table's 12.25% SB)
+ * and the calculator must not add the levy again. Default false — the
+ * seeded rates are income tax only. */
 export interface NzSecondaryRateParam {
   code: string; // SB | S | SH | ST | SA | ND
   rate: number;
+  accInclusive?: boolean;
 }
 
 /** ACC earners' levy — 1:1 with the rate set. */
@@ -124,8 +129,14 @@ export interface NzRateSetParams {
 // transitions.
 // ---------------------------------------------------------------------------
 
-/** DB election vocabulary (Phase 0 EmployeeTaxProfile.kiwiSaverStatus). */
-export type NzKsElectionStatus = "ACTIVE" | "OPTED_OUT" | "ON_HOLIDAY" | "NOT_ELIGIBLE";
+/** DB election vocabulary (Phase 0 EmployeeTaxProfile.kiwiSaverStatus;
+ * "NOT_ENROLLED" added in Phase 3 for the admin profile editor). */
+export type NzKsElectionStatus =
+  | "ACTIVE"
+  | "NOT_ENROLLED"
+  | "OPTED_OUT"
+  | "ON_HOLIDAY"
+  | "NOT_ELIGIBLE";
 
 /**
  * KiwiSaver employment category for the auto-enrolment rules (IRD

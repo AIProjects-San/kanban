@@ -24,6 +24,7 @@ import {
   type NzTaxProfileRow,
 } from "@/lib/payroll/nz/calculate";
 import { NzStatutoryError } from "@/lib/payroll/nz/types";
+import { resolveKiwiSaverStatus } from "@/lib/payroll/nz/kiwisaver";
 import { baseProfile, fy2026RateSet, utc } from "./fixtures";
 
 const SET = fy2026RateSet();
@@ -262,6 +263,58 @@ describe("Task 1.4 — toNzTaxProfile (row adapter)", () => {
     expect(() => toNzTaxProfile({ ...ROW, kiwiSaverStatus: "MYSTERY" })).toThrowError(NzStatutoryError);
     expect(() => toNzTaxProfile({ ...ROW, taxCode: "  " })).toThrowError(NzStatutoryError);
     expect(() => toNzTaxProfile({ ...ROW, stcAccTreatment: "SOMETIMES" })).toThrowError(NzStatutoryError);
+  });
+});
+
+describe("Task 3.4 — toNzTaxProfile (Phase 3 profile-row employment facts)", () => {
+  const ROW3: NzTaxProfileRow = {
+    taxCode: "M SL",
+    isCasual: false,
+    kiwiSaverStatus: "ACTIVE",
+    kiwiSaverRate: 0.035,
+    employerKiwiSaverRate: null,
+    taxCodeSpecialRate: null,
+    stcAccTreatment: null,
+    stcStudentLoanRate: null,
+  };
+
+  it("row employment fields take precedence over the call-site facts", () => {
+    const p = toNzTaxProfile(
+      {
+        ...ROW3,
+        employmentType: "TEMPORARY",
+        casualHolidayPayInWages: false,
+        employmentStartDate: utc("2026-10-31"),
+        esctRateOverride: "0.3",
+      },
+      { employmentCategory: "PERMANENT", hireDate: utc("2020-01-01"), casualHolidayPayInWages: true },
+    );
+    expect(p.employmentCategory).toBe("TEMPORARY");
+    expect(p.casualHolidayPayInWages).toBe(false);
+    expect(p.employmentStartDate && p.employmentStartDate.toISOString().slice(0, 10)).toBe("2026-10-31");
+    expect(p.esctRateOverride).toBe(0.3);
+  });
+
+  it("the call-site facts still apply when the row fields are absent (pre-migration rows)", () => {
+    const p = toNzTaxProfile(
+      { ...ROW3, employmentType: null, casualHolidayPayInWages: null, employmentStartDate: null, esctRateOverride: null },
+      { employmentCategory: "CASUAL_AGRICULTURAL", hireDate: utc("2026-08-01"), casualHolidayPayInWages: false },
+    );
+    expect(p.employmentCategory).toBe("CASUAL_AGRICULTURAL");
+    expect(p.casualHolidayPayInWages).toBe(false);
+    expect(p.employmentStartDate && p.employmentStartDate.toISOString().slice(0, 10)).toBe("2026-08-01");
+    expect(p.esctRateOverride).toBeNull();
+  });
+
+  it("an invalid row employmentType is ignored (falls back to isCasual/param)", () => {
+    expect(toNzTaxProfile({ ...ROW3, employmentType: "ZERO_HOURS" }).employmentCategory).toBe("PERMANENT");
+    expect(toNzTaxProfile({ ...ROW3, isCasual: true, employmentType: "ZERO_HOURS" }).employmentCategory).toBe("CASUAL");
+  });
+
+  it("the NOT_ENROLLED election passes the adapter and resolves to zero contributions", () => {
+    const p = toNzTaxProfile({ ...ROW3, kiwiSaverStatus: "NOT_ENROLLED", kiwiSaverRate: null });
+    const resolution = resolveKiwiSaverStatus(p, PERIOD_END);
+    expect(resolution.status).toBe("NOT_ENROLLED");
   });
 });
 
