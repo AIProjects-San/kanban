@@ -89,3 +89,4 @@ scripts/pg-replay/node_modules/
 scripts/pg-replay/package.json
 scripts/pg-replay/bun.lock
 scripts/pg-replay/schema-dump.json
+.phase4-snapshot.json

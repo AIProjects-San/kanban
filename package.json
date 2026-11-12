@@ -23,7 +23,8 @@
     "db:reset": "bash scripts/run-with-env.sh bunx prisma migrate reset",
     "db:seed": "SEED_DEMO=1 bash scripts/run-with-env.sh node scripts/seed.js",
     "db:seed:statutory": "bash scripts/run-with-env.sh node scripts/seed-statutory.js",
-    "verify:phase1": "bash scripts/run-with-env.sh bun scripts/verify-phase1.ts"
+    "verify:phase1": "bash scripts/run-with-env.sh bun scripts/verify-phase1.ts",
+    "verify:phase4": "bash scripts/run-with-env.sh bun scripts/verify-phase4.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
