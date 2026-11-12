@@ -16,6 +16,10 @@ const db = vi.hoisted(() => {
     "attendanceRecord", "leaveRequest", "leaveType", "salaryWithholding",
     "fullAndFinalStatement", "mailOutbox", "leaveBalance",
     "statutoryRule", "employeeTaxProfile", "taxYear",
+    // Phase 1B (G8) — the assignment read createPayrollRun/addPayslip make.
+    "salaryStructureAssignment",
+    // Phase 1C (G2) — the GL reads the lock-time posting makes.
+    "ledgerAccount", "accountingPeriod", "journalEntry", "journalEntryLine",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -173,6 +177,18 @@ beforeEach(() => {
   db.statutoryRule.findUnique.mockResolvedValue(null);
   db.payAdjustment.findMany.mockResolvedValue([]);
   db.salaryWithholding.findMany.mockResolvedValue([]);
+  // Phase 1B (G8) — no assignment timeline by default (the assignment-path
+  // tests set these explicitly).
+  db.salaryStructureAssignment.findMany.mockResolvedValue([]);
+  db.salaryStructureAssignment.findFirst.mockResolvedValue(null);
+  // Phase 1C (G2) — the lock-time GL posting reads: the system chart rows
+  // resolve to stable ids, no entry exists yet, periods resolve per-test,
+  // and journalEntry.create echoes its input (the posting tests override).
+  db.ledgerAccount.findUnique.mockImplementation(async ({ where }: { where: { code: string } }) =>
+    where.code === "MISSING" ? null : { id: `acc-\${where.code}`, code: where.code, name: `Chart \${where.code}`, type: "LIABILITY", isActive: true, isSystem: true },
+  );
+  db.journalEntry.findFirst.mockResolvedValue(null);
+  db.journalEntry.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "je-new", ...data }));
   db.fullAndFinalStatement.findFirst.mockResolvedValue(null);
   db.payrollRun.findUnique.mockResolvedValue(null);
   db.payrollRun.findMany.mockResolvedValue([]);

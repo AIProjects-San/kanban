@@ -22,7 +22,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { Prisma } from "@prisma/client";
+import { Prisma, type SalaryStructure } from "@prisma/client";
 import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT, LopDetailT, OpeningYtdRowT } from "@/lib/types";
 import {
@@ -106,6 +106,11 @@ import { buildPayrollAnalytics, type PayrollAnalytics } from "@/lib/payroll-anal
 // type every statutory failure surfaces as.
 import { resolveNzRateSet, type NzTaxProfileRow } from "@/lib/payroll/nz/calculate";
 import { NzStatutoryError, type NzPayFrequency } from "@/lib/payroll/nz/types";
+// Phase 1B (G8) — effective-dated salary assignment resolution.
+import {
+  resolveAssignmentAt,
+  assignmentsInForceWhere,
+} from "@/lib/payroll/resolve-assignment";
 import {
   classifyComponentsForStatutory,
   parseStatutorySnapshot,
@@ -115,6 +120,8 @@ import {
   type SlipAutoEnrolment,
   type SlipStatutoryPlan,
 } from "@/lib/payroll/nz/slip-statutory";
+// Phase 1C (G2) — the GL posting engine (lock hook).
+import { postPayrollRun } from "@/lib/accounting/post-payroll-run";
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -961,7 +968,39 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
         ...(data.userIds && data.userIds.length > 0 ? { userId: { in: data.userIds } } : {}),
       },
     });
-    if (structures.length === 0) {
+
+    // Phase 1B (G8) — the effective-dated resolution: every assignment in
+    // force at the window START (frequency-matched through its structure)
+    // decides which structure prices that employee's slip. Employees whose
+    // timeline was never materialised keep the pre-1B legacy read of their
+    // one active structure — scripts/backfill-salary-assignments.ts makes
+    // that fallback dead code in practice, but a workspace that never ran
+    // the backfill must not stop paying people.
+    const assignmentRows = await db.salaryStructureAssignment.findMany({
+      where: {
+        ...assignmentsInForceWhere(
+          window.start,
+          data.userIds && data.userIds.length > 0 ? data.userIds : undefined,
+        ),
+        structure: { frequency: window.frequency },
+      },
+      include: { structure: true },
+      orderBy: { fromDate: "asc" },
+    });
+    // Latest fromDate wins per employee — @@unique(employeeId, fromDate)
+    // makes same-date duplicates impossible, so asc order + overwrite keeps
+    // the most recent row.
+    const assignmentByUser = new Map<string, (typeof assignmentRows)[number]>();
+    for (const row of assignmentRows) assignmentByUser.set(row.employeeId, row);
+    const legacyFallback = structures.filter((s) => !assignmentByUser.has(s.userId));
+    // The effective pay sources, ONE per employee: the assignment's structure
+    // (active or retired — the timeline row is authoritative for the window
+    // it covers) or, uncovered, the legacy active structure.
+    const paidSources: SalaryStructure[] = [
+      ...[...assignmentByUser.values()].map((a) => a.structure),
+      ...legacyFallback,
+    ];
+    if (paidSources.length === 0) {
       throw new AuthorizationError(
         data.userIds && data.userIds.length > 0
           ? `No active ${window.frequency.toLowerCase()} salary structures for the selected employees — create or bulk-assign at least one before running ${window.frequency.toLowerCase()} payroll.`
@@ -999,7 +1038,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       ? await loadStatutoryClassification()
       : classifyComponentsForStatutory([]);
     const taxProfileByUser = rateSet
-      ? await loadTaxProfileRows(structures.map((s) => s.userId))
+      ? await loadTaxProfileRows(paidSources.map((s) => s.userId))
       : new Map<string, NzTaxProfileRow>();
     const statutorySkips: Array<{ userId: string; slipNo: string; reason: string }> = [];
     let statutoryDefaulted = 0;
@@ -1015,7 +1054,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // days they were employed (deliberate default-ON correctness fix;
     // pre-S5 rows read as full-period).
     const lopByUser = await deriveLopDaysForUsers(
-      structures.map((s) => s.userId),
+      paidSources.map((s) => s.userId),
       { start: window.start, end: window.end },
       periodHolidays,
     );
@@ -1057,7 +1096,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       if (list) list.push(row);
       else dueByUser.set(row.userId, [row]);
     }
-    const slipUserIds = new Set(structures.map((s) => s.userId));
+    const slipUserIds = new Set(paidSources.map((s) => s.userId));
     // Due rows whose employee has no slip in this run: ONE_SHOT/OVERWRITE
     // windows may still come back (another cadence's run can meet them),
     // but a period that never recurs again is skipped with a visible
@@ -1103,7 +1142,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       consumed: ConsumedEntry[];
       autoEnrol: SlipAutoEnrolment | null;
     };
-    const slipPlans: SlipPlan[] = structures.map((s, i) => {
+    const slipPlans: SlipPlan[] = paidSources.map((s, i) => {
       const facts = lopByUser.get(s.userId)
         ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false, lopDetail: null };
       const components = parseComponents(s.components);
@@ -1776,13 +1815,31 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
         "This employee's full-and-final statement is settled — no payslips can be added for them anymore.",
       );
     }
-    const structure = await db.salaryStructure.findFirst({
-      where: { userId: data.userId, isActive: true },
-    });
+    // P10 — the run's REAL window (stored dates, falling back to the parsed
+    // period key for pre-backfill rows) drives every per-slip derivation.
+    // Phase 1B (G8): computed BEFORE the pay source is resolved, because the
+    // assignment in force is dated by the window START.
+    const runFrequency = (run.frequency || "MONTHLY") as PayrollFrequency;
+    const windowStart = runWindowStart(run.period, run.startDate);
+    const windowEnd = runWindowEnd(run.period, run.endDate);
+    if (!windowStart || !windowEnd) {
+      throw new AuthorizationError("The run's period is not a parseable payroll window — recreate the run.");
+    }
+    // Phase 1B (G8) — the assignment in force at the run's window start
+    // decides which structure prices this joiner's slip; the legacy
+    // active-structure read remains the fallback for employees whose
+    // timeline was never materialised (the backfill makes that path dead
+    // code in practice). The assignment's structure is authoritative even
+    // when retired — history pays from the timeline, never from isActive.
+    const assignment = await resolveAssignmentAt(db, data.userId, windowStart);
+    const structure = assignment
+      ? await db.salaryStructure.findUnique({ where: { id: assignment.structureId } })
+      : await db.salaryStructure.findFirst({
+          where: { userId: data.userId, isActive: true },
+        });
     if (!structure) throw new AuthorizationError("No active salary structure for this employee — create one first.");
     // P10 — the joiner's structure cadence must match the run's (the same
     // frequency-matched rule run creation applies).
-    const runFrequency = (run.frequency || "MONTHLY") as PayrollFrequency;
     if ((structure.frequency || "MONTHLY") !== runFrequency) {
       throw new AuthorizationError(
         `This employee's active structure is ${(structure.frequency || "MONTHLY").toLowerCase()} — it cannot join a ${runFrequency.toLowerCase()} run.`,
@@ -1798,13 +1855,6 @@ export async function addPayslip(input: unknown): Promise<ActionResult<{ id: str
       ? isPeriodHeld({ fromPeriod: activeHold.fromPeriod, untilPeriod: activeHold.untilPeriod }, run.period)
       : false;
     const count = await db.payslip.count({ where: { runId: run.id } });
-    // P10 — the run's REAL window (stored dates, falling back to the parsed
-    // period key for pre-backfill rows) drives every per-slip derivation.
-    const windowStart = runWindowStart(run.period, run.startDate);
-    const windowEnd = runWindowEnd(run.period, run.endDate);
-    if (!windowStart || !windowEnd) {
-      throw new AuthorizationError("The run's period is not a parseable payroll window — recreate the run.");
-    }
     const components = parseComponents(structure.components);
     const earnings = windowEarningsFromStructure(
       components,
@@ -2128,6 +2178,41 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
       },
       { timeout: 30_000 },
     );
+    // Phase 1C (G2) — post the locked run to the general ledger, AFTER the
+    // lock commits (postPayrollRun re-reads the run; inside the interactive
+    // transaction that read would race the SQLite write lock, and an
+    // interactive-transaction JE create has the same second-connection
+    // deadlock logAudit had). Best-effort at this seam: a missing
+    // accounting period or an out-of-balance edge must not roll back a
+    // payroll the business has already paid — the failure is audited and
+    // the posting stays idempotent for a retry once the cause is fixed.
+    let glPostedId: string | null = null;
+    let glError: string | null = null;
+    try {
+      const je = await postPayrollRun(run.id, { postedById: auth.userId });
+      glPostedId = je.id;
+    } catch (e) {
+      glError = e instanceof Error ? e.message : "unknown GL posting error";
+    }
+    if (glPostedId) {
+      await logAudit({
+        actor: auth,
+        action: "payroll.gl_posted",
+        entityType: "PAYROLL_RUN",
+        entityId: run.id,
+        entityLabel: run.period,
+        detail: `${run.period} posted to the general ledger — journal entry ${glPostedId} (PAYROLL_RUN source, statutory liabilities + net pay clearing credited).`,
+      });
+    } else {
+      await logAudit({
+        actor: auth,
+        action: "payroll.gl_posting_failed",
+        entityType: "PAYROLL_RUN",
+        entityId: run.id,
+        entityLabel: run.period,
+        detail: `${run.period} was NOT posted to the general ledger: ${glError}. Fix the cause and re-run the posting — it is idempotent.`,
+      });
+    }
     // P18 — deliver outside the transaction (provider I/O never holds the
     // lock and never throws into the business write — the S17 discipline;
     // one row at a time so a big run can't stampede the provider).

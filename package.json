@@ -21,7 +21,7 @@
     "db:deploy": "bash scripts/run-with-env.sh bunx prisma migrate deploy",
     "db:status": "bash scripts/run-with-env.sh bunx prisma migrate status",
     "db:reset": "bash scripts/run-with-env.sh bunx prisma migrate reset",
-    "db:seed": "SEED_DEMO=1 bash scripts/run-with-env.sh node scripts/seed.js",
+    "db:seed": "SEED_DEMO=1 bash scripts/run-with-env.sh node scripts/seed.js && bash scripts/run-with-env.sh bun prisma/seed.ts && bash scripts/run-with-env.sh bun scripts/backfill-salary-assignments.ts",
     "db:seed:statutory": "bash scripts/run-with-env.sh bun prisma/seed/nz-statutory.ts",
     "verify:phase1": "bash scripts/run-with-env.sh bun scripts/verify-phase1.ts",
     "verify:phase4": "bash scripts/run-with-env.sh bun scripts/verify-phase4.ts"

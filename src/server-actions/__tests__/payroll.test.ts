@@ -16,6 +16,10 @@ const db = vi.hoisted(() => {
     "mailOutbox", "leaveBalance",
     // Phase 2 (engine wiring) — the statutory reads createPayrollRun makes.
     "statutoryRule", "employeeTaxProfile", "taxYear",
+    // Phase 1B (G8) — the assignment read createPayrollRun/addPayslip make.
+    "salaryStructureAssignment",
+    // Phase 1C (G2) — the GL reads the lock-time posting makes.
+    "ledgerAccount", "accountingPeriod", "journalEntry", "journalEntryLine",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -165,6 +169,21 @@ beforeEach(() => {
   db.salaryStructure.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-new", ...data }));
   db.salaryStructure.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ss-1", ...data }));
   db.salaryStructure.updateMany.mockResolvedValue({ count: 0 });
+  // Phase 1B (G8) — no assignment timeline by default (every pre-1B test
+  // exercises the legacy active-structure fallback; the assignment-path
+  // tests set these explicitly).
+  db.salaryStructureAssignment.findMany.mockResolvedValue([]);
+  db.salaryStructureAssignment.findFirst.mockResolvedValue(null);
+  // Phase 1C (G2) — the lock-time GL posting reads: the system chart rows
+  // resolve to stable ids, no entry exists yet, periods resolve per-test,
+  // and journalEntry.create echoes its input (the posting tests override).
+  db.ledgerAccount.findUnique.mockImplementation(async ({ where }: { where: { code: string } }) =>
+    where.code === "MISSING" ? null : { id: `acc-\${where.code}`, code: where.code, name: `Chart \${where.code}`, type: "LIABILITY", isActive: true, isSystem: true },
+  );
+  db.journalEntry.findFirst.mockResolvedValue(null);
+  db.journalEntry.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "je-new", ...data }));
+  db.salaryStructureAssignment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ssa-new", ...data }));
+  db.salaryStructureAssignment.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "ssa-1", ...data }));
   // F1.5 — the component catalog: empty by default (createStructureFromOffer
   // then auto-registers every offer code, which the F1.5 tests assert).
   db.salaryComponent.findMany.mockResolvedValue([]);

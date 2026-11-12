@@ -890,6 +890,27 @@ export interface PayslipLineT {
   statistical?: boolean;
 }
 
+/** Phase 1B (G8) — one effective-dated salary assignment on the employee's
+ *  timeline: the [fromDate, toDate) window (toDate null = current), the
+ *  structure that priced it, and the annual base / variable salary facts. */
+export interface SalaryAssignmentT {
+  id: string;
+  employeeId: string;
+  structureId: string;
+  fromDate: string;
+  toDate: string | null;
+  base: number;
+  variable: number;
+  reason: string | null;
+  approvedById: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  createdById: string;
+  createdByName: string;
+  /** True when the referenced structure is the employee's current active row. */
+  structureActive: boolean;
+}
+
 /** R7 — an employee's standing salary structure (annual components; the
  * payslip generator divides by 12). */
 export interface SalaryStructureT {

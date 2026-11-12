@@ -80,6 +80,11 @@ async function main() {
 
   console.log("🌱 Seeding Fernly database...");
 
+  // Phase 1B (G8) — assignment history references User/SalaryStructure with
+  // RESTRICT: wipe it before the users/structures go (a fresh demo starts
+  // with no timeline; run scripts/backfill-salary-assignments.ts after the
+  // seed to materialise it again).
+  await db.salaryStructureAssignment.deleteMany();
   await db.notification.deleteMany();
   await db.timeEntry.deleteMany();
   await db.leaveRequest.deleteMany();

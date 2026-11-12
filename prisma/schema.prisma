@@ -96,6 +96,10 @@ model User {
   // P39 (EM-16 advances half) — salary advances issued to this employee.
   salaryAdvances SalaryAdvance[] @relation("SalaryAdvances")
 
+  // Phase 1B (G8) — the employee's effective-dated salary assignment
+  // timeline (the pay history; see SalaryStructureAssignment).
+  salaryStructureAssignments SalaryStructureAssignment[]
+
   @@index([managerId])
 }
 
@@ -1373,6 +1377,13 @@ model SalaryComponent {
   // components). Read-only in the mapping editor — the engine or the seed
   // owns it, not the workspace admin.
   isSystemGenerated Boolean @default(false)
+  // Phase 1C (G2) — the GL posting map: which EXPENSE account debits this
+  // component's earning lines (null = the system 4000 Salaries & Wages
+  // fallback) and which LIABILITY account credits its deduction lines
+  // (null = the 4000 expense-reduction fallback for non-statutory
+  // deductions). Both null = the safe pre-1C default.
+  expenseAccountId   String?
+  liabilityAccountId String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -2139,6 +2150,67 @@ model SalaryStructure {
 
   @@index([userId])
   @@index([isActive])
+
+  // Phase 1B (G8) — the effective-dated assignment history that points at
+  // this structure (see SalaryStructureAssignment).
+  assignments SalaryStructureAssignment[]
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1B (G8) — EFFECTIVE-DATED SALARY ASSIGNMENTS.
+//
+// The pre-1B world resolved an employee's pay at run time by reading their
+// single ACTIVE SalaryStructure directly — a revision was a mutation of that
+// row (no history, no effective date). G8 gives every employee a timeline of
+// assignments: [fromDate, toDate) windows, toDate null = current, at most one
+// beginning on any given date (@@unique). A payroll run resolves the
+// assignment in force at its window START (lib/payroll/resolve-assignment.ts)
+// and pays from THAT assignment's structure — a backdated revision therefore
+// re-prices the windows it covers, without rewriting paid history.
+//
+// base / variable are the effective-dated salary FACTS (annual NZD):
+//   base    = the referenced structure's ANNUAL basic anchor
+//             (computeOffer().basic — what PERCENT_OF_BASIC resolves against)
+//   variable = the remaining annual EARNINGS total (allowances, bonuses,
+//             percent components) — base + variable = annual earnings.
+// Money math itself never reads them: gross still flows exclusively through
+// windowEarningsFromStructure(structure.components) (the single source for
+// every payslip line); base/variable drive the salary-history UI, the arrears
+// detector (Phase 1B step 6) and reporting.
+//
+// reason records WHY the timeline moved: HIRE (backfill / joining), REVISION
+// (market adjustment), PROMOTION, TRANSFER. Legacy compatibility: employees
+// whose active structure has NO assignment row yet keep the pre-1B direct
+// read (scripts/backfill-salary-assignments.ts materialises the rows).
+// ---------------------------------------------------------------------------
+model SalaryStructureAssignment {
+  id          String   @id @default(cuid())
+  // The employee (Fernly's User is the employee record — EmployeeProfile and
+  // EmployeeTaxProfile hang off it 1:1).
+  employeeId  String
+  employee    User     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  structureId String
+  structure   SalaryStructure @relation(fields: [structureId], references: [id], onDelete: Restrict)
+
+  // Effective from (inclusive). Unique per employee: two assignments can
+  // never begin on the same date (resolution stays deterministic).
+  fromDate    DateTime
+  // Effective until (EXCLUSIVE); null = the current open assignment.
+  toDate      DateTime?
+  // The effective-dated salary facts (annual NZD) — see the block comment.
+  base        Decimal  @db.Decimal(12, 2)
+  variable    Decimal  @default(0) @db.Decimal(12, 2)
+
+  // HIRE | REVISION | PROMOTION | TRANSFER
+  reason      String?
+  approvedById String?
+  approvedAt  DateTime?
+
+  createdAt   DateTime @default(now())
+  createdById String
+
+  @@index([employeeId, fromDate])
+  @@unique([employeeId, fromDate])
 }
 
 // R7 — one payroll period per window (P10: any cadence; the unique
@@ -2222,30 +2294,22 @@ model Payslip {
   // (the benchmark's Salary Slip Leave child, Fernly-shaped): which leave
   // spans covered the window ({code, name, takenDays, chargedDays,
   // fraction, paid}) plus the attendance-side docks (absentDays /
-  // halfDays / unmarkedDays). Null = nothing was docked or the slip predates
-  // P15 / a MANUAL LOP override replaced the derivation (the override is
-  // opaque by design — the note says "manually set by HR").
+  // halfDays / unmarkedDays). Null = nothing docked, pre-P15, or a MANUAL
+  // LOP override replaced the derivation.
   lopDetail  Json?
-  // F-R2 (S1) — optimistic-lock version. updatePayslip carries the version
-  // the editor loaded; a mismatch (someone else saved while this editor was
-  // open) refuses the save instead of silently overwriting. Incremented on
-  // every successful edit; LOCKED slips are immutable so it never moves
-  // after payment.
+  // F-R2 (S1) — optimistic-lock version. A mismatch (someone else saved
+  // while this editor was open) refuses the save; LOCKED slips never move.
   version    Int       @default(0)
   // PR-B06 (S5) — working days inside the employee's employment window
   // [max(period start, hireDate), min(period end, lastWorkingDay)],
-  // snapshotted at run/slip creation. Earnings are scaled by
-  // paidDays/workingDays (scaleEarningsToPaidDays). null = pre-S5 rows
-  // (read as full-period; no retroactive rewrite of paid history). The LOP
-  // derivation already refuses to charge outside the window (S4).
+  // snapshotted at run/slip creation; earnings scale by paidDays/
+  // workingDays. null = pre-S5 rows (read as full-period).
   paidDays   Float?
   gross      Float     @default(0)
   net        Float     @default(0)
-  // P8 (PR-19/PR-B13) — "" = normal (paid with its run) | WITHHELD = the
-  // net is held (an ACTIVE SalaryWithholding covered the period; YTD and
-  // self-service exclude it) | RELEASED = the held net was paid out via a
-  // WITHHELD_RELEASE adjustment in a later period (excluded here — the
-  // money counts once, there).
+  // P8 (PR-19/PR-B13) — "" = normal | WITHHELD = the net is held (YTD and
+  // self-service exclude it) | RELEASED = paid out via a WITHHELD_RELEASE
+  // adjustment in a later period (the money counts once, there).
   withholdStatus String @default("")
   // NZ statutory engine (Phase 0) — the frozen statutory computation
   // snapshot at creation: resolved tax code, rate-set id + label, the
@@ -2723,88 +2787,66 @@ model StatutoryStudentLoan {
 model EmployeeTaxProfile {
   id        String   @id @default(cuid())
   userId    String   @unique
-  // IRD number as declared on the IR330 (8-9 digits, stored plain — the
-  // Phase 1 engine checksum-validates before use; "" = not recorded).
+  // IRD number as declared on the IR330 (8-9 digits, plain; "" = not
+  // recorded — the Phase 1 engine checksum-validates before use).
   irdNumber String   @default("")
   // IR330 (Aug 2026) vocabulary: M | ME | SB | S | SH | ST | SA | ND | STC |
-  // CAE | NSW | EDW, optionally suffixed " SL" (e.g. "M SL", "SB SL").
-  // SH2 / ST2 were retired by IRD and are rejected. Validated at the zod
-  // boundary; "" never happens (default "M" — the no-declaration case is
-  // the explicit ND code).
+  // CAE | NSW | EDW, optionally suffixed " SL". SH2/ST2 retired. Default
+  // "M" — the no-declaration case is the explicit ND code.
   taxCode   String   @default("M")
-  // Casual employment rules (Task 0.2): true marks irregular-hours casual
-  // employment (the CAE / NSW / EDW special-code family). The profile
-  // editor surfaces those codes only for casuals, and the engine's casual
-  // path taxes each payment on its own annualisation without IETC.
+  // True = irregular-hours casual employment (the CAE / NSW / EDW family);
+  // the engine's casual path taxes each payment on its own annualisation.
   isCasual  Boolean  @default(false)
-  // KiwiSaver election. ACTIVE + null rate = no recorded election -> the
-  // rate set's defaultEmployeeRate applies (3.5% FY2026-27 — user
-  // decision). NOT_ENROLLED (Phase 3) = recorded as not in the scheme —
-  // no employee deduction, no employer contribution, no auto-enrolment.
-  // OPTED_OUT = no employee deduction and no employer contribution.
-  // ON_HOLIDAY = savings suspension (paused). NOT_ELIGIBLE = under-18 /
-  // 65+ etc. (opt-in members keep an elected rate — employer side is
-  // voluntary for them).
+  // KiwiSaver election: ACTIVE + null rate = no recorded election (the rate
+  // set's defaultEmployeeRate applies — 3.5% FY2026-27); NOT_ENROLLED /
+  // OPTED_OUT = nothing deducted; ON_HOLIDAY = savings suspension;
+  // NOT_ELIGIBLE = under-18/65+ (opt-in members keep an elected rate).
   kiwiSaverStatus          String    @default("ACTIVE")
-  // Phase 1A vocabulary: kiwiSaverEmployeeRate / kiwiSaverEmployerRate
-  // (renamed from kiwiSaverRate / employerKiwiSaverRate). Null = no
-  // recorded election → the rate set's defaultEmployeeRate applies
-  // (3.5% FY2026-27 — user decision); a persisted value is the sticky
-  // evidence of an election or an auto-enrolment (Task 1.2 design).
+  // Phase 1A vocabulary (renamed from kiwiSaverRate / employerKiwiSaverRate).
+  // Null = no recorded election → the rate-set default; a persisted value
+  // is the sticky evidence of an election or an auto-enrolment.
   kiwiSaverEmployeeRate   Decimal?  @db.Decimal(6, 4)
   kiwiSaverEmployerRate   Decimal?  @db.Decimal(6, 4)
-  // Phase 1A — explicit student-loan declaration flag (the IR330 SL
-  // suffix is the primary source; this records the box the employee
-  // ticked, OR'd with the suffix by the engine adapter).
+  // Phase 1A — explicit SL declaration flag (OR'd with the IR330 suffix by
+  // the engine adapter).
   studentLoan             Boolean   @default(false)
-  // Phase 1A — where the tax code came from: IR330 | ADMIN | IMPORTED
-  // (audit trail for the declaration's provenance).
+  // Phase 1A — declaration provenance: IR330 | ADMIN | IMPORTED.
   taxCodeSource           String    @default("")
 
   // --- STC support (Task 0.2-r1, verbatim per user spec) ---
   // IR23 tailored tax code certificate: the special rate replaces PAYE
-  // (both the M/ME slab path and secondary flat rates) while every other
-  // statutory line keeps computing normally.
+  // while every other statutory line keeps computing normally.
   taxCodeSpecialRate Decimal? @db.Decimal(6, 4) // IR23 tailored rate, e.g. 0.18
   // "INC" (rate includes ACC) | "PLUS" (rate excludes ACC, add separately)
   stcAccTreatment    String?  @default("INC")
-  // IR23 special student-loan repayment deduction rate — overrides the
-  // standard 12% (null = standard rate applies).
+  // IR23 special student-loan repayment rate — overrides the standard 12%.
   stcStudentLoanRate Decimal? @db.Decimal(6, 4)
-  // Phase 3 (Task 3.4-r1) — the IR23 certificate's expiry date. The
-  // profile editor warns when it has passed; a renewed certificate is a
-  // new effectiveFrom save.
+  // Phase 3 — the IR23 certificate's expiry date (the editor warns when
+  // passed; a renewal is a new effectiveFrom save).
   stcCertificateExpiry DateTime?
 
   // --- Phase 3 (Task 3.4-r1) — Section A/C fields ---
   // The date this tax code declaration applies from (IR330 start date).
-  // Null = unknown; the profile-level effectiveFrom stays the record date.
   taxCodeEffectiveFrom DateTime?
-  // Fixed ESCT rate override (the engine has honoured one since Phase 1 —
-  // the column finally exists). Null = the ESCT tier lookup applies.
+  // Fixed ESCT rate override (null = the ESCT tier lookup applies).
   esctRateOverride     Decimal?  @db.Decimal(6, 4)
 
-  // --- Phase 3 (Task 3.4-r1) — Section C: employment / casual status.
-  // The employment facts KiwiSaver auto-enrolment needs, now on the row
-  // itself (the engine adapter prefers them over call-site facts). ---
+  // --- Phase 3 — Section C: employment / casual status. ---
   // PERMANENT | CASUAL | TEMPORARY | CASUAL_AGRICULTURAL. Null = derive
   // from isCasual (the Phase 0/1 behaviour).
   employmentType            String?
-  // Casual holiday pay is paid WITH wages (the 8% on top arrangement) —
-  // the statutory casual definition. Default true: the typical NZ casual
-  // arrangement and the conservative no-deduction posture.
+  // Casual holiday pay paid WITH wages (the 8% on top arrangement) — the
+  // statutory casual definition. Default true (conservative posture).
   casualHolidayPayInWages   Boolean   @default(true)
   employmentStartDate       DateTime?
   employmentEndDate         DateTime?
-  // Phase 1A — a recorded KiwiSaver auto-enrolment EXEMPTION reason code
-  // (e.g. "CASUAL_HOLIDAY_PAY_IN_WAGES", "ADMIN_RECORDED"). Non-empty
-  // blocks the 28-day / 3-month time rules from auto-enrolling.
+  // Phase 1A — auto-enrolment EXEMPTION reason code. Non-empty blocks the
+  // 28-day / 3-month time rules from auto-enrolling.
   autoEnrolExemption        String    @default("")
-  // Phase 1A — the materialised auto-enrolment due date (TEMPORARY:
-  // start + TEMP_MAX_DAYS; CASUAL_AGRICULTURAL: the day after
-  // CASUAL_AGRI_MAX_MONTHS). Written by the profile save action so the
-  // admin list shows it without recomputation; the engine recomputes at
-  // pay time regardless (the source of truth is the category + dates).
+  // Phase 1A — the materialised auto-enrolment due date (TEMPORARY: start
+  // + TEMP_MAX_DAYS; CASUAL_AGRICULTURAL: day after
+  // CASUAL_AGRI_MAX_MONTHS). Display-only; the engine recomputes at pay
+  // time (the source of truth is the category + dates).
   autoEnrolDueDate          DateTime?
 
   effectiveFrom DateTime @default(now())
@@ -2812,4 +2854,117 @@ model EmployeeTaxProfile {
   createdById  String   @default("")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1C (G2) — GENERAL LEDGER.
+//
+// The double-entry core the payroll postings ride on:
+//   • LedgerAccount      — the chart of accounts (code-keyed, tree-capable,
+//                          isSystem rows are seed-owned and undeletable).
+//   • AccountingPeriod   — the posting calendar ([startDate, endDate]
+//                          inclusive, monthly in the seed). A closed period
+//                          refuses every new posting; corrections happen via
+//                          a REVERSAL entry in an open period.
+//   • JournalEntry       — one dated, balanced entry (DRAFT | POSTED |
+//                          REVERSED) with a source pointer (PAYROLL_RUN |
+//                          ARREARS | MANUAL) for provenance, and the
+//                          reversalOf self-link that pairs a correction to
+//                          the original it negates.
+//   • JournalEntryLine   — the debit/credit legs. Debits and credits are
+//                          separate non-negative columns (never signed
+//                          amounts) — the balance assertion is a SUM
+//                          comparison, and a line never straddles sides.
+//
+// Posting discipline (lib/accounting/post-payroll-run.ts): a PayrollRun
+// locks → one POSTED entry per run (idempotent on sourceType+sourceId),
+// debiting salary expense and crediting the statutory liabilities + net
+// pay clearing; the balance assert throws before anything is written.
+// ---------------------------------------------------------------------------
+
+model LedgerAccount {
+  id       String   @id @default(cuid())
+  code     String   @unique
+  name     String
+  // ASSET | LIABILITY | EQUITY | INCOME | EXPENSE
+  type     String
+  parentId String?
+  parent   LedgerAccount?  @relation("AccountTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children LedgerAccount[] @relation("AccountTree")
+  currency String   @default("NZD")
+  isActive Boolean  @default(true)
+  // True = seed/system-owned (the statutory payable set, the payroll expense
+  // set): the chart editor refuses to delete them.
+  isSystem Boolean  @default(false)
+  lines    JournalEntryLine[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([parentId])
+}
+
+model AccountingPeriod {
+  id        String   @id @default(cuid())
+  startDate DateTime
+  endDate   DateTime
+  // Closed → every posting into this period is refused (closePeriod);
+  // corrections go through a reversal entry in an OPEN period.
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  journalEntries JournalEntry[]
+
+  @@index([startDate, endDate])
+}
+
+model JournalEntry {
+  id         String   @id @default(cuid())
+  date       DateTime
+  memo       String?
+  periodId   String
+  period     AccountingPeriod @relation(fields: [periodId], references: [id])
+  // PAYROLL_RUN | ARREARS | MANUAL — the module that minted the entry.
+  sourceType String
+  // The source row's id (e.g. the PayrollRun id) — provenance + the
+  // idempotency key for payroll postings.
+  sourceId   String?
+  // DRAFT | POSTED | REVERSED. REVERSED marks an entry negated by a
+  // reversal — its lines are immutable history, only the flag moved.
+  status     String   @default("DRAFT")
+  postedAt   DateTime?
+  postedById String?
+  // Set when this entry was reversed (who actioned it).
+  reversedById String?
+  // The reversal link: a correction entry points at the original it
+  // negates; the original keeps its own lines byte-identical.
+  reversalOfId   String?
+  reversalOf     JournalEntry?  @relation("JeReversal", fields: [reversalOfId], references: [id])
+  reversedBy     JournalEntry[] @relation("JeReversal")
+  lines      JournalEntryLine[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([sourceType, sourceId])
+  @@index([periodId])
+  @@index([status])
+}
+
+model JournalEntryLine {
+  id             String   @id @default(cuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        LedgerAccount @relation(fields: [accountId], references: [id])
+  debit          Decimal  @default(0) @db.Decimal(12, 2)
+  credit         Decimal  @default(0) @db.Decimal(12, 2)
+  costCenter     String?
+  employeeId     String?
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([employeeId])
 }

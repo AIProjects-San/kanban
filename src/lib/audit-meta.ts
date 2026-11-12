@@ -15,7 +15,7 @@ import {
   KeyRound, FileText, FileWarning, XCircle, Landmark, Lock, FilePenLine, FilePlus2,
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
-  ArrowUpRight, Upload, FileX, Archive, PiggyBank,
+  ArrowUpRight, Upload, FileX, Archive, PiggyBank, TriangleAlert,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -217,6 +217,14 @@ export type AuditAction =
   // P2 (LV-09, F2.2) — leave encashment riding the adapter.
   // P3 (PR-13/PR-B11, F3.1) — arrears reverse-simulation.
   | "payroll.arrears_generated"
+  // Phase 1B (G8) — effective-dated salary revision.
+  | "payroll.salary_revision"
+  // Phase 1C (G2) — GL posting at the lock seam.
+  | "payroll.gl_posted"
+  | "payroll.gl_posting_failed"
+  // Phase 1C (G2) — accounting actions.
+  | "accounting.period_closed"
+  | "accounting.entry_reversed"
   // P4 (PR-14/PR-B12, F3.1) — LWP correction reversal.
   | "payroll.lwp_credit_created"
   // P5 (PR-15–18, F3.2) — flexible benefits.
@@ -435,6 +443,11 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.adjustment_created": { icon: CircleDollarSign, cls: "text-teal-500 bg-teal-500/10" },
   "payroll.adjustments_applied": { icon: CircleDollarSign, cls: "text-sky-500 bg-sky-500/10" },
   "payroll.arrears_generated": { icon: RotateCcw, cls: "text-indigo-500 bg-indigo-500/10" },
+  "payroll.salary_revision": { icon: CircleDollarSign, cls: "text-violet-500 bg-violet-500/10" },
+  "payroll.gl_posted": { icon: BookOpen, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.gl_posting_failed": { icon: TriangleAlert, cls: "text-amber-500 bg-amber-500/10" },
+  "accounting.period_closed": { icon: Lock, cls: "text-slate-500 bg-slate-500/10" },
+  "accounting.entry_reversed": { icon: Undo2, cls: "text-orange-500 bg-orange-500/10" },
   "payroll.lwp_credit_created": { icon: Undo2, cls: "text-teal-500 bg-teal-500/10" },
   "payroll.benefit_elected": { icon: HeartPulse, cls: "text-pink-500 bg-pink-500/10" },
   "payroll.benefit_election_cancelled": { icon: HeartPulse, cls: "text-zinc-500 bg-zinc-500/10" },

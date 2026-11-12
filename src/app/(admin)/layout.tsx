@@ -28,6 +28,8 @@ const NAV = [
   { href: "/settings/tax/rules", label: "Statutory rules", icon: ScrollText },
   { href: "/settings/tax/component-mapping", label: "Component mapping", icon: ArrowLeftRight },
   { href: "/employees", label: "Employee tax profiles", icon: Users },
+  // Phase 1C (G2) — the GL report.
+  { href: "/accounting/trial-balance", label: "Trial balance", icon: ScrollText },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

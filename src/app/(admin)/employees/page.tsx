@@ -72,12 +72,20 @@ export default async function AdminEmployeesPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/employees/${e.userId}/tax-profile`}
-                      className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-                    >
-                      Open <ArrowRight className="h-3.5 w-3.5" />
-                    </Link>
+                    <div className="flex items-center justify-end gap-3">
+                      <Link
+                        href={`/employees/${e.userId}/salary-history`}
+                        className="text-sm font-medium text-primary hover:underline"
+                      >
+                        Salary history
+                      </Link>
+                      <Link
+                        href={`/employees/${e.userId}/tax-profile`}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                      >
+                        Open <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
