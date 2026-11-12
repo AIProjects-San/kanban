@@ -221,7 +221,7 @@ export function EmployeeTaxProfileView({
             <input
               className={`${inputCls} tabular-nums`}
               value={draft.irdNumber}
-              placeholder="e.g. 49091850"
+              placeholder="e.g. 49091869"
               onChange={(e) => set("irdNumber", e.target.value)}
             />
             {irdInvalid && (

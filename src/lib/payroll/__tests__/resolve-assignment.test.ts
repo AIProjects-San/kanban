@@ -224,10 +224,10 @@ const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "rem
 const ASSIGNMENT_ROWS: ReturnType<typeof assignmentRow>[] = [];
 
 /** A structure row (annual components JSON) with the given basic amount. */
-function structureRow(id: string, basic: number, isActive: boolean) {
+function structureRow(id: string, basic: number, isActive: boolean, userId = "u-hana") {
   return {
     id,
-    userId: "u-hana",
+    userId,
     components: JSON.stringify([
       { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: basic },
     ]),
@@ -251,10 +251,11 @@ function assignmentRow(
   toDate: string | null,
   structure: ReturnType<typeof structureRow>,
   base: number,
+  userId = "u-hana",
 ) {
   return {
     id,
-    employeeId: "u-hana",
+    employeeId: userId,
     structureId: structure.id,
     fromDate: new Date(fromDate),
     toDate: toDate == null ? null : new Date(toDate),
@@ -307,10 +308,23 @@ beforeEach(() => {
   db.payslip.findUnique.mockResolvedValue(null);
   // The assignment read mirrors the real client's where-filter (the in-force
   // window at the queried date) so the action sees exactly what SQL would
-  // return. Per-test rows land in ASSIGNMENT_ROWS.
+  // return. Per-test rows land in ASSIGNMENT_ROWS. The post-1B hygiene probe
+  // (any-assignment, no window — employeeId in […]) returns every row for
+  // the probed employees, any date, shaped like its select.
   db.salaryStructureAssignment.findMany.mockImplementation(
-    async (args: { where: { fromDate: { lte: Date }; structure?: { frequency?: string } } }) => {
-      const at = args.where.fromDate.lte;
+    async (args: {
+      where: {
+        fromDate?: { lte: Date };
+        employeeId?: { in: string[] };
+        structure?: { frequency?: string };
+      };
+    }) => {
+      if (args.where.employeeId?.in) {
+        return ASSIGNMENT_ROWS.filter((a) =>
+          args.where.employeeId!.in.includes(a.employeeId),
+        ).map((a) => ({ employeeId: a.employeeId }));
+      }
+      const at = args.where.fromDate!.lte;
       const freq = args.where.structure?.frequency;
       return ASSIGNMENT_ROWS.filter(
         (a) => a.fromDate.getTime() <= at.getTime(),
@@ -385,6 +399,99 @@ describe("createPayrollRun uses the assignment in force at run.startDate", () =>
     expect(JSON.parse(createArg.data.payslips.create[0].earnings)).toEqual([
       { key: "basic", label: "Basic Salary", amount: 6_500 },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Post-1B hygiene — the legacy fallback is ONLY for never-materialised
+// timelines. An employee with ANY SalaryStructureAssignment row (regardless
+// of date) is skipped for windows no row of theirs covers: a future-dated
+// first assignment must never price an earlier run through the active
+// structure.
+// ---------------------------------------------------------------------------
+
+describe("createPayrollRun skips employees whose only assignments are future-dated", () => {
+  // The user-spec scenario: ONE assignment starting 2026-06-01 (the employee
+  // is not yet on the timeline in April), plus a never-materialised employee
+  // so the April run still has someone to pay (the "skipped" branch, not the
+  // strict whole-run failure).
+  function futureOnlyFixtures() {
+    const hanaFuture = structureRow("ss-hana-future", 84_000, true); // active — the trap
+    const yukiLegacy = structureRow("ss-yuki-legacy", 78_000, true, "u-yuki");
+    ASSIGNMENT_ROWS.push(
+      assignmentRow("ssa-hana", "2026-06-01", null, hanaFuture, 84_000),
+    );
+    db.salaryStructure.findMany.mockResolvedValue([hanaFuture, yukiLegacy]);
+    db.user.findMany.mockResolvedValue([
+      { id: "u-hana", name: "Hana Park" },
+      { id: "u-yuki", name: "Yuki Tanaka" },
+    ]);
+    return { hanaFuture, yukiLegacy };
+  }
+
+  it("April run: the employee is skipped — no payslip, the legacy-only employee still paid", async () => {
+    futureOnlyFixtures();
+
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-04-01" });
+    expect(res.ok).toBe(true);
+
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ userId: string; earnings: string }> } };
+    };
+    // Exactly ONE slip — yuki's, from the legacy fallback (78,000 / 12).
+    expect(createArg.data.payslips.create).toHaveLength(1);
+    expect(createArg.data.payslips.create[0].userId).toBe("u-yuki");
+    expect(JSON.parse(createArg.data.payslips.create[0].earnings)).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 6_500 },
+    ]);
+    // Hana was NOT paid in April despite her active structure.
+    expect(
+      createArg.data.payslips.create.some((s) => s.userId === "u-hana"),
+    ).toBe(false);
+    if (res.ok) expect(res.data.payslipCount).toBe(1);
+    // The any-assignment probe consulted her rows (any date, no window).
+    const probe = db.salaryStructureAssignment.findMany.mock.calls.find(
+      (c) => (c[0] as { where: { employeeId?: { in: string[] } } }).where.employeeId?.in,
+    );
+    expect(probe).toBeTruthy();
+  });
+
+  it("June run (assignment now active): the employee IS paid from her assignment's structure", async () => {
+    const { hanaFuture } = futureOnlyFixtures();
+    expect(hanaFuture.isActive).toBe(true);
+
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-06-01" });
+    expect(res.ok).toBe(true);
+
+    const createArg = db.payrollRun.create.mock.calls[0][0] as {
+      data: { payslips: { create: Array<{ userId: string; earnings: string }> } };
+    };
+    // TWO slips: hana via her assignment (84,000 / 12 = 7,000) and yuki via
+    // the legacy fallback (78,000 / 12 = 6,500).
+    expect(createArg.data.payslips.create).toHaveLength(2);
+    const byUser = new Map(createArg.data.payslips.create.map((s) => [s.userId, s]));
+    expect(JSON.parse(byUser.get("u-hana")!.earnings)).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 7_000 },
+    ]);
+    expect(JSON.parse(byUser.get("u-yuki")!.earnings)).toEqual([
+      { key: "basic", label: "Basic Salary", amount: 6_500 },
+    ]);
+    if (res.ok) expect(res.data.payslipCount).toBe(2);
+  });
+
+  it("strict: a run whose ONLY candidate is future-dated fails outright", async () => {
+    // Hana alone — no legacy-only employee to keep the run alive.
+    const hanaFuture = structureRow("ss-hana-future", 84_000, true);
+    ASSIGNMENT_ROWS.push(
+      assignmentRow("ssa-hana", "2026-06-01", null, hanaFuture, 84_000),
+    );
+    db.salaryStructure.findMany.mockResolvedValue([hanaFuture]);
+
+    const res = await createPayrollRun({ frequency: "MONTHLY", anchorDate: "2026-04-01" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/No active monthly salary structures/);
+    // And nothing was created.
+    expect(db.payrollRun.create).not.toHaveBeenCalled();
   });
 });
 

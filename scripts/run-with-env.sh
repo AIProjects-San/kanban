@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Wrapper that loads .env (overriding any system env vars) before running a command.
+# Wrapper that loads .env before running a command.
+#
+# DATABASE_URL PRECEDENCE: a DATABASE_URL already present in the environment
+# WINS over .env — see scripts/README.md ("Environment precedence"). This is
+# what makes throwaway-copy audits safe:
+#   DATABASE_URL=file:/tmp/copy.db bash scripts/run-with-env.sh bun scripts/x.ts
+# Without the guard, sourcing .env below would silently repoint the command
+# at the production db (the duplicate-reversal-JE incident, post-1C).
 #
 # ADR-008 (docs/DECISIONS.md): every db:* script, dev, build and start in
 # package.json exec through here, so this is the single place where the
@@ -20,10 +27,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
+# Capture a preset DATABASE_URL (set AND non-empty) so .env cannot clobber it.
+PRESET_DATABASE_URL="${DATABASE_URL:-}"
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   . "$ENV_FILE"
   set +a
+fi
+if [[ -n "$PRESET_DATABASE_URL" ]]; then
+  DATABASE_URL="$PRESET_DATABASE_URL"
+  export DATABASE_URL
 fi
 
 # --- Prisma provider resolution (ADR-008) ------------------------------------

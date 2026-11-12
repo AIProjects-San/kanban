@@ -19,7 +19,9 @@ async function main() {
   for (const h of hol) console.log(`  ${h.date.toISOString().slice(0, 10)} ${h.label} kind=${h.kind} half=${h.isHalfDay}`);
 
   const yuki = await db.user.findUnique({ where: { email: "yuki@fernly.app" } });
+  if (!yuki) throw new Error("verify-arrears-math: yuki@fernly.app not found — seed first");
   const w45 = await db.payrollRun.findUnique({ where: { period: "2026-W45" }, select: { id: true } });
+  if (!w45) throw new Error("verify-arrears-math: the 2026-W45 run not found — create it first");
   const slips = await db.payslip.findMany({ where: { runId: w45.id }, select: { userId: true } });
   const users = await db.user.findMany({ select: { id: true, email: true } });
   const byId = new Map(users.map((u) => [u.id, u.email]));

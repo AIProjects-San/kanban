@@ -992,10 +992,28 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // the most recent row.
     const assignmentByUser = new Map<string, (typeof assignmentRows)[number]>();
     for (const row of assignmentRows) assignmentByUser.set(row.employeeId, row);
-    const legacyFallback = structures.filter((s) => !assignmentByUser.has(s.userId));
+    // Hygiene (post-1B) — the legacy fallback is reserved for employees whose
+    // timeline was NEVER materialised: zero SalaryStructureAssignment rows of
+    // ANY date. An employee with rows but none in force at the window START
+    // (e.g. their first assignment begins 2026-06-01 and this is the April
+    // run) is SKIPPED for that window — never paid from the active structure,
+    // which would price a pre-hire window with a post-hire salary. The probe
+    // runs only when some active structure's owner is uncovered, so a fully
+    // backfilled workspace pays zero extra queries.
+    const uncovered = structures.filter((s) => !assignmentByUser.has(s.userId));
+    let legacyFallback: SalaryStructure[] = uncovered;
+    if (uncovered.length > 0) {
+      const anyAssignmentRows = await db.salaryStructureAssignment.findMany({
+        where: { employeeId: { in: uncovered.map((s) => s.userId) } },
+        select: { employeeId: true },
+      });
+      const materialised = new Set(anyAssignmentRows.map((r) => r.employeeId));
+      legacyFallback = uncovered.filter((s) => !materialised.has(s.userId));
+    }
     // The effective pay sources, ONE per employee: the assignment's structure
     // (active or retired — the timeline row is authoritative for the window
-    // it covers) or, uncovered, the legacy active structure.
+    // it covers) or, uncovered AND unmaterialised, the legacy active
+    // structure.
     const paidSources: SalaryStructure[] = [
       ...[...assignmentByUser.values()].map((a) => a.structure),
       ...legacyFallback,

@@ -3,9 +3,15 @@ import { postPayrollRun } from "../src/lib/accounting/post-payroll-run";
 
 const db = new PrismaClient();
 
+/** Loud guard — a verification script must fail, not silently skip. */
+function req<T>(v: T | null | undefined, what: string): T {
+  if (v == null) throw new Error(`verify-phase1c-close: ${what} not found — seed/repost first`);
+  return v;
+}
+
 async function main() {
   // 1) Re-post the closed period's run — must throw.
-  const run = await db.payrollRun.findUnique({ where: { period: "2026-12" } });
+  const run = req(await db.payrollRun.findUnique({ where: { period: "2026-12" } }), "the 2026-12 run");
   try {
     await postPayrollRun(run.id);
     console.log("FAIL: re-post did not throw");
@@ -14,11 +20,17 @@ async function main() {
   }
 
   // 2) Reverse the December JE into the OPEN January 2027 period.
-  const je = await db.journalEntry.findFirst({
-    where: { sourceType: "PAYROLL_RUN", sourceId: run.id, reversalOfId: null },
-    include: { lines: true },
-  });
-  const jan = await db.accountingPeriod.findFirst({ where: { startDate: new Date("2027-01-01T00:00:00Z") } });
+  const je = req(
+    await db.journalEntry.findFirst({
+      where: { sourceType: "PAYROLL_RUN", sourceId: run.id, reversalOfId: null },
+      include: { lines: true },
+    }),
+    "the 2026-12 payroll JE",
+  );
+  const jan = req(
+    await db.accountingPeriod.findFirst({ where: { startDate: new Date("2027-01-01T00:00:00Z") } }),
+    "the 2027-01 accounting period",
+  );
   const before = je.lines.map((l: any) => [l.accountId, Number(l.debit), Number(l.credit), l.employeeId].join("|")).sort().join(";");
 
   // Call the inner logic through a raw transaction-equivalent: the server
@@ -55,7 +67,10 @@ async function main() {
   });
 
   // 3) The original remains immutable: re-read and fingerprint.
-  const after = await db.journalEntry.findUnique({ where: { id: je.id }, include: { lines: true } });
+  const after = req(
+    await db.journalEntry.findUnique({ where: { id: je.id }, include: { lines: true } }),
+    "the original JE on re-read",
+  );
   const afterFp = after.lines.map((l: any) => [l.accountId, Number(l.debit), Number(l.credit), l.employeeId].join("|")).sort().join(";");
   console.log("2) reversal JE:", reversal.id, "status", reversal.status, "period", jan.startDate.toISOString().slice(0, 10), "lines", reversal.lines.length);
   let dr = 0, cr = 0;

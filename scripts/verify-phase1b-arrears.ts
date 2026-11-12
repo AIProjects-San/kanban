@@ -7,10 +7,12 @@ const db = new PrismaClient();
 
 async function main() {
   const yuki = await db.user.findUnique({ where: { email: "yuki@fernly.app" } });
+  if (!yuki) throw new Error("verify-phase1b-arrears: yuki@fernly.app not found — seed first");
   const revision = await db.salaryStructureAssignment.findFirst({
     where: { employeeId: yuki.id, reason: "REVISION" },
     orderBy: { fromDate: "desc" },
   });
+  if (!revision) throw new Error("verify-phase1b-arrears: no REVISION assignment for yuki — run the 1B scenario first");
   console.log("revision:", {
     fromDate: revision.fromDate.toISOString().slice(0, 10),
     base: Number(revision.base),

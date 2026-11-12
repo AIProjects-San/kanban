@@ -36,6 +36,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { db } from "../src/lib/db";
 import { resolveNzRateSet } from "../src/lib/payroll/nz/calculate";
 import {
@@ -68,7 +69,10 @@ import { computeRunningAggregates, type AggregateSlip } from "../src/lib/payslip
 import { logAudit } from "../src/server-actions/shared";
 import type { PayrollRoundingMode } from "../src/lib/payroll-math";
 
-const SNAPSHOT_FILE = join(import.meta.dir, "..", ".phase4-snapshot.json");
+// fileURLToPath(new URL(".", import.meta.url)) — the portable spelling of
+// Bun's import.meta.dir (keeps the file out of bun-types' global leakage).
+const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
+const SNAPSHOT_FILE = join(SCRIPT_DIR, "..", ".phase4-snapshot.json");
 const PHASE4_PERIOD_PREFIX = "phase4";
 
 interface RunSnap {
@@ -108,16 +112,23 @@ async function snapshot(): Promise<{ runs: RunSnap[]; slips: SlipSnap[] }> {
     include: { run: { select: { period: true } } },
   });
   return {
-    runs: runs.map((r) => ({
-      id: r.id,
-      period: r.period,
-      frequency: r.frequency,
-      status: r.status,
-      rateSetId: r.rateSetId,
-      workingDays: r.workingDays,
-      start: r.startDate.toISOString(),
-      end: r.endDate.toISOString(),
-    })),
+    runs: runs.map((r) => {
+      // Snapshot hashes must be stable AND loud: a run without window dates
+      // is a broken row, not a silent `null` in the fingerprint.
+      if (!r.startDate || !r.endDate) {
+        throw new Error(`verify-phase4 snapshot: run ${r.period} (${r.id}) has no window dates`);
+      }
+      return {
+        id: r.id,
+        period: r.period,
+        frequency: r.frequency,
+        status: r.status,
+        rateSetId: r.rateSetId,
+        workingDays: r.workingDays,
+        start: r.startDate.toISOString(),
+        end: r.endDate.toISOString(),
+      };
+    }),
     slips: slips.map((p) => ({
       id: p.id,
       runPeriod: p.run.period,
@@ -251,8 +262,8 @@ async function stagePost(): Promise<void> {
   // The engine run's window: the month AFTER the latest seeded run (a
   // period no run occupies yet).
   const latest = await db.payrollRun.findFirst({ orderBy: { period: "desc" } });
-  if (!latest) {
-    console.error("  ✗ no seeded runs — run the PRE stage against a seeded database");
+  if (!latest?.startDate) {
+    console.error("  ✗ no seeded runs with a window start — run the PRE stage against a seeded database");
     process.exit(1);
   }
   const anchor = new Date(
@@ -456,8 +467,8 @@ async function stagePost(): Promise<void> {
     where: { id: runId },
     include: { payslips: true },
   });
-  if (!run) {
-    console.error("  ✗ the phase4 run vanished");
+  if (!run?.startDate) {
+    console.error("  ✗ the phase4 run vanished (or has no window start)");
     process.exit(1);
   }
 
@@ -602,9 +613,12 @@ async function stagePost(): Promise<void> {
   }
 
   // ---- 5. auto-enrolment persistence -------------------------------------
-  const tempProfile = run.payslips
-    .map((p) => profileByUser.get(p.userId))
-    .find((r) => r?.employmentType === "TEMPORARY");
+  // Find the slip whose profile is TEMPORARY, keeping the userId the
+  // profile row itself doesn't carry (NzTaxProfileRow has no userId field).
+  const tempSlip = run.payslips.find(
+    (p) => profileByUser.get(p.userId)?.employmentType === "TEMPORARY",
+  );
+  const tempProfile = tempSlip ? profileByUser.get(tempSlip.userId) : undefined;
   if (tempProfile) {
     // SQLite hands Prisma Decimal columns back as Decimal objects — compare
     // numerically (0.035 === Decimal(0.035) is false).
@@ -614,7 +628,7 @@ async function stagePost(): Promise<void> {
       `TEMPORARY profile — sticky election persisted at 3.5% (got ${persistedRate})`,
     );
     const auditRows = await db.auditLog.count({
-      where: { action: "payroll.kiwisaver_auto_enrolled", entityId: tempProfile.userId },
+      where: { action: "payroll.kiwisaver_auto_enrolled", entityId: tempSlip?.userId },
     });
     check(auditRows > 0, `auto-enrolment audit entry exists (${auditRows} row(s))`);
     const tempSnap = perUserFindings.find(
@@ -638,7 +652,8 @@ async function stagePost(): Promise<void> {
     withholdStatus: p.withholdStatus,
     earnings: p.earnings,
     deductions: p.deductions,
-    windowEndMs: p.run.endDate.getTime(),
+    // Pre-window-date legacy runs sort first (oldest) — windowEndMs 0.
+    windowEndMs: p.run.endDate ? p.run.endDate.getTime() : 0,
   }));
   const aggregates = computeRunningAggregates(aggregateSlips);
   const phase4SlipIds = new Set(run.payslips.map((p) => p.id));

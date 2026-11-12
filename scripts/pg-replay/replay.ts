@@ -12,8 +12,12 @@
 import { PGlite } from "@electric-sql/pglite";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const MIGRATIONS_DIR = join(import.meta.dir, "..", "..", "prisma", "migrations");
+// fileURLToPath(new URL(".", import.meta.url)) — the portable spelling of
+// Bun's import.meta.dir (keeps the file out of bun-types' global leakage).
+const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
+const MIGRATIONS_DIR = join(SCRIPT_DIR, "..", "..", "prisma", "migrations");
 
 async function main() {
   const dirs = readdirSync(MIGRATIONS_DIR)
@@ -64,7 +68,7 @@ async function main() {
     WHERE n.nspname = 'public' AND ix.indisunique AND i.relkind = 'i'
     GROUP BY t.relname, i.relname ORDER BY t.relname, i.relname`);
 
-  writeFileSync(join(import.meta.dir, "schema-dump.json"), JSON.stringify({
+  writeFileSync(join(SCRIPT_DIR, "schema-dump.json"), JSON.stringify({
     tables: tables.rows.map((r) => r.table_name),
     columns: columns.rows,
     enums: enums.rows,
