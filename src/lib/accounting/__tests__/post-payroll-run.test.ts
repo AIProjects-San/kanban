@@ -209,13 +209,14 @@ describe("postPayrollRun", () => {
     expect(debit).toBe(credit);
   });
 
-  it("is idempotent — a second call returns the existing POSTED entry", async () => {
+  it("is idempotent — a second call returns the existing POSTED entry (with lines)", async () => {
     const existing = { id: "je-existing", status: "POSTED", lines: [] };
     db.journalEntry.findFirst.mockResolvedValue(existing);
     const je = await postPayrollRun("run-dec");
     expect(je.id).toBe("je-existing");
+    expect(Array.isArray(je.lines)).toBe(true);
     expect(db.journalEntry.create).not.toHaveBeenCalled();
-    // The idempotency lookup excludes reversals.
+    // The idempotency lookup excludes reversals…
     const where = db.journalEntry.findFirst.mock.calls[0][0].where;
     expect(where).toEqual({
       sourceType: "PAYROLL_RUN",
@@ -223,6 +224,10 @@ describe("postPayrollRun", () => {
       status: "POSTED",
       reversalOfId: null,
     });
+    // …and includes the lines (the PostedJournalEntry contract must hold on
+    // the idempotent return too — post-run-to-gl iterates them).
+    const include = db.journalEntry.findFirst.mock.calls[0][0].include;
+    expect(include).toEqual({ lines: true });
   });
 
   it("throws out-of-balance BEFORE any write", async () => {

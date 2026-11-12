@@ -239,8 +239,12 @@ export async function postPayrollRun(
   if (period.isClosed) throw new Error("Accounting period is closed");
 
   // Idempotency: the run's POSTED entry (a reversal entry never counts).
+  // include lines — the contract (PostedJournalEntry.lines) must hold on
+  // this path too, not just on the create path (post-run-to-gl iterates
+  // them to print the Dr/Cr proof).
   const existing = await db.journalEntry.findFirst({
     where: { sourceType: "PAYROLL_RUN", sourceId: runId, status: "POSTED", reversalOfId: null },
+    include: { lines: true },
   });
   if (existing) return existing as unknown as PostedJournalEntry;
 

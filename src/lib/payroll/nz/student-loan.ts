@@ -9,7 +9,7 @@
 //   per-period repayment threshold. The threshold is the annual $24,128
 //   divided by pays-per-year and TRUNCATED to whole cents (spec §5.4:
 //   weekly $464 · fortnightly $928 · four-weekly $1,856 · monthly
-//   $2,010.66).
+//   2010.66 — the periodThresholds the IR341 columns bake in).
 //
 //   Secondary (SB SL … SA SL) — the threshold does NOT apply to secondary
 //   income ("it has already been used against your main income"): 12% of
@@ -45,9 +45,9 @@ const SECONDARY_CODES = new Set(["SB", "S", "SH", "ST", "SA"]);
 
 /**
  * The per-period repayment threshold: annualThreshold ÷ pays-per-year,
- * truncated to whole cents — the values the IR341 columns bake
+ * truncated to whole cents — the periodThresholds the IR341 columns bake
  * in: weekly $464.00, fortnightly $928.00, four-weekly $1,856.00,
- * monthly $2,010.66 (= $24,128/12).
+ * monthly 2010.66 (= $24,128/12).
  */
 export function studentLoanPeriodThreshold(
   frequency: NzPayFrequency,

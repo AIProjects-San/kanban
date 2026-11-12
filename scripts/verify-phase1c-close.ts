@@ -1,6 +1,5 @@
 import { PrismaClient } from "@prisma/client";
 import { postPayrollRun } from "../src/lib/accounting/post-payroll-run";
-import { reverseJournalEntry } from "../home/z/my-project/src/server-actions/accounting";
 
 const db = new PrismaClient();
 
