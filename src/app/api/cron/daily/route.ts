@@ -9,6 +9,7 @@ import {
   runEncashmentAutoDraftJob,
   sendEncashmentAutoDraftFailureAlarm,
 } from "@/lib/leave/encashment-auto-draft";
+import { runDueEmploymentDocumentsJob } from "@/lib/hr/employment-doc-effect";
 import { captureError, logError } from "@/lib/infra/observability";
 import {
   tryAcquireMaintenanceLock,
@@ -16,6 +17,7 @@ import {
   EMPLOYEE_REMINDERS_LOCK_KEY,
   INTERVIEW_REMINDERS_LOCK_KEY,
   ENCASHMENT_AUTO_DRAFT_LOCK_KEY,
+  EMPLOYMENT_DOCS_LOCK_KEY,
 } from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,10 @@ import {
 //   4. encashment-auto-draft — the opt-in encashment proposals for
 //      balances over the floor (P31 / LV-J02, LV-09's remainder;
 //      gated by the Workspace.autoLeaveEncashment switch, default OFF)
+//   5. employment-documents — the effective-date sweep: APPROVED
+//      transfers/promotions whose date has arrived go EFFECTIVE and their
+//      facts land (P1 G6; per-document isolation, the status flip is the
+//      idempotency)
 //
 // NOT carried: the platform audit purge (/api/cron/prune-audit) — launch
 // gate 12's own endpoint, called first in the compose loop. The HR jobs
@@ -180,6 +186,11 @@ async function handle(req: Request): Promise<NextResponse> {
       }
       return report as unknown as Record<string, unknown>;
     }),
+  );
+  jobs.push(
+    await runJob("employment-documents", EMPLOYMENT_DOCS_LOCK_KEY, async () =>
+      (await runDueEmploymentDocumentsJob()) as unknown as Record<string, unknown>,
+    ),
   );
 
   const allOk = jobs.every((j) => j.ok);

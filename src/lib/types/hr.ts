@@ -380,3 +380,64 @@ export interface OnboardingTemplateTaskT {
   isActive: boolean;
   sortOrder: number;
 }
+
+// ---------------------------------------------------------------------------
+// P1 G6 — the Employee Transfer / Employee Promotion documents (the
+// approval-gated, effective-dated employment-change writers). Client-safe
+// mirrors of the Prisma rows: ISO strings, resolved display names, and the
+// status as a plain string (the graph lives in lib/hr/employment-documents).
+// ---------------------------------------------------------------------------
+
+/** One transfer document row (serialized for the UI). */
+export interface EmployeeTransferT {
+  id: string;
+  employeeId: string;
+  fromDepartment: string | null;
+  toDepartment: string | null;
+  fromJobTitle: string | null;
+  toJobTitle: string | null;
+  fromManagerId: string | null;
+  toManagerId: string | null;
+  fromLocation: string | null;
+  toLocation: string | null;
+  /** "yyyy-mm-dd". */
+  effectiveDate: string;
+  reason: string | null;
+  status: string;
+  approvedById: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  cancelledById: string | null;
+  cancelledAt: string | null;
+  createdAt: string;
+  createdById: string;
+  createdByName: string;
+  /** Resolved display names for the manager refs (null = no manager). */
+  fromManagerName: string | null;
+  toManagerName: string | null;
+}
+
+/** One promotion document row (serialized for the UI). */
+export interface EmployeePromotionT {
+  id: string;
+  employeeId: string;
+  fromJobTitle: string | null;
+  toJobTitle: string;
+  fromGrade: string | null;
+  toGrade: string | null;
+  /** "yyyy-mm-dd". */
+  effectiveDate: string;
+  reason: string | null;
+  status: string;
+  approvedById: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  cancelledById: string | null;
+  cancelledAt: string | null;
+  /** Optional pointer at the Phase 1B SalaryStructureAssignment this
+   * promotion rides (the link is recorded, never acted on). */
+  linkedSalaryAssignmentId: string | null;
+  createdAt: string;
+  createdById: string;
+  createdByName: string;
+}

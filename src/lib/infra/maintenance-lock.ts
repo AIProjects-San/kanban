@@ -53,6 +53,11 @@ export const INTERVIEW_REMINDERS_LOCK_KEY = `${redisKeyPrefix()}maintenance:inte
  * fifth job the daily dispatcher carries). Same discipline: one job's
  * run never suppresses another's. */
 export const ENCASHMENT_AUTO_DRAFT_LOCK_KEY = `${redisKeyPrefix()}maintenance:encashment_auto_draft`;
+/** P1 G6 — the employment-documents effective-date sweep's own lock
+ * identity (the APPROVED → EFFECTIVE pass for transfers/promotions; the
+ * sixth job the daily dispatcher carries). Same discipline: one job's run
+ * never suppresses another's. */
+export const EMPLOYMENT_DOCS_LOCK_KEY = `${redisKeyPrefix()}maintenance:employment_documents`;
 
 export interface MaintenanceLockResult {
   acquired: boolean;

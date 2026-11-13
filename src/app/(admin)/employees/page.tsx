@@ -68,6 +68,18 @@ export default async function AdminEmployeesPage() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
                       <Link
+                        href={`/admin/employees/${e.userId}/transfers`}
+                        className="text-sm font-medium text-primary hover:underline"
+                      >
+                        Transfers
+                      </Link>
+                      <Link
+                        href={`/admin/employees/${e.userId}/promotions`}
+                        className="text-sm font-medium text-primary hover:underline"
+                      >
+                        Promotions
+                      </Link>
+                      <Link
                         href={`/employees/${e.userId}/salary-history`}
                         className="text-sm font-medium text-primary hover:underline"
                       >

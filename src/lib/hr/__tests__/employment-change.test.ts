@@ -57,8 +57,15 @@ describe("P33 — planEmploymentChange (the structured diff)", () => {
     expect(rows).toEqual([]);
   });
 
-  it("the registry covers the promotable properties (grade joined at P34/EM-03)", () => {
-    expect(EMPLOYMENT_PROPERTIES).toEqual(["jobTitle", "department", "grade", "manager", "salary"]);
+  it("the registry covers the promotable properties (grade joined at P34/EM-03, location at P1 G6)", () => {
+    expect(EMPLOYMENT_PROPERTIES).toEqual([
+      "jobTitle",
+      "department",
+      "grade",
+      "manager",
+      "location",
+      "salary",
+    ]);
   });
 
   // P34 (EM-03) — grade is promotable: the diff planner treats it exactly

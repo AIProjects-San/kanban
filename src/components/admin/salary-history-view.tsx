@@ -14,12 +14,15 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   ArrowDownToLine,
+  ArrowLeftRight,
   CalendarRange,
   History,
   Plus,
+  TrendingUp,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -44,7 +47,32 @@ interface HistoryT {
   assignments: SalaryAssignmentT[];
 }
 
-export function SalaryHistoryView({ history, today }: { history: HistoryT; today: string }) {
+/** One transfers/promotions timeline event (P1 G6). */
+interface EmploymentEventT {
+  kind: "TRANSFER" | "PROMOTION";
+  id: string;
+  effectiveDate: string;
+  status: string;
+  summary: string;
+}
+
+const EVENT_STATUS_BADGE: Record<string, string> = {
+  DRAFT: "bg-muted text-muted-foreground",
+  PENDING_APPROVAL: "bg-amber-500/10 text-amber-600",
+  APPROVED: "bg-blue-500/10 text-blue-600",
+  EFFECTIVE: "bg-emerald-500/10 text-emerald-600",
+  CANCELLED: "bg-muted text-muted-foreground line-through",
+};
+
+export function SalaryHistoryView({
+  history,
+  today,
+  employmentEvents = [],
+}: {
+  history: HistoryT;
+  today: string;
+  employmentEvents?: EmploymentEventT[];
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -177,6 +205,63 @@ export function SalaryHistoryView({ history, today }: { history: HistoryT; today
           </tbody>
         </table>
       </div>
+
+      {employmentEvents.length > 0 && (
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <History className="h-4 w-4" /> Transfers &amp; promotions
+            </h2>
+            <div className="flex items-center gap-3 text-xs">
+              <Link
+                href={`/admin/employees/${history.employee.id}/transfers`}
+                className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+              >
+                <ArrowLeftRight className="h-3 w-3" /> Transfers
+              </Link>
+              <Link
+                href={`/admin/employees/${history.employee.id}/promotions`}
+                className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+              >
+                <TrendingUp className="h-3 w-3" /> Promotions
+              </Link>
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <tbody>
+              {employmentEvents.map((e) => (
+                <tr key={e.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                  <td className="w-32 px-4 py-3 font-mono text-xs">{e.effectiveDate}</td>
+                  <td className="w-28 px-4 py-3">
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                        e.kind === "PROMOTION"
+                          ? "bg-teal-500/10 text-teal-700"
+                          : "bg-sky-500/10 text-sky-700"
+                      }`}
+                    >
+                      {e.kind === "PROMOTION" ? (
+                        <TrendingUp className="h-3 w-3" />
+                      ) : (
+                        <ArrowLeftRight className="h-3 w-3" />
+                      )}
+                      {e.kind === "PROMOTION" ? "Promotion" : "Transfer"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{e.summary}</td>
+                  <td className="w-32 px-4 py-3 text-right">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${EVENT_STATUS_BADGE[e.status] ?? "bg-muted"}`}
+                    >
+                      {e.status.charAt(0) + e.status.slice(1).toLowerCase().replace("_", " ")}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {open && (
         <div

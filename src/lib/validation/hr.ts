@@ -350,3 +350,57 @@ export const rejectEmployeeDocumentSchema = z.object({
   // Required — the member needs to know what to fix.
   remarks: z.string().trim().min(1, "A rejection note is required.").max(2_000),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// P1 G6 — the Employee Transfer / Employee Promotion documents (the
+// approval-gated, effective-dated employment changes). Create takes the
+// to-side only (the from-side is snapshotted server-side from the live
+// profile); submit/approve/cancel/effect address an existing document by
+// kind + id. The status graph and date rules live in
+// lib/hr/employment-documents.ts — these schemas only bound the shapes.
+// ---------------------------------------------------------------------------
+
+/** A department key the transfer may move to (controlled vocabulary — the
+ * runtime re-checks against DEPARTMENT_LABELS for the friendly error). */
+const departmentKey = z
+  .string()
+  .trim()
+  .min(1)
+  .max(40)
+  .refine(
+    (k) => ["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"].includes(k),
+    "Unknown department.",
+  );
+
+export const createEmployeeTransferSchema = z.object({
+  employeeId: cuidish,
+  effectiveDate: isoDateStr,
+  toDepartment: departmentKey.optional(),
+  toJobTitle: z.string().trim().min(1).max(120).optional(),
+  /** null (or "") = clear the reporting line; undefined = leave untouched. */
+  toManagerId: z.string().trim().max(64).nullable().optional(),
+  toLocation: z.string().trim().min(1).max(120).optional(),
+  reason: z.string().trim().max(2_000).optional(),
+}).strict();
+
+export const createEmployeePromotionSchema = z.object({
+  employeeId: cuidish,
+  effectiveDate: isoDateStr,
+  /** Required — a promotion always names the new designation (spec §4:
+   * it must differ from the current one; the action refuses same-title). */
+  toJobTitle: z.string().trim().min(1).max(120),
+  toGrade: z.string().trim().min(1).max(60).optional(),
+  reason: z.string().trim().max(2_000).optional(),
+  /** Optional pointer at a Phase 1B SalaryStructureAssignment belonging to
+   * the same employee (validated at write time; never acted on). */
+  linkedSalaryAssignmentId: cuidish.optional(),
+}).strict();
+
+export const employmentDocumentRefSchema = z.object({
+  kind: z.enum(["TRANSFER", "PROMOTION"]),
+  id: cuidish,
+}).strict();
+
+export const cancelEmploymentDocumentSchema = employmentDocumentRefSchema.extend({
+  reason: z.string().trim().max(2_000).optional(),
+}).strict();

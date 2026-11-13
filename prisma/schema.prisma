@@ -100,6 +100,12 @@ model User {
   // timeline (the pay history; see SalaryStructureAssignment).
   salaryStructureAssignments SalaryStructureAssignment[]
 
+  // P1 G6 — the employee's approved employment-change documents (see
+  // EmployeeTransfer / EmployeePromotion below; the effective-dated,
+  // approval-gated writers ahead of EmployeePropertyHistory).
+  employeeTransfers  EmployeeTransfer[]
+  employeePromotions EmployeePromotion[]
+
   @@index([managerId])
 }
 
@@ -1472,8 +1478,9 @@ model EmployeeProfile {
 model EmployeePropertyHistory {
   id           String   @id @default(cuid())
   userId       String
-  // jobTitle | department | grade | manager | salary (the promotable
-  // property registry lives in lib/employment-change.ts).
+  // jobTitle | department | grade | manager | location | salary (the
+  // promotable property registry lives in lib/employment-change.ts; location
+  // joined at P1 G6 when transfers started carrying it).
   property     String
   // Display value BEFORE the change (label/manager-name/gross rendered).
   currentValue String
@@ -1488,6 +1495,98 @@ model EmployeePropertyHistory {
 
   @@index([userId, effectiveAt])
   @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// P1 G6 — the Employee Transfer document: an effective-dated, approval-gated
+// move across the employment axes (department / job title / reporting
+// manager / location). Fernly stores those facts as strings on
+// EmployeeProfile (QA-19 discipline: the department is a controlled key, the
+// title and location are free strings; there is intentionally NO Department
+// or Designation master table), so the from/to sides carry the same string
+// shape instead of FK ids. The from-side is SNAPSHOTTED at creation; the
+// to-side is the requested end state. Status graph (spec §2):
+//   DRAFT → PENDING_APPROVAL (HR/Admin submits; future effective date)
+//   PENDING_APPROVAL → APPROVED (a different pair of eyes approves)
+//   APPROVED → EFFECTIVE (on/after the effective date — the daily sweep or
+//   a manual admin trigger; the ONLY state that writes profile facts)
+//   any pre-EFFECTIVE state → CANCELLED (the creator, or an ADMIN as the
+//   safety valve for an orphaned APPROVED doc)
+// The graph itself lives in lib/hr/employment-documents.ts. Manager refs are
+// plain scalars (the EmployeeProfile.leaveApproverId convention — validated
+// at write time, no FK): the org chart moves, the document must not.
+// ---------------------------------------------------------------------------
+model EmployeeTransfer {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   User     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  // The from-side snapshot (the live facts at DRAFT time; null = not tracked).
+  fromDepartment String?
+  fromJobTitle   String?
+  fromManagerId  String?
+  fromLocation   String?
+  // The requested end state. At least one axis must actually change (the
+  // writer refuses a no-change transfer; same department/title is refused
+  // outright per spec §4).
+  toDepartment String?
+  toJobTitle   String?
+  toManagerId  String? // null = clear the reporting line (move to root)
+  toLocation   String?
+
+  effectiveDate DateTime
+  reason        String?
+
+  status        String   @default("DRAFT") // the graph: lib/hr/employment-documents.ts
+  approvedById  String?
+  approvedAt    DateTime?
+  cancelledById String?
+  cancelledAt   DateTime?
+
+  createdAt   DateTime @default(now())
+  createdById String
+
+  @@index([employeeId, status])
+  @@index([employeeId, effectiveDate])
+  @@index([status, effectiveDate])
+}
+
+// ---------------------------------------------------------------------------
+// P1 G6 — the Employee Promotion document: an effective-dated, approval-gated
+// designation (and optionally grade) change. Same string-shape rationale and
+// the same status graph as EmployeeTransfer. toJobTitle is REQUIRED and must
+// differ from the from-side (spec §4: "cannot promote to the same
+// designation"); toGrade is optional but, when present, must differ. The
+// optional linkedSalaryAssignmentId points at a Phase 1B
+// SalaryStructureAssignment (plain scalar by design — the promotion document
+// NEVER mutates the assignment; the salary revision is its own document, and
+// the link only records that the two belong together).
+// ---------------------------------------------------------------------------
+model EmployeePromotion {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   User     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  fromJobTitle String?
+  toJobTitle   String
+  fromGrade    String?
+  toGrade      String?
+
+  effectiveDate DateTime
+  reason        String?
+  status        String   @default("DRAFT") // the graph: lib/hr/employment-documents.ts
+  approvedById  String?
+  approvedAt    DateTime?
+  cancelledById String?
+  cancelledAt   DateTime?
+  linkedSalaryAssignmentId String?
+
+  createdAt   DateTime @default(now())
+  createdById String
+
+  @@index([employeeId, status])
+  @@index([employeeId, effectiveDate])
+  @@index([status, effectiveDate])
 }
 
 // HR Module feature 3 — performance reviews (docs/HR_MODULE_PLAN.md §6).

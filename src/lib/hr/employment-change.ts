@@ -7,8 +7,9 @@
 // kernel owns the three rules every caller rides:
 //
 //   • the promotable property registry — jobTitle / department / grade /
-//     manager / salary (grade registered at P34/EM-03 when the field
-//     landed; the registry is the single place it registers)
+//     manager / location / salary (grade registered at P34/EM-03 when the
+//     field landed, location at P1 G6 when transfers started carrying it;
+//     the registry is the single place they register)
 //   • planEmploymentChange — the diff: ONE row per property whose display
 //     value actually changes; unchanged properties record nothing (the
 //     no-change change is refused by the writer, never recorded as noise)
@@ -36,14 +37,23 @@ import { computeOffer, type OfferComponent } from "@/lib/hiring/offer-math";
 // The property registry.
 // ---------------------------------------------------------------------------
 
-/** Every property a promotion/transfer may change. */
-export type EmploymentProperty = "jobTitle" | "department" | "grade" | "manager" | "salary";
+/** Every property a promotion/transfer may change. Location joined at
+ * P1 G6 (transfers carry it; the P33 writers never pass it, so their diffs
+ * are unchanged — the planner skips absent keys). */
+export type EmploymentProperty =
+  | "jobTitle"
+  | "department"
+  | "grade"
+  | "manager"
+  | "location"
+  | "salary";
 
 export const EMPLOYMENT_PROPERTIES: EmploymentProperty[] = [
   "jobTitle",
   "department",
   "grade",
   "manager",
+  "location",
   "salary",
 ];
 
@@ -57,6 +67,7 @@ export const EMPLOYMENT_PROPERTY_DEFS: EmploymentPropertyDef[] = [
   { key: "department", label: "Department" },
   { key: "grade", label: "Grade" },
   { key: "manager", label: "Reporting manager" },
+  { key: "location", label: "Location" },
   { key: "salary", label: "Salary (annual gross)" },
 ];
 

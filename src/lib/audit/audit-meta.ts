@@ -121,6 +121,19 @@ export type AuditAction =
   // per applied change, the property diff recorded in the detail line and
   // the structured rows in EmployeePropertyHistory.
   | "hr.employment_change_applied"
+  // P1 G6 — the Employee Transfer / Employee Promotion document lifecycle:
+  // one entry per transition per document (the EFFECTIVE entry carries the
+  // property diff; the structured rows land in EmployeePropertyHistory).
+  | "hr.transfer_created"
+  | "hr.transfer_submitted"
+  | "hr.transfer_approved"
+  | "hr.transfer_cancelled"
+  | "hr.transfer_effective"
+  | "hr.promotion_created"
+  | "hr.promotion_submitted"
+  | "hr.promotion_approved"
+  | "hr.promotion_cancelled"
+  | "hr.promotion_effective"
   // HR module — performance review lifecycle (docs/HR_MODULE_PLAN.md §6)
   | "review.created"
   | "review.updated"
@@ -385,6 +398,16 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.employment_transitioned": { icon: ArrowRightLeft, cls: "text-amber-500 bg-amber-500/10" },
   // P33 — the promotion/transfer application (EM-06/EM-01).
   "hr.employment_change_applied": { icon: ArrowUpRight, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.transfer_created": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.transfer_submitted": { icon: Send, cls: "text-amber-500 bg-amber-500/10" },
+  "hr.transfer_approved": { icon: CheckCircle2, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.transfer_cancelled": { icon: XCircle, cls: "text-muted-foreground bg-muted" },
+  "hr.transfer_effective": { icon: ArrowUpRight, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.promotion_created": { icon: Plus, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.promotion_submitted": { icon: Send, cls: "text-amber-500 bg-amber-500/10" },
+  "hr.promotion_approved": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.promotion_cancelled": { icon: XCircle, cls: "text-muted-foreground bg-muted" },
+  "hr.promotion_effective": { icon: ArrowUpRight, cls: "text-emerald-500 bg-emerald-500/10" },
   "hr.attendance_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
   "hr.attendance_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
 
@@ -549,6 +572,8 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   CANDIDATE: { label: "Candidate", cls: "bg-teal-500/10 text-teal-700" },
   NOTIFICATION_TEMPLATE: { label: "Notification", cls: "bg-violet-500/10 text-violet-700" },
   LEAVE_PERIOD: { label: "Leave period", cls: "bg-lime-500/10 text-lime-700" },
+  EMPLOYEE_TRANSFER: { label: "Transfer", cls: "bg-sky-500/10 text-sky-700" },
+  EMPLOYEE_PROMOTION: { label: "Promotion", cls: "bg-teal-500/10 text-teal-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -576,7 +601,7 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "projects", label: "Projects", types: ["PROJECT"] },
   { key: "bugs", label: "Bugs", types: ["BUG"] },
   { key: "hiring", label: "Hiring", types: ["CANDIDATE"] },
-  { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE"] },
+  { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE", "EMPLOYEE_TRANSFER", "EMPLOYEE_PROMOTION"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },
   { key: "other", label: "Other", types: ["REMINDER", "TIME", "AUTH", "WORKSPACE", "CONFIG", "NOTIFICATION_TEMPLATE", "LEAVE_PERIOD"] },
