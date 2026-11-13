@@ -11,10 +11,10 @@ import { CircleDollarSign, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { SalaryAdvanceT } from "@/lib/types";
 import { getSalaryAdvances, issueSalaryAdvance } from "@/server-actions/salary-advances";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 export function SalaryAdvancesModal({
   open, onClose, onChanged, employees,

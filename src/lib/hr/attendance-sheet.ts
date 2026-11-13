@@ -24,14 +24,14 @@
 // name order; records of former members simply never render (their rows
 // are gone with the user). Employee numbers come from the directory side.
 //
-// The file rides the P32 shared `lib/report-csv.ts` helper (RFC 4180
+// The file rides the P32 shared `lib/shared/report-csv.ts` helper (RFC 4180
 // escaping, the disclaimer header, the CRLF body). Pure and
 // dependency-free beyond that: the server action feeds the inputs, the
 // unit tests own the bytes.
 // ---------------------------------------------------------------------------
 
-import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
-import { dayKind } from "@/lib/working-days";
+import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/shared/report-csv";
+import { dayKind } from "@/lib/hr/working-days";
 
 export interface AttendanceSheetMember {
   userId: string;

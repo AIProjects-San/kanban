@@ -45,8 +45,8 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { dayKey } from "@/lib/working-days";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { dayKey } from "@/lib/hr/working-days";
 import { materializeLeaveBalanceTx, loadLeavePeriods } from "./hr-shared";
 import {
   assignmentBucketCandidates,

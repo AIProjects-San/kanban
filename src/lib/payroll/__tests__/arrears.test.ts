@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 // ---------------------------------------------------------------------------
 
 import { simulateArrearsForSlip, simulateArrearsRun, arrearsAdjustmentLabel } from "@/lib/payroll/arrears";
-import type { OfferComponent } from "@/lib/offer-math";
+import type { OfferComponent } from "@/lib/hiring/offer-math";
 
 const FACTS = {
   payslipId: "ps-1",

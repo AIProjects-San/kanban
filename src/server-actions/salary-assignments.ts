@@ -28,9 +28,9 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { parseOrThrow, createSalaryRevisionSchema } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import type { SalaryAssignmentT } from "@/lib/types";
-import { basicKeyOf, parseComponents } from "@/lib/offer-math";
+import { basicKeyOf, parseComponents } from "@/lib/hiring/offer-math";
 import { resolveAssignmentAt } from "@/lib/payroll/resolve-assignment";
 import { detectArrears } from "@/lib/payroll/detect-arrears";
 

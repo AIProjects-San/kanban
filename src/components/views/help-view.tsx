@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Search, BookOpen, Keyboard, Mail, MessageCircle, ChevronDown, LifeBuoy, Zap, Settings as SettingsIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { useApp } from "@/store/app-store";
 import { Modal } from "../ui/modal";
 import { APP } from "@/config/app";

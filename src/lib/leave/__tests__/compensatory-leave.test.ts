@@ -11,7 +11,7 @@ import {
   earnedCompDays,
   claimedNonWorkingDays,
 } from "@/lib/leave/compensatory-leave";
-import { holidayLookupFrom } from "@/lib/working-days";
+import { holidayLookupFrom } from "@/lib/hr/working-days";
 
 /** 2026-01: Fri 2, Sat 3, Sun 4, Mon 5 … (a weekend inside the first week). */
 const HOLIDAYS = holidayLookupFrom([

@@ -31,7 +31,7 @@ import {
   type PayAdjustmentRow,
 } from "@/lib/payroll/pay-adjustment";
 import { OVERTIME_LINE_KEY, overtimeLineLabel, planOvertimePayout } from "@/lib/payroll/overtime-bridge";
-import type { OfferComponent } from "@/lib/offer-math";
+import type { OfferComponent } from "@/lib/hiring/offer-math";
 import type { PayrollFrequency } from "@/lib/payroll/payroll-windows";
 
 export interface SlipDerivationInput {

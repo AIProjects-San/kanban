@@ -10,7 +10,7 @@ import { useState } from "react";
 import { Calculator, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { solveBaseForCtc } from "@/lib/hiring/ctc-solver";
-import { basicKeyOf, formatMoney, type OfferComponent } from "@/lib/offer-math";
+import { basicKeyOf, formatMoney, type OfferComponent } from "@/lib/hiring/offer-math";
 
 export function CtcSolverField({
   components,

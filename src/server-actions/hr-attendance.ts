@@ -25,14 +25,14 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import type { AttendanceT, AttendanceMonthT, AttendanceStatus, AttendanceSource } from "@/lib/types";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { attendanceRecordSchema, deleteAttendanceRecordSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import { parseDay } from "./hr-shared";
 import { deriveAttendanceTiming, type AttendanceTimingFacts } from "@/lib/hr/attendance-flags";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
-import { nonWorkingDayReason } from "@/lib/working-days";
+import { nonWorkingDayReason } from "@/lib/hr/working-days";
 import { monthlyAttendanceSheetCsv } from "@/lib/hr/attendance-sheet";
 
 /** Clamp/normalize a (year, month) pair; invalid input falls back to the
@@ -169,7 +169,7 @@ export async function upsertAttendanceRecord(input: {
     // F-R15 (S3) — the server-side half of the grid-shading honesty: marks
     // on non-working days are REJECTED (weekends + full holidays; half-day
     // holidays stay markable — they are working half-days). The pure rule
-    // lives in lib/working-days.ts; this is the friendly-error writer.
+    // lives in lib/hr/working-days.ts; this is the friendly-error writer.
     // The leave→ON_LEAVE derivation bypasses this guard BY DESIGN (it is
     // server-driven and LOP never charges non-working days either way).
     const holiday = await db.holidayCalendarEntry.findFirst({

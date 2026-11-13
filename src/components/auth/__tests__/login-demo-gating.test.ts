@@ -118,7 +118,7 @@ describe("L-P0-12 login screen demo gating (src/components/auth/login-screen.tsx
   });
 
   it("the i18n dictionary does not carry the demo password either", () => {
-    const i18n = readFileSync(resolve(__dirname, "../../../lib/i18n.ts"), "utf-8");
+    const i18n = readFileSync(resolve(__dirname, "../../../lib/shared/i18n.ts"), "utf-8");
     expect(i18n).not.toMatch(/fernly123/);
   });
 

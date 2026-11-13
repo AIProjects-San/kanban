@@ -35,11 +35,11 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { parseOrThrow, employmentTransitionSchema, employmentChangeSchema } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import type { OfferComponent } from "@/lib/offer-math";
+import type { ActionResult } from "@/lib/shared/action-result";
+import type { OfferComponent } from "@/lib/hiring/offer-math";
 import { assertNoCycle } from "@/lib/auth/hierarchy";
 import { logError } from "@/lib/infra/observability";
-import { DEPARTMENT_LABELS } from "@/lib/config";
+import { DEPARTMENT_LABELS } from "@/lib/shared/config";
 import {
   EMPLOYMENT_STATUS_LABELS,
   PROBATION_DEFAULT_MONTHS,

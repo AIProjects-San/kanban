@@ -7,7 +7,7 @@
 // Server component (no "use client") so it renders before any client JS.
 // ---------------------------------------------------------------------------
 
-import { t } from "@/lib/i18n";
+import { t } from "@/lib/shared/i18n";
 import { APP } from "@/config/app";
 
 export default function Loading() {

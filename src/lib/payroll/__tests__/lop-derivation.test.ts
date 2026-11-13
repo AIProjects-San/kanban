@@ -13,7 +13,7 @@ import {
   type LopAttendanceMark,
   type LopLeaveSpan,
 } from "@/lib/payroll/lop-derivation";
-import { holidayLookupFrom } from "@/lib/working-days";
+import { holidayLookupFrom } from "@/lib/hr/working-days";
 
 const PERIOD = "2026-11";
 

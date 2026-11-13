@@ -15,7 +15,7 @@
 //
 // Model:
 //   • SalaryStructure — the employee's standing ANNUAL components (same
-//     shape as offers; lib/offer-math.ts resolves fixed / % of basic).
+//     shape as offers; lib/hiring/offer-math.ts resolves fixed / % of basic).
 //     Created manually, or copied from the hire's SIGNED offer.
 //   • PayrollRun — one month ("YYYY-MM"), OPEN → LOCKED. Creating a run
 //     snapshots every ACTIVE structure into per-employee payslips
@@ -38,9 +38,9 @@ import {
 } from "@/lib/validation";
 import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { parseComponents } from "@/lib/offer-math";
-import { workingDaysBetween, paymentWindowBetween, type HolidayLookup } from "@/lib/working-days";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { parseComponents } from "@/lib/hiring/offer-math";
+import { workingDaysBetween, paymentWindowBetween, type HolidayLookup } from "@/lib/hr/working-days";
 import { deriveLopBreakdownBetween, parseLopDetail, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/payroll/lop-derivation";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import { getHolidayLookup } from "./hr-shared";
@@ -254,7 +254,7 @@ function slipNumber(period: string, seq: number): string {
  * run/slip CREATION only — the value is then a snapshot on the payslip
  * (F1.1's never-re-derived discipline).
  * S5 (PR-B06) — also returns each user's PAID DAYS (the employment-window
- * working-day count from lib/working-days.ts paymentWindow) so the caller
+ * working-day count from lib/hr/working-days.ts paymentWindow) so the caller
  * can scale earnings to the days actually employed. */
 interface PayrollFacts {
   lopDays: number;

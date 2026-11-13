@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 // PR-35 (production-readiness round 2) — wiring test.
 //
-// The HIBP client itself is unit-tested in lib/__tests__/breach-check.test.ts
+// The HIBP client itself is unit-tested in lib/auth/__tests__/breach-check.test.ts
 // (this file must NOT mock the module under another name — a file-level
 // vi.mock would hijack that suite's import too, which is why the wiring
 // tests live here instead).

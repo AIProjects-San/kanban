@@ -8,7 +8,7 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function assignUserToProject(
   userId: string,

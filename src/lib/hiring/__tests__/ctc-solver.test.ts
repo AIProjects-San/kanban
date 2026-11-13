@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { solveBaseForCtc } from "@/lib/hiring/ctc-solver";
-import { computeOffer, type OfferComponent } from "@/lib/offer-math";
+import { computeOffer, type OfferComponent } from "@/lib/hiring/offer-math";
 
 const C = (key: string, kind: OfferComponent["kind"], mode: OfferComponent["mode"], amount: number): OfferComponent =>
   ({ key, label: key, kind, mode, amount });

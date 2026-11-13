@@ -30,7 +30,7 @@
 // the same planner inside the transaction (one rule, both callers).
 // ---------------------------------------------------------------------------
 
-import { computeOffer, type OfferComponent } from "@/lib/offer-math";
+import { computeOffer, type OfferComponent } from "@/lib/hiring/offer-math";
 
 // ---------------------------------------------------------------------------
 // The property registry.

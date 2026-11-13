@@ -50,7 +50,7 @@ import type { NzTaxProfileRow } from "../src/lib/payroll/nz/calculate";
 import type { NzPayFrequency } from "../src/lib/payroll/nz/types";
 import {
   parseComponents,
-} from "../src/lib/offer-math";
+} from "../src/lib/hiring/offer-math";
 import {
   windowEarningsFromStructure,
   payslipTotals,
@@ -62,8 +62,8 @@ import {
   resolvePayrollWindow,
   fiscalYearOf,
 } from "../src/lib/payroll/payroll-windows";
-import { workingDaysBetween } from "../src/lib/working-days";
-import { getHolidayLookup } from "../src/lib/holidays";
+import { workingDaysBetween } from "../src/lib/hr/working-days";
+import { getHolidayLookup } from "../src/lib/hr/holidays";
 import { getWorkspaceConfig } from "../src/lib/infra/config-loader";
 import { computeRunningAggregates, type AggregateSlip } from "../src/lib/payroll/payslip-aggregates";
 import { logAudit } from "../src/lib/audit/audit";

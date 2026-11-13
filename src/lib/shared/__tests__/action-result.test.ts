@@ -6,7 +6,7 @@ import {
   isValidationError,
   actionErrorMessage,
   type ActionResult,
-} from "@/lib/action-result";
+} from "@/lib/shared/action-result";
 
 // ---------------------------------------------------------------------------
 // The result envelope + the boundary-safe error classification.

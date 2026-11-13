@@ -44,7 +44,7 @@ import {
   renderTemplate,
   type ResolvedNotificationTemplate,
 } from "@/lib/email/notification-template";
-import { daysBetween } from "@/lib/working-days";
+import { daysBetween } from "@/lib/hr/working-days";
 import { emailHtml } from "@/lib/email/email-html";
 
 // ---------------------------------------------------------------------------

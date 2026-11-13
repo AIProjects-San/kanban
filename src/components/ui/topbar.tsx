@@ -16,8 +16,8 @@ import {
 import { useApp } from "@/store/app-store";
 import { ROLE_LABELS, type Role } from "@/lib/auth/rbac";
 import { Avatar } from "./avatar";
-import { cn } from "@/lib/utils";
-import { timeAgo } from "@/lib/time";
+import { cn } from "@/lib/shared/utils";
+import { timeAgo } from "@/lib/shared/time";
 import { appSignOut } from "@/hooks/use-app-session"; // PR-48 — flag-aware (v4 wrapper or Better Auth)
 import type { NotificationT, MessageT } from "@/lib/types";
 

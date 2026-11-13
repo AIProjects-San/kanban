@@ -8,7 +8,7 @@
 // post-launch addition that only needs a new dictionary + locale detection.
 //
 // Usage:
-//   import { t } from "@/lib/i18n";
+//   import { t } from "@/lib/shared/i18n";
 //   t("auth.signIn")           // "Sign in"
 //   t("errors.required", { field: "Email" })  // "Email is required."
 //

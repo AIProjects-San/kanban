@@ -21,10 +21,10 @@
 //
 // All dates are UTC-midnight "YYYY-MM-DD" day keys.
 
-import { nonWorkingDayReason, type HolidayLookup } from "@/lib/working-days";
+import { nonWorkingDayReason, type HolidayLookup } from "@/lib/hr/working-days";
 
 import { round2 } from "@/lib/payroll/payroll-math";
-import { parseDay } from "@/lib/working-days";
+import { parseDay } from "@/lib/hr/working-days";
 
 
 

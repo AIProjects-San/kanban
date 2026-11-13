@@ -27,7 +27,7 @@
 
 import { payslipTotals, withRoundingLine, round2 } from "@/lib/payroll/payroll-math";
 import { deriveSlipLines } from "@/lib/payroll/slip-derivation";
-import { parseComponents, type OfferComponent } from "@/lib/offer-math";
+import { parseComponents, type OfferComponent } from "@/lib/hiring/offer-math";
 import type { PayrollRoundingMode } from "@/lib/payroll/payroll-math";
 import type { PayrollFrequency } from "@/lib/payroll/payroll-windows";
 

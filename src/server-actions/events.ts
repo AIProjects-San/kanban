@@ -8,7 +8,7 @@ import { requirePermission } from "./auth-guard";
 import { createEventSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit, fmtDayDate } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function createEvent(input: {
   title: string;

@@ -17,12 +17,12 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { electBenefitSchema, claimBenefitSchema, cancelBenefitElectionSchema } from "@/lib/validation";
 import { planBenefitElection, planBenefitClaim, benefitBalance, benefitPayoutLabel } from "@/lib/payroll/benefits";
 import type { BenefitsOverviewT } from "@/lib/types";
-import { round2 } from "@/lib/money";
+import { round2 } from "@/lib/shared/money";
 
 // ---------------------------------------------------------------------------
 // Reads

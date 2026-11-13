@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Section } from "../ui/section";
 import { Field, FormRow } from "../ui/field";
 import { Modal } from "../ui/modal";
-import { cn, barWidthClass } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/shared/utils";
 import type { OnboardingChecklistT, OnboardingTemplateTaskT } from "@/lib/types";
 import {
   getOnboarding,

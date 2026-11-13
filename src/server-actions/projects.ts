@@ -8,7 +8,7 @@ import { requirePermission } from "./auth-guard";
 import { createProjectSchema, updateProjectSchema, parseOrThrow, validationError } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function createProject(input: {
   name: string;

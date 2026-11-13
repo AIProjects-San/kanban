@@ -5,7 +5,7 @@
 // one query shape, one caching story.
 
 import { db } from "@/lib/infra/db";
-import { holidayLookupFrom, type HolidayLookup } from "@/lib/working-days";
+import { holidayLookupFrom, type HolidayLookup } from "@/lib/hr/working-days";
 
 /** The compact holiday lookup for a date range: date-key → half-day flag.
  *  Rows are date-only UTC-midnight values, so inclusive gte/lte bounds on

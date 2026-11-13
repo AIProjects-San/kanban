@@ -17,7 +17,7 @@ import { logAudit, getMyTeamMemberId, getScopedProjectIds, assertTaskEditPermiss
 import { findApprovedLeaveOn } from "./hr-shared";
 import { logTimeSchema, logTaskTimeSchema, parseOrThrow } from "@/lib/validation";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function logTime(raw: {
   projectId: string;

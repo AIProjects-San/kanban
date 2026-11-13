@@ -7,12 +7,12 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow } from "./auth-guard";
 import { AuthorizationError } from "./auth-guard";
-import { TASK_STATUS_LABELS } from "@/lib/config";
+import { TASK_STATUS_LABELS } from "@/lib/shared/config";
 import { createTaskSchema, updateTaskSchema, moveTaskSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit, assertTaskEditPermission, assertTaskDeletePermission, recalcMemberStats, getScopedProjectIds, getProjectAssociatedUserIds, assertTeamMemberAssociatedWithProject } from "./shared";
 import { notifyMentionedUsers } from "./mentions";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function createTask(input: {
   title: string;

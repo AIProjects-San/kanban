@@ -13,7 +13,7 @@ import {
   Bar,
 } from "recharts";
 import { CheckCircle2, Clock, TrendingUp, Gauge, Download, Loader2, Users } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { Avatar } from "../ui/avatar";
 import { toast } from "sonner";
 import {
@@ -21,7 +21,7 @@ import {
   type AnalyticsData,
   type AnalyticsScope,
 } from "@/server-actions/data";
-import { downloadBlob } from "@/lib/format";
+import { downloadBlob } from "@/lib/shared/format";
 
 // ---------------------------------------------------------------------------
 // PR-63 — role-scoped Analytics.

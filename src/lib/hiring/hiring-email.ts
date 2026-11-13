@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { APP } from "@/config/app";
-import { escapeHtml } from "@/lib/utils";
+import { escapeHtml } from "@/lib/shared/utils";
 
 export interface RejectionEmailInput {
   candidateName: string;

@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { createSalaryRevision } from "@/server-actions/salary-assignments";
 import type { SalaryAssignmentT } from "@/lib/types";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 const inputCls =
   "h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";

@@ -26,7 +26,7 @@ import { EmployeeDocumentsPanel } from "../ui/employee-documents-panel";
 // P37 (EM-18) — the skill-map panel + the card's top-skills line.
 import { SkillMapPanel } from "../ui/skill-map-panel";
 import { topSkills } from "@/lib/hr/skills";
-import { DEPARTMENT_LABELS, departmentLabel, EMPLOYMENT_TYPE_LABELS, employmentTypeLabel } from "@/lib/config";
+import { DEPARTMENT_LABELS, departmentLabel, EMPLOYMENT_TYPE_LABELS, employmentTypeLabel } from "@/lib/shared/config";
 import { retirementProjection } from "@/lib/hr/employment-change";
 import {
   EMPLOYMENT_STATUS_BADGE,
@@ -34,7 +34,7 @@ import {
   EMPLOYMENT_STATUS_TRANSITIONS,
 } from "@/lib/hr/employment";
 import type { EmployeeProfileT, EmploymentStatus } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import {
   getMyProfile,
   upsertMyProfile,
@@ -43,7 +43,7 @@ import {
   exportDirectoryCsv,
 } from "@/server-actions/hr-directory";
 import { transitionEmployment } from "@/server-actions/employment";
-import { downloadBlob } from "@/lib/format";
+import { downloadBlob } from "@/lib/shared/format";
 
 // ---------------------------------------------------------------------------
 // Self-service card (Settings view)

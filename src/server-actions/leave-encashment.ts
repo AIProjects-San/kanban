@@ -29,13 +29,13 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { requestLeaveEncashmentSchema, decideLeaveEncashmentSchema } from "@/lib/validation";
 import { resolveLeavePolicy } from "@/lib/leave/leave-policy";
 import { planLeaveEncashment, encashmentDailyRate, encashmentAmount } from "@/lib/leave/leave-encashment";
-import { workingDaysInPeriod } from "@/lib/working-days";
-import { parseComponents, computeOffer } from "@/lib/offer-math";
+import { workingDaysInPeriod } from "@/lib/hr/working-days";
+import { parseComponents, computeOffer } from "@/lib/hiring/offer-math";
 import { round2 } from "@/lib/payroll/payroll-math";
 import {
   getHolidayLookup,

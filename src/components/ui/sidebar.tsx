@@ -11,7 +11,7 @@ import {
 import { useApp } from "@/store/app-store";
 import { usePermissions } from "@/hooks/use-permissions";
 import { usePersistAppearance } from "@/hooks/use-appearance-sync";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { appSignOut } from "@/hooks/use-app-session"; // PR-48 — flag-aware (v4 wrapper or Better Auth)
 import { APP } from "@/config/app";
 import {

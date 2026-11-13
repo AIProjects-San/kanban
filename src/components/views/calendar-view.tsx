@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Plus, MapPin, Clock, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { useRefresh } from "@/hooks/use-refresh";
 import { createEvent, deleteEvent } from "@/server-actions/data";
 import { toast } from "sonner";
@@ -10,7 +10,7 @@ import { Modal } from "../ui/modal";
 import { EntityHistorySection } from "../ui/entity-history-section";
 import { Field, FormRow } from "../ui/field";
 import { FormActions } from "../ui/form-actions";
-import { EVENT_TYPE_MAP, EVENT_TYPES } from "@/lib/config";
+import { EVENT_TYPE_MAP, EVENT_TYPES } from "@/lib/shared/config";
 import type { CalendarEventT, EventType } from "@/lib/types";
 
 interface CalendarViewProps {

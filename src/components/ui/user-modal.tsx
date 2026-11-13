@@ -10,14 +10,14 @@ import {
   deleteUser,
   getAllUsers } from "@/server-actions/data";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { type Role } from "@/lib/auth/rbac";
 import { EntityHistorySection } from "./entity-history-section";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
 import { PasswordInput, generatePassword } from "./password-input";
 import { AvatarColorPicker } from "./avatar-color-picker";
-import { TIMEZONES, DEPARTMENTS } from "@/lib/constants";
+import { TIMEZONES, DEPARTMENTS } from "@/lib/shared/constants";
 import type { AccentTheme } from "@/store/app-store";
 import { APP } from "@/config/app";
 

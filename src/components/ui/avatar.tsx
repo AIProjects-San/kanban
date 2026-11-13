@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 
 // PR-40 — the size set is closed on purpose: every size renders as a static
 // `.f-av-<size>` class (globals.css) instead of an inline style attribute,

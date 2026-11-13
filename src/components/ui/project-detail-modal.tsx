@@ -46,8 +46,8 @@ import {
   unassignUserFromProject,
 } from "@/server-actions/data";
 import { toast } from "sonner";
-import { cn, barWidthClass } from "@/lib/utils";
-import { PROJECT_STATUS_MAP, priorityClass } from "@/lib/config";
+import { cn, barWidthClass } from "@/lib/shared/utils";
+import { PROJECT_STATUS_MAP, priorityClass } from "@/lib/shared/config";
 import type { ProjectT, TeamMemberT } from "@/lib/types";
 
 interface ProjectDetailModalProps {

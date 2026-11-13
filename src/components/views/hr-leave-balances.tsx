@@ -12,10 +12,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Download, Loader2, Scale } from "lucide-react";
 import { toast } from "sonner";
 import type { LeaveTypeT } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { getLeaveBalanceReport, exportLeaveBalanceReportCsv } from "@/server-actions/hr-leave";
 import type { LeaveBalanceReportRow } from "@/lib/leave/leave-balance-report";
-import { downloadBlob } from "@/lib/format";
+import { downloadBlob } from "@/lib/shared/format";
 
 function fmtDays(n: number): string {
   return n % 1 === 0 ? String(n) : n.toFixed(2);

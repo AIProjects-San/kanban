@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-// R5 — offer math (src/lib/offer-math.ts): component resolution
+// R5 — offer math (src/lib/hiring/offer-math.ts): component resolution
 // (fixed vs percent-of-basic), CTC vs net semantics, letter placeholders,
 // and defensive JSON parsing for the TEXT columns.
 
@@ -12,7 +12,7 @@ import {
   renderOfferLetter,
   formatMoney,
   type OfferComponent,
-} from "@/lib/offer-math";
+} from "@/lib/hiring/offer-math";
 
 const STRUCTURE: OfferComponent[] = [
   { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 80_000 },

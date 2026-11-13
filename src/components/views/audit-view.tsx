@@ -5,14 +5,14 @@ import {
   History, RefreshCw, Loader2, ShieldAlert, Search,
   ChevronDown, Activity, CalendarDays, Users,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { ROLE_LABELS, type Role  } from "@/lib/auth/rbac";
 import { getAuditLogs } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 import { Avatar } from "../ui/avatar";
 import { StatCard } from "../ui/stat-card";
 import { FilterBar } from "../ui/filter-bar";
-import { timeAgo } from "@/lib/time";
+import { timeAgo } from "@/lib/shared/time";
 import { getActionMeta, getEntityBadge, AUDIT_FILTERS } from "@/lib/audit/audit-meta";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/use-permissions";

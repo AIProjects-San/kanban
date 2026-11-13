@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 // ---------------------------------------------------------------------------
-// F1.1 — holiday-aware working-day math (lib/working-days.ts).
+// F1.1 — holiday-aware working-day math (lib/hr/working-days.ts).
 // Pins the exact semantics: weekends never count; holiday entries remove
 // weekdays (half-days 0.5); kind is irrelevant to the count; entries on
 // weekends change nothing; periods read only their own days.
@@ -13,7 +13,7 @@ import {
   holidayLookupFrom,
   workingDaysBetween,
   workingDaysInPeriod,
-} from "../working-days";
+} from "@/lib/hr/working-days";
 
 const d = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
@@ -178,7 +178,7 @@ describe("paymentWindow (S5 / PR-B06)", () => {
 // fixture calendar the rest of this file uses.
 // ---------------------------------------------------------------------------
 
-import { addWorkingDays } from "../working-days";
+import { addWorkingDays } from "@/lib/hr/working-days";
 
 describe("addWorkingDays", () => {
   it("advances n calendar working days — Mon start +3 → Thu same week", () => {

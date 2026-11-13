@@ -92,7 +92,7 @@ import {
   deleteRole,
 } from "@/server-actions/data";
 
-import type { ActionResult, ActionErrorCode } from "@/lib/action-result";
+import type { ActionResult, ActionErrorCode } from "@/lib/shared/action-result";
 
 /** Assert an action failed, optionally matching the message regex or error code. */
 function expectErr<T>(r: ActionResult<T>, matcher?: RegExp | ActionErrorCode): void {

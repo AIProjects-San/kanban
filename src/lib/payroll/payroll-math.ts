@@ -4,14 +4,14 @@
 // Shared by the server actions and the payslip editor UI:
 //   • PayslipLine — one MONTHLY money line on a payslip (key/label/amount).
 //   • monthlyEarningsFromStructure — resolves the ANNUAL structure
-//     components (lib/offer-math.ts) and divides by 12.
+//     components (lib/hiring/offer-math.ts) and divides by 12.
 //   • payslipTotals — gross = Σ earnings, net = gross − Σ deductions.
 //   • LOP (loss of pay) — pro-rated: gross × lopDays / days-in-period,
 //     stored as the auto-managed "lop" deduction line.
 // All amounts rounded to 2 decimals at every step (money never drifts).
 // ---------------------------------------------------------------------------
 
-import { computeOffer, type OfferComponent } from "@/lib/offer-math";
+import { computeOffer, type OfferComponent } from "@/lib/hiring/offer-math";
 import { windowsInYear, type PayrollFrequency } from "@/lib/payroll/payroll-windows";
 
 export interface PayslipLine {
@@ -28,8 +28,8 @@ export interface PayslipLine {
   statistical?: boolean;
 }
 
-export { round2, toCents } from "@/lib/money";
-import { round2 } from "@/lib/money";
+export { round2, toCents } from "@/lib/shared/money";
+import { round2 } from "@/lib/shared/money";
 
 /** Days in a "YYYY-MM" period (the month's length). */
 export function daysInPeriod(period: string): number {

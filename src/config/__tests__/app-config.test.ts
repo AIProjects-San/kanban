@@ -26,7 +26,7 @@ const CONFIG_CONSUMERS = [
   "src/server-actions/ics-export.ts",
   "src/lib/email/mailer.ts",
   "src/lib/infra/config-loader.ts",
-  "src/lib/i18n.ts",
+  "src/lib/shared/i18n.ts",
   "src/store/app-store.ts",
 ];
 

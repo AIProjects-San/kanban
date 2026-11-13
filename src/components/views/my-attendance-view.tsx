@@ -9,9 +9,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
-import { ATTENDANCE_STATUS_BADGE, ATTENDANCE_STATUS_LABELS } from "@/lib/config";
+import { ATTENDANCE_STATUS_BADGE, ATTENDANCE_STATUS_LABELS } from "@/lib/shared/config";
 import type { AttendanceT, AttendanceStatus } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { describeAttendanceTiming, formatMinutes } from "@/lib/hr/attendance-flags";
 import { getMyAttendance } from "@/server-actions/hr-attendance";
 // The attendance list shows weekday + day + month only ("Wed 25 Dec") —

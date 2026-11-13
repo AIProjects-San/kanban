@@ -25,7 +25,7 @@
 import { getSessionOrThrow } from "./auth-guard";
 import { signJwt } from "@/lib/auth/jwt";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { DEFAULT_TOKEN_TTL_SEC } from "@/lib/auth/jwt";
 
 export interface IssuedToken {

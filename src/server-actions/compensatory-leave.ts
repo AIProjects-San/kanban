@@ -33,10 +33,10 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { parseOrThrow, createCompLeaveRequestSchema, decideCompLeaveRequestSchema } from "@/lib/validation";
 import { earnedCompDays } from "@/lib/leave/compensatory-leave";
-import { dayKey, holidayLookupFrom } from "@/lib/working-days";
+import { dayKey, holidayLookupFrom } from "@/lib/hr/working-days";
 import {
   todayUTC,
   getApproverIdsFor,

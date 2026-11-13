@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 
 /**
  * Password input with show/hide toggle and optional "generate password" button.

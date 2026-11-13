@@ -10,7 +10,7 @@ import { ArrowRight, Wallet } from "lucide-react";
 import type { PayslipT } from "@/lib/types";
 import { getMyPayslips } from "@/server-actions/payroll-self-service";
 import { useApp } from "@/store/app-store";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 function monthLabel(period: string): string {
   const [y, m] = period.split("-").map(Number);

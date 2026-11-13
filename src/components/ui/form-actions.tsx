@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 
 /**
  * Modal form footer — the Cancel / Save / Delete button row.

@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import Link from "next/link";
-import { t } from "@/lib/i18n";
+import { t } from "@/lib/shared/i18n";
 import { APP } from "@/config/app";
 
 export default function NotFound() {

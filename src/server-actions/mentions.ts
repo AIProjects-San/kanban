@@ -6,7 +6,7 @@
 
 import { logError } from "@/lib/infra/observability";
 import { db } from "@/lib/infra/db";
-import { extractMentionedNames, normaliseNameForMention } from "@/lib/mentions";
+import { extractMentionedNames, normaliseNameForMention } from "@/lib/shared/mentions";
 
 export interface MentionContext {
   /** The text body to scan for @mentions (task description, message body). */

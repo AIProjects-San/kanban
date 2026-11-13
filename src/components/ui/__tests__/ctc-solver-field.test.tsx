@@ -11,7 +11,7 @@ const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast: toastMock }));
 
 import { CtcSolverField } from "@/components/ui/ctc-solver-field";
-import type { OfferComponent } from "@/lib/offer-math";
+import type { OfferComponent } from "@/lib/hiring/offer-math";
 
 const PACKAGE: OfferComponent[] = [
   { key: "basic", label: "Basic Salary", kind: "EARNING", mode: "FIXED", amount: 60_000 },

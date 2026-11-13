@@ -5,13 +5,13 @@ import {
   UserCog, UserPlus, RefreshCw, Loader2, Mail, Trash2,
   Edit3, FolderKanban, Clock, Plus, ShieldCheck, ShieldX,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { useApp } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
 import {
   getAllUsers, deleteUser, getUserProjectAssignments } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 import {
   type Role,
   ROLE_LABELS, ALL_PERMISSIONS,

@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import type { PayslipT } from "@/lib/types";
 import { getMyPayslips } from "@/server-actions/payroll-self-service";
 import { PayslipModal } from "../ui/payslip-modal";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 function monthLabel(period: string): string {
   const [y, m] = period.split("-").map(Number);

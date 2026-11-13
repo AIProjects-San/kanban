@@ -15,7 +15,7 @@ import {
   computeOffer,
   parseComponents,
   type OfferComponent,
-} from "@/lib/offer-math";
+} from "@/lib/hiring/offer-math";
 import {
   windowDeductionsFromStructure,
   windowEarningsFromStructure,

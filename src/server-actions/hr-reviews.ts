@@ -22,7 +22,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/infra/db";
 import { logError } from "@/lib/infra/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { REVIEW_STATUS_LABELS } from "@/lib/config";
+import { REVIEW_STATUS_LABELS } from "@/lib/shared/config";
 import {
   createReviewSchema,
   selfAssessmentSchema,
@@ -34,7 +34,7 @@ import type { ReviewKind, ReviewStatus, PerformanceReviewT } from "@/lib/types";
 import { logAudit } from "./shared";
 import { getApproverIdsFor } from "./hr-shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 /**
  * The subject's manager chain, an ADMIN, or HR may write the manager review.

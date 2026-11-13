@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { PrismaClient } from "@prisma/client";
-import { computeOffer, parseComponents } from "../src/lib/offer-math";
+import { computeOffer, parseComponents } from "../src/lib/hiring/offer-math";
 
 const db = new PrismaClient();
 

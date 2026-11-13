@@ -30,7 +30,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/infra/db", () => ({ db }));
 
 import { getAnalyticsData } from "@/server-actions/data";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 const ADMIN = { userId: "u-ada", name: "Ada", email: "ada@fernly.dev", role: "ADMIN" as string };
 const MANAGER = { userId: "u-max", name: "Max", email: "max@fernly.dev", role: "MANAGER" as string };

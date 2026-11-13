@@ -1,8 +1,8 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { ACCENTS, PROJECT_COLORS } from "@/lib/constants";
+import { cn } from "@/lib/shared/utils";
+import { ACCENTS, PROJECT_COLORS } from "@/lib/shared/constants";
 import type { AccentTheme } from "@/store/app-store";
 
 /**

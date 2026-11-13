@@ -14,7 +14,7 @@ import type { PayAdjustmentT } from "@/lib/types";
 import { createPayAdjustmentSchema, lockPayrollRunSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { parsePayslipLines, withRoundingLine, payslipTotals } from "@/lib/payroll/payroll-math";
 import { applyAdjustments, isDueInPeriod, validateAdjustmentInput, type PayAdjustmentRow } from "@/lib/payroll/pay-adjustment";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";

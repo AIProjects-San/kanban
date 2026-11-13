@@ -4,7 +4,7 @@
 // R5 + R6 — the offer lifecycle (split from hiring.ts). Templates are
 // hiring:config; offers are hiring:manage and only for SELECTED candidates
 // (the hire decision gates the offer, not the other way round). Components
-// are stored as JSON and computed by lib/offer-math.ts.
+// are stored as JSON and computed by lib/hiring/offer-math.ts.
 //
 // R6 e-sign flow: createOfferRecord (HR composes, DRAFT) → approveOffer (a
 // MANAGER — the four-eyes step, hiring:approve, distinct from the composer)
@@ -31,11 +31,11 @@ import {
 } from "@/lib/validation";
 import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
-import { computeOffer, parseComponents, parseBenefits, renderOfferLetter, formatMoney } from "@/lib/offer-math";
+import { computeOffer, parseComponents, parseBenefits, renderOfferLetter, formatMoney } from "@/lib/hiring/offer-math";
 import { isOfferLinkExpired, formatOfferDate, dateOnlyISO } from "@/lib/hiring/offer-lifecycle";
-import { escapeHtml } from "@/lib/utils";
+import { escapeHtml } from "@/lib/shared/utils";
 import { namesFor } from "@/lib/hiring/user-names";
 import { lapseExpiredSentOffers } from "@/lib/hiring/offer-lapse";
 
@@ -43,7 +43,7 @@ import { lapseExpiredSentOffers } from "@/lib/hiring/offer-lapse";
 // R5 — offer builder (docs/RECRUITMENT_MODULE_PLAN.md §5). Templates are
 // hiring:config; offers are hiring:manage and only for SELECTED candidates
 // (the hire decision gates the offer, not the other way round). Components
-// are stored as JSON and computed by lib/offer-math.ts.
+// are stored as JSON and computed by lib/hiring/offer-math.ts.
 // ---------------------------------------------------------------------------
 
 function serializeOfferTemplate(t: {

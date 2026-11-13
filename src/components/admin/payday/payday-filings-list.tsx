@@ -10,8 +10,8 @@ import { toast } from "sonner";
 import { AlertTriangle, CalendarClock, FileText, Loader2, RefreshCw } from "lucide-react";
 import { refreshOverdueFilings } from "@/server-actions/payday-filing";
 import type { PaydayFilingSummaryT } from "@/lib/ird/filing-types";
-import { formatMoneyCents } from "@/lib/format";
-import { FILING_STATUS_BADGE, FILING_STATUSES } from "@/lib/config";
+import { formatMoneyCents } from "@/lib/shared/format";
+import { FILING_STATUS_BADGE, FILING_STATUSES } from "@/lib/shared/config";
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
 

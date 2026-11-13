@@ -40,7 +40,7 @@ trip, and hands it to `AppShell`, which switches between views client-side
 `hr-reviews`, `hr-onboarding`, `hr-shared` — with `data.ts` as a thin barrel
 re-export so callers have one stable import path. Every client-invoked action
 returns an **`ActionResult<T> = { ok: true; data: T } | { ok: false; code; error }`**
-(`lib/action-result.ts`) instead of throwing: production never masks action
+(`lib/shared/action-result.ts`) instead of throwing: production never masks action
 error messages, and clients branch on `res.ok`. SSR-only loaders
 (`getDashboardData`, `getUserProfile`, `getUserSettings`) keep the throwing
 contract — a DB outage there belongs in the error boundary, not an empty UI.

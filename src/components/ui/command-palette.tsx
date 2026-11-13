@@ -12,7 +12,7 @@ import {
 import { useApp } from "@/store/app-store";
 import { navLeaves } from "@/config/navigation";
 import { usePermissions } from "@/hooks/use-permissions";
-import { ACCENTS } from "@/lib/constants";
+import { ACCENTS } from "@/lib/shared/constants";
 import { useAppSession } from "@/hooks/use-app-session";
 import { updateUserSettings } from "@/server-actions/data";
 

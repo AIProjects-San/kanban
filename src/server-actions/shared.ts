@@ -15,7 +15,7 @@ import {
   templateForKind,
   type OnboardingTemplateTaskRow,
 } from "@/lib/hr/onboarding-template";
-import { addWorkingDays, type HolidayLookup } from "@/lib/working-days";
+import { addWorkingDays, type HolidayLookup } from "@/lib/hr/working-days";
 
 // Audit + outbox infrastructure lives in lib (cron jobs and lib kernels use
 // it without importing the action layer); re-exported here for the action
@@ -311,7 +311,7 @@ export async function assertTaskEditPermission(
 //
 // Unassigned tasks in projects nobody "owns" for the caller are deletable by
 // ADMIN (and a chain manager of the project owner) only. The client mirrors
-// this predicate in lib/task-delete.ts to decide whether to render the
+// this predicate in lib/shared/task-delete.ts to decide whether to render the
 // Delete button; the server remains the source of truth.
 export async function assertTaskDeletePermission(
   auth: { userId: string; email: string; role: Role },

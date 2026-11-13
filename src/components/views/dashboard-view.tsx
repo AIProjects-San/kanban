@@ -10,7 +10,7 @@ import {
   AlertCircle,
   ArrowRight,
 } from "lucide-react";
-import { cn, barWidthClass } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/shared/utils";
 import { Avatar } from "../ui/avatar";
 import { StatCard } from "../ui/stat-card";
 import { MyPayslipsCard } from "../ui/my-payslips-card";

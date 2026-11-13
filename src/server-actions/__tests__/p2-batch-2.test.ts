@@ -56,7 +56,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { bulkUpdateTasks } from "../bulk";
 import { exportCalendarIcs } from "../ics-export";
-import { t } from "@/lib/i18n";
+import { t } from "@/lib/shared/i18n";
 
 const MEMBER_AUTH = { userId: "u-mia", role: "MEMBER" as const, name: "Mia", email: "mia@x.co" };
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Admin", email: "a@x.co" };

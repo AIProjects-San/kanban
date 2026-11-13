@@ -23,8 +23,8 @@
 
 import { createHash } from "node:crypto";
 import { db } from "@/lib/infra/db";
-import { getHolidayLookup } from "@/lib/holidays";
-import { holidayLookupFrom, type HolidayLookup } from "@/lib/working-days";
+import { getHolidayLookup } from "@/lib/hr/holidays";
+import { holidayLookupFrom, type HolidayLookup } from "@/lib/hr/working-days";
 import type { PayslipStatutoryT } from "@/lib/types";
 import { buildEiFile, type EiEmployeeLine } from "./ei-file";
 import { buildEdFile, type EdEmployeeLine, type EdFilingKind } from "./ed-file";

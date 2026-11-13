@@ -29,8 +29,8 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { validateLeavePeriod } from "@/lib/leave/leave-period";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { dayKey } from "@/lib/working-days";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { dayKey } from "@/lib/hr/working-days";
 import {
   leavePeriodCreateSchema,
   leavePeriodDeleteSchema,

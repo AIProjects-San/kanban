@@ -29,7 +29,7 @@
 
 import { round2, lineSum, type PayslipLine } from "@/lib/payroll/payroll-math";
 import { parsePayrollPeriodKey } from "@/lib/payroll/payroll-windows";
-import type { OfferComponent } from "@/lib/offer-math";
+import type { OfferComponent } from "@/lib/hiring/offer-math";
 
 export type AdjustmentSide = "EARNING" | "DEDUCTION";
 export type AdjustmentRecurrence = "ONE_SHOT" | "RECURRING" | "OVERWRITE";

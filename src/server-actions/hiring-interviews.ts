@@ -20,7 +20,7 @@ import { requirePermission, getSessionOrThrow, AuthorizationError, checkPermissi
 import { scheduleInterviewSchema, scorecardSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit, sendOutboxMail } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { composeInterviewInviteEmail } from "@/lib/hiring/hiring-email";
 import { planInterviewEvent } from "@/lib/hiring/interview-event";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";

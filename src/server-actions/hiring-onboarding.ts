@@ -17,13 +17,13 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit, sendOutboxMail, readOnboardingTemplate, instantiateChecklist } from "./shared";
 import { nextEmployeeNumber } from "./hr-shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
-import { parseComponents } from "@/lib/offer-math";
+import { parseComponents } from "@/lib/hiring/offer-math";
 import { evaluateJoiningGate } from "@/lib/hiring/joining-gate";
-import { holidayLookupFrom } from "@/lib/working-days";
+import { holidayLookupFrom } from "@/lib/hr/working-days";
 import { hashPassword } from "@/lib/auth/password";
-import { escapeHtml } from "@/lib/utils";
+import { escapeHtml } from "@/lib/shared/utils";
 
 /** The deterministic account email for a joining hire:
  * <first>.<last>@hiringEmailDomain, lowercased ASCII; collisions get a

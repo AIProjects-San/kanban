@@ -14,7 +14,7 @@ import {
   csvRow,
   reportCsvHeaderLines,
   csvFileBody,
-} from "@/lib/report-csv";
+} from "@/lib/shared/report-csv";
 
 describe("report-csv — csvEscape (RFC 4180)", () => {
   it("is the same function payroll-csv re-exports (one definition)", () => {

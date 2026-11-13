@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, ChevronRight, FileText, Filter, Loader2, Mail, Plus, Settings2, ShieldCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { CandidateT, HiringFunnelT, HiringStageConfigT, MailOutboxT, OfferRecordT } from "@/lib/types";
 import {
   getHiringBoard,
@@ -30,7 +30,7 @@ import { OfferBuilderModal } from "../ui/offer-builder-modal";
 import { OfferTemplateModal } from "../ui/offer-template-modal";
 import { HiringStageModal } from "../ui/hiring-stage-modal";
 import { DocumentTypeModal } from "../ui/document-type-modal";
-import { computeOffer, formatMoney } from "@/lib/offer-math";
+import { computeOffer, formatMoney } from "@/lib/hiring/offer-math";
 
 type StatusFilter = "ACTIVE" | "SELECTED" | "REJECTED" | "WITHDRAWN" | "HIRED";
 

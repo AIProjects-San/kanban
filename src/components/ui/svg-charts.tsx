@@ -17,7 +17,7 @@
 // and the test suite see the same summary.
 // ---------------------------------------------------------------------------
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 
 export interface TrendPoint {
   /** Bucket display label ("Nov 2026"). */

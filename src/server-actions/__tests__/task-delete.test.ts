@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 //
 // Covers assertTaskDeletePermission (via deleteTask) and the dashboard
 // payload's managedUserIds field that feeds the client-side mirror
-// (lib/task-delete.ts — see lib/__tests__/task-delete.test.ts).
+// (lib/shared/task-delete.ts — see lib/shared/__tests__/task-delete.test.ts).
 // ---------------------------------------------------------------------------
 
 const { db, getBetterSession } = vi.hoisted(() => {
@@ -38,7 +38,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/infra/db", () => ({ db }));
 
 import { deleteTask, getDashboardData } from "@/server-actions/data";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 const ADMIN = { userId: "u-admin", name: "Ada", email: "ada@fernly.dev", role: "ADMIN" as string };
 const MANAGER = { userId: "u-max", name: "Max", email: "max@fernly.dev", role: "MANAGER" as string };

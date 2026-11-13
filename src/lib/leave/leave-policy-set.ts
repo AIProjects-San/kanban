@@ -11,7 +11,7 @@
 //   • the engine — the entitlement override resolution that turns an
 //     assignment into the numbers every materializer consumes
 //     (src/server-actions/hr-shared.ts wires it; the shape lives here so
-//     the rule is test-pinned in lib/__tests__/leave-policy-set.test.ts);
+//     the rule is test-pinned in lib/leave/__tests__/leave-policy-set.test.ts);
 //   • the UI — the bucket candidates the assign modal offers.
 //
 // THE ONE DESIGN DECISION everything else follows from: a policy SET is the

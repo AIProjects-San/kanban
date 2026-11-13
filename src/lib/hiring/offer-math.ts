@@ -13,7 +13,7 @@
 // All amounts are ANNUAL, whole currency units, stored as numbers in JSON.
 // ---------------------------------------------------------------------------
 
-import { round2 } from "@/lib/money";
+import { round2 } from "@/lib/shared/money";
 
 export type OfferComponentKind =
   | "EARNING"

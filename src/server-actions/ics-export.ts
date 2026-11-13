@@ -14,7 +14,7 @@
 import { db } from "@/lib/infra/db";
 import { getSessionOrThrow } from "./auth-guard";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { APP } from "@/config/app";
 
 /**

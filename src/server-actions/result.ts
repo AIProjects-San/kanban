@@ -4,7 +4,7 @@
 // non-async value and is imported by the action modules, not by clients.
 
 import { logError } from "@/lib/infra/observability";
-import { ok, err, isValidationError, isAuthorizationError, type ActionResult } from "@/lib/action-result";
+import { ok, err, isValidationError, isAuthorizationError, type ActionResult } from "@/lib/shared/action-result";
 
 /**
  * Run an action body, catching every failure and converting it into a

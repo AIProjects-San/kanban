@@ -1,7 +1,7 @@
 "use client";
 
 import { Shield } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { ROLE_LABELS, type Role } from "@/lib/auth/rbac";
 
 const ROLE_STYLES: Record<Role, string> = {

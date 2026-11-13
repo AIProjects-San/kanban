@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { timeAgo } from "@/lib/time";
+import { timeAgo } from "@/lib/shared/time";
 
 describe("timeAgo", () => {
   afterEach(() => vi.useRealTimers());

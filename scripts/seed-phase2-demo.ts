@@ -18,7 +18,7 @@ import { resolveNzRateSet, calculateNzStatutoryWithSet, toNzTaxProfile, type NzT
 import { serializeStatutorySnapshot, statutoryDeductionLines } from "../src/lib/payroll/nz/slip-statutory";
 import type { PayslipStatutoryT } from "../src/lib/types";
 import { postPayrollRun } from "../src/lib/accounting/post-payroll-run";
-import type { OfferComponent } from "../src/lib/offer-math";
+import type { OfferComponent } from "../src/lib/hiring/offer-math";
 
 const PERIOD = "2026-09";
 const WINDOW_START = new Date("2026-09-01T00:00:00.000Z");

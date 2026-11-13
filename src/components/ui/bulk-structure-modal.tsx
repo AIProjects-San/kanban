@@ -16,7 +16,7 @@ import { Field } from "./field";
 import type { OfferComponentT, PayrollFrequencyT, SalaryStructureT } from "@/lib/types";
 import { PAYROLL_FREQUENCY_OPTIONS } from "@/lib/payroll/payroll-windows";
 import { bulkAssignStructure } from "@/server-actions/payroll-structures";
-import { computeOffer, formatMoney } from "@/lib/offer-math";
+import { computeOffer, formatMoney } from "@/lib/hiring/offer-math";
 
 export function BulkStructureModal({
   open,

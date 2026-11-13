@@ -12,7 +12,7 @@ import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth
 import { sendMessageSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function sendMessage(raw: {
   // direction is now ignored — always derived as "OUT" from the sender's POV

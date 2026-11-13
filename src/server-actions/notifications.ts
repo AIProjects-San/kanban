@@ -15,7 +15,7 @@ import { db } from "@/lib/infra/db";
 import { getSessionOrThrow, checkPermission } from "./auth-guard";
 import { AuthorizationError } from "./auth-guard";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function markNotificationRead(id: string, read: boolean): Promise<ActionResult<void>> {
   return toResult(async () => {

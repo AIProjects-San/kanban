@@ -20,10 +20,10 @@
 //
 // Pure and dependency-free: the server action feeds ledger rows + label
 // maps; unit tests own the arithmetic. P32: the CSV builder rides the
-// shared `lib/report-csv.ts` helper (one file shape for every report).
+// shared `lib/shared/report-csv.ts` helper (one file shape for every report).
 // ---------------------------------------------------------------------------
 
-import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
+import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/shared/report-csv";
 
 import { round2 } from "@/lib/payroll/payroll-math";
 

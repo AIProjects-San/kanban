@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field } from "../ui/field";
 import type { HolidayT } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import {
   getHolidayCalendar,
   upsertHolidayEntry,

@@ -32,7 +32,7 @@
 
 import { db } from "@/lib/infra/db";
 import { logError, logInfo } from "@/lib/infra/observability";
-import { dayKey } from "@/lib/working-days";
+import { dayKey } from "@/lib/hr/working-days";
 import { projectLeaveBalance } from "@/lib/leave/leave-ledger";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import {

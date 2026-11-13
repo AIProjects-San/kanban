@@ -44,10 +44,10 @@ import {
 } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { parseComponents } from "@/lib/offer-math";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { parseComponents } from "@/lib/hiring/offer-math";
 import { monthlyEarningsFromStructure, lineSum } from "@/lib/payroll/payroll-math";
-import { workingDaysInPeriod } from "@/lib/working-days";
+import { workingDaysInPeriod } from "@/lib/hr/working-days";
 import { runWindowEnd, runWindowStart } from "@/lib/payroll/payroll-windows";
 import { projectLeaveBalance } from "@/lib/leave/leave-ledger";
 import {

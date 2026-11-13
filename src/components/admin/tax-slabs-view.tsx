@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import { ChevronDown, Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
 import { getTaxYears, saveTaxYearSlabs, simulateTax } from "@/server-actions/tax-admin";
 import type { TaxSlabRowT, TaxSimulateResultT, TaxYearAdminT } from "@/lib/types";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 const FREQUENCIES = [
   { key: "ANNUAL", label: "Annualised gross (annual)" },

@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Clock, Loader2, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
 import {
@@ -19,7 +19,7 @@ import {
 } from "@/server-actions/payroll-withholding";
 import { currentPeriod } from "@/lib/payroll/payroll-math";
 import type { SalaryWithholdingT } from "@/lib/types";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 export function WithholdingModal({
   open,

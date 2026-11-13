@@ -8,7 +8,7 @@
 // information in the workspace; MANAGERs and MEMBERs never reach it.
 //
 //   • SalaryStructure — the employee's standing ANNUAL components (same
-//     shape as offers; lib/offer-math.ts resolves fixed / % of basic).
+//     shape as offers; lib/hiring/offer-math.ts resolves fixed / % of basic).
 //     Created manually, or copied from the hire's SIGNED offer.
 // ---------------------------------------------------------------------------
 
@@ -20,8 +20,8 @@ import type { SalaryStructureT } from "@/lib/types";
 import { saveSalaryStructureSchema, bulkAssignStructureSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { parseComponents, type OfferComponent } from "@/lib/offer-math";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { parseComponents, type OfferComponent } from "@/lib/hiring/offer-math";
 import { parseOpeningYtd } from "@/lib/payroll/opening-ytd";
 
 type StructureRow = {

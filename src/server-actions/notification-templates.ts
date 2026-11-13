@@ -24,7 +24,7 @@ import {
 } from "@/lib/email/notification-template";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import {
   notificationTemplateSchema,
   notificationTemplateResetSchema,

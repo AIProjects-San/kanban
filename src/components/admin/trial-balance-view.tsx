@@ -16,7 +16,7 @@ import {
   exportTrialBalanceCsv,
 } from "@/server-actions/accounting";
 import type { TrialBalanceT } from "@/server-actions/accounting";
-import { formatMoney, downloadBlob } from "@/lib/format";
+import { formatMoney, downloadBlob } from "@/lib/shared/format";
 
 interface PeriodT {
   id: string;

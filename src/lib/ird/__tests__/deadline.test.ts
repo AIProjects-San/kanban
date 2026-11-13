@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { computeDueDate, workingDaysRemaining } from "../deadline";
-import { holidayLookupFrom } from "@/lib/working-days";
+import { holidayLookupFrom } from "@/lib/hr/working-days";
 
 const d = (s: string) => new Date(`${s}T00:00:00.000Z`);
 

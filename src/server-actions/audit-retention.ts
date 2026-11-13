@@ -32,7 +32,7 @@
 import { db } from "@/lib/infra/db";
 import { requirePermission } from "./auth-guard";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import type { PruneResult } from "@/lib/audit/audit-retention-config";
 import { runAuditPrune, clampRetentionDays } from "@/lib/audit/audit-prune-core";
 

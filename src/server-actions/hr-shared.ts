@@ -8,7 +8,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/infra/db";
 import { logError } from "@/lib/infra/observability";
 import type { HolidayT } from "@/lib/types";
-import { dayKey, workingDaysBetween } from "@/lib/working-days";
+import { dayKey, workingDaysBetween } from "@/lib/hr/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave/leave-ledger";
 import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/hr/employment";
 import { resolveLeaveApprover } from "@/lib/auth/hierarchy";
@@ -20,7 +20,7 @@ import { AuthorizationError } from "./auth-guard";
 // Holiday-calendar + leave-policy-override reads live in lib/server (the payroll
 // kernels and cron jobs use them without importing the action layer);
 // re-exported here for the hr-* action files' existing imports.
-export { getHolidayLookup } from "@/lib/holidays";
+export { getHolidayLookup } from "@/lib/hr/holidays";
 export {
   assignmentOverridesFor,
   assignmentOverridesForUsers,
@@ -32,11 +32,11 @@ export {
 // and are normalized to UTC midnight so day arithmetic is timezone-stable
 // regardless of the server's TZ. Weekends (Sat/Sun) never count as leave;
 // holiday-calendar entries remove weekdays too (F1.1) — see
-// lib/working-days.ts for the exact semantics.
+// lib/hr/working-days.ts for the exact semantics.
 // ---------------------------------------------------------------------------
 
-export { parseDay, daysBetween } from "@/lib/working-days";
-import { parseDay, daysBetween } from "@/lib/working-days";
+export { parseDay, daysBetween } from "@/lib/hr/working-days";
+import { parseDay, daysBetween } from "@/lib/hr/working-days";
 void parseDay; void daysBetween;
 
 /**

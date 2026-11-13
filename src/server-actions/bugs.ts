@@ -24,7 +24,7 @@ import {
   BUG_SEVERITY_LABELS,
   BUG_PRIORITY_LABELS,
   BUG_RESOLUTION_LABELS,
-} from "@/lib/config";
+} from "@/lib/shared/config";
 import type { BugPriority, BugResolution, BugSeverity, BugStatus } from "@/lib/types";
 import {
   createBugSchema,
@@ -37,8 +37,8 @@ import {
 } from "@/lib/validation";
 import { logAudit, getScopedProjectIds, assertUserAssociatedWithProject, getProjectAssociatedUserIds } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { safeCursor, pageOf } from "@/lib/pagination";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { safeCursor, pageOf } from "@/lib/shared/pagination";
 
 // ---------------------------------------------------------------------------
 // Helpers

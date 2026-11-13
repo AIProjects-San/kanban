@@ -15,10 +15,10 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/infra/db";
-import { workingDaysBetween } from "@/lib/working-days";
+import { workingDaysBetween } from "@/lib/hr/working-days";
 import { windowsInYear, type PayrollFrequency } from "@/lib/payroll/payroll-windows";
 import { round2 } from "@/lib/payroll/payroll-math";
-import { getHolidayLookup } from "@/lib/holidays";
+import { getHolidayLookup } from "@/lib/hr/holidays";
 
 
 

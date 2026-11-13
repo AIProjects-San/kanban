@@ -64,7 +64,7 @@ import {
   markFiled,
 } from "../src/lib/ird/filing-service";
 import { computeDueDate } from "../src/lib/ird/deadline";
-import type { OfferComponent } from "../src/lib/offer-math";
+import type { OfferComponent } from "../src/lib/hiring/offer-math";
 
 async function main(): Promise<void> {
 const { db } = await import("../src/lib/infra/db");

@@ -14,7 +14,7 @@ import { FileCheck2, FileText, IdCard, Plus, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Field } from "./field";
 import { Section } from "./section";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { EmployeeDocumentT } from "@/lib/types";
 import { EMPLOYEE_DOC_STATUS_LABELS } from "@/lib/hr/employee-documents";
 import {

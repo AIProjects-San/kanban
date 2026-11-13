@@ -29,8 +29,8 @@ import {
   downloadAmendmentFile,
 } from "@/server-actions/payday-filing";
 import type { PaydayFilingSummaryT, PayrollFilingSettingsT, RunFilingPanelT } from "@/lib/ird/filing-types";
-import { formatMoneyCents, downloadBlob } from "@/lib/format";
-import { FILING_STATUS_BADGE } from "@/lib/config";
+import { formatMoneyCents, downloadBlob } from "@/lib/shared/format";
+import { FILING_STATUS_BADGE } from "@/lib/shared/config";
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
 

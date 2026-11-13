@@ -21,7 +21,7 @@ import { AuthorizationError } from "./auth-guard";
 import { createReminderSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function toggleReminder(id: string, completed: boolean): Promise<ActionResult<void>> {
   return toResult(async () => {

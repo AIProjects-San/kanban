@@ -10,7 +10,7 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { bumpConfigCache, getWorkspaceConfig, type WorkspaceConfig } from "@/lib/infra/config-loader";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { workspaceSettingsSchema, configItemSchema, parseOrThrow } from "@/lib/validation";
 
 /** Permissions only ADMIN may grant — a MANAGER granted role:manage by an

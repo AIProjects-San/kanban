@@ -4,8 +4,8 @@ import {
   PROJECT_STATUSES,
   EVENT_TYPES,
   DEPARTMENT_LABELS,
-} from "@/lib/config";
-import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
+} from "@/lib/shared/config";
+import { PRIORITIES, TASK_TAGS } from "@/lib/shared/constants";
 import { ROLE_PERMISSIONS, ROLE_LABELS, ROLE_DESCRIPTIONS } from "@/lib/auth/rbac";
 import { DEFAULT_WORKSPACE_NAME } from "@/config/app";
 import {

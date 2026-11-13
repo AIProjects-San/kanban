@@ -7,10 +7,10 @@ import {
 import { useApp } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
 import { Avatar } from "./avatar";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { toast } from "sonner";
 import { sendMessage, markThreadRead, deleteMessage } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 import type { MessageT, TeamMemberT } from "@/lib/types";
 
 interface InboxDrawerProps {

@@ -11,7 +11,7 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { exportPayrollCsvSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { round2, parsePayslipLines } from "@/lib/payroll/payroll-math";
 import { salaryRegisterCsv, bankRemittanceCsv } from "@/lib/payroll/payroll-csv";
 import { runWindowEnd } from "@/lib/payroll/payroll-windows";

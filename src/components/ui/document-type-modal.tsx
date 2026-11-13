@@ -10,7 +10,7 @@ import { ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { DocumentTypeConfigT } from "@/lib/types";
 import { getDocumentTypes, saveDocumentType, deleteDocumentType } from "@/server-actions/hiring-formalities";
 

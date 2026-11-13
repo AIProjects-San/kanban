@@ -18,7 +18,7 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { arrearsPreviewSchema, generateArrearsSchema } from "@/lib/validation";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";

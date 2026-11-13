@@ -13,7 +13,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Award, Banknote, BarChart3, BookOpen, CalendarPlus, CircleDollarSign, Download, FileText, HeartPulse, Landmark, Layers, Loader2, Lock, Pause, Plus, RotateCcw, Scale, ShieldAlert, Undo2, Users, Wallet, HandCoins } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
 import {
   createPayrollRun,
@@ -25,8 +25,8 @@ import { getPayrollAnalytics, exportPayrollRunCsv } from "@/server-actions/payro
 import { applyPayAdjustmentsToRun } from "@/server-actions/payroll-adjustments";
 // Phase 2 (payday filing) — the per-run EI filing badge.
 import { getRunFilingStatus } from "@/server-actions/payday-filing";
-import { computeOffer } from "@/lib/offer-math";
-import { formatMoney, downloadBlob } from "@/lib/format";
+import { computeOffer } from "@/lib/hiring/offer-math";
+import { formatMoney, downloadBlob } from "@/lib/shared/format";
 // P10 — the pure windows kernel drives the new-run form's live preview and
 // the client-side period label for run rows (same functions the server
 // resolves with — one authority).

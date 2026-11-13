@@ -5,7 +5,7 @@ import { Loader2, ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
-import { DEPARTMENT_LABELS } from "@/lib/config";
+import { DEPARTMENT_LABELS } from "@/lib/shared/config";
 import { applyEmploymentChange } from "@/server-actions/employment";
 import type { EmployeeProfileT } from "@/lib/types";
 

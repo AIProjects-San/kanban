@@ -24,7 +24,7 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { createSalaryWithholdingSchema, releaseWithholdingSchema } from "@/lib/validation";
 import {
@@ -34,7 +34,7 @@ import {
   withholdingReleaseLabel,
 } from "@/lib/payroll/salary-withholding";
 import type { SalaryWithholdingT } from "@/lib/types";
-import { round2 } from "@/lib/money";
+import { round2 } from "@/lib/shared/money";
 
 export async function listSalaryWithholdings(): Promise<ActionResult<SalaryWithholdingT[]>> {
   return toResult(async () => {

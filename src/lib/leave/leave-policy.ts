@@ -52,7 +52,7 @@
 //
 // All dates are "YYYY-MM-DD" strings; arithmetic is UTC-midnight based.
 
-import { workingDaysBetween, type HolidayLookup } from "@/lib/working-days";
+import { workingDaysBetween, type HolidayLookup } from "@/lib/hr/working-days";
 import type {
   LeaveAccrualFrequency,
   LeaveAccrualRounding,
@@ -197,12 +197,12 @@ export function resolveLeavePolicy(row: LeavePolicyRow | null | undefined): Reso
 
 // ---------------------------------------------------------------------------
 // Date arithmetic ("YYYY-MM-DD" strings, UTC-midnight) — the shared
-// mini-library in lib/working-days.ts, re-exported for the leave modules'
+// mini-library in lib/hr/working-days.ts, re-exported for the leave modules'
 // existing imports.
 // ---------------------------------------------------------------------------
 
-export { daysBetween, addMonths } from "@/lib/working-days";
-import { parseDay, addDays, daysBetween, addMonths } from "@/lib/working-days";
+export { daysBetween, addMonths } from "@/lib/hr/working-days";
+import { parseDay, addDays, daysBetween, addMonths } from "@/lib/hr/working-days";
 
 /** Whole calendar months from a to b (negative when b precedes a). */
 export function monthsBetween(a: string, b: string): number {

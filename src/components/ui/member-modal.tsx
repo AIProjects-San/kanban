@@ -9,8 +9,8 @@ import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
 import { Avatar } from "./avatar";
 import { Loader2, Plus, Search, Check } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { DEPARTMENTS } from "@/lib/constants";
+import { cn } from "@/lib/shared/utils";
+import { DEPARTMENTS } from "@/lib/shared/constants";
 import type { Department } from "@/lib/types";
 
 interface ExistingUser {

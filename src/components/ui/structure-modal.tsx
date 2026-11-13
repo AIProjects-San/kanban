@@ -17,7 +17,7 @@ import { PAYROLL_FREQUENCY_OPTIONS } from "@/lib/payroll/payroll-windows";
 import { CtcSolverField } from "./ctc-solver-field";
 import { createStructureFromOffer, saveSalaryStructure, getSalaryStructures } from "@/server-actions/payroll-structures";
 import { getSalaryComponents } from "@/server-actions/payroll-components";
-import { computeOffer, formatMoney } from "@/lib/offer-math";
+import { computeOffer, formatMoney } from "@/lib/hiring/offer-math";
 import type { OpeningYtdRowT } from "@/lib/types";
 
 const KIND_LABEL: Record<string, string> = {

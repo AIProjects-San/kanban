@@ -15,7 +15,7 @@ import { getEffectivePermissions } from "@/lib/infra/config-loader";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 /**
  * Date helpers for the dashboard loader's `take` + date-window scoping

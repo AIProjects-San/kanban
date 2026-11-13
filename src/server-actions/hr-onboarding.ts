@@ -36,9 +36,9 @@ import {
 } from "@/lib/validation";
 import { logAudit, readOnboardingTemplate, instantiateChecklist } from "./shared";
 import { checklistCompletion } from "@/lib/hr/onboarding-template";
-import { addWorkingDays, holidayLookupFrom } from "@/lib/working-days";
+import { addWorkingDays, holidayLookupFrom } from "@/lib/hr/working-days";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 // F2.10 (F-R8) — the template source is now the OnboardingTemplateTask table
 // (with the canonical constants in lib/hr/onboarding-template.ts as the

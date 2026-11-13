@@ -5,7 +5,7 @@ import {
   Settings2, Save, Loader2, Plus, Shield,
   Tag, Flag, Building2, Calendar, CheckSquare, FolderKanban, Bell, RotateCcw,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { toast } from "sonner";
 import { useRefresh } from "@/hooks/use-refresh";
 import { Section } from "../ui/section";
@@ -16,7 +16,7 @@ import {
   updateRole, createRole, deleteRole,
   updateNotificationTemplate, resetNotificationTemplate,
   type WorkspaceConfig } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 // P24 — the notification template registry + renderer (pure, client-safe:
 // the editor previews render locally with the registry's sample values).
 import {

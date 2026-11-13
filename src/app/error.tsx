@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect } from "react";
-import { t } from "@/lib/i18n";
+import { t } from "@/lib/shared/i18n";
 import { ERROR_BRIDGE_KEY } from "@/config/app";
 
 export default function Error({

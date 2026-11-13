@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // test. Since the PR-49 flip the repo default stack is "better", so
 // auth-guard's getSession() resolves through getBetterSession().
 // (Session normalisation — unknown-role downgrade, soft-delete guard — is
-// pinned by src/lib/__tests__/auth-better.test.ts at the real seam.)
+// pinned by src/lib/auth/__tests__/auth-better.test.ts at the real seam.)
 // ---------------------------------------------------------------------------
 
 const { getBetterSession } = vi.hoisted(() => ({ getBetterSession: vi.fn() }));

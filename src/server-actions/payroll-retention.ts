@@ -19,7 +19,7 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { createRetentionBonusSchema } from "@/lib/validation";
 import { planRetentionBonus, periodPlusMonths, retentionBonusLabel } from "@/lib/payroll/retention-bonus";

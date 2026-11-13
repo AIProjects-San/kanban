@@ -12,7 +12,7 @@ import { requirePermission, AuthorizationError, getSessionOrThrow } from "./auth
 import { hasPermission } from "@/lib/auth/rbac";
 import { getWorkspaceLimit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function getAuditLogs(): Promise<ActionResult<
   Array<{

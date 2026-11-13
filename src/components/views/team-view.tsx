@@ -6,13 +6,13 @@ import {
   CheckCircle2, Loader2, Calendar, TrendingUp, Send,
 } from "lucide-react";
 import { Avatar } from "../ui/avatar";
-import { cn, barWidthClass } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/shared/utils";
 import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
 import { sendMessage } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 import { EntityHistorySection } from "../ui/entity-history-section";
-import { TASK_STATUS_ACCENT, tagClass, DEPARTMENT_LABELS } from "@/lib/config";
+import { TASK_STATUS_ACCENT, tagClass, DEPARTMENT_LABELS } from "@/lib/shared/config";
 import type { TeamMemberT, Department, TaskT, ProjectT, TimeEntryT } from "@/lib/types";
 
 interface TeamViewProps {

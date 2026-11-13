@@ -1081,7 +1081,7 @@ describe("cancelLeaveRequest", () => {
 
 // ---------------------------------------------------------------------------
 // F1.2 — leave-ledger semantics on the action surface (the pure projection
-// matrix lives in lib/__tests__/leave-ledger.test.ts).
+// matrix lives in lib/leave/__tests__/leave-ledger.test.ts).
 // ---------------------------------------------------------------------------
 
 describe("F1.2 leave ledger", () => {

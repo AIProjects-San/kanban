@@ -19,7 +19,7 @@ import { db } from "@/lib/infra/db";
 import { logError } from "@/lib/infra/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/auth/rbac";
-import { LEAVE_STATUS_LABELS } from "@/lib/config";
+import { LEAVE_STATUS_LABELS } from "@/lib/shared/config";
 import type { LeaveStatus, LeaveRequestT, LeaveTypeT, LeaveBalanceT, HolidayT, LeaveAllocationStrategy, LeaveAccrualFrequency, LeaveAllocateOnDay, LeaveAccrualRounding, LeaveGrantOn } from "@/lib/types";
 import {
   createLeaveRequestSchema,
@@ -33,8 +33,8 @@ import {
 } from "@/lib/validation";
 import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { workingDaysBetween, dayKey } from "@/lib/working-days";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { workingDaysBetween, dayKey } from "@/lib/hr/working-days";
 import {
   checkLeaveRequestAgainstBalance,
   checkServiceEligibility,

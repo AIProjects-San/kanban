@@ -12,7 +12,7 @@ import { Award, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Field } from "./field";
 import { Section } from "./section";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { EmployeeSkillT, SkillT } from "@/lib/types";
 import { SKILL_PROFICIENCY_LABELS } from "@/lib/hr/skills";
 import {

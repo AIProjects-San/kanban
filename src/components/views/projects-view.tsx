@@ -4,16 +4,16 @@ import { useState, useMemo } from "react";
 import {
   FolderKanban, Plus, Edit3, Trash2, Calendar as CalIcon,
 } from "lucide-react";
-import { cn, barWidthClass } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/shared/utils";
 import { useApp } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
 import { usePermissions } from "@/hooks/use-permissions";
 import { toast } from "sonner";
 import { deleteProject } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 import { EmptyState } from "../ui/empty-state";
 import { FilterBar } from "../ui/filter-bar";
-import { PROJECT_STATUSES, PROJECT_STATUS_MAP, priorityClass } from "@/lib/config";
+import { PROJECT_STATUSES, PROJECT_STATUS_MAP, priorityClass } from "@/lib/shared/config";
 import type { ProjectT, ProjectStatus } from "@/lib/types";
 
 interface ProjectsViewProps {

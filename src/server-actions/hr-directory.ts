@@ -17,14 +17,14 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/auth/rbac";
-import { DEPARTMENT_LABELS, employmentTypeLabel } from "@/lib/config";
+import { DEPARTMENT_LABELS, employmentTypeLabel } from "@/lib/shared/config";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import type { EmployeeProfileT } from "@/lib/types";
 import { employeeProfileSchema, employeeProfileSelfSchema, parseOrThrow } from "@/lib/validation";
 import { isoDateOrNull, EMPLOYMENT_STATUS_LABELS } from "@/lib/hr/employment";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { employeeInformationCsv, type DirectoryReportRow } from "@/lib/hr/directory-report";
 
 // QA-19: "" (not classified yet) is a valid stored value, so the set is

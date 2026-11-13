@@ -1,6 +1,6 @@
 import { getBetterSession } from "@/lib/auth/auth-better";
 import { getDashboardData, getUserProfile } from "@/server-actions/data";
-import { getGreeting, getTodayDateStr } from "@/lib/greeting";
+import { getGreeting, getTodayDateStr } from "@/lib/shared/greeting";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
 import { AppShell } from "@/components/ui/app-shell";
 import { Providers } from "@/components/providers";

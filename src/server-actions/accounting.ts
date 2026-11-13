@@ -31,9 +31,9 @@ import { requirePermission, AuthorizationError } from "./auth-guard";
 import { parseOrThrow, reverseJournalEntrySchema } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
-import { csvEscape } from "@/lib/report-csv";
-import { round2 } from "@/lib/money";
+import type { ActionResult } from "@/lib/shared/action-result";
+import { csvEscape } from "@/lib/shared/report-csv";
+import { round2 } from "@/lib/shared/money";
 
 export interface TrialBalanceRowT {
   code: string;

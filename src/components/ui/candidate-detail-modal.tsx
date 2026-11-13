@@ -24,7 +24,7 @@ import {
 import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { CandidateT, CandidateStageT, CandidateDocumentT, BackgroundCheckT, DocumentTypeConfigT } from "@/lib/types";
 import {
   advanceStage,

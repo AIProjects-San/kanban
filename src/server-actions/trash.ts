@@ -19,7 +19,7 @@ import { canManageUser, getSubtreeUserIds } from "@/lib/auth/hierarchy";
 import { isValidRole, type Role } from "@/lib/auth/rbac";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { revalidatePath } from "next/cache";
 import { logAuditOn } from "@/lib/audit/audit";
 

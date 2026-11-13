@@ -53,8 +53,8 @@ vi.mock("@/lib/infra/config-loader", () => ({
 // department before the guard can see it. Simulating the drift (config
 // drops "DESIGN" while validation still accepts it) pins the guard. No
 // existing test in this file passes a department, so nothing else changes.
-vi.mock("@/lib/config", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/config")>();
+vi.mock("@/lib/shared/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/shared/config")>();
   return {
     ...actual,
     DEPARTMENT_LABELS: actual.DEPARTMENT_LABELS.filter((d) => d.key !== "DESIGN"),

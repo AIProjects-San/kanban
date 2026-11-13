@@ -26,7 +26,7 @@ import { db } from "@/lib/infra/db";
 import { getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import { getSubtreeUserIds } from "@/lib/auth/hierarchy";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import type { TeamMemberT, TimeEntryT } from "@/lib/types";
 
 /** What the client asks for. The server may narrow it (MEMBER/HR → self). */

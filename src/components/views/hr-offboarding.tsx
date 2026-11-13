@@ -21,7 +21,7 @@ import { Plus, Check, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field } from "../ui/field";
-import { cn, barWidthClass } from "@/lib/utils";
+import { cn, barWidthClass } from "@/lib/shared/utils";
 import { EMPLOYMENT_STATUS_BADGE, EMPLOYMENT_STATUS_LABELS } from "@/lib/hr/employment";
 import { EXIT_INTERVIEW_STATUS_LABELS } from "@/lib/hr/full-and-final";
 import { createChecklist, setTaskDone } from "@/server-actions/hr-onboarding";
@@ -35,7 +35,7 @@ import {
   settleFullAndFinal,
 } from "@/server-actions/hr-offboarding";
 import type { OffboardingCaseT, OffboardingOverviewT, FnFComputedT } from "@/lib/types";
-import { fmtDay, formatMoney } from "@/lib/format";
+import { fmtDay, formatMoney } from "@/lib/shared/format";
 
 /** FnF lines are signed (receivables negative) — compose the shared kit's
  * unsigned formatMoney with the explicit leading minus. */

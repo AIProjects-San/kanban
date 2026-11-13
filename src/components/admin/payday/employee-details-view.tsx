@@ -24,8 +24,8 @@ import {
   markEmployeeDetailsFiledAction,
 } from "@/server-actions/payday-filing";
 import type { EmployeeDetailsViewT, PayrollFilingSettingsT } from "@/lib/ird/filing-types";
-import { downloadBlob } from "@/lib/format";
-import { FILING_STATUS_BADGE } from "@/lib/config";
+import { downloadBlob } from "@/lib/shared/format";
+import { FILING_STATUS_BADGE } from "@/lib/shared/config";
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
 

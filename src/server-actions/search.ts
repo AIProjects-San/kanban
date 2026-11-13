@@ -19,7 +19,7 @@ import { db } from "@/lib/infra/db";
 import { getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export interface SearchHit {
   id: string;

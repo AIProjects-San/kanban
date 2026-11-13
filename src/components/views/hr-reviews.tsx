@@ -12,9 +12,9 @@ import { Section } from "../ui/section";
 import { Field, FormRow } from "../ui/field";
 import { Modal } from "../ui/modal";
 import { FilterBar } from "../ui/filter-bar";
-import { REVIEW_STATUS_BADGE, REVIEW_STATUS_LABELS } from "@/lib/config";
+import { REVIEW_STATUS_BADGE, REVIEW_STATUS_LABELS } from "@/lib/shared/config";
 import type { PerformanceReviewT } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import {
   getReviewQueue,
   createReview,
@@ -26,7 +26,7 @@ import {
 } from "@/server-actions/hr-reviews";
 import { getDirectory } from "@/server-actions/hr-directory";
 import { useApp } from "@/store/app-store";
-import { fmtDay } from "@/lib/format";
+import { fmtDay } from "@/lib/shared/format";
 
 function fmtPeriod(r: PerformanceReviewT): string {
   return `${fmtDay(r.periodStart)} → ${fmtDay(r.periodEnd)}`;

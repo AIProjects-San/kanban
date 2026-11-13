@@ -34,7 +34,7 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/infra/db";
 import { logError, logInfo } from "@/lib/infra/observability";
-import { dayKey } from "@/lib/working-days";
+import { dayKey } from "@/lib/hr/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave/leave-ledger";
 import { queueOutboxMail, deliverOutboxMail } from "@/lib/email/mail-outbox";
 import { leaveJobFailureEmailSubject, leaveJobFailureEmailText, leaveEmailHtml } from "@/lib/leave/leave-email";

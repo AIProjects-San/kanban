@@ -24,8 +24,8 @@ Every exported action in a `"use server"` file is a **public HTTP endpoint**. Th
    an explicit ownership check. No exceptions.
 2. **Never trust action arguments for identity or authorization.** Roles, ids and
    ownership come from `getSession()` only.
-3. Validate inputs with a zod schema from `lib/validation.ts` (add the schema there,
-   not inline).
+3. Validate inputs with a zod schema from `src/lib/validation/` (add it to the matching
+   domain file, not inline).
 4. Mutations must: write an audit entry (`logAudit` with a typed action), call
    `revalidatePath("/")`, and bump the config cache when config tables change.
 5. Multi-table writes go inside `db.$transaction`.
@@ -82,7 +82,7 @@ Every exported action in a `"use server"` file is a **public HTTP endpoint**. Th
 - Tailwind is configured **CSS-first (v4)** — there is no `tailwind.config.ts` on
   purpose (ADR-003). Do not reintroduce one.
 - Status/tag/priority labels and their classes are defined once in
-  `src/lib/config.ts` (`TASK_STATUSES`, `EVENT_TYPES`, `priorityClass()`, …) —
+  `src/lib/shared/config.ts` (`TASK_STATUSES`, `EVENT_TYPES`, `priorityClass()`, …) —
   import them, never redeclare locally.
 
 ## 5b. Product identity (branding)

@@ -9,8 +9,8 @@ import { EntityHistorySection } from "./entity-history-section";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
 import { ProjectColorPicker } from "./avatar-color-picker";
-import { PRIORITIES } from "@/lib/constants";
-import { PROJECT_STATUSES } from "@/lib/config";
+import { PRIORITIES } from "@/lib/shared/constants";
+import { PROJECT_STATUSES } from "@/lib/shared/config";
 import type { TeamMemberT, ProjectT, ProjectStatus, Priority } from "@/lib/types";
 
 interface ProjectModalProps {

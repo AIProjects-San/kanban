@@ -15,9 +15,9 @@ import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
 import { FilterBar } from "../ui/filter-bar";
-import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/config";
+import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/shared/config";
 import type { LeaveRequestT, LeaveTypeT, CompLeaveRequestT } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import {
   getLeaveQueue,
   decideLeaveRequest,
@@ -58,7 +58,7 @@ import {
   type LeavePolicyStateT,
   type LeavePolicySetT,
 } from "@/server-actions/leave-policy-sets";
-import { fmtDay } from "@/lib/format";
+import { fmtDay } from "@/lib/shared/format";
 
 interface CurrentUser {
   id: string;

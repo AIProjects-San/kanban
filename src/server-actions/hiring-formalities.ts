@@ -25,7 +25,7 @@ import {
 } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import { evaluateJoiningGate } from "@/lib/hiring/joining-gate";
 import { namesFor } from "@/lib/hiring/user-names";

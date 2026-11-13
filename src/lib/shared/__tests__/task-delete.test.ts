@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 // PR-61 — the client-side mirror of the task-delete rule. Pure function:
 // the matrix here mirrors server-actions/__tests__/task-delete.test.ts.
 
-import { canDeleteTask, type TaskDeleteContext } from "@/lib/task-delete";
+import { canDeleteTask, type TaskDeleteContext } from "@/lib/shared/task-delete";
 import type { ProjectT, TeamMemberT } from "@/lib/types";
 
 const ADMIN = { id: "u-admin", role: "ADMIN" };

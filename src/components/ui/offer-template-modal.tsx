@@ -12,7 +12,7 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { OfferComponentT, OfferTemplateT } from "@/lib/types";
 import { getOfferTemplates, saveOfferTemplate, deleteOfferTemplate } from "@/server-actions/hiring-offers";
-import { computeOffer, formatMoney } from "@/lib/offer-math";
+import { computeOffer, formatMoney } from "@/lib/hiring/offer-math";
 
 interface Draft {
   id?: string;

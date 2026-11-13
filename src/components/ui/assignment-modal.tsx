@@ -9,7 +9,7 @@ import {
   assignUserToProject,
   unassignUserFromProject } from "@/server-actions/data";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 
 interface ProjectAssignment {
   id: string;

@@ -10,13 +10,13 @@
 // bank files feed parsers, not eyes).
 //
 // P32: the RFC 4180 escaper + the row composer + the disclaimer header now
-// live in the shared `lib/report-csv.ts` helper (the ONE place every
+// live in the shared `lib/shared/report-csv.ts` helper (the ONE place every
 // tabular report CSV gets its file shape from — PL-11's first cut). The
 // escaper is re-exported here so existing importers are unchanged, and the
 // bytes are identical — the P20 golden tests pin that.
 // ---------------------------------------------------------------------------
 
-import { csvEscape, csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
+import { csvEscape, csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/shared/report-csv";
 
 
 function money(n: number): string {

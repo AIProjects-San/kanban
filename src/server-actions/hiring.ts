@@ -41,7 +41,7 @@ import {
 } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 // R3 — decisions & candidate email outbox.
 import { composeRejectionEmail } from "@/lib/hiring/hiring-email";
 import { createMailer } from "@/lib/email/mailer";

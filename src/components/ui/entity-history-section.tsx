@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
 import { ChevronDown, History, Loader2, CircleDot } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { getAuditLogsForEntity } from "@/server-actions/data";
-import { timeAgo } from "@/lib/time";
+import { timeAgo } from "@/lib/shared/time";
 
 interface AuditLogEntry {
   id: string;

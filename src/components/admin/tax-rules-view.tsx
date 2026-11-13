@@ -20,7 +20,7 @@ import {
   getTaxYears,
 } from "@/server-actions/tax-admin";
 import type { TaxSlabRowT, TaxYearAdminT } from "@/lib/types";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 type Category =
   | "PAYE"

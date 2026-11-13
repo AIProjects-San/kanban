@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import { Check, Bell, User, Palette, Clock, Lock, Loader2, Download, Shield } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { useApp, type AccentTheme } from "@/store/app-store";
 import { useRefresh } from "@/hooks/use-refresh";
 import { Avatar } from "../ui/avatar";
 import { toast } from "sonner";
 import { updateProfile, changePassword, updateUserSettings } from "@/server-actions/data";
 import { exportMyData } from "@/server-actions/data-export";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 import { Section } from "../ui/section";
 import { EmployeeProfileSection } from "./hr-directory";
 import { MyReviewsSection } from "./hr-reviews";
@@ -22,9 +22,9 @@ import { Field } from "../ui/field";
 import { PasswordInput } from "../ui/password-input";
 import { AvatarColorPicker } from "../ui/avatar-color-picker";
 import { Toggle } from "../ui/toggle";
-import { ACCENTS, TIMEZONES } from "@/lib/constants";
+import { ACCENTS, TIMEZONES } from "@/lib/shared/constants";
 import { APP } from "@/config/app";
-import { downloadBlob } from "@/lib/format";
+import { downloadBlob } from "@/lib/shared/format";
 
 interface SettingsViewProps {
   user: {

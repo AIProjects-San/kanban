@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render } from "@testing-library/react";
 import { Avatar, AVATAR_SIZES } from "@/components/ui/avatar";
-import { barWidthClass } from "@/lib/utils";
+import { barWidthClass } from "@/lib/shared/utils";
 
 describe("PR-40: Avatar renders without inline style attributes", () => {
   it.each([...AVATAR_SIZES])("size %ipx uses only classes (online dot too)", (size) => {

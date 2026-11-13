@@ -18,7 +18,7 @@ import { assertPasswordNotBreached } from "@/lib/auth/breach-check";
 import { emailSchema, updateProfileSchema, updateUserSettingsSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 export async function getUserProfile(userId: string) {
   // Only the user themselves (or an admin/manager with role:manage) may read

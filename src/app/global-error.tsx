@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect } from "react";
-import { t } from "@/lib/i18n";
+import { t } from "@/lib/shared/i18n";
 import "./globals.css";
 
 export default function GlobalError({

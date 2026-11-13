@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { getGreeting, getTodayDateStr } from "@/lib/greeting";
+import { getGreeting, getTodayDateStr } from "@/lib/shared/greeting";
 
 describe("getGreeting", () => {
   it("returns one of the three greetings for a valid timezone", () => {

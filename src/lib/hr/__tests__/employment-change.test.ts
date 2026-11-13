@@ -15,7 +15,7 @@ import {
   formatAnnualGross,
   EMPLOYMENT_PROPERTIES,
 } from "@/lib/hr/employment-change";
-import type { OfferComponent } from "@/lib/offer-math";
+import type { OfferComponent } from "@/lib/hiring/offer-math";
 
 function comp(patch: Partial<OfferComponent>): OfferComponent {
   return {

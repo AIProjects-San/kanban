@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Lock, Plus, Printer, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { Modal } from "./modal";
 import { Field } from "./field";
 import type { PayslipT, PayslipLineT } from "@/lib/types";
@@ -23,7 +23,7 @@ import { componentYtdAmount } from "@/lib/payroll/payslip-aggregates";
 // P16 (PR-11) — the fiscal-year label for the YTD chip ("2026/27" when the
 // workspace basis isn't the calendar year).
 import { fiscalYearLabel, fiscalYearOf, parsePayrollPeriodKey } from "@/lib/payroll/payroll-windows";
-import { formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/shared/format";
 
 /** Percent label for the statutory box ("3.5%", "10%"). */
 function pct(rate: number): string {

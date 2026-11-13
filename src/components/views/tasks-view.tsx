@@ -17,11 +17,11 @@ import { Plus, MoreHorizontal, Calendar as CalIcon, FolderKanban, Clock, Bug as 
 import { useApp } from "@/store/app-store";
 import { Avatar } from "../ui/avatar";
 import { FilterBar } from "../ui/filter-bar";
-import { cn } from "@/lib/utils";
-import { TASK_STATUSES, priorityClass, tagClass } from "@/lib/config";
+import { cn } from "@/lib/shared/utils";
+import { TASK_STATUSES, priorityClass, tagClass } from "@/lib/shared/config";
 import type { TaskT, TaskStatus, ProjectT, TeamMemberT } from "@/lib/types";
 import { moveTask } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-result";
+import { actionErrorMessage } from "@/lib/shared/action-result";
 import { toast } from "sonner";
 
 interface TasksViewProps {

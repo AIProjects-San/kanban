@@ -11,8 +11,8 @@ import {
   tagClass,
   DEPARTMENT_LABELS,
   departmentLabel,
-} from "@/lib/config";
-import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
+} from "@/lib/shared/config";
+import { PRIORITIES, TASK_TAGS } from "@/lib/shared/constants";
 
 describe("task status config", () => {
   it("defines the four Kanban columns in order", () => {

@@ -2,7 +2,7 @@
 // P12 (PR-B20 / RJ-B14) — the CTC solver: the compensation engine's inverse.
 // docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2.1 payroll sweep.
 //
-// computeOffer (lib/offer-math.ts) derives the CTC from a component set;
+// computeOffer (lib/hiring/offer-math.ts) derives the CTC from a component set;
 // solveBaseForCtc inverts it: given a TARGET annual CTC, solve the basic
 // amount that hits it, holding every other component (fixed amounts and
 // percent-of-basic rates) constant. The benchmark's CTC calculator:
@@ -26,7 +26,7 @@
 // Pure: no I/O, no clock, no db — the modals call it live.
 // ---------------------------------------------------------------------------
 
-import { basicKeyOf, computeOffer, type OfferComponent, type OfferTotals } from "@/lib/offer-math";
+import { basicKeyOf, computeOffer, type OfferComponent, type OfferTotals } from "@/lib/hiring/offer-math";
 
 import { round2 } from "@/lib/payroll/payroll-math";
 

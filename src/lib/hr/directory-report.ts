@@ -19,13 +19,13 @@
 // Rows sort by (name, employee number) for deterministic output — the
 // golden-file CSV test owns the bytes.
 //
-// The file rides the P32 shared `lib/report-csv.ts` helper (RFC 4180
+// The file rides the P32 shared `lib/shared/report-csv.ts` helper (RFC 4180
 // escaping, the disclaimer header, the CRLF body). Pure and
 // dependency-free: the server action resolves every display string (the
 // department label, the employment-status label) before calling.
 // ---------------------------------------------------------------------------
 
-import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
+import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/shared/report-csv";
 
 export interface DirectoryReportRow {
   employeeNumber: string | null;

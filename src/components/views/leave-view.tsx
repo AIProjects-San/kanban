@@ -10,11 +10,11 @@ import { CalendarClock, CalendarDays, CircleDollarSign, Loader2, Plus, X } from 
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
-import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/config";
+import { LEAVE_STATUS_BADGE, LEAVE_STATUS_LABELS } from "@/lib/shared/config";
 import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT, LeaveEncashmentT, CompLeaveRequestT } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { getMyLeaveData, createLeaveRequest, cancelLeaveRequest } from "@/server-actions/hr-leave";
-import { holidayLookupFrom, workingDaysBetween } from "@/lib/working-days";
+import { holidayLookupFrom, workingDaysBetween } from "@/lib/hr/working-days";
 import { capBalanceForConsumption, splitConsumptionAtCarryBoundary } from "@/lib/leave/leave-policy";
 import { useApp } from "@/store/app-store";
 import { getMyEncashments, requestLeaveEncashment } from "@/server-actions/leave-encashment";
@@ -27,7 +27,7 @@ import {
   createCompensatoryLeaveRequest,
 } from "@/server-actions/compensatory-leave";
 import { claimedNonWorkingDays } from "@/lib/leave/compensatory-leave";
-import { fmtDay } from "@/lib/format";
+import { fmtDay } from "@/lib/shared/format";
 
 interface CurrentUser {
   id: string;
@@ -458,7 +458,7 @@ function RequestFormModal({
       ? selectedType.policy.negativeFloor ?? 0
       : 0;
   // F1.1 — holiday-aware preview: same math as the server's createLeaveRequest
-  // (lib/working-days.ts), so the number the member sees is the number that
+  // (lib/hr/working-days.ts), so the number the member sees is the number that
   // gets denormalized onto the request. F2.4: when the type counts holidays
   // as leave days, only half-day entries discount (the server's
   // countHolidaysInLeave mode).

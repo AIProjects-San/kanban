@@ -18,7 +18,7 @@ import { logAudit, recalcMemberStats, getProjectAssociatedUserIds } from "./shar
 import { bulkTaskPatchSchema, parseOrThrow } from "@/lib/validation";
 import { hasPermission } from "@/lib/auth/rbac";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { revalidatePath } from "next/cache";
 
 export interface BulkTaskPatch {

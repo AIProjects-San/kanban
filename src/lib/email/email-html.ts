@@ -4,7 +4,7 @@
 // house Arial style. Before this module four mail builders hand-rolled the
 // same split/escape/join/wrap with per-file bold-prefix sniffing.
 
-import { escapeHtml } from "@/lib/utils";
+import { escapeHtml } from "@/lib/shared/utils";
 
 export function emailHtml(
   text: string,

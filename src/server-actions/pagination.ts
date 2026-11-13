@@ -17,8 +17,8 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, getVisibleMemberIds } from "./shared";
 import { toResult } from "./result";
-import { pageOf, safeCursor } from "@/lib/pagination";
-import type { ActionResult } from "@/lib/action-result";
+import { pageOf, safeCursor } from "@/lib/shared/pagination";
+import type { ActionResult } from "@/lib/shared/action-result";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;

@@ -7,7 +7,7 @@
 import { db } from "@/lib/infra/db";
 import { getSessionOrThrow } from "./auth-guard";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import type { PayslipT } from "@/lib/types";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import { runWindowEnd } from "@/lib/payroll/payroll-windows";

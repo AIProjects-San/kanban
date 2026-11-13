@@ -4,7 +4,7 @@
 // (docs/RECRUITMENT_MODULE_PLAN.md §5). Opened from the candidate detail
 // modal for SELECTED candidates: generate an offer from a role template,
 // negotiate the components (fixed amounts or % of basic), edit benefits +
-// the letter text, with live CTC / net-take-home totals (lib/offer-math.ts).
+// the letter text, with live CTC / net-take-home totals (lib/hiring/offer-math.ts).
 // R6 adds the send: DRAFT → SENT mints the single-use signing link (7-day
 // expiry), records the offer email in the audited outbox, and lets HR copy
 // the link; a SENT row shows its link + expiry until it is signed/declined.
@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
 import { CtcSolverField } from "./ctc-solver-field";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import type { CandidateT, OfferComponentT, OfferRecordT, OfferTemplateT } from "@/lib/types";
 import {
   createOfferRecord,
@@ -24,7 +24,7 @@ import {
   sendOffer,
   updateOfferRecord,
 } from "@/server-actions/hiring-offers";
-import { computeOffer, formatMoney } from "@/lib/offer-math";
+import { computeOffer, formatMoney } from "@/lib/hiring/offer-math";
 
 const OFFER_STATUS_CLS: Record<string, string> = {
   DRAFT: "bg-amber-500/10 text-amber-600",

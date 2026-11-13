@@ -14,7 +14,7 @@
 // service.
 // ---------------------------------------------------------------------------
 
-import { addWorkingDays, dayKey, type HolidayLookup } from "@/lib/working-days";
+import { addWorkingDays, dayKey, type HolidayLookup } from "@/lib/hr/working-days";
 
 /** The statutory filing window (electronic filers). */
 export const FILING_WORKING_DAYS = 2;

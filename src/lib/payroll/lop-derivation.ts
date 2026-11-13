@@ -47,7 +47,7 @@
 // All dates are UTC-midnight date-only values; inputs accept Date or
 // "YYYY-MM-DD" strings defensively (the LeaveRequest.startDate convention).
 
-import { dayKey, type HolidayLookup } from "@/lib/working-days";
+import { dayKey, type HolidayLookup } from "@/lib/hr/working-days";
 
 /** One attendance record that can charge LOP (ABSENT / HALF_DAY). */
 import { round2 } from "@/lib/payroll/payroll-math";

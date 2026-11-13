@@ -21,10 +21,10 @@ import { toast } from "sonner";
 import { EntityHistorySection } from "./entity-history-section";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";
-import { PRIORITIES, TASK_TAGS } from "@/lib/constants";
-import { TASK_STATUSES, BUG_SEVERITY_BADGE, BUG_SEVERITY_LABELS, BUG_STATUS_BADGE, BUG_STATUS_LABELS } from "@/lib/config";
-import { cn } from "@/lib/utils";
-import { canDeleteTask, type TaskDeleteContext } from "@/lib/task-delete";
+import { PRIORITIES, TASK_TAGS } from "@/lib/shared/constants";
+import { TASK_STATUSES, BUG_SEVERITY_BADGE, BUG_SEVERITY_LABELS, BUG_STATUS_BADGE, BUG_STATUS_LABELS } from "@/lib/shared/config";
+import { cn } from "@/lib/shared/utils";
+import { canDeleteTask, type TaskDeleteContext } from "@/lib/shared/task-delete";
 import { useAppSession } from "@/hooks/use-app-session";
 import { usePermissions } from "@/hooks/use-permissions";
 import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, TeamMemberT, BugSeverity, BugStatus } from "@/lib/types";
@@ -32,7 +32,7 @@ import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, TeamMemberT, BugSe
 interface TaskModalProps {
   tasks: TaskT[];
   projects: ProjectT[];
-  /** PR-61 — context for the row-level task-delete rule (see lib/task-delete.ts). */
+  /** PR-61 — context for the row-level task-delete rule (see lib/shared/task-delete.ts). */
   members?: TeamMemberT[];
   managedUserIds?: string[];
 }

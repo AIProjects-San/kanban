@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractMentionedNames, normaliseNameForMention } from "@/lib/mentions";
+import { extractMentionedNames, normaliseNameForMention } from "@/lib/shared/mentions";
 
 // L-P2-29 — @mention parsing (pure function). Each @ yields the MAXIMAL
 // two-word candidate; the caller resolves candidates against real users.

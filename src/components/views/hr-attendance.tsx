@@ -14,12 +14,12 @@ import { CalendarCheck, ChevronLeft, ChevronRight, Download, Loader2, Trash2 } f
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
-import { ATTENDANCE_STATUS_CODE, ATTENDANCE_STATUS_LABELS } from "@/lib/config";
+import { ATTENDANCE_STATUS_CODE, ATTENDANCE_STATUS_LABELS } from "@/lib/shared/config";
 import type { AttendanceT, AttendanceMonthT, AttendanceStatus } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import { deriveAttendanceTiming, describeAttendanceTiming } from "@/lib/hr/attendance-flags";
 import { getAttendanceMonth, upsertAttendanceRecord, deleteAttendanceRecord, exportAttendanceSheetCsv } from "@/server-actions/hr-attendance";
-import { downloadBlob } from "@/lib/format";
+import { downloadBlob } from "@/lib/shared/format";
 
 /** Statuses HR may set from the form — ON_LEAVE is derived-only. */
 const SETTABLE: Exclude<AttendanceStatus, "ON_LEAVE">[] = ["PRESENT", "ABSENT", "HALF_DAY", "WFH"];

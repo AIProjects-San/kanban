@@ -21,7 +21,7 @@ import { toResult } from "./result";
 import { AuthorizationError } from "./auth-guard";
 import { requirePermission } from "./auth-guard";
 import { logAudit } from "./shared";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import { isValidEmployerIrdNumber } from "@/lib/ird/ird-number";
 import { workingDaysRemaining } from "@/lib/ird/deadline";
 import { isFilingCadence } from "@/lib/ird/pay-cycle";

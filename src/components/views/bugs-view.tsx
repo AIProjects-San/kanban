@@ -21,14 +21,14 @@ import {
   BUG_STATUSES, BUG_SEVERITIES, BUG_PRIORITIES,
   BUG_STATUS_LABELS, BUG_STATUS_BADGE, BUG_SEVERITY_LABELS, BUG_SEVERITY_BADGE,
   BUG_PRIORITY_LABELS, BUG_STATUS_TRANSITIONS,
-} from "@/lib/config";
+} from "@/lib/shared/config";
 import type { BugStatus, BugSeverity, BugPriority, BugResolution, ProjectT, TaskT } from "@/lib/types";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
 import { Avatar } from "../ui/avatar";
 import { FilterBar } from "../ui/filter-bar";
 import { EntityHistorySection } from "../ui/entity-history-section";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/shared/utils";
 import {
   createBug, getBug, changeBugStatus, moveBug, linkBugToTask,
   assignBug, addBugComment, deleteBug, getBugBoard,

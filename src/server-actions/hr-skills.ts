@@ -31,7 +31,7 @@ import {
 } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
-import type { ActionResult } from "@/lib/action-result";
+import type { ActionResult } from "@/lib/shared/action-result";
 import type { SkillT, EmployeeSkillT, SkillMapT } from "@/lib/types";
 import { skillMapSummary, skillProficiencyLabel } from "@/lib/hr/skills";
 
