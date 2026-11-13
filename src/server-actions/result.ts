@@ -4,8 +4,7 @@
 // non-async value and is imported by the action modules, not by clients.
 
 import { logError } from "@/lib/observability";
-import { AuthorizationError } from "./auth-guard";
-import { ok, err, type ActionResult } from "@/lib/action-result";
+import { ok, err, isValidationError, isAuthorizationError, type ActionResult } from "@/lib/action-result";
 
 /**
  * Run an action body, catching every failure and converting it into a
@@ -21,10 +20,10 @@ export async function toResult<T>(body: () => Promise<T>): Promise<ActionResult<
   try {
     return ok(await body());
   } catch (e) {
-    if (e instanceof AuthorizationError) {
-      return err("AUTH", e.message);
+    if (isAuthorizationError(e)) {
+      return err("AUTH", e instanceof Error ? e.message : "You must be signed in.");
     }
-    if (e instanceof Error && (e.name === "ValidationError" || (e as { digest?: unknown }).digest === "ValidationError")) {
+    if (isValidationError(e) && e instanceof Error) {
       return err("VALIDATION", e.message);
     }
     // Unexpected failure — log it server-side, keep the client message generic.

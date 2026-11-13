@@ -84,7 +84,7 @@ export async function getEmployeeDocuments(input: {
   return toResult(async () => {
     const auth = await requirePermission("settings:edit");
     const isSelf = !input.userId || input.userId === auth.userId;
-    const canManage = await checkPermissionQuiet(auth.role, "hr:view");
+    const canManage = await checkPermission(auth.role, "hr:view");
     if (!isSelf && !canManage) {
       throw new AuthorizationError("You can only view your own identification documents.");
     }
@@ -128,12 +128,6 @@ export async function getEmployeeDocuments(input: {
       canManage,
     };
   });
-}
-
-async function checkPermissionQuiet(role: string, perm: string): Promise<boolean> {
-  // F-R13 — the DB-aware probe (static floor OR DB ceiling), the boolean
-  // counterpart of requirePermission.
-  return checkPermission(role as never, perm as never);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +203,7 @@ export async function submitEmployeeDocument(input: unknown): Promise<ActionResu
     const doc = await db.employeeDocument.findUnique({ where: { id: data.documentId } });
     if (!doc) throw new AuthorizationError("Document not found.");
     const isOwner = doc.userId === auth.userId;
-    const canManage = await checkPermissionQuiet(auth.role, "hr:admin");
+    const canManage = await checkPermission(auth.role, "hr:admin");
     if (!isOwner && !canManage) {
       throw new AuthorizationError("Only the employee themself or HR can submit this document.");
     }

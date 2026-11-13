@@ -22,6 +22,7 @@ import { parseOrThrow } from "@/lib/validation";
 import { electBenefitSchema, claimBenefitSchema, cancelBenefitElectionSchema } from "@/lib/validation";
 import { planBenefitElection, planBenefitClaim, benefitBalance, benefitPayoutLabel } from "@/lib/benefits";
 import type { BenefitsOverviewT } from "@/lib/types";
+import { round2 } from "@/lib/money";
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -66,7 +67,7 @@ export async function getBenefitsOverview(input?: { year?: number }): Promise<Ac
         annualAmount: e.annualAmount,
         status: (e.status === "CANCELLED" ? "CANCELLED" : "ACTIVE") as "ACTIVE" | "CANCELLED",
         cap: capByUser.get(e.userId) ?? 0,
-        balance: Math.round((balanceBy.get(`${e.userId}|${e.componentCode}`) ?? 0) * 100) / 100,
+        balance: round2(balanceBy.get(`${e.userId}|${e.componentCode}`) ?? 0),
         createdAt: e.createdAt.toISOString(),
       })),
     };

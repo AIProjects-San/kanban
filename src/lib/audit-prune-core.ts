@@ -12,7 +12,8 @@
 // cron path attributes it to the synthetic "system (cron)" actor.
 
 import { db } from "@/lib/db";
-import { logAudit } from "@/server-actions/shared";
+import { logWarn } from "@/lib/observability";
+import { logAudit } from "@/lib/server/audit";
 import {
   DEFAULT_AUDIT_RETENTION_DAYS,
   MIN_AUDIT_RETENTION_DAYS,
@@ -153,8 +154,9 @@ export async function runMaintenancePurge(
       },
     });
     purgedResetTokens = r.count;
-  } catch {
+  } catch (err) {
     // Counted as 0 — the next run retries. Never block the other purges.
+    logWarn("[audit-prune] password-reset-token purge failed (counted as 0):", err);
   }
   try {
     // PR-48 — Better Auth sessions that expired without an explicit
@@ -165,25 +167,28 @@ export async function runMaintenancePurge(
       where: { expiresAt: { lt: new Date(now) } },
     });
     purgedExpiredSessions = r.count;
-  } catch {
+  } catch (err) {
     // see above — also 0 while the v4 stack runs (tables may be absent in
     // environments that never ran the Phase 1 migration).
+    logWarn("[audit-prune] expired-session purge failed (counted as 0):", err);
   }
   try {
     const r = await db.notification.deleteMany({
       where: { read: true, createdAt: { lt: notifCutoff } },
     });
     purgedReadNotifications = r.count;
-  } catch {
+  } catch (err) {
     // see above
+    logWarn("[audit-prune] read-notification purge failed (counted as 0):", err);
   }
   try {
     const r = await db.messageRead.deleteMany({
       where: { message: { deletedAt: { lt: readCutoff } } },
     });
     purgedStaleMessageReads = r.count;
-  } catch {
+  } catch (err) {
     // see above
+    logWarn("[audit-prune] stale-message-read purge failed (counted as 0):", err);
   }
 
   return {

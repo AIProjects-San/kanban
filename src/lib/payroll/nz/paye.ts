@@ -56,6 +56,7 @@ import {
   type NzSecondaryRateParam,
   type NzTaxProfileInput,
 } from "./types";
+import { SECONDARY_RATE_CODES } from "./tax-codes";
 
 /** Calculation method that produced the PAYE lines. */
 export type NzPayeMethod =
@@ -82,7 +83,7 @@ export interface NzPayeResult {
 }
 
 /** Secondary codes with a seeded flat rate (income tax only). */
-const SECONDARY_CODES = new Set(["SB", "S", "SH", "ST", "SA"]);
+const SECONDARY_CODES = new Set<string>(SECONDARY_RATE_CODES);
 
 /**
  * ACC earners' levy for ONE pay period: rate × period earnings, capped at

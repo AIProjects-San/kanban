@@ -33,9 +33,20 @@ vi.mock("@/lib/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 const getSessionMock = vi.fn();
-vi.mock("@/server-actions/auth-guard", () => ({
+vi.mock("@/server-actions/auth-guard", () => {
+  class AuthorizationError extends Error {
+    readonly digest = "AuthorizationError";
+    constructor(m: string) { super(m); this.name = "AuthorizationError"; }
+  }
+  return {
+    getSession: () => getSessionMock(),
+    getSessionOrThrow: async () => {
+      const a = await getSessionMock();
+      if (!a) throw new AuthorizationError("You must be signed in.");
+      return a;
+    },
   requirePermission: (...a: unknown[]) => requirePermissionMock(...a),
-  getSession: () => getSessionMock(),
+  
   requirePermissionForTarget: vi.fn(),
   AuthorizationError: class AuthorizationError extends Error {
     readonly digest = "AuthorizationError";
@@ -44,7 +55,8 @@ vi.mock("@/server-actions/auth-guard", () => ({
       this.name = "AuthorizationError";
     }
   },
-}));
+  };
+});
 
 const logAuditMock = vi.fn();
 vi.mock("@/server-actions/shared", () => ({

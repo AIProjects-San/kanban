@@ -23,10 +23,7 @@ import { componentYtdAmount } from "@/lib/payslip-aggregates";
 // P16 (PR-11) — the fiscal-year label for the YTD chip ("2026/27" when the
 // workspace basis isn't the calendar year).
 import { fiscalYearLabel, fiscalYearOf, parsePayrollPeriodKey } from "@/lib/payroll-windows";
-
-function money(n: number): string {
-  return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+import { formatMoney } from "@/lib/format";
 
 /** Percent label for the statutory box ("3.5%", "10%"). */
 function pct(rate: number): string {
@@ -168,7 +165,7 @@ export function PayslipModal({
     });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    toast.success(`Payslip ${payslip.slipNo} saved — net ${money(totals.net)}.`);
+    toast.success(`Payslip ${payslip.slipNo} saved — net ${formatMoney(totals.net)}.`);
     onChanged();
     onClose();
   };
@@ -227,7 +224,7 @@ export function PayslipModal({
               title={`This component's year-to-date total through ${p.runPeriod} (read-time; recalculated as slips are saved or finalized)`}
               data-testid={`payslip-${kind}-ytd-${i}`}
             >
-              YTD {money(ytd)}
+              YTD {formatMoney(ytd)}
             </span>
           )}
           <button
@@ -272,7 +269,7 @@ export function PayslipModal({
             {payslip.earnings.filter((l) => l.statistical).map((l) => (
               <div key={l.key} className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
                 <span>{l.label}</span>
-                <span className="tabular-nums">{money(l.amount)}</span>
+                <span className="tabular-nums">{formatMoney(l.amount)}</span>
               </div>
             ))}
           </div>
@@ -292,7 +289,7 @@ export function PayslipModal({
             </Field>
             {totals.lop > 0 && (
               <div className="text-xs text-amber-700" data-testid="payslip-lop-amount">
-                LOP deduction: <strong>{money(totals.lop)}</strong> (auto line)
+                LOP deduction: <strong>{formatMoney(totals.lop)}</strong> (auto line)
               </div>
             )}
             <div className="w-full text-[0.6875rem] text-muted-foreground" data-testid="payslip-lop-source">
@@ -380,24 +377,24 @@ export function PayslipModal({
             {editable && statutoryLines.map((l) => (
               <div key={l.key} className="flex items-baseline justify-between gap-3 text-xs">
                 <span>{l.label}</span>
-                <span className="tabular-nums">{money(l.amount)}</span>
+                <span className="tabular-nums">{formatMoney(l.amount)}</span>
               </div>
             ))}
             {p.statutory && p.statutory.kiwiSaver.employerGross > 0 && (
               <>
                 <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
                   <span>Employer KiwiSaver ({pct(p.statutory.kiwiSaver.employerRate)}) — not deducted from pay</span>
-                  <span className="tabular-nums">{money(p.statutory.kiwiSaver.employerGross)}</span>
+                  <span className="tabular-nums">{formatMoney(p.statutory.kiwiSaver.employerGross)}</span>
                 </div>
                 <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
                   <span>ESCT on the employer contribution ({pct(p.statutory.kiwiSaver.esctRate)})</span>
-                  <span className="tabular-nums">−{money(p.statutory.kiwiSaver.esct)}</span>
+                  <span className="tabular-nums">−{formatMoney(p.statutory.kiwiSaver.esct)}</span>
                 </div>
               </>
             )}
             {p.statutory && (
               <div className="text-[0.6875rem] text-muted-foreground" data-testid="payslip-statutory-meta">
-                Tax code {p.statutory.taxCode} · tax year {p.statutory.rateSetLabel} · taxable gross {money(p.statutory.taxableGross)}
+                Tax code {p.statutory.taxCode} · tax year {p.statutory.rateSetLabel} · taxable gross {formatMoney(p.statutory.taxableGross)}
                 {p.statutory.defaultedProfile ? " · computed on system defaults (no tax profile recorded for this employee)" : ""}
                 {editable ? " · auto-managed: editing earnings or loss-of-pay recomputes these lines when the slip is saved" : ""}
               </div>
@@ -411,15 +408,15 @@ export function PayslipModal({
             land in one month, e.g. weekly cadences). P16: the YTD cells name
             the fiscal basis when it isn't the calendar year. */}
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 grid grid-cols-3 gap-2 text-xs" data-testid="payslip-totals">
-          <div><div className="text-muted-foreground">Gross</div><div className="font-semibold tabular-nums">{money(totals.gross)}</div></div>
-          <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{money(totals.lop + totals.manualDeductions + totals.statutory)}</div></div>
-          <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{money(totals.net)}</div></div>
-          <div className="print-detailed"><div className="text-muted-foreground">YTD gross{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{money(p.ytdGross)}</div></div>
-          <div className="print-detailed"><div className="text-muted-foreground">YTD net{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{money(p.ytdNet)}</div></div>
-          <div className="print-detailed"><div className="text-muted-foreground">Month-to-date net</div><div className="font-semibold tabular-nums" data-testid="payslip-mtd-net">{money(p.mtdNet)}</div></div>
+          <div><div className="text-muted-foreground">Gross</div><div className="font-semibold tabular-nums">{formatMoney(totals.gross)}</div></div>
+          <div><div className="text-muted-foreground">Deductions</div><div className="font-semibold tabular-nums text-destructive">{formatMoney(totals.lop + totals.manualDeductions + totals.statutory)}</div></div>
+          <div><div className="text-muted-foreground">Net pay{totals.roundingAdj !== 0 ? " (rounded)" : ""}</div><div className="font-semibold tabular-nums text-primary">{formatMoney(totals.net)}</div></div>
+          <div className="print-detailed"><div className="text-muted-foreground">YTD gross{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-gross">{formatMoney(p.ytdGross)}</div></div>
+          <div className="print-detailed"><div className="text-muted-foreground">YTD net{ytdBasisChip ? ` · ${ytdBasisChip}` : ""}</div><div className="font-semibold tabular-nums" data-testid="payslip-ytd-net">{formatMoney(p.ytdNet)}</div></div>
+          <div className="print-detailed"><div className="text-muted-foreground">Month-to-date net</div><div className="font-semibold tabular-nums" data-testid="payslip-mtd-net">{formatMoney(p.mtdNet)}</div></div>
         </div>
         <div className="text-xs text-muted-foreground print-detailed" data-testid="payslip-ytd-basis">
-          YTD net (through {p.runPeriod}): <strong data-testid="payslip-ytd">{money(p.ytdNet)}</strong>
+          YTD net (through {p.runPeriod}): <strong data-testid="payslip-ytd">{formatMoney(p.ytdNet)}</strong>
           {editable ? " — updates when this slip is saved." : ""}
           {ytdBasisChip ? ` YTD basis: fiscal year ${ytdBasisChip} (resets at the fiscal boundary, not January 1).` : ""}
           {" "}Per-line "YTD" figures are each component's year total through this period (read-time).

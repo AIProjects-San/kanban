@@ -10,7 +10,7 @@ import { Avatar } from "./avatar";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { sendMessage, markThreadRead, deleteMessage } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-errors";
+import { actionErrorMessage } from "@/lib/action-result";
 import type { MessageT, TeamMemberT } from "@/lib/types";
 
 interface InboxDrawerProps {

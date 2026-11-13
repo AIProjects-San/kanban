@@ -14,6 +14,7 @@ import { Field, FormRow } from "./field";
 import { cn } from "@/lib/utils";
 import type { SalaryAdvanceT } from "@/lib/types";
 import { getSalaryAdvances, issueSalaryAdvance } from "@/server-actions/salary-advances";
+import { formatMoney } from "@/lib/format";
 
 export function SalaryAdvancesModal({
   open, onClose, onChanged, employees,
@@ -41,9 +42,6 @@ export function SalaryAdvancesModal({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) { void load(); setUserId(""); setAmount("500"); setInstallments("4"); setReason(""); }
   }, [open, load]);
-
-  const fmt = (n: number) =>
-    `$${Math.abs(n).toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const issue = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,14 +91,14 @@ export function SalaryAdvancesModal({
                 </span>
               </div>
               <div className="text-[0.625rem] text-muted-foreground truncate">
-                {fmt(a.amount)} · {a.installments} installment{a.installments === 1 ? "" : "s"} from {a.startPeriod}
+                {formatMoney(a.amount)} · {a.installments} installment{a.installments === 1 ? "" : "s"} from {a.startPeriod}
                 {a.issuedBy ? ` · issued by ${a.issuedBy}` : ""}
                 {a.reason ? ` · ${a.reason}` : ""}
               </div>
             </div>
             <div className="shrink-0 text-right">
               <div className={cn("text-xs font-medium tabular-nums", a.outstanding > 0 ? "text-destructive" : "text-success")}>
-                {a.outstanding > 0 ? `${fmt(a.outstanding)} outstanding` : "recovered"}
+                {a.outstanding > 0 ? `${formatMoney(a.outstanding)} outstanding` : "recovered"}
               </div>
               <div className="text-[0.625rem] text-muted-foreground">{a.summary.split(" · ")[1] ?? ""}</div>
             </div>

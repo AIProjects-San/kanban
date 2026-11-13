@@ -35,17 +35,12 @@ import {
   settleFullAndFinal,
 } from "@/server-actions/hr-offboarding";
 import type { OffboardingCaseT, OffboardingOverviewT, FnFComputedT } from "@/lib/types";
+import { fmtDay, formatMoney } from "@/lib/format";
 
-function fmtDay(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
-    day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
-  });
-}
-
+/** FnF lines are signed (receivables negative) — compose the shared kit's
+ * unsigned formatMoney with the explicit leading minus. */
 function fmtMoney(n: number): string {
-  const sign = n < 0 ? "−" : "";
-  return `${sign}$${Math.abs(n).toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${n < 0 ? "−" : ""}${formatMoney(Math.abs(n))}`;
 }
 
 const FNF_KIND_LABELS: Record<string, string> = {

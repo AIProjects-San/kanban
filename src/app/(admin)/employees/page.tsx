@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { getAdminEmployees } from "@/server-actions/tax-admin";
+import { EMPLOYMENT_CATEGORY_LABELS } from "@/lib/payroll/nz/tax-codes";
 
 // ---------------------------------------------------------------------------
 // Task 3.4 — the employee index for the tax-profile editor. The [id] page
@@ -8,13 +9,6 @@ import { getAdminEmployees } from "@/server-actions/tax-admin";
 // ---------------------------------------------------------------------------
 
 export const dynamic = "force-dynamic";
-
-const EMPLOYMENT_LABELS: Record<string, string> = {
-  PERMANENT: "Permanent",
-  CASUAL: "Casual",
-  TEMPORARY: "Temporary",
-  CASUAL_AGRICULTURAL: "Casual agricultural",
-};
 
 export default async function AdminEmployeesPage() {
   const res = await getAdminEmployees();
@@ -58,7 +52,7 @@ export default async function AdminEmployeesPage() {
                   <td className="px-4 py-3 text-muted-foreground">{e.role}</td>
                   <td className="px-4 py-3 font-mono text-xs">{e.taxCode || "—"}</td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {EMPLOYMENT_LABELS[e.employmentType] ?? "—"}
+                    {EMPLOYMENT_CATEGORY_LABELS[e.employmentType] ?? "—"}
                   </td>
                   <td className="px-4 py-3">
                     {e.hasProfile ? (

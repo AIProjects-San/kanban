@@ -13,6 +13,8 @@
 // All amounts are ANNUAL, whole currency units, stored as numbers in JSON.
 // ---------------------------------------------------------------------------
 
+import { round2 } from "@/lib/money";
+
 export type OfferComponentKind =
   | "EARNING"
   | "EMPLOYER_CONTRIBUTION"
@@ -118,7 +120,7 @@ export function computeOffer(components: OfferComponent[]): OfferTotals {
       continue;
     }
     const raw = resolveGrossBased(c);
-    const value = Math.round(Math.max(0, Number.isFinite(raw) ? raw : 0) * 100) / 100;
+    const value = round2(Math.max(0, Number.isFinite(raw) ? raw : 0));
     resolved[c.key] = value;
     earnings += value;
   }
@@ -131,7 +133,7 @@ export function computeOffer(components: OfferComponent[]): OfferTotals {
       continue;
     }
     const raw = resolveGrossBased(c);
-    const value = Math.round(Math.max(0, Number.isFinite(raw) ? raw : 0) * 100) / 100;
+    const value = round2(Math.max(0, Number.isFinite(raw) ? raw : 0));
     resolved[c.key] = value;
     if (c.kind === "EMPLOYER_CONTRIBUTION") employerContributions += value;
     else if (c.kind === "STATISTICAL") {
@@ -149,10 +151,6 @@ export function computeOffer(components: OfferComponent[]): OfferTotals {
     ctc: round2(earnings + employerContributions),
     unresolved,
   };
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 /** Parse a components JSON string defensively (schema stores TEXT). P23 —

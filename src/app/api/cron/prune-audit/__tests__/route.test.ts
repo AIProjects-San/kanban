@@ -25,7 +25,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-vi.mock("@/server-actions/shared", () => ({
+vi.mock("@/lib/server/audit", () => ({
   logAudit: vi.fn(),
 }));
 

@@ -9,18 +9,12 @@ import {
   Calendar as CalIcon,
   AlertCircle,
   ArrowRight,
-  Play,
-  Pause,
-  Square,
-  Timer,
 } from "lucide-react";
 import { cn, barWidthClass } from "@/lib/utils";
-import { useState, useEffect } from "react";
 import { Avatar } from "../ui/avatar";
 import { StatCard } from "../ui/stat-card";
 import { MyPayslipsCard } from "../ui/my-payslips-card";
 import { useApp } from "@/store/app-store";
-import { toast } from "sonner";
 import { usePermissions } from "@/hooks/use-permissions";
 import type { ProjectT, TeamMemberT, ReminderT, TaskT, NotificationT } from "@/lib/types";
 
@@ -205,7 +199,6 @@ export function DashboardView({ projects, members, reminders, tasks, notifs, sta
           <MyPayslipsCard />
 
           {/* Time Tracker */}
-          <TimeTracker />
 
           {/* Reminders */}
           <div className="f-card p-5">
@@ -338,66 +331,3 @@ function ProgressBar({ label, value, tone }: { label: string; value: number; ton
   );
 }
 
-function TimeTracker() {
-  const [running, setRunning] = useState(false);
-  const [elapsed, setElapsed] = useState(0); // seconds
-  const [project] = useState("Halcyon Labs Website");
-
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => clearInterval(id);
-  }, [running]);
-
-  const h = Math.floor(elapsed / 3600);
-  const m = Math.floor((elapsed % 3600) / 60);
-  const s = elapsed % 60;
-  const fmt = (n: number) => n.toString().padStart(2, "0");
-
-  return (
-    <div className="f-card p-5">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Timer size={16} className="text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Time Tracker</h2>
-        </div>
-        <span className="text-[0.625rem] text-muted-foreground">Today</span>
-      </div>
-      <div className="text-center py-3">
-        <div className="text-3xl font-bold tabular-nums text-foreground">
-          {fmt(h)}:{fmt(m)}:{fmt(s)}
-        </div>
-        <div className="text-xs text-muted-foreground mt-1">{project}</div>
-      </div>
-      <div className="flex items-center justify-center gap-2">
-        {!running ? (
-          <button
-            onClick={() => { setRunning(true); toast.success("Timer started"); }}
-            className="f-btn f-btn-primary f-btn-sm"
-          >
-            <Play size={14} /> Start
-          </button>
-        ) : (
-          <button
-            onClick={() => { setRunning(false); toast.info("Timer paused"); }}
-            className="f-btn f-btn-secondary f-btn-sm"
-          >
-            <Pause size={14} /> Pause
-          </button>
-        )}
-        <button
-          onClick={() => {
-            if (elapsed > 0) {
-              toast.success(`Logged ${fmt(h)}:${fmt(m)}:${fmt(s)} to ${project}`);
-              setElapsed(0);
-              setRunning(false);
-            }
-          }}
-          className="f-btn f-btn-ghost f-btn-sm"
-        >
-          <Square size={14} /> Stop & Log
-        </button>
-      </div>
-    </div>
-  );
-}

@@ -25,14 +25,23 @@ db.$transaction = vi.fn((arr: unknown[]) => Promise.all(arr as Promise<unknown>[
 
 const getSessionMock = vi.fn();
 const requirePermissionMock = vi.fn();
-vi.mock("@/server-actions/auth-guard", () => ({
-  getSession: () => getSessionMock(),
-  requirePermission: (...a: unknown[]) => requirePermissionMock(...a),
-  AuthorizationError: class AuthorizationError extends Error {
+vi.mock("@/server-actions/auth-guard", () => {
+  class AuthorizationError extends Error {
     readonly digest = "AuthorizationError";
     constructor(m: string) { super(m); this.name = "AuthorizationError"; }
-  },
-}));
+  }
+  return {
+    getSession: () => getSessionMock(),
+    getSessionOrThrow: async () => {
+      const a = await getSessionMock();
+      if (!a) throw new AuthorizationError("You must be signed in.");
+      return a;
+    },
+  
+  requirePermission: (...a: unknown[]) => requirePermissionMock(...a),
+  AuthorizationError,
+  };
+});
 
 const logAuditMock = vi.fn();
 const recalcMemberStatsMock = vi.fn();

@@ -410,7 +410,7 @@ export async function getEncashmentQueue(): Promise<
 > {
   return toResult(async () => {
     const auth = await requirePermission("hr:view");
-    const canAdmin = hasPermission(auth.role as never, "hr:admin");
+    const canAdmin = hasPermission(auth.role, "hr:admin");
 
     let visibleUserIds: string[] | null = null;
     if (auth.role === "MANAGER") {

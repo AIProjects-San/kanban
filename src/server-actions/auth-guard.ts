@@ -1,6 +1,6 @@
 // Server-side authorization helpers.
 // NOTE: This file intentionally does NOT have "use server" because it exports
-// non-function values (the AuthorizationError class). It's imported by server
+// non-function values (the AuthorizationError re-export). It's imported by server
 // actions and server components, which is fine — it runs on the server only.
 
 import { logError } from "@/lib/observability";
@@ -9,6 +9,11 @@ import { hasPermission, isValidRole, type Permission, type Role } from "@/lib/rb
 import { canManageUser, getSubtreeUserIds } from "@/lib/hierarchy";
 import { hasPermissionDb } from "@/lib/config-loader";
 import { db } from "@/lib/db";
+import { AuthorizationError } from "@/lib/server/authorization-error";
+
+// The class lives in lib so lib kernels can throw it without importing the
+// action layer; re-exported here for the action files' existing imports.
+export { AuthorizationError };
 
 interface AuthResult {
   userId: string;
@@ -153,15 +158,4 @@ export async function requirePermissionForTarget(
     );
   }
   return auth;
-}
-
-export class AuthorizationError extends Error {
-  /** Stable marker preserved across the server→client boundary so clients can
-   * recognise authorisation failures even when production masks messages. */
-  readonly digest = "AuthorizationError";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "AuthorizationError";
-  }
 }

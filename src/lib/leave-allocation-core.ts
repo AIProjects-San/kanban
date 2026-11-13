@@ -36,7 +36,7 @@ import { db } from "@/lib/db";
 import { logError, logInfo } from "@/lib/observability";
 import { dayKey } from "@/lib/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
-import { queueOutboxMail, deliverOutboxMail } from "@/server-actions/shared";
+import { queueOutboxMail, deliverOutboxMail } from "@/lib/server/mail-outbox";
 import { leaveJobFailureEmailSubject, leaveJobFailureEmailText, leaveEmailHtml } from "@/lib/leave-email";
 import {
   resolveLeavePolicy,
@@ -58,7 +58,7 @@ import {
 // P28 (LV-02/LV-03) — the policy-set assignments' entitlement override (the
 // row-level rule + the batched resolver shared with the action layer).
 import { policyRowWithAnnualDays } from "@/lib/leave-policy-set";
-import { assignmentOverridesForUsers } from "@/server-actions/hr-shared";
+import { assignmentOverridesForUsers } from "@/lib/server/leave-overrides";
 
 /** DB row → the kernel's plain-data shape (day keys). */
 function toPeriodInput(row: { id: string; name: string; startDate: Date; endDate: Date }): LeavePeriodInput {

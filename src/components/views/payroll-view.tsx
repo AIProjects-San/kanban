@@ -9,6 +9,7 @@
 //   • Structures — per-employee annual salary components (÷12 for the
 //     monthly gross), copied from the signed offer or entered manually.
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Award, Banknote, BarChart3, BookOpen, CalendarPlus, CircleDollarSign, Download, FileText, HeartPulse, Landmark, Layers, Loader2, Lock, Pause, Plus, RotateCcw, Scale, ShieldAlert, Undo2, Users, Wallet, HandCoins } from "lucide-react";
 import { toast } from "sonner";
@@ -25,7 +26,8 @@ import {
 } from "@/server-actions/payroll";
 // Phase 2 (payday filing) — the per-run EI filing badge.
 import { getRunFilingStatus } from "@/server-actions/payday-filing";
-import { computeOffer, formatMoney } from "@/lib/offer-math";
+import { computeOffer } from "@/lib/offer-math";
+import { formatMoney, downloadBlob } from "@/lib/format";
 // P10 — the pure windows kernel drives the new-run form's live preview and
 // the client-side period label for run rows (same functions the server
 // resolves with — one authority).
@@ -55,10 +57,6 @@ import { getDirectory } from "@/server-actions/hr-directory";
 import type { PayrollAnalytics } from "@/lib/payroll-analytics";
 import { TrendChart, BarListChart } from "../ui/svg-charts";
 import { StatCard } from "../ui/stat-card";
-
-function money(n: number): string {
-  return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 function monthLabel(period: string): string {
   return payrollPeriodLabel(period);
@@ -115,7 +113,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   // + six cards; LOCKED-run basis, refreshed on every load()).
   const [analytics, setAnalytics] = useState<PayrollAnalytics | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<PayrollRunT[]> => {
     const res = await getPayrollData();
     if (res.ok) {
       setStructures(res.data.structures);
@@ -133,12 +131,17 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     const an = await getPayrollAnalytics();
     if (an.ok) setAnalytics(an.data);
     const dir = await getDirectory();
-    if (dir.ok) setEmployees(dir.data.profiles.map((p) => ({ userId: p.userId, name: p.name })));
+    if (dir.ok) {
+      setEmployees(dir.data.profiles.map((p) => ({ userId: p.userId, name: p.name })));
+    } else {
+      toast.error("Could not load the employee roster — pickers may be empty. Retry from the refresh button.");
+    }
     // Phase 2 — the filing badge per run (best-effort; a failure just
     // hides the badges).
     const badges = await getRunFilingStatus();
     if (badges.ok) setFilingStatus(badges.data);
     setLoaded(true);
+    return res.ok ? res.data.runs : [];
   }, []);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -209,13 +212,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       );
     }
     setSelectedRunId(null);
-    await load();
-    // Select the fresh run (the newest one for that window).
-    const runsRes = await getPayrollData();
-    if (runsRes.ok) {
-      const fresh = runsRes.data.runs.find((r) => r.period === previewWindow.periodKey);
-      if (fresh) setSelectedRunId(fresh.id);
-    }
+    // load() already refetched the runs list — select the fresh run from it.
+    const fresh = (await load()).find((r) => r.period === previewWindow.periodKey);
+    if (fresh) setSelectedRunId(fresh.id);
   };
 
   const lockRun = async (runId: string) => {
@@ -231,19 +230,13 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
 
   // P20 (PR-R01/PR-R02) — the per-run CSV exports (LOCKED only server-side;
   // the buttons live on LOCKED rows). The action returns the built file;
-  // the download itself is the analytics pattern (Blob + anchor click).
+  // the download itself rides the shared downloadBlob kit.
   const exportCsv = async (runId: string, period: string, kind: "REGISTER" | "BANK_REMITTANCE") => {
     setBusy(true);
     const res = await exportPayrollRunCsv({ runId, kind });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    const blob = new Blob([res.data.csv], { type: res.data.mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = res.data.filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data.csv, res.data.filename, res.data.mime);
     toast.success(`${kind === "REGISTER" ? "Salary register" : "Bank remittance"} for ${period} exported (${res.data.filename}).`);
   };
 
@@ -346,7 +339,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3" data-testid="payroll-analytics-cards">
               <StatCard
                 icon={Banknote}
-                value={money(analytics.cards.totalOutgoingSalary)}
+                value={formatMoney(analytics.cards.totalOutgoingSalary)}
                 label={`Outgoing salary · ${analytics.cards.outgoingSalaryMonths} month${analytics.cards.outgoingSalaryMonths === 1 ? "" : "s"}`}
                 iconColor="text-emerald-600"
                 iconBg="bg-emerald-500/10"
@@ -360,7 +353,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
               />
               <StatCard
                 icon={HeartPulse}
-                value={money(analytics.cards.benefitClaimsTotal)}
+                value={formatMoney(analytics.cards.benefitClaimsTotal)}
                 label={`Benefit claims · ${analytics.cards.benefitClaimsCount} claim${analytics.cards.benefitClaimsCount === 1 ? "" : "s"}`}
                 iconColor="text-violet-600"
                 iconBg="bg-violet-500/10"
@@ -381,7 +374,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
               />
               <StatCard
                 icon={Award}
-                value={money(analytics.cards.incentiveTotal)}
+                value={formatMoney(analytics.cards.incentiveTotal)}
                 label={`Incentives given · ${analytics.cards.incentiveCount} row${analytics.cards.incentiveCount === 1 ? "" : "s"}`}
                 iconColor="text-orange-600"
                 iconBg="bg-orange-500/10"
@@ -394,7 +387,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 <TrendChart
                   title="Outgoing salary — disbursed net per month"
                   points={analytics.outgoing.map((m) => ({ label: m.label, value: m.net }))}
-                  formatValue={(n) => money(n)}
+                  formatValue={(n) => formatMoney(n)}
                   emptyHint="No locked runs yet — the trend appears once a run is paid."
                   testId="chart-outgoing-salary"
                 />
@@ -404,7 +397,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 <TrendChart
                   title="Benefit claims — claimed amount per month"
                   points={analytics.benefitClaims.map((m) => ({ label: m.label, value: m.amount }))}
-                  formatValue={(n) => money(n)}
+                  formatValue={(n) => formatMoney(n)}
                   color="#8b5cf6"
                   fill="rgba(139,92,246,0.12)"
                   emptyHint="No benefit claims yet — elect benefits and file a claim to see the trend."
@@ -425,7 +418,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 <BarListChart
                   title="Salary by department — gross in the latest paid month"
                   rows={analytics.departmentSalary.rows.map((r) => ({ label: r.label, value: r.amount }))}
-                  formatValue={(n) => money(n)}
+                  formatValue={(n) => formatMoney(n)}
                   emptyHint="No locked runs yet — the slice appears once a run is paid."
                   testId="chart-department-salary"
                 />
@@ -440,7 +433,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                 <BarListChart
                   title="Salary by job title — gross in the latest paid month"
                   rows={analytics.designationSalary.rows.map((r) => ({ label: r.label, value: r.amount }))}
-                  formatValue={(n) => money(n)}
+                  formatValue={(n) => formatMoney(n)}
                   color="#38bdf8"
                   emptyHint="No locked runs yet — the slice appears once a run is paid."
                   testId="chart-designation-salary"
@@ -553,7 +546,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                   </span>
                 )}
                 <span className="block text-xs text-muted-foreground">
-                  {r.payslipCount} payslip{r.payslipCount === 1 ? "" : "s"} · gross {money(r.totalGross)} · net {money(r.totalNet)}
+                  {r.payslipCount} payslip{r.payslipCount === 1 ? "" : "s"} · gross {formatMoney(r.totalGross)} · net {formatMoney(r.totalNet)}
                   {r.lockedBy ? ` · locked by ${r.lockedBy}` : ""}
                 </span>
               </button>
@@ -565,7 +558,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
               </span>
               {/* Phase 2 — the per-run filing status (EI lifecycle). */}
               {filingStatus[r.id] && (
-                <a
+                <Link
                   href={`/admin/payroll/runs/${r.id}/filing`}
                   className={cn(
                     "text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0 hover:underline",
@@ -579,17 +572,17 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                   data-testid={`filing-badge-${r.period}`}
                 >
                   EI {filingStatus[r.id].status}
-                </a>
+                </Link>
               )}
               {r.status === "LOCKED" && !filingStatus[r.id] && (
-                <a
+                <Link
                   href={`/admin/payroll/runs/${r.id}/filing`}
                   className="text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0 bg-slate-500/10 text-slate-600 hover:underline"
                   title="Generate this run's Employment Information file for IRD"
                   data-testid={`filing-badge-${r.period}`}
                 >
                   EI filing…
-                </a>
+                </Link>
               )}
               {r.status === "LOCKED" && (
                 <>
@@ -665,7 +658,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
               {payslipsRun.status}
             </span>
             <span className="text-xs text-muted-foreground ml-auto">
-              net total {money(payslipsRun.totalNet)}
+              net total {formatMoney(payslipsRun.totalNet)}
             </span>
             {payslipsRun.status === "OPEN" && (
               <button
@@ -703,13 +696,13 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                       )}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      gross {money(p.gross)} · deductions {money(p.gross - p.net)}
+                      gross {formatMoney(p.gross)} · deductions {formatMoney(p.gross - p.net)}
                       {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}
                       {p.withholdStatus === "WITHHELD" ? " · net held until release" : ""}
                     </span>
                   </span>
-                  <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {money(p.ytdNet)}</span>
-                  <span className="font-semibold tabular-nums text-primary shrink-0">{money(p.net)}</span>
+                  <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {formatMoney(p.ytdNet)}</span>
+                  <span className="font-semibold tabular-nums text-primary shrink-0">{formatMoney(p.net)}</span>
                 </button>
                 {payslipsRun.status === "LOCKED" && p.lopDays > 0 && (
                   <button
@@ -777,7 +770,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                   </span>
                 </span>
                 <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">CTC {formatMoney(annual.ctc)}</span>
-                <span className="font-semibold tabular-nums text-primary shrink-0">{money(Math.round((annual.earnings / 12) * 100) / 100)}/mo</span>
+                <span className="font-semibold tabular-nums text-primary shrink-0">{formatMoney(Math.round((annual.earnings / 12) * 100) / 100)}/mo</span>
               </button>
             );
           })}
@@ -793,12 +786,12 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       <ComponentCatalogModal
         open={catalogOpen}
         onClose={() => setCatalogOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
       />
       <PayAdjustmentModal
         open={adjustmentModalOpen}
         onClose={() => setAdjustmentModalOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
         employees={employees}
         defaultPeriod={payslipsRun?.period ?? previewWindow?.periodKey ?? ""}
       />
@@ -808,7 +801,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           onClose={() => setArrearsRun(null)}
           runId={arrearsRun.id}
           runPeriod={arrearsRun.period}
-          onGenerated={load}
+          onGenerated={() => void load()}
         />
       )}
       {lwpSlip && (
@@ -816,43 +809,43 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
           open={lwpSlip != null}
           onClose={() => setLwpSlip(null)}
           payslipId={lwpSlip.id}
-          onReversed={load}
+          onReversed={() => void load()}
         />
       )}
       <BenefitsModal
         open={benefitsOpen}
         onClose={() => setBenefitsOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
         employees={employees}
       />
       <RetentionBonusModal
         open={retentionOpen}
         onClose={() => setRetentionOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
         employees={employees}
       />
       {/* P39 (EM-16 advances half) — the salary-advances modal. */}
       <SalaryAdvancesModal
         open={advancesOpen}
         onClose={() => setAdvancesOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
         employees={employees}
       />
       <GratuityRuleModal
         open={gratuityOpen}
         onClose={() => setGratuityOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
       />
       <WithholdingModal
         open={withholdingOpen}
         onClose={() => setWithholdingOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
         employees={employees}
       />
       <StructureModal
         open={structureModalOpen}
         onClose={() => setStructureModalOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
         edit={editStructure}
         employees={employees}
       />
@@ -860,7 +853,7 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
       <BulkStructureModal
         open={bulkOpen}
         onClose={() => setBulkOpen(false)}
-        onChanged={load}
+        onChanged={() => void load()}
         employees={employees}
         structures={structures.filter((s) => s.isActive)}
       />

@@ -33,9 +33,12 @@ const BASE_CTX: TaskDeleteContext = {
 const TASK = { assigneeId: "m-assignee", projectId: "p-1" };
 
 describe("canDeleteTask (PR-61 client mirror)", () => {
-  it("ADMIN sees Delete for any task", () => {
+  it("the effective task:delete permission shows Delete for any task (ADMIN role or DB grant)", () => {
     expect(canDeleteTask(ADMIN, TASK, BASE_CTX)).toBe(true);
     expect(canDeleteTask(ADMIN, { assigneeId: null, projectId: null }, BASE_CTX)).toBe(true);
+    // A DB-granted MEMBER (the ceiling) must see it too — the static-role
+    // check alone used to hide the button from them.
+    expect(canDeleteTask({ id: "u-member", role: "MEMBER" }, TASK, { ...BASE_CTX, canTaskDelete: true })).toBe(true);
   });
 
   it("the assigned user sees Delete for their own task", () => {

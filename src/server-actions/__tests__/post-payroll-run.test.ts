@@ -58,7 +58,7 @@ import {
   journalBalance,
   type PostingPayslip,
   type BuildLinesContext,
-} from "../post-payroll-run";
+} from "@/lib/accounting/post-payroll-run";
 import { reverseJournalEntry, closePeriod } from "@/server-actions/accounting";
 
 const HR_AUTH = { userId: "u-hr", role: "ADMIN" as const, name: "Remy", email: "remy@x.co" };

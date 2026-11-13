@@ -15,23 +15,12 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import {
-  workingDaysBetween,
-  holidayLookupFrom,
-  type HolidayLookup,
-} from "@/lib/working-days";
+import { workingDaysBetween } from "@/lib/working-days";
 import { windowsInYear, type PayrollFrequency } from "@/lib/payroll-windows";
 import { round2 } from "@/lib/payroll-math";
+import { getHolidayLookup } from "@/lib/server/holidays";
 
-/** The holiday lookup over a range (mirrors hr-shared's getHolidayLookup —
- *  kept local so this lib never imports a server-actions module). */
-async function holidayLookupBetween(start: Date, end: Date): Promise<HolidayLookup> {
-  const rows = await db.holidayCalendarEntry.findMany({
-    where: { date: { gte: start, lte: end } },
-    select: { date: true, isHalfDay: true },
-  });
-  return holidayLookupFrom(rows);
-}
+
 
 export interface ArrearsRow {
   periodStart: Date;
@@ -101,11 +90,11 @@ export async function detectArrears(
     // The revision covers the part of the period from its fromDate; a
     // fromDate at/before the period start covers the whole window.
     const coverStart = revision.fromDate > periodStart ? revision.fromDate : periodStart;
-    const holidays = await holidayLookupBetween(coverStart, periodEnd);
+    const holidays = await getHolidayLookup(coverStart, periodEnd);
     const coveredDays = workingDaysBetween(coverStart, periodEnd, holidays);
     const denominator = run.workingDays > 0
       ? run.workingDays
-      : workingDaysBetween(periodStart, periodEnd, await holidayLookupBetween(periodStart, periodEnd));
+      : workingDaysBetween(periodStart, periodEnd, await getHolidayLookup(periodStart, periodEnd));
     if (denominator <= 0) continue;
 
     const delta = round2(perPeriod * (coveredDays / denominator));

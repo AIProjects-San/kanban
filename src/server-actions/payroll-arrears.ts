@@ -30,6 +30,7 @@ import {
 } from "@/lib/arrears";
 import { round2 } from "@/lib/payroll-math";
 import type { ArrearsPreviewT } from "@/lib/types";
+import { parsePayrollFrequency } from "@/lib/payroll-windows";
 
 /** The shared read: one LOCKED run + its slips + the current structures,
  * simulated through the pure kernel. Both the preview and the generator
@@ -56,6 +57,7 @@ async function simulateForRun(runId: string) {
     payslipId: p.id,
     userId: p.userId,
     period: run.period,
+    frequency: parsePayrollFrequency(run.frequency),
     workingDays: run.workingDays,
     paidDays: p.paidDays ?? null,
     lopDays: p.lopDays,

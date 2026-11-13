@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { ChevronDown, Plus, RotateCcw, Save, Trash2, Wand2 } from "lucide-react";
 import { getTaxYears, saveTaxYearSlabs, simulateTax } from "@/server-actions/tax-admin";
 import type { TaxSlabRowT, TaxSimulateResultT, TaxYearAdminT } from "@/lib/types";
+import { formatMoney } from "@/lib/format";
 
 const FREQUENCIES = [
   { key: "ANNUAL", label: "Annualised gross (annual)" },
@@ -28,6 +29,9 @@ const FREQUENCIES = [
   { key: "QUARTERLY", label: "Quarterly" },
 ] as const;
 
+// The simulator's offerable subset of the IR330 vocabulary: codes the
+// seeded rate tables price cleanly (CAE/NSW/EDW stay schema-valid but have
+// no table rows to simulate).
 const SIM_CODES = ["M", "ME", "SB", "S", "SH", "ST", "SA", "ND", "STC"] as const;
 
 const GROUP_LABELS: Record<TaxSlabRowT["group"], string> = {
@@ -35,9 +39,6 @@ const GROUP_LABELS: Record<TaxSlabRowT["group"], string> = {
   SECONDARY: "Secondary flat rates",
   ESCT: "ESCT tiers",
 };
-
-const money = (n: number | null) =>
-  n == null ? "above" : `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 const inputCls =
   "h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm tabular-nums focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60";
@@ -281,7 +282,7 @@ export function TaxSlabsView({
                                         }}
                                       />
                                     ) : (
-                                      <span className="tabular-nums text-muted-foreground">{money(row.lower)}</span>
+                                      <span className="tabular-nums text-muted-foreground">{row.lower == null ? "above" : formatMoney(row.lower)}</span>
                                     )
                                   ) : (
                                     <span className="text-muted-foreground">—</span>
@@ -300,7 +301,7 @@ export function TaxSlabsView({
                                         }}
                                       />
                                     ) : (
-                                      <span className="tabular-nums text-muted-foreground">{money(row.upper)}</span>
+                                      <span className="tabular-nums text-muted-foreground">{row.upper == null ? "above" : formatMoney(row.upper)}</span>
                                     )
                                   ) : (
                                     <span className="text-muted-foreground">—</span>
@@ -455,7 +456,7 @@ function RulesEditor({
             {editing ? (
               <NumCell value={p.acc?.maxEarnings ?? null} onChange={(v) => setParam({ acc: { ...p.acc!, maxEarnings: v ?? 0 } })} />
             ) : (
-              <p className="tabular-nums text-sm font-medium">{p.acc ? money(p.acc.maxEarnings) : "—"}</p>
+              <p className="tabular-nums text-sm font-medium">{p.acc ? formatMoney(p.acc.maxEarnings) : "—"}</p>
             )}
           </div>
           <div>
@@ -463,7 +464,7 @@ function RulesEditor({
             {editing ? (
               <NumCell value={p.acc?.maxLevy ?? null} onChange={(v) => setParam({ acc: { ...p.acc!, maxLevy: v ?? 0 } })} />
             ) : (
-              <p className="tabular-nums text-sm font-medium">{p.acc ? money(p.acc.maxLevy) : "—"}</p>
+              <p className="tabular-nums text-sm font-medium">{p.acc ? formatMoney(p.acc.maxLevy) : "—"}</p>
             )}
           </div>
         </div>
@@ -486,7 +487,7 @@ function RulesEditor({
             {editing ? (
               <NumCell value={p.studentLoan?.annualThreshold ?? null} onChange={(v) => setParam({ studentLoan: { ...p.studentLoan!, annualThreshold: v ?? 0 } })} />
             ) : (
-              <p className="tabular-nums text-sm font-medium">{p.studentLoan ? money(p.studentLoan.annualThreshold) : "—"}</p>
+              <p className="tabular-nums text-sm font-medium">{p.studentLoan ? formatMoney(p.studentLoan.annualThreshold) : "—"}</p>
             )}
           </div>
         </div>

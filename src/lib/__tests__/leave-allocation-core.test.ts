@@ -30,7 +30,7 @@ vi.mock("@/lib/db", () => ({ db }));
 // transitively constructs the auth stack, which a unit test must not).
 const queueOutboxMailMock = vi.fn();
 const deliverOutboxMailMock = vi.fn();
-vi.mock("@/server-actions/shared", () => ({
+vi.mock("@/lib/server/mail-outbox", () => ({
   queueOutboxMail: (...a: unknown[]) => queueOutboxMailMock(...a),
   deliverOutboxMail: (...a: unknown[]) => deliverOutboxMailMock(...a),
 }));
@@ -41,7 +41,7 @@ vi.mock("@/server-actions/shared", () => ({
 // pinned in hr-leave.test.ts, which runs the real helper against the db
 // mock.
 const assignmentOverridesForUsersMock = vi.fn();
-vi.mock("@/server-actions/hr-shared", () => ({
+vi.mock("@/lib/server/leave-overrides", () => ({
   assignmentOverridesForUsers: (...a: unknown[]) => assignmentOverridesForUsersMock(...a),
 }));
 

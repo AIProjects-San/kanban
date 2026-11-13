@@ -50,6 +50,8 @@
 import { dayKey, type HolidayLookup } from "@/lib/working-days";
 
 /** One attendance record that can charge LOP (ABSENT / HALF_DAY). */
+import { round2 } from "@/lib/payroll-math";
+
 export interface LopAttendanceMark {
   date: Date | string;
   status: string;
@@ -273,7 +275,6 @@ export function deriveLopBreakdownBetween(
     }
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
-  const round2 = (n: number) => Math.round(n * 100) / 100;
   return {
     total: round2(total),
     absentDays: round2(absentDays),

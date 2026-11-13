@@ -4,15 +4,11 @@
 // non-async values and is imported by the domain action modules below,
 // never by client components.
 
-import { logError } from "@/lib/observability";
 import { db } from "@/lib/db";
 import { hasPermission, type Role } from "@/lib/rbac";
 import { getSubtreeUserIds } from "@/lib/hierarchy";
-import { AuthorizationError } from "./auth-guard";
-import type { AuditAction } from "@/lib/audit-meta";
-import { headers as nextHeaders } from "next/headers";
-// F2.10 — the shared outbox sender + onboarding-template instantiation.
-import { createMailer } from "@/lib/mailer";
+import { checkPermission } from "./auth-guard";
+import { AuthorizationError } from "@/lib/server/authorization-error";
 import { Prisma } from "@prisma/client";
 import {
   resolveTemplateAssignee,
@@ -21,32 +17,20 @@ import {
 } from "@/lib/onboarding-template";
 import { addWorkingDays, type HolidayLookup } from "@/lib/working-days";
 
-export { AuthorizationError };
+// Audit + outbox infrastructure lives in lib (cron jobs and lib kernels use
+// it without importing the action layer); re-exported here for the action
+// files' existing imports.
+export { logAudit, logAuditOn, getClientInfo } from "@/lib/server/audit";
+export {
+  sendOutboxMail,
+  queueOutboxMail,
+  deliverOutboxMail,
+} from "@/lib/server/mail-outbox";
 
-/**
- * P1 (production-readiness re-audit) — extract the client IP + user agent
- * from the request context for audit logging. Best-effort: behind a reverse
- * proxy we read `x-forwarded-for` (first hop); without a proxy we fall back
- * to "unknown". Returns an object so callers can destructure both fields
- * from one call site.
- */
-export async function getClientInfo(): Promise<{ ip: string; userAgent: string }> {
-  try {
-    const h = await nextHeaders();
-    const xff = h.get("x-forwarded-for") ?? "";
-    const ip = xff.split(",")[0].trim() || "unknown";
-    const userAgent = (h.get("user-agent") ?? "").slice(0, 500) || "unknown";
-    return { ip, userAgent };
-  } catch (err) {
-    // PR-22 — log the miss. headers() throws outside a request context
-    // (e.g. tests, background jobs); that's expected, but a persistent
-    // failure in a real request should be visible.
-    logError("[shared] getClientInfo failed (outside request context?):", err);
-    return { ip: "unknown", userAgent: "unknown" };
-  }
-}
-
-export function fmtDay(d: Date) {
+/** Short day-month for audit detail lines (Date input, no year — the
+ *  detail string carries the full context). The client-side iso-string
+ *  formatter with the year lives in lib/format.ts. */
+export function fmtDayDate(d: Date) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
@@ -74,42 +58,6 @@ export async function getWorkspaceLimit(
     return typeof v === "number" && v > 0 ? Math.min(Math.floor(v), max) : fallback;
   } catch {
     return fallback;
-  }
-}
-
-export async function logAudit(entry: {
-  actor: { userId: string; name: string; role: string };
-  action: AuditAction;
-  entityType: string;
-  entityId?: string;
-  entityLabel?: string;
-  detail: string;
-  /** P1 (production-readiness re-audit) — source IP + user agent for
-   *  post-incident forensics. Optional; callers that have a request context
-   *  (server actions, the auth flow) pass them through. */
-  ipAddress?: string;
-  userAgent?: string;
-}) {
-  try {
-    await db.auditLog.create({
-      data: {
-        actorId: entry.actor.userId,
-        actorName: entry.actor.name,
-        actorRole: entry.actor.role,
-        action: entry.action,
-        entityType: entry.entityType,
-        entityId: entry.entityId ?? "",
-        entityLabel: entry.entityLabel ?? "",
-        detail: entry.detail,
-        // P1 re-audit — capture the source IP + UA when available. Both
-        // columns are NOT NULL DEFAULT '' so omitting them is safe.
-        ...(entry.ipAddress !== undefined ? { ipAddress: entry.ipAddress } : {}),
-        ...(entry.userAgent !== undefined ? { userAgent: entry.userAgent } : {}),
-      },
-    });
-  } catch (err) {
-    // Audit logging must never break the underlying operation
-    logError("[audit] failed to write log entry:", err);
   }
 }
 
@@ -200,11 +148,29 @@ export async function getScopedProjectIds(
 //             (possibly empty — a scoped user with no visible members
 //             sees no entries at all, which is correct).
 //
-// NOTE: getDashboardData inlines the same logic (it already has the member
-// list in hand for display, so it post-filters in JS rather than re-querying).
-// If you change the rule here, update dashboard.ts too — both are commented
-// to point at each other.
 // ---------------------------------------------------------------------------
+
+/** The member-visibility where-clause every scoped read path shares:
+ *  members with tasks in the viewer's projects, members staffed on them,
+ *  and the viewer. getDashboardData builds its memberWhere from this and
+ *  getVisibleMemberIds queries it directly — one rule, two read paths. */
+export async function visibleMemberWhere(
+  projectIdArray: string[],
+  viewerUserId: string,
+): Promise<Prisma.TeamMemberWhereInput> {
+  const assignedUserIds = await db.projectAssignment.findMany({
+    where: { projectId: { in: projectIdArray } },
+    select: { userId: true },
+    take: 1000,
+  }).then((rows) => rows.map((r) => r.userId));
+  return {
+    OR: [
+      { tasks: { some: { projectId: { in: projectIdArray } } } },
+      { userId: { in: assignedUserIds } },
+      { userId: viewerUserId },
+    ],
+  };
+}
 
 export async function getVisibleMemberIds(
   auth: { userId: string; role: string },
@@ -224,24 +190,8 @@ export async function getVisibleMemberIds(
   }
 
   const projectIdArray = Array.from(scopedIds);
-  // Same three sources as the dashboard's memberWhere (dashboard.ts):
-  //   1. members with tasks in the viewer's projects
-  //   2. members explicitly staffed on those projects (ProjectAssignment)
-  //   3. the viewer themselves (always visible)
-  const assignedUserIds = await db.projectAssignment.findMany({
-    where: { projectId: { in: projectIdArray } },
-    select: { userId: true },
-    take: 1000,
-  }).then((rows) => rows.map((r) => r.userId));
   const members = await db.teamMember.findMany({
-    where: {
-      OR: [
-        { tasks: { some: { projectId: { in: projectIdArray } } } },
-        { userId: { in: assignedUserIds } },
-        { userId: auth.userId },
-      ],
-      deletedAt: null,
-    },
+    where: { ...(await visibleMemberWhere(projectIdArray, auth.userId)), deletedAt: null },
     select: { id: true },
     take: 1000,
   });
@@ -367,8 +317,9 @@ export async function assertTaskDeletePermission(
   auth: { userId: string; email: string; role: Role },
   task: { assigneeId: string | null; projectId: string | null },
 ) {
-  // 1. ADMIN — the only role holding the blanket task:delete permission.
-  if (hasPermission(auth.role, "task:delete")) return;
+  // 1. The blanket task:delete permission — static floor OR the DB ceiling
+  //    (the client mirror reads the same effective set).
+  if (await checkPermission(auth.role, "task:delete")) return;
 
   // 2. The assigned user may delete their own task (any role).
   const myMemberId = await getMyTeamMemberId(auth);
@@ -441,98 +392,8 @@ export async function recalcMemberStats(memberId: string | null) {
   });
 }
 
-// ---------------------------------------------------------------------------
 // F2.10 — joining-hardening shared helpers (used by hiring.ts AND
-// hr-onboarding.ts; shared.ts is the server-only home for cross-module
-// non-action helpers).
-// ---------------------------------------------------------------------------
-
-/**
- * F-R16 (folded into F2.10) — the ONE audited-outbox send helper. The
- * QUEUED → send → resolve dance was hand-rolled ×3 (sendOffer, markJoined,
- * queueCandidateEmail); every new candidate-facing email (the F2.10
- * interview invite) writes through here instead.
- *
- * Writes the MailOutbox row FIRST (status QUEUED — the audit copy exists
- * even when the provider is down), attempts delivery best-effort, then
- * resolves the row to SENT / SKIPPED / FAILED. Never throws: a provider
- * outage must not fail the business action that triggered the email.
- */
-export async function sendOutboxMail(input: {
-  kind: string;
-  candidateId?: string | null;
-  toAddress: string;
-  subject: string;
-  text: string;
-  html: string;
-  sentById: string;
-}): Promise<{ status: "SENT" | "SKIPPED" | "FAILED"; providerMessageId: string; error: string }> {
-  const row = await queueOutboxMail(db, input);
-  return deliverOutboxMail(row.id, input);
-}
-
-/**
- * F-R12 (S17) — the queue half: creates the QUEUED outbox row on the GIVEN
- * client (db or a transaction's tx), so a business write and its outbox row
- * can land atomically. Returns the created row.
- */
-export async function queueOutboxMail(
-  tx: Pick<Prisma.TransactionClient, "mailOutbox">,
-  input: {
-    kind: string;
-    candidateId?: string | null;
-    toAddress: string;
-    subject: string;
-    text: string;
-    sentById: string;
-  },
-) {
-  return tx.mailOutbox.create({
-    data: {
-      kind: input.kind,
-      candidateId: input.candidateId ?? null,
-      toAddress: input.toAddress,
-      subject: input.subject,
-      body: input.text,
-      status: "QUEUED",
-      sentById: input.sentById,
-    },
-  });
-}
-
-/**
- * F-R12 (S17) — the delivery half: attempts the provider send best-effort
- * and resolves the row to SENT / SKIPPED / FAILED. NEVER called inside a
- * transaction (network I/O); never throws.
- */
-export async function deliverOutboxMail(
-  rowId: string,
-  input: { toAddress: string; subject: string; html: string; text: string },
-): Promise<{ status: "SENT" | "SKIPPED" | "FAILED"; providerMessageId: string; error: string }> {
-  let status: "SENT" | "SKIPPED" | "FAILED" = "SKIPPED";
-  let providerMessageId = "";
-  let error = "";
-  try {
-    const result = await createMailer().sendMail({
-      to: input.toAddress,
-      subject: input.subject,
-      html: input.html,
-      text: input.text,
-    });
-    if (result.delivered) {
-      status = "SENT";
-      providerMessageId = result.messageId ?? "";
-    }
-  } catch (err) {
-    status = "FAILED";
-    error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-  }
-  await db.mailOutbox.update({
-    where: { id: rowId },
-    data: { status, providerMessageId, error, sentAt: new Date() },
-  });
-  return { status, providerMessageId, error };
-}
+// hr-onboarding.ts). The outbox senders live in lib/server/mail-outbox.
 
 /**
  * F2.10 (F-R8) — read the onboarding template rows for a kind, falling back

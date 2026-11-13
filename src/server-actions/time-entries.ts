@@ -11,7 +11,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getSession, getSessionOrThrow, requirePermission, AuthorizationError } from "./auth-guard";
+import { getSessionOrThrow, requirePermission, AuthorizationError } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { logAudit, getMyTeamMemberId, getScopedProjectIds, assertTaskEditPermission } from "./shared";
 import { findApprovedLeaveOn } from "./hr-shared";
@@ -152,8 +152,7 @@ export async function getTaskTimeLog(taskId: string): Promise<ActionResult<{
   }>;
 }>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
 
     const task = await db.task.findUnique({
       where: { id: taskId },
@@ -219,7 +218,7 @@ export async function deleteTimeEntry(id: string): Promise<ActionResult<void>> {
     const entry = await db.timeEntry.findUnique({ where: { id } });
     if (!entry) return; // not-found is a clean no-op, matching deleteTask
 
-    if (!hasPermission(auth.role as never, "task:edit:any")) {
+    if (!hasPermission(auth.role, "task:edit:any")) {
       const myMemberId = await getMyTeamMemberId(auth);
       if (!entry.memberId || entry.memberId !== myMemberId) {
         throw new AuthorizationError("You can only delete time entries you logged.");

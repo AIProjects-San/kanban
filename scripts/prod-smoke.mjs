@@ -61,8 +61,19 @@ function parseEnvFile(path) {
 
 const fileEnv = parseEnvFile(ENV_FILE);
 const EMAIL = process.env.SMOKE_EMAIL || "demo@fernly.app";
-const PASSWORD = process.env.SMOKE_PASSWORD || fileEnv.NEXT_PUBLIC_DEMO_PASSWORD || "fernly123";
+const PASSWORD = process.env.SMOKE_PASSWORD || fileEnv.NEXT_PUBLIC_DEMO_PASSWORD;
 const CRON_SECRET = process.env.CRON_SECRET || fileEnv.CRON_SECRET || "";
+if (!PASSWORD) {
+  // Secret hygiene (scripts/lib/demo-env.mjs, docs/SECURITY.md): the demo
+  // password's only home is .env (NEXT_PUBLIC_DEMO_PASSWORD) — there is no
+  // hardcoded fallback. Fail fast instead of minting doomed logins.
+  console.error(
+    "prod-smoke: no demo password available — set NEXT_PUBLIC_DEMO_PASSWORD in .env\n" +
+      "  (the demo password's only home) or export SMOKE_PASSWORD to override the\n" +
+      "  login account's password.",
+  );
+  process.exit(2);
+}
 
 // ---------------------------------------------------------------------------
 // Check runner.

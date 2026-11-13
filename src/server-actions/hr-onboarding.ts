@@ -24,7 +24,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { hasPermission, type Role } from "@/lib/rbac";
 import type { OnboardingChecklistT, OnboardingTemplateTaskT } from "@/lib/types";
 import {
   createChecklistSchema,
@@ -155,7 +155,7 @@ export async function getMyOnboardingTasks(): Promise<ActionResult<{
     ]);
     return {
       checklists: rows.map((r) => serialize(r, names.get(r.newHireId) ?? "(former user)", names)),
-      canManage: hasPermission(auth.role as never, "onboarding:manage"),
+      canManage: hasPermission(auth.role, "onboarding:manage"),
     };
   });
 }
@@ -328,7 +328,7 @@ export async function addTask(input: {
 // ---------------------------------------------------------------------------
 
 async function assertCanTick(
-  auth: { userId: string; role: string },
+  auth: { userId: string; role: Role },
   taskId: string,
 ): Promise<{ id: string; title: string; checklistId: string; assigneeId: string | null; assigneeRole: string }> {
   const task = await db.onboardingTask.findUnique({
@@ -345,7 +345,7 @@ async function assertCanTick(
   // P35 (EM-B06) — a role-scoped task belongs to EVERY holder of its role
   // key (the benchmark's "role → all holders see the task").
   const isRoleHolder = task.assigneeRole !== "" && task.assigneeRole === auth.role;
-  const canManage = hasPermission(auth.role as never, "onboarding:manage");
+  const canManage = hasPermission(auth.role, "onboarding:manage");
   if (!isAssignee && !isHire && !isRoleHolder && !canManage) {
     throw new AuthorizationError("Only the task's assignee, a holder of its role, the new hire, or HR can tick this task.");
   }

@@ -28,13 +28,10 @@
 //                                  silently stop).
 
 import { logWarn, logInfo } from "@/lib/observability";
-import { getSharedRedisClient, redisKeyPrefix } from "@/lib/redis-client";
+import { getSharedRedisClient, redisKeyPrefix, type RedisLike } from "@/lib/redis-client";
 
-/** Minimal Redis surface needed for the lock — satisfied by ioredis. */
-export interface LockRedis {
-  set(key: string, value: string, mode: "PX", ttlMs: number, nx: "NX"): Promise<"OK" | null>;
-  get(key: string): Promise<string | null>;
-}
+/** The Redis surface the lock needs — a slice of the shared RedisLike. */
+export type LockRedis = Pick<RedisLike, "set" | "get">;
 
 /** Redis key holding the cross-instance maintenance lock. */
 export const MAINTENANCE_LOCK_KEY = `${redisKeyPrefix()}maintenance:lock`;
@@ -97,7 +94,7 @@ export async function tryAcquireMaintenanceLock(opts?: {
   let client: LockRedis | null | undefined = opts?.redisClient;
   if (client === undefined) {
     if (!redisUrl) client = null;
-    else client = getSharedRedisClient(redisUrl) as unknown as LockRedis | undefined ?? null;
+    else client = getSharedRedisClient(redisUrl) ?? null;
   }
 
   if (client) {
@@ -154,7 +151,7 @@ export async function recordMaintenanceRun(opts?: {
   let client: LockRedis | null | undefined = opts?.redisClient;
   if (client === undefined) {
     if (!redisUrl) client = null;
-    else client = getSharedRedisClient(redisUrl) as unknown as LockRedis | undefined ?? null;
+    else client = getSharedRedisClient(redisUrl) ?? null;
   }
   if (client) {
     try {
@@ -181,7 +178,7 @@ export async function getMaintenanceLastRun(opts?: {
   let client: LockRedis | null | undefined = opts?.redisClient;
   if (client === undefined) {
     if (!redisUrl) client = null;
-    else client = getSharedRedisClient(redisUrl) as unknown as LockRedis | undefined ?? null;
+    else client = getSharedRedisClient(redisUrl) ?? null;
   }
   if (!client) return null;
   try {

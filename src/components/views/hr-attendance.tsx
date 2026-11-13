@@ -19,6 +19,7 @@ import type { AttendanceT, AttendanceMonthT, AttendanceStatus } from "@/lib/type
 import { cn } from "@/lib/utils";
 import { deriveAttendanceTiming, describeAttendanceTiming } from "@/lib/attendance-flags";
 import { getAttendanceMonth, upsertAttendanceRecord, deleteAttendanceRecord, exportAttendanceSheetCsv } from "@/server-actions/hr-attendance";
+import { downloadBlob } from "@/lib/format";
 
 /** Statuses HR may set from the form — ON_LEAVE is derived-only. */
 const SETTABLE: Exclude<AttendanceStatus, "ON_LEAVE">[] = ["PRESENT", "ABSENT", "HALF_DAY", "WFH"];
@@ -89,21 +90,15 @@ export function AttendanceTab() {
 
   const monthValue = `${year}-${String(month).padStart(2, "0")}`;
 
-  // P32 (AT-R01) — the monthly attendance sheet CSV (the analytics Blob
-  // pattern; the action builds the RFC 4180 file and audits the export like
+  // P32 (AT-R01) — the monthly attendance sheet CSV (the shared downloadBlob
+  // kit; the action builds the RFC 4180 file and audits the export like
   // every report CSV).
   const exportSheet = async () => {
     setExporting(true);
     const res = await exportAttendanceSheetCsv({ year, month });
     setExporting(false);
     if (!res.ok) { toast.error(res.error); return; }
-    const blob = new Blob([res.data.csv], { type: res.data.mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = res.data.filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data.csv, res.data.filename, res.data.mime);
     toast.success(`Attendance sheet for ${monthValue} exported (${res.data.filename}).`);
   };
 

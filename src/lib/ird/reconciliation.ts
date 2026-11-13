@@ -31,7 +31,14 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import { parsePayslipLines } from "@/lib/payroll-math";
+import {
+  parsePayslipLines,
+  toCents,
+  PAYE_LINE_KEY,
+  ACC_LEVY_LINE_KEY,
+  KIWISAVER_LINE_KEY,
+  STUDENT_LOAN_LINE_KEY,
+} from "@/lib/payroll-math";
 import { STATUTORY_ACCOUNT_CODES } from "@/lib/accounting/accounts";
 import type { PayslipStatutoryT } from "@/lib/types";
 
@@ -65,10 +72,6 @@ export interface ReconciliationReport {
    * payslips (internal reconciliation only; never written to the EI). */
   accLevyCents: number;
   allPass: boolean;
-}
-
-function cents(n: number): number {
-  return Math.round(n * 100);
 }
 
 function sumLine(deductions: string, key: string): number {
@@ -125,10 +128,10 @@ export function runReconciliation(input: {
   const runIds = new Set<string>();
   for (const slip of payslips) {
     runIds.add(slip.runId);
-    payeLines += sumLine(slip.deductions, "paye");
-    accLines += sumLine(slip.deductions, "acc");
-    ksLines += sumLine(slip.deductions, "ks");
-    slLines += sumLine(slip.deductions, "sl");
+    payeLines += sumLine(slip.deductions, PAYE_LINE_KEY);
+    accLines += sumLine(slip.deductions, ACC_LEVY_LINE_KEY);
+    ksLines += sumLine(slip.deductions, KIWISAVER_LINE_KEY);
+    slLines += sumLine(slip.deductions, STUDENT_LOAN_LINE_KEY);
     employerNet += slip.employerKiwiSaverNet;
     esct += slip.employerEsct;
     if (!slip.statutory) {
@@ -143,14 +146,14 @@ export function runReconciliation(input: {
       index: 1,
       label: "Σ payslip PAYE (income tax line only) == EI field 15 total",
       filingCents: t.payeCents,
-      sourceCents: cents(payeLines),
-      pass: t.payeCents === cents(payeLines),
+      sourceCents: toCents(payeLines),
+      pass: t.payeCents === toCents(payeLines),
     },
     {
       index: 2,
       label: "Σ payslip ACC earners' levy (logged only — never filed)",
       filingCents: 0,
-      sourceCents: cents(accLines),
+      sourceCents: toCents(accLines),
       pass: true,
       note: "ACC is embedded in the tax rate; IRD derives the levy. Total logged for internal reconciliation.",
     },
@@ -158,36 +161,36 @@ export function runReconciliation(input: {
       index: 3,
       label: "Σ payslip KiwiSaver employee == EI field 22 total",
       filingCents: t.kiwisaverEmployeeCents,
-      sourceCents: cents(ksLines),
-      pass: t.kiwisaverEmployeeCents === cents(ksLines),
+      sourceCents: toCents(ksLines),
+      pass: t.kiwisaverEmployeeCents === toCents(ksLines),
     },
     {
       index: 4,
       label: "Σ payslip employer KiwiSaver NET == EI field 23 total",
       filingCents: t.kiwisaverEmployerNetCents,
-      sourceCents: cents(employerNet),
-      pass: t.kiwisaverEmployerNetCents === cents(employerNet),
+      sourceCents: toCents(employerNet),
+      pass: t.kiwisaverEmployerNetCents === toCents(employerNet),
     },
     {
       index: 5,
       label: "Σ payslip ESCT == EI field 24 total",
       filingCents: t.esctCents,
-      sourceCents: cents(esct),
-      pass: t.esctCents === cents(esct),
+      sourceCents: toCents(esct),
+      pass: t.esctCents === toCents(esct),
     },
     {
       index: 6,
       label: "Σ payslip student loan == EI field 19 total",
       filingCents: t.studentLoanCents,
-      sourceCents: cents(slLines),
-      pass: t.studentLoanCents === cents(slLines),
+      sourceCents: toCents(slLines),
+      pass: t.studentLoanCents === toCents(slLines),
     },
     {
       index: 7,
       label: "Σ payslip TAXABLE gross (statutory snapshot) == EI field 11 total",
       filingCents: t.grossCents,
-      sourceCents: cents(taxableGross),
-      pass: t.grossCents === cents(taxableGross),
+      sourceCents: toCents(taxableGross),
+      pass: t.grossCents === toCents(taxableGross),
     },
   ];
 
@@ -199,7 +202,7 @@ export function runReconciliation(input: {
     { code: RECONCILE_ACCOUNT_CODES.STUDENT_LOAN, field: "EI field 19 (student loan)", filingCents: t.studentLoanCents },
   ];
   for (const pair of ledgerPairs) {
-    const jeCents = cents(input.journalCredits.get(pair.code) ?? 0);
+    const jeCents = toCents(input.journalCredits.get(pair.code) ?? 0);
     checks.push({
       index: 8,
       label: `JournalEntry credits ${pair.code} == ${pair.field}`,
@@ -214,7 +217,7 @@ export function runReconciliation(input: {
     filingId: input.filingId,
     runIds: [...runIds],
     checks,
-    accLevyCents: cents(accLines),
+    accLevyCents: toCents(accLines),
     allPass: checks.every((c) => c.pass),
   };
 }

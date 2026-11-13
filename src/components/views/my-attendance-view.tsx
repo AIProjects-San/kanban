@@ -14,14 +14,15 @@ import type { AttendanceT, AttendanceStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { describeAttendanceTiming, formatMinutes } from "@/lib/attendance-flags";
 import { getMyAttendance } from "@/server-actions/hr-attendance";
-
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
+// The attendance list shows weekday + day + month only ("Wed 25 Dec") —
+// a variant of the shared day formatter, composed here.
+function fmtAttendanceDay(iso: string): string {
+  return new Date(`${iso.slice(0, 10)}T00:00:00.000Z`).toLocaleDateString("en-GB", {
     weekday: "short", day: "numeric", month: "short", timeZone: "UTC",
   });
 }
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function fmtMonth(year: number, month: number): string {
   return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-GB", {
@@ -211,7 +212,7 @@ export function MyAttendanceView({ currentUser }: { currentUser: { id: string; n
           <div className="divide-y divide-border">
             {records.map((r) => (
               <div key={r.id} className="px-4 py-2.5 flex items-center gap-3 text-sm" data-testid="my-att-record" data-date={r.date}>
-                <span className="text-xs text-muted-foreground w-28 shrink-0">{fmtDay(r.date)}</span>
+                <span className="text-xs text-muted-foreground w-28 shrink-0">{fmtAttendanceDay(r.date)}</span>
                 <span className={cn("inline-flex px-2 py-0.5 rounded text-[0.6875rem] font-medium", ATTENDANCE_STATUS_BADGE[r.status])}>
                   {ATTENDANCE_STATUS_LABELS[r.status]}
                 </span>

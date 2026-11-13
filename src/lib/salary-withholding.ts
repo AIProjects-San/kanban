@@ -32,6 +32,8 @@
 import { parsePayrollPeriodKey } from "@/lib/payroll-windows";
 
 /** "" | WITHHELD | RELEASED — the literal union the payslip column stores. */
+import { round2 } from "@/lib/payroll-math";
+
 export type WithholdStatus = "" | "WITHHELD" | "RELEASED";
 
 /** A window as the kernel consumes it (a SalaryWithholding row, or an
@@ -147,10 +149,10 @@ export function planWithholdingRelease(input: {
       payslipId: s.id,
       slipNo: s.slipNo,
       period: s.period,
-      amount: Math.round(s.net * 100) / 100,
+      amount: round2(s.net),
     });
   }
-  const total = Math.round(rows.reduce((sum, r) => sum + r.amount, 0) * 100) / 100;
+  const total = round2(rows.reduce((sum, r) => sum + r.amount, 0));
   return { rows, total, zeroNetSlips };
 }
 

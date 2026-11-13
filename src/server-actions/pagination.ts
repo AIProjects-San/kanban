@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { requirePermission, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, getVisibleMemberIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -37,12 +37,24 @@ function clampLimit(limit: number | undefined): number {
  * CUIDs are 24-char lowercase base-36 (typically start with 'c'). We accept
  * any 20-32 char alphanumeric string as a permissive sanity check.
  */
-function safeCursor(cursor: string | undefined): string | null {
+export function safeCursor(cursor: string | undefined): string | null {
   if (!cursor || typeof cursor !== "string") return null;
   const trimmed = cursor.trim();
   if (trimmed.length < 20 || trimmed.length > 32) return null;
   if (!/^[a-z0-9]+$/i.test(trimmed)) return null;
   return trimmed;
+}
+
+/** Slice one page + the hasMore flag + the next cursor from an
+ *  over-fetched row list (callers take limit+1 rows). */
+export function pageOf<T extends { id: string }>(
+  rows: T[],
+  limit: number,
+): { items: T[]; hasMore: boolean; nextCursor: string | null } {
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+  return { items, hasMore, nextCursor };
 }
 
 export interface PaginatedResult<T> {
@@ -97,9 +109,7 @@ export async function getUsersPage(input?: {
       take: limit + 1,
     });
 
-    const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+    const { items, hasMore, nextCursor } = pageOf(rows, limit);
 
     return {
       items: items.map((u) => ({
@@ -145,8 +155,7 @@ export async function getTasksPage(input?: {
 }): Promise<ActionResult<PaginatedResult<TaskListItem>>> {
   return toResult(async () => {
     const cursor = safeCursor(input?.cursor);
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
 
@@ -194,9 +203,7 @@ export async function getTasksPage(input?: {
       take: limit + 1,
     });
 
-    const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+    const { items, hasMore, nextCursor } = pageOf(rows, limit);
 
     return {
       items: items.map((t) => ({
@@ -242,8 +249,7 @@ export async function getProjectsPage(input?: {
 }): Promise<ActionResult<PaginatedResult<ProjectListItem>>> {
   return toResult(async () => {
     const cursor = safeCursor(input?.cursor);
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
 
@@ -272,9 +278,7 @@ export async function getProjectsPage(input?: {
       take: limit + 1,
     });
 
-    const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+    const { items, hasMore, nextCursor } = pageOf(rows, limit);
 
     return {
       items: items.map((p) => ({
@@ -319,8 +323,7 @@ export async function getTimeEntriesPage(input?: {
 }): Promise<ActionResult<PaginatedResult<TimeEntryListItem>>> {
   return toResult(async () => {
     const cursor = safeCursor(input?.cursor);
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     const limit = clampLimit(input?.limit);
     const search = input?.search?.trim().toLowerCase();
 
@@ -376,9 +379,7 @@ export async function getTimeEntriesPage(input?: {
       take: limit + 1,
     });
 
-    const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
+    const { items, hasMore, nextCursor } = pageOf(rows, limit);
 
     return {
       items: items.map((te) => ({

@@ -17,6 +17,7 @@ const FACTS = {
   payslipId: "ps-1",
   userId: "u-yuki",
   period: "2026-10",
+      frequency: "MONTHLY" as const,
   workingDays: 22,
   paidDays: 22,
   lopDays: 0,

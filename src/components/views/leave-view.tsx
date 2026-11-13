@@ -27,17 +27,12 @@ import {
   createCompensatoryLeaveRequest,
 } from "@/server-actions/compensatory-leave";
 import { claimedNonWorkingDays } from "@/lib/compensatory-leave";
+import { fmtDay } from "@/lib/format";
 
 interface CurrentUser {
   id: string;
   name: string;
   role: string;
-}
-
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
-    day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
-  });
 }
 
 /** Holiday entries inside a range, for the preview's exclusion note. */

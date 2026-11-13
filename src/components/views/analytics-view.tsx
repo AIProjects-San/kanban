@@ -21,6 +21,7 @@ import {
   type AnalyticsData,
   type AnalyticsScope,
 } from "@/server-actions/data";
+import { downloadBlob } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // PR-63 — role-scoped Analytics.
@@ -230,13 +231,7 @@ export function AnalyticsView({ user }: AnalyticsViewProps) {
       "Date,Tasks completed,Hours tracked",
       ...throughput.map((r) => `${r.date},${r.tasks},${r.hours}`),
     ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `fernly-analytics-${period.toLowerCase()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(csv, `fernly-analytics-${period.toLowerCase()}.csv`);
     toast.success("CSV exported");
   };
 

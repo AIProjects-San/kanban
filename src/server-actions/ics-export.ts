@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import { getSession, AuthorizationError } from "./auth-guard";
+import { getSessionOrThrow } from "./auth-guard";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { APP } from "@/config/app";
@@ -74,8 +74,7 @@ const ICS_EXPORT_MAX_EVENTS = 1000;
  */
 export async function exportCalendarIcs(): Promise<ActionResult<IcsExport>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    await getSessionOrThrow();
 
     const events = await db.calendarEvent.findMany({
       orderBy: { date: "asc" },

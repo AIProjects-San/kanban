@@ -58,6 +58,7 @@ import {
   type LeavePolicyStateT,
   type LeavePolicySetT,
 } from "@/server-actions/leave-policy-sets";
+import { fmtDay } from "@/lib/format";
 
 interface CurrentUser {
   id: string;
@@ -66,12 +67,6 @@ interface CurrentUser {
 }
 
 type Tab = "requests" | "types" | "holidays" | "attendance" | "balances" | "directory" | "reviews" | "onboarding" | "offboarding";
-
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
-    day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
-  });
-}
 
 export function HRView({ currentUser }: { currentUser: CurrentUser }) {
   const [tab, setTab] = useState<Tab>("requests");

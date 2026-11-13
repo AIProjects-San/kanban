@@ -12,8 +12,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getSessionOrThrow } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { getSessionOrThrow, checkPermission } from "./auth-guard";
 import { AuthorizationError } from "./auth-guard";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -28,7 +27,7 @@ export async function markNotificationRead(id: string, read: boolean): Promise<A
       if (existing.recipientUserId !== auth.userId) {
         throw new AuthorizationError("You can only change your own notifications.");
       }
-    } else if (!hasPermission(auth.role, "role:manage")) {
+    } else if (!(await checkPermission(auth.role, "role:manage"))) {
       throw new AuthorizationError("Workspace-wide notifications can only be managed by an admin.");
     }
     await db.notification.update({ where: { id }, data: { read } });

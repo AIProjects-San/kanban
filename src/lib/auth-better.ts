@@ -36,6 +36,8 @@ import { hashPii } from "@/lib/pii";
 import { isValidRole, type Role } from "@/lib/rbac";
 import { extractClientIp } from "@/lib/client-ip";
 import { verifyJwt } from "@/lib/jwt";
+import { logAudit } from "@/lib/server/audit";
+import { WEAK_SECRET_PREFIX } from "@/lib/jwt";
 
 // ---------------------------------------------------------------------------
 // Secret handling — identical contract to the old v4 stack (P0-6): refuse
@@ -43,8 +45,6 @@ import { verifyJwt } from "@/lib/jwt";
 // phase. PR-49 cleanup: the env var is BETTER_AUTH_SECRET (renamed from
 // NEXTAUTH_SECRET, same value — see docs/DEPLOY.md §3a).
 // ---------------------------------------------------------------------------
-
-const WEAK_SECRET_PREFIX = "fernly-dev-secret";
 
 // CI-repair — process-wide cache for the dev ephemeral secret.
 // Next.js dev (turbopack) gives every route its own module instance, so a
@@ -445,18 +445,14 @@ export const auth = betterAuth({
             select: { id: true, name: true, role: true, email: true },
           });
           if (user) {
-            await db.auditLog.create({
-              data: {
-                actorId: user.id,
-                actorName: user.name,
-                actorRole: user.role,
-                action: "auth.signed_in",
-                entityType: "AUTH",
-                entityLabel: user.email,
-                detail: `${user.name} signed in to the workspace`,
-                ipAddress: ip,
-                userAgent: userAgentFromRequest(request).slice(0, 500),
-              },
+            await logAudit({
+              actor: { userId: user.id, name: user.name, role: user.role },
+              action: "auth.signed_in",
+              entityType: "AUTH",
+              entityLabel: user.email,
+              detail: `${user.name} signed in to the workspace`,
+              ipAddress: ip,
+              userAgent: userAgentFromRequest(request).slice(0, 500),
             });
           }
         } catch (err) {
@@ -479,18 +475,14 @@ export const auth = betterAuth({
           .fernlySignOutUser;
         if (!user) return;
         try {
-          await db.auditLog.create({
-            data: {
-              actorId: user.id,
-              actorName: user.name,
-              actorRole: user.role,
-              action: "auth.signed_out",
-              entityType: "AUTH",
-              entityLabel: user.email,
-              detail: `${user.name} signed out of the workspace`,
-              ipAddress: ipFromRequest(request),
-              userAgent: userAgentFromRequest(request).slice(0, 500),
-            },
+          await logAudit({
+            actor: { userId: user.id, name: user.name, role: user.role },
+            action: "auth.signed_out",
+            entityType: "AUTH",
+            entityLabel: user.email,
+            detail: `${user.name} signed out of the workspace`,
+            ipAddress: ipFromRequest(request),
+            userAgent: userAgentFromRequest(request).slice(0, 500),
           });
         } catch (err) {
           logError("[auth-better] failed to log sign-out:", err);

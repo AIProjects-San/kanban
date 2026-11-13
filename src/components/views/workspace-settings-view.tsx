@@ -16,7 +16,7 @@ import {
   updateRole, createRole, deleteRole,
   updateNotificationTemplate, resetNotificationTemplate,
   type WorkspaceConfig } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-errors";
+import { actionErrorMessage } from "@/lib/action-result";
 // P24 — the notification template registry + renderer (pure, client-safe:
 // the editor previews render locally with the registry's sample values).
 import {

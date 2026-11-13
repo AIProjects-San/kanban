@@ -14,13 +14,14 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { requirePermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
 import { canManageUser, getSubtreeUserIds } from "@/lib/hierarchy";
 import { isValidRole, type Role } from "@/lib/rbac";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
+import { logAuditOn } from "@/lib/server/audit";
 
 export interface TrashItem {
   id: string;
@@ -184,8 +185,7 @@ export async function restoreUser(userId: string): Promise<ActionResult<void>> {
  */
 export async function restoreMessage(id: string): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     const existing = await db.message.findUnique({ where: { id } });
     if (!existing) throw new AuthorizationError("Message not found.");
     if (!existing.deletedAt) throw new AuthorizationError("Message is not in the trash.");
@@ -270,20 +270,16 @@ export async function eraseUser(userId: string): Promise<ActionResult<void>> {
 
     await db.$transaction(async (tx) => {
       // 1. Evidence-first — inside the tx (see header).
-      await tx.auditLog.create({
-        data: {
-          actorId: auth.userId,
-          actorName: auth.name,
-          actorRole: auth.role,
-          action: "user.erased",
-          entityType: "USER",
-          entityId: userId,
-          entityLabel: target.id.slice(0, 10),
-          detail:
-            `Permanently erased the account of a soft-deleted user ` +
-            `(id ${target.id.slice(0, 10)}). Roster row deleted, message ` +
-            `display names anonymised, account row removed.`,
-        },
+      await logAuditOn(tx, {
+        actor: auth,
+        action: "user.erased",
+        entityType: "USER",
+        entityId: userId,
+        entityLabel: target.id.slice(0, 10),
+        detail:
+          `Permanently erased the account of a soft-deleted user ` +
+          `(id ${target.id.slice(0, 10)}). Roster row deleted, message ` +
+          `display names anonymised, account row removed.`,
       });
 
       // 2. Scrub the roster profile (PII: name, email, avatar). Rows are

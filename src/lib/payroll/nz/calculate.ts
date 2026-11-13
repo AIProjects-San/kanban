@@ -387,9 +387,12 @@ function mapRateSetRow(row: NzRateSetRow): NzRateSetParams {
   };
 }
 
-const RATE_SET_INCLUDE = {
+/** The rate-set Prisma include shared by the engine resolver and the admin
+ *  editor — one shape, so a new rate family can never appear in one and
+ *  not the other. */
+export const RATE_SET_INCLUDE = {
   payeTiers: { orderBy: { fromAnnual: "asc" as const } },
-  secondaryRates: true,
+  secondaryRates: { orderBy: { code: "asc" as const } },
   accLevy: true,
   ietc: true,
   kiwiSaver: true,

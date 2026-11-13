@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import { getSession, AuthorizationError } from "./auth-guard";
+import { getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -44,8 +44,7 @@ const MAX_QUERY_LENGTH = 100; // Deep-dive review F-03: cap the ILIKE needle.
 
 export async function searchWorkspace(query: string): Promise<ActionResult<SearchResults>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
 
     const q = query.trim().slice(0, MAX_QUERY_LENGTH);
     const empty: SearchResults = { query: q, tasks: [], projects: [], members: [] };

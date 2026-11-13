@@ -49,6 +49,7 @@ import type {
   RunFilingPanelT,
 } from "@/lib/ird/filing-types";
 import type { PaydayFiling, EmployeeDetailsFiling, PaydayAmendmentFiling, PayrollRun } from "@prisma/client";
+import { toCents } from "@/lib/payroll-math";
 
 const cuidish = z.string().trim().min(1);
 
@@ -606,12 +607,12 @@ export async function generateAmendmentFilingAction(input: unknown): Promise<Act
         amended: c.delete
           ? null
           : {
-              grossCents: c.gross != null ? Math.round(c.gross * 100) : undefined,
-              payeCents: c.paye != null ? Math.round(c.paye * 100) : undefined,
-              studentLoanCents: c.studentLoan != null ? Math.round(c.studentLoan * 100) : undefined,
-              kiwisaverEmployeeCents: c.kiwisaverEmployee != null ? Math.round(c.kiwisaverEmployee * 100) : undefined,
-              kiwisaverEmployerNetCents: c.kiwisaverEmployerNet != null ? Math.round(c.kiwisaverEmployerNet * 100) : undefined,
-              esctCents: c.esct != null ? Math.round(c.esct * 100) : undefined,
+              grossCents: c.gross != null ? toCents(c.gross) : undefined,
+              payeCents: c.paye != null ? toCents(c.paye) : undefined,
+              studentLoanCents: c.studentLoan != null ? toCents(c.studentLoan) : undefined,
+              kiwisaverEmployeeCents: c.kiwisaverEmployee != null ? toCents(c.kiwisaverEmployee) : undefined,
+              kiwisaverEmployerNetCents: c.kiwisaverEmployerNet != null ? toCents(c.kiwisaverEmployerNet) : undefined,
+              esctCents: c.esct != null ? toCents(c.esct) : undefined,
             },
       })),
       { generatedById: auth.userId },

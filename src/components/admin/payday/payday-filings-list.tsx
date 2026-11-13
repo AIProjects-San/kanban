@@ -10,22 +10,10 @@ import { toast } from "sonner";
 import { AlertTriangle, CalendarClock, FileText, Loader2, RefreshCw } from "lucide-react";
 import { refreshOverdueFilings } from "@/server-actions/payday-filing";
 import type { PaydayFilingSummaryT } from "@/lib/ird/filing-types";
-
-const money = (cents: number) =>
-  (cents / 100).toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+import { formatMoneyCents } from "@/lib/format";
+import { FILING_STATUS_BADGE, FILING_STATUSES } from "@/lib/config";
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
-
-const STATUS_STYLE: Record<string, string> = {
-  DRAFT: "bg-slate-500/10 text-slate-600",
-  GENERATED: "bg-sky-500/10 text-sky-600",
-  FILED: "bg-blue-500/10 text-blue-600",
-  ACCEPTED: "bg-emerald-500/10 text-emerald-600",
-  REJECTED: "bg-red-500/10 text-red-600",
-  AMENDED: "bg-orange-500/10 text-orange-600",
-};
-
-const STATUSES = ["", "GENERATED", "FILED", "ACCEPTED", "REJECTED", "AMENDED"];
 
 export function PaydayFilingsList({
   filings,
@@ -80,7 +68,7 @@ export function PaydayFilingsList({
         >
           All ({filings.length})
         </button>
-        {STATUSES.filter((s) => s !== "").map((s) => (
+        {FILING_STATUSES.map((s) => (
           <button
             key={s}
             className={`rounded-md px-3 py-1.5 text-sm ${!overdueOnly && statusFilter === s ? "bg-primary text-primary-foreground" : "border border-border hover:bg-muted"}`}
@@ -124,11 +112,11 @@ export function PaydayFilingsList({
                   <span className="inline-flex items-center gap-1"><CalendarClock size={12} className="text-muted-foreground" />{day(f.dueDate)}</span>
                 </td>
                 <td className="px-3 py-2">
-                  <span className={`text-[0.625rem] font-semibold px-1.5 py-0.5 rounded ${STATUS_STYLE[f.status] ?? "bg-slate-500/10 text-slate-600"}`}>{f.status}</span>
+                  <span className={`text-[0.625rem] font-semibold px-1.5 py-0.5 rounded ${FILING_STATUS_BADGE[f.status] ?? FILING_STATUS_BADGE.DRAFT}`}>{f.status}</span>
                 </td>
                 <td className="px-3 py-2 text-right">{f.totalEmployeeLines}</td>
-                <td className="px-3 py-2 text-right font-mono">{money(f.totalGrossCents)}</td>
-                <td className="px-3 py-2 text-right font-mono">{money(f.totalPayeCents)}</td>
+                <td className="px-3 py-2 text-right font-mono">{formatMoneyCents(f.totalGrossCents)}</td>
+                <td className="px-3 py-2 text-right font-mono">{formatMoneyCents(f.totalPayeCents)}</td>
                 <td className={`px-3 py-2 text-right ${f.workingDaysRemaining < 0 && f.status !== "ACCEPTED" && f.status !== "AMENDED" ? "text-red-600 font-semibold" : "text-muted-foreground"}`}>
                   {f.workingDaysRemaining < 0 && f.status !== "ACCEPTED" && f.status !== "AMENDED"
                     ? `${Math.abs(f.workingDaysRemaining)}`

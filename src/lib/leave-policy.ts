@@ -66,6 +66,8 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** The DB-shaped policy row (Prisma LeavePolicy, nullable columns as-is). */
+import { round2 } from "@/lib/payroll-math";
+
 export interface LeavePolicyRow {
   annualDays: number;
   maxCarryOver: number;
@@ -194,40 +196,18 @@ export function resolveLeavePolicy(row: LeavePolicyRow | null | undefined): Reso
 }
 
 // ---------------------------------------------------------------------------
-// Date arithmetic ("YYYY-MM-DD" strings, UTC-midnight)
+// Date arithmetic ("YYYY-MM-DD" strings, UTC-midnight) — the shared
+// mini-library in lib/working-days.ts, re-exported for the leave modules'
+// existing imports.
 // ---------------------------------------------------------------------------
 
-function parseDayStr(s: string): Date {
-  return new Date(`${s}T00:00:00.000Z`);
-}
-
-function dayStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function addDays(s: string, n: number): string {
-  return dayStr(new Date(parseDayStr(s).getTime() + n * 86_400_000));
-}
-
-/** Whole calendar days from a to b (negative when b precedes a).
- * P27 (LV-08): exported for the leave-period window kernel. */
-export function daysBetween(a: string, b: string): number {
-  return Math.round((parseDayStr(b).getTime() - parseDayStr(a).getTime()) / 86_400_000);
-}
-
-/** Add whole months with end-of-month clamping (Jan 31 + 1 → Feb 28/29). */
-export function addMonths(s: string, n: number): string {
-  const d = parseDayStr(s);
-  const targetY = d.getUTCFullYear();
-  const targetM = d.getUTCMonth() + n;
-  const lastDay = new Date(Date.UTC(targetY, targetM + 1, 0)).getUTCDate();
-  return dayStr(new Date(Date.UTC(targetY, targetM, Math.min(d.getUTCDate(), lastDay))));
-}
+export { daysBetween, addMonths } from "@/lib/working-days";
+import { parseDay, addDays, daysBetween, addMonths } from "@/lib/working-days";
 
 /** Whole calendar months from a to b (negative when b precedes a). */
 export function monthsBetween(a: string, b: string): number {
-  const da = parseDayStr(a);
-  const db = parseDayStr(b);
+  const da = parseDay(a);
+  const db = parseDay(b);
   let m = (db.getUTCFullYear() - da.getUTCFullYear()) * 12 + (db.getUTCMonth() - da.getUTCMonth());
   // Partial month: Mar 15 → Apr 10 is 0 months (not 1); Apr 10 → Apr 15 is 0.
   if (db.getUTCDate() < da.getUTCDate()) m -= 1;
@@ -513,7 +493,7 @@ export function dueGrantOps(input: DueGrantsInput): GrantOp[] {
     // nominal per employed period, honestly short by design.
     let delta = roundDays(p.nominal, policy.accrualRounding);
     if (policy.allocationStrategy === "EARNED" && i === lastIdx && fullYear) {
-      delta = round2(precision(policy.annualDays - grantedSoFar - sumOf(ops)));
+      delta = round2(round2(policy.annualDays - grantedSoFar - sumOf(ops)));
     }
 
     // EARNED standing cap: room = cap − available (consumption frees room).
@@ -552,15 +532,6 @@ function grantNote(policy: ResolvedLeavePolicy, periodKey: string, delta: number
 
 function sumOf(ops: GrantOp[]): number {
   return ops.reduce((s, o) => s + o.delta, 0);
-}
-
-function precision(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
-function round2(n: number): number {
-  const r = Math.round(n * 100) / 100;
-  return r === 0 ? 0 : r;
 }
 
 // ---------------------------------------------------------------------------

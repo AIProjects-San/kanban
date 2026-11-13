@@ -19,25 +19,20 @@
 // ---------------------------------------------------------------------------
 
 import { logInfo, logWarn, log } from "@/lib/observability";
+import { LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS } from "@/lib/rate-limit";
 import { SlidingWindowLimiter, type RateLimitState } from "./rate-limit";
-import { getSharedRedisClient, redisKeyPrefix } from "./redis-client";
+import { getSharedRedisClient, redisKeyPrefix, type RedisLike } from "./redis-client";
 
-// ---------------------------------------------------------------------------
-// Minimal Redis client interface — satisfied by ioredis and node-redis
-// (with adapter wrappers).
-export interface RedisLike {
-  zadd(key: string, score: number, member: string): Promise<number>;
-  zremrangebyscore(key: string, min: number, max: number): Promise<number>;
-  zcard(key: string): Promise<number>;
-  zrangebyscore(key: string, min: number, max: number): Promise<string[]>;
-  del(...keys: string[]): Promise<number>;
-  expire(key: string, seconds: number): Promise<number>;
-}
+/** The sorted-set surface the limiter needs — a slice of the shared RedisLike. */
+export type LimiterRedis = Pick<
+  RedisLike,
+  "zadd" | "zremrangebyscore" | "zcard" | "zrangebyscore" | "del" | "expire"
+>;
 
 export interface RedisLimiterOptions {
   maxHits: number;
   windowMs: number;
-  redis: RedisLike;
+  redis: LimiterRedis;
   keyPrefix?: string;
   progressiveDelayThreshold?: number;
   progressiveDelayMaxMs?: number;
@@ -46,7 +41,7 @@ export interface RedisLimiterOptions {
 export class RedisSlidingWindowLimiter {
   private readonly maxHits: number;
   private readonly windowMs: number;
-  private readonly redis: RedisLike;
+  private readonly redis: LimiterRedis;
   private readonly keyPrefix: string;
   private readonly progressiveDelayThreshold: number;
   private readonly progressiveDelayMaxMs: number;
@@ -215,15 +210,15 @@ let cachedClientErrorLimiter: LimiterLike | null = null;
  * limiter with a warning.
  */
 export function createLoginLimiter(opts?: {
-  redisClient?: RedisLike;
+  redisClient?: LimiterRedis;
   redisUrl?: string;
   maxHits?: number;
   windowMs?: number;
 }): LimiterLike {
   if (cachedLoginLimiter) return cachedLoginLimiter;
 
-  const maxHits = opts?.maxHits ?? 5; // LOGIN_MAX_ATTEMPTS
-  const windowMs = opts?.windowMs ?? 15 * 60 * 1000; // LOGIN_WINDOW_MS
+  const maxHits = opts?.maxHits ?? LOGIN_MAX_ATTEMPTS;
+  const windowMs = opts?.windowMs ?? LOGIN_WINDOW_MS;
   const redisUrl = opts?.redisUrl ?? process.env.REDIS_URL;
   // Deep-dive F-12 — when no client is injected, build the shared ioredis
   // client ourselves so the Redis path is actually reachable.
@@ -265,7 +260,7 @@ export function createLoginLimiter(opts?: {
  * for a legitimate user who retries a few times, too tight for bombing.
  */
 export function createPasswordResetLimiter(opts?: {
-  redisClient?: RedisLike;
+  redisClient?: LimiterRedis;
   redisUrl?: string;
   maxHits?: number;
   windowMs?: number;
@@ -305,7 +300,7 @@ export function createPasswordResetLimiter(opts?: {
  * noisier logs, never a broken app.
  */
 export function createClientErrorLimiter(opts?: {
-  redisClient?: RedisLike;
+  redisClient?: LimiterRedis;
   redisUrl?: string;
   maxHits?: number;
   windowMs?: number;

@@ -29,6 +29,8 @@
 // Rows come from a `groupBy entryType` aggregate — the shape is
 // { entryType, delta } per group, NOT individual rows.
 
+import { round2 } from "@/lib/payroll-math";
+
 export type LeaveLedgerEntryType =
   | "GRANT"
   | "CARRY"
@@ -54,15 +56,6 @@ export interface LeaveLedgerProjection {
   adjustments: number;
   /** Σ ALL deltas — the number every overdraft guard must compare against. */
   available: number;
-}
-
-function round2(n: number): number {
-  const r = Math.round(n * 100) / 100;
-  // Normalize -0: a consume/reverse pair nets to exactly 0, and
-  // `Math.round(-0)` keeps the sign — Object.is(-0, 0) is false, so every
-  // downstream assertion (and JSON serialization) would see a "negative
-  // zero days used".
-  return r === 0 ? 0 : r;
 }
 
 /**

@@ -29,7 +29,7 @@ import {
   assertNoCycle,
   resolveLeaveApprover,
 } from "@/lib/hierarchy";
-import { AuthorizationError } from "@/server-actions/auth-guard";
+import { AuthorizationError } from "@/lib/server/authorization-error";
 import type { Role } from "@/lib/rbac";
 
 const actor = (userId: string, role: Role) => ({ userId, role });

@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from "@/lib/db";
-import { getSession, AuthorizationError } from "./auth-guard";
+import { AuthorizationError, getSessionOrThrow } from "./auth-guard";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -52,8 +52,7 @@ export interface UserDataExport {
  */
 export async function exportMyData(): Promise<ActionResult<UserDataExport>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
 
     const user = await db.user.findUnique({
       where: { id: auth.userId },

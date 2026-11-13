@@ -8,10 +8,10 @@ import {
   createPasswordResetLimiter,
   createClientErrorLimiter,
   _resetLoginLimiterCacheForTests,
-  type RedisLike,
+  type LimiterRedis,
 } from "@/lib/rate-limit-redis";
 
-class FakeRedis implements RedisLike {
+class FakeRedis implements LimiterRedis {
   private store = new Map<string, Array<{ score: number; member: string }>>();
 
   async zadd(key: string, score: number, member: string): Promise<number> {
@@ -255,7 +255,7 @@ describe("fail-open behaviour when Redis errors (F-12 closure)", () => {
   });
 
   it("returns not-blocked instead of throwing when Redis commands reject", async () => {
-    const brokenRedis: RedisLike = {
+    const brokenRedis: LimiterRedis = {
       zadd: async () => { throw new Error("ECONNREFUSED"); },
       zremrangebyscore: async () => { throw new Error("ECONNREFUSED"); },
       zcard: async () => { throw new Error("ECONNREFUSED"); },
@@ -277,7 +277,7 @@ describe("fail-open behaviour when Redis errors (F-12 closure)", () => {
 
   it("degrades with at most one warning per 30s (no log spam)", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const brokenRedis: RedisLike = {
+    const brokenRedis: LimiterRedis = {
       zadd: async () => { throw new Error("boom"); },
       zremrangebyscore: async () => { throw new Error("boom"); },
       zcard: async () => { throw new Error("boom"); },
@@ -396,7 +396,7 @@ describe("createClientErrorLimiter factory (PR-13)", () => {
   });
 
   it("fails open when Redis errors mid-flight (error reports are never 500s)", async () => {
-    const brokenRedis: RedisLike = {
+    const brokenRedis: LimiterRedis = {
       zadd: async () => { throw new Error("ECONNREFUSED"); },
       zremrangebyscore: async () => { throw new Error("ECONNREFUSED"); },
       zcard: async () => { throw new Error("ECONNREFUSED"); },

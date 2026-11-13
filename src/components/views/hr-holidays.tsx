@@ -21,8 +21,9 @@ import {
   upsertHolidayEntry,
   deleteHolidayEntry,
 } from "@/server-actions/hr-holidays";
-
-function fmtDay(iso: string): string {
+// The holidays list shows the weekday too ("Mon 25 Dec 2026") — a variant
+// of the shared day formatter, composed here.
+function fmtHolidayDay(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", {
     weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
   });
@@ -119,7 +120,7 @@ export function HolidaysTab() {
           {entries.map((h) => (
             <div key={h.id} data-testid="holiday-row" data-date={h.date} className="flex items-center gap-3 px-3 py-2.5">
               <div className="w-40 shrink-0 text-sm text-foreground tabular-nums">
-                {fmtDay(h.date)}
+                {fmtHolidayDay(h.date)}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-foreground truncate">{h.label || "—"}</div>

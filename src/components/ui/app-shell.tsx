@@ -26,6 +26,7 @@ import type {
   ProjectT, TaskT, TeamMemberT, CalendarEventT, NotificationT, ReminderT, TimeEntryT, MessageT,
 } from "@/lib/types";
 import { useAppSession } from "@/hooks/use-app-session";
+import { WIDE_VIEWS } from "@/config/navigation";
 
 // ---------------------------------------------------------------------------
 // L-P1-17 — Code splitting. Heavy and rarely-opened views are lazy-loaded
@@ -250,7 +251,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
           <div
             key={`${view}-${refreshTick}`}
             className={`f-view-enter p-4 lg:p-6 ${
-              ["settings", "users", "audit", "workspace-settings", "help", "bugs", "leave", "hr"].includes(view)
+              WIDE_VIEWS.includes(view)
                 ? "w-full"
                 : "max-w-7xl mx-auto"
             }`}
@@ -294,10 +295,7 @@ export function AppShell({ data, user, greeting, todayDate }: AppShellProps) {
             {view === "help" && <HelpView />}
             {view === "audit" && <AuditView currentUser={user} />}
             {view === "users" && (
-              <UsersView
-                currentUser={user}
-                projects={data.projects}
-              />
+              <UsersView currentUser={user} />
             )}
             {view === "workspace-settings" && (
               <WorkspaceSettingsView currentUser={user} />

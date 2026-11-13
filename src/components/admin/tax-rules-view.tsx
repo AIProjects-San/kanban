@@ -20,6 +20,7 @@ import {
   getTaxYears,
 } from "@/server-actions/tax-admin";
 import type { TaxSlabRowT, TaxYearAdminT } from "@/lib/types";
+import { formatMoney } from "@/lib/format";
 
 type Category =
   | "PAYE"
@@ -42,9 +43,6 @@ const CATEGORIES: Array<{ key: Category; label: string; blurb: string }> = [
 
 const inputCls =
   "h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm tabular-nums focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-
-const money = (n: number | null) =>
-  n == null ? "above" : `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -429,7 +427,7 @@ function CategorySummary({ category, set }: { category: Category; set: TaxYearAd
         <ul className="space-y-1 text-sm">
           {set.slabs.filter((s) => s.group === "PAYE").map((s) => (
             <li key={s.id} className="flex justify-between tabular-nums">
-              <span className="text-muted-foreground">{money(s.lower)} – {money(s.upper)}</span>
+              <span className="text-muted-foreground">{s.lower == null ? "above" : formatMoney(s.lower)} – {s.upper == null ? "above" : formatMoney(s.upper)}</span>
               <span className="font-medium">{s.rate}%</span>
             </li>
           ))}
@@ -453,7 +451,7 @@ function CategorySummary({ category, set }: { category: Category; set: TaxYearAd
         <ul className="space-y-1 text-sm">
           {set.slabs.filter((s) => s.group === "ESCT").map((s) => (
             <li key={s.id} className="flex justify-between tabular-nums">
-              <span className="text-muted-foreground">{money(s.lower)} – {money(s.upper)}</span>
+              <span className="text-muted-foreground">{s.lower == null ? "above" : formatMoney(s.lower)} – {s.upper == null ? "above" : formatMoney(s.upper)}</span>
               <span className="font-medium">{s.rate}%</span>
             </li>
           ))}
@@ -464,8 +462,8 @@ function CategorySummary({ category, set }: { category: Category; set: TaxYearAd
       return (
         <ul className="space-y-1 text-sm tabular-nums">
           <li className="flex justify-between"><span className="text-muted-foreground">Levy rate</span><span className="font-medium">{a?.rate}%</span></li>
-          <li className="flex justify-between"><span className="text-muted-foreground">Liable-earnings cap</span><span className="font-medium">{a ? money(a.maxEarnings) : "—"}</span></li>
-          <li className="flex justify-between"><span className="text-muted-foreground">Maximum levy</span><span className="font-medium">{a ? money(a.maxLevy) : "—"}</span></li>
+          <li className="flex justify-between"><span className="text-muted-foreground">Liable-earnings cap</span><span className="font-medium">{a ? formatMoney(a.maxEarnings) : "—"}</span></li>
+          <li className="flex justify-between"><span className="text-muted-foreground">Maximum levy</span><span className="font-medium">{a ? formatMoney(a.maxLevy) : "—"}</span></li>
         </ul>
       );
     }
@@ -473,9 +471,9 @@ function CategorySummary({ category, set }: { category: Category; set: TaxYearAd
       const i = set.params.ietc;
       return (
         <ul className="space-y-1 text-sm tabular-nums">
-          <li className="flex justify-between"><span className="text-muted-foreground">Annual credit</span><span className="font-medium">{i ? money(i.annualAmount) : "—"}</span></li>
-          <li className="flex justify-between"><span className="text-muted-foreground">Window</span><span className="font-medium">{i ? `${money(i.lowerBound)} – ${money(i.upperBound)}` : "—"}</span></li>
-          <li className="flex justify-between"><span className="text-muted-foreground">Abatement</span><span className="font-medium">{i ? `${i.abateRate}% above ${money(i.abateFrom)}` : "—"}</span></li>
+          <li className="flex justify-between"><span className="text-muted-foreground">Annual credit</span><span className="font-medium">{i ? formatMoney(i.annualAmount) : "—"}</span></li>
+          <li className="flex justify-between"><span className="text-muted-foreground">Window</span><span className="font-medium">{i ? `${formatMoney(i.lowerBound)} – ${formatMoney(i.upperBound)}` : "—"}</span></li>
+          <li className="flex justify-between"><span className="text-muted-foreground">Abatement</span><span className="font-medium">{i ? `${i.abateRate}% above ${formatMoney(i.abateFrom)}` : "—"}</span></li>
         </ul>
       );
     }
@@ -494,7 +492,7 @@ function CategorySummary({ category, set }: { category: Category; set: TaxYearAd
       return (
         <ul className="space-y-1 text-sm tabular-nums">
           <li className="flex justify-between"><span className="text-muted-foreground">Repayment rate</span><span className="font-medium">{s?.rate}%</span></li>
-          <li className="flex justify-between"><span className="text-muted-foreground">Annual threshold</span><span className="font-medium">{s ? money(s.annualThreshold) : "—"}</span></li>
+          <li className="flex justify-between"><span className="text-muted-foreground">Annual threshold</span><span className="font-medium">{s ? formatMoney(s.annualThreshold) : "—"}</span></li>
         </ul>
       );
     }

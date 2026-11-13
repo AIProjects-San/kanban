@@ -76,24 +76,20 @@ describe("isValidIrdNumberForFiling — IRD spec 5.8 worked examples", () => {
   });
 });
 
-describe("the Phase 1 helper vs the spec (documented deviation, ADR-018)", () => {
-  it("the Phase 1 helper rejects spec example 1 (49091850) — the filing layer must NOT use it", () => {
-    // This documents WHY lib/ird/ird-number.ts exists: the Phase 1
-    // isValidIrdNumber transposes the remainder-0/remainder-1 rules and
-    // fails IRD's own worked examples 1 and 3.
-    expect(phaseOneHelper("49091850")).toBe(false);
-    expect(isValidIrdNumberForFiling("49091850")).toBe(true);
+describe("the write-path helper delegates to the spec validator", () => {
+  it("accepts IRD's worked examples 1 and 3 (the old copy rejected them)", () => {
+    expect(phaseOneHelper("49091850")).toBe(true);
+    expect(phaseOneHelper("136410132")).toBe(true);
   });
 
-  it("the Phase 1 helper rejects spec example 3 (136410132)", () => {
-    expect(phaseOneHelper("136410132")).toBe(false);
-    expect(isValidIrdNumberForFiling("136410132")).toBe(true);
-  });
-
-  it("both validators agree inside the common remainder band (2-10)", () => {
-    for (const ird of ["35901981", "075555555", "111111111", "123123123"]) {
-      expect(phaseOneHelper(ird)).toBe(true);
-      expect(isValidIrdNumberForFiling(ird)).toBe(true);
+  it("agrees with the filing validator on every non-empty input", () => {
+    for (const ird of ["35901981", "075555555", "111111111", "123123123", "49091851", "136410131", "583639137"]) {
+      expect(phaseOneHelper(ird)).toBe(isValidIrdNumberForFiling(ird));
     }
+  });
+
+  it("keeps the write path's not-recorded semantics: empty is allowed", () => {
+    expect(phaseOneHelper("")).toBe(true);
+    expect(isValidIrdNumberForFiling("")).toBe(false);
   });
 });

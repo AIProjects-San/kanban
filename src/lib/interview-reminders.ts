@@ -48,13 +48,13 @@
 import { db } from "@/lib/db";
 import { logError, logInfo } from "@/lib/observability";
 import { getWorkspaceConfig } from "@/lib/config-loader";
-import { queueOutboxMail, deliverOutboxMail } from "@/server-actions/shared";
-import { escapeHtml } from "@/lib/utils";
+import { queueOutboxMail, deliverOutboxMail } from "@/lib/server/mail-outbox";
 import {
   resolveNotificationTemplate,
   renderTemplate,
   type ResolvedNotificationTemplate,
 } from "@/lib/notification-template";
+import { emailHtml } from "@/lib/email-html";
 
 // ---------------------------------------------------------------------------
 // The pure kernel
@@ -348,11 +348,7 @@ export async function runInterviewRemindersJob(): Promise<InterviewRemindersJobR
   return report;
 }
 
-/** The plain-text nudge → the shared mail HTML wrap (escaped per line). */
+/** The plain-text nudge → the shared mail HTML wrap. */
 export function interviewEmailHtml(text: string): string {
-  const body = text
-    .split("\n")
-    .map((l) => escapeHtml(l))
-    .join("<br />");
-  return `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #111;">${body}</div>`;
+  return emailHtml(text);
 }

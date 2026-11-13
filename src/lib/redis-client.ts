@@ -19,7 +19,23 @@
 
 import { logError } from "@/lib/observability";
 import Redis from "ioredis";
-import type { RedisLike } from "./rate-limit-redis";
+
+/** Minimal Redis command surface the app's consumers need — satisfied by
+ *  ioredis clients (and node-redis with adapter wrappers). Lives here, with
+ *  the client it describes, so every consumer shares one shape; consumers
+ *  that need less take a `Pick` of it. */
+export interface RedisLike {
+  zadd(key: string, score: number, member: string): Promise<number>;
+  zremrangebyscore(key: string, min: number, max: number): Promise<number>;
+  zcard(key: string): Promise<number>;
+  zrangebyscore(key: string, min: number, max: number): Promise<string[]>;
+  del(...keys: string[]): Promise<number>;
+  expire(key: string, seconds: number): Promise<number>;
+  set(key: string, value: string): Promise<"OK" | null>;
+  set(key: string, value: string, mode: "PX", ttlMs: number, nx: "NX"): Promise<"OK" | null>;
+  get(key: string): Promise<string | null>;
+  publish(channel: string, message: string): Promise<number>;
+}
 
 let sharedClient: Redis | null = null;
 let constructionFailed = false;
@@ -118,24 +134,16 @@ export function _resetSharedRedisClientForTests(): void {
 // deployments keep the pure in-memory behaviour.
 // ---------------------------------------------------------------------------
 
-/** Minimal PUBLISH surface — satisfied by ioredis. */
-export interface PublishRedis {
-  publish(channel: string, message: string): Promise<number>;
-}
-
 /**
  * Get a publisher for the config-invalidation channel (the shared command
  * client), or undefined when Redis is not configured / construction failed.
  */
-export function getSharedRedisPublisher(): PublishRedis | undefined {
+export function getSharedRedisPublisher(): Pick<RedisLike, "publish"> | undefined {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) return undefined;
   const client = getSharedRedisClient(redisUrl);
   if (!client) return undefined;
-  return {
-    publish: (channel: string, message: string) =>
-      (client as unknown as PublishRedis).publish(channel, message),
-  };
+  return { publish: (channel, message) => client.publish(channel, message) };
 }
 
 let configSubscriber: Redis | null = null;

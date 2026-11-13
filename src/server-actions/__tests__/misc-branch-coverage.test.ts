@@ -402,6 +402,7 @@ describe("PR-56 updateTask change detection", () => {
 describe("PR-56 unauthenticated guards", () => {
   beforeEach(() => {
     getSessionMock.mockResolvedValue(null);
+    getSessionOrThrowMock.mockRejectedValue(Object.assign(new Error("You must be signed in."), { name: "AuthorizationError", digest: "AuthorizationError" }));
   });
 
   it("getProjectAssignments rejects an anonymous caller before any roster query (L112)", async () => {

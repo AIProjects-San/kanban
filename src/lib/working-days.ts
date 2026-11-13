@@ -21,6 +21,41 @@ export interface HolidayDay {
 export type HolidayLookup = Map<string, HolidayDay>;
 
 /** "yyyy-mm-dd" for a UTC-midnight date. */
+/** UTC midnight for a "YYYY-MM-DD" string. A malformed string throws —
+ *  a bad date must fail loudly, not become NaN day arithmetic. */
+export function parseDay(day: string): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error(`Invalid date: ${day}`);
+  }
+  const d = new Date(`${day}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`Invalid date: ${day}`);
+  }
+  return d;
+}
+
+/** Whole calendar days from a to b (negative when b precedes a). Accepts
+ *  Date or "YYYY-MM-DD" — strings parse as UTC midnight. */
+export function daysBetween(a: Date | string, b: Date | string): number {
+  const ta = typeof a === "string" ? parseDay(a).getTime() : a.getTime();
+  const tb = typeof b === "string" ? parseDay(b).getTime() : b.getTime();
+  return Math.round((tb - ta) / 86_400_000);
+}
+
+/** The day key n days away from a day key. */
+export function addDays(day: string, n: number): string {
+  return dayKey(new Date(parseDay(day).getTime() + n * 86_400_000));
+}
+
+/** Add whole months with end-of-month clamping (Jan 31 + 1 → Feb 28/29). */
+export function addMonths(day: string, n: number): string {
+  const d = parseDay(day);
+  const targetY = d.getUTCFullYear();
+  const targetM = d.getUTCMonth() + n;
+  const lastDay = new Date(Date.UTC(targetY, targetM + 1, 0)).getUTCDate();
+  return dayKey(new Date(Date.UTC(targetY, targetM, Math.min(d.getUTCDate(), lastDay))));
+}
+
 export function dayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }

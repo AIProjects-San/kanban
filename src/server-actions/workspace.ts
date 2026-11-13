@@ -13,6 +13,10 @@ import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { workspaceSettingsSchema, configItemSchema, parseOrThrow } from "@/lib/validation";
 
+/** Permissions only ADMIN may grant — a MANAGER granted role:manage by an
+ *  admin could otherwise escalate themselves further. */
+const PROTECTED_PERMS = ["role:manage"];
+
 /**
  * Client-facing config loader. `getWorkspaceConfig` itself lives in
  * lib/config-loader (plain server code); this wrapper makes it callable
@@ -261,7 +265,6 @@ export async function updateRole(roleId: string, data: {
         // (granted by an admin via the DB) could otherwise grant `role:manage`
         // to their own role, then grant `user:manage:any` to themselves, etc.
         // Only ADMIN may add `role:manage` to any role.
-        const PROTECTED_PERMS = ["role:manage"];
         if (auth.role !== "ADMIN") {
           const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
           if (conflicting.length > 0) {
@@ -327,7 +330,6 @@ export async function createRole(data: {
       });
       if (data.permissions && data.permissions.length > 0) {
         // P2 re-audit — same protected-permission guard as updateRole.
-        const PROTECTED_PERMS = ["role:manage"];
         if (auth.role !== "ADMIN") {
           const conflicting = data.permissions.filter((p) => PROTECTED_PERMS.includes(p));
           if (conflicting.length > 0) {

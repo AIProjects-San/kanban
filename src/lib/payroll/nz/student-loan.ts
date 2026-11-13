@@ -39,9 +39,10 @@ import {
   type NzStudentLoanParam,
   type NzTaxProfileInput,
 } from "./types";
+import { SECONDARY_RATE_CODES } from "./tax-codes";
 
 /** Secondary codes whose SL variant taxes every dollar (no threshold). */
-const SECONDARY_CODES = new Set(["SB", "S", "SH", "ST", "SA"]);
+const SECONDARY_CODES = new Set<string>(SECONDARY_RATE_CODES);
 
 /**
  * The per-period repayment threshold: annualThreshold ÷ pays-per-year,

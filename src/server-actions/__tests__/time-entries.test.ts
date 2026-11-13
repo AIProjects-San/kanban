@@ -195,6 +195,7 @@ describe("getTaskTimeLog", () => {
 
   it("requires a signed-in session", async () => {
     getSessionMock.mockResolvedValue(null);
+    getSessionOrThrowMock.mockRejectedValue(Object.assign(new Error("You must be signed in."), { name: "AuthorizationError", digest: "AuthorizationError" }));
     const res = await getTaskTimeLog("t-1");
     expect(res.ok).toBe(false);
   });

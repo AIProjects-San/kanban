@@ -24,15 +24,10 @@ import {
   markEmployeeDetailsFiledAction,
 } from "@/server-actions/payday-filing";
 import type { EmployeeDetailsViewT, PayrollFilingSettingsT } from "@/lib/ird/filing-types";
+import { downloadBlob } from "@/lib/format";
+import { FILING_STATUS_BADGE } from "@/lib/config";
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
-
-const STATUS_STYLE: Record<string, string> = {
-  GENERATED: "bg-sky-500/10 text-sky-600",
-  FILED: "bg-blue-500/10 text-blue-600",
-  ACCEPTED: "bg-emerald-500/10 text-emerald-600",
-  REJECTED: "bg-red-500/10 text-red-600",
-};
 
 export function EmployeeDetailsFilingView({
   view,
@@ -76,13 +71,7 @@ export function EmployeeDetailsFilingView({
     const res = await downloadEmployeeDetailsFile({ id });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    const blob = new Blob([res.data.csv], { type: res.data.mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = res.data.filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data.csv, res.data.filename, res.data.mime);
     toast.success(`${res.data.filename} downloaded.`);
   };
 
@@ -205,7 +194,7 @@ export function EmployeeDetailsFilingView({
           {view.filed.map((f) => (
             <div key={f.id} className="px-4 py-2.5 flex flex-wrap items-center gap-3">
               <span className="text-sm font-medium">{f.employeeName}</span>
-              <span className={`text-[0.625rem] font-semibold px-1.5 py-0.5 rounded ${STATUS_STYLE[f.status] ?? "bg-slate-500/10 text-slate-600"}`}>{f.status}</span>
+              <span className={`text-[0.625rem] font-semibold px-1.5 py-0.5 rounded ${FILING_STATUS_BADGE[f.status] ?? FILING_STATUS_BADGE.DRAFT}`}>{f.status}</span>
               <span className={`text-[0.625rem] font-semibold px-1.5 py-0.5 rounded ${f.kind === "NEW" ? "bg-emerald-500/10 text-emerald-600" : "bg-orange-500/10 text-orange-600"}`}>{f.kind}</span>
               <span className="text-xs text-muted-foreground font-mono">{f.employeeIrd}</span>
               <span className="text-xs text-muted-foreground">

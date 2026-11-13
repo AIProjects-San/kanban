@@ -23,14 +23,10 @@
 
 import { nonWorkingDayReason, type HolidayLookup } from "@/lib/working-days";
 
-function round2(n: number): number {
-  const r = Math.round(n * 100) / 100;
-  return r === 0 ? 0 : r;
-}
+import { round2 } from "@/lib/payroll-math";
+import { parseDay } from "@/lib/working-days";
 
-function parseDayStr(s: string): Date {
-  return new Date(`${s}T00:00:00.000Z`);
-}
+
 
 function dayStr(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -76,8 +72,8 @@ export function earnedCompDays(input: {
 }): CompDayWalk {
   const problems: CompDayProblem[] = [];
   let days = 0;
-  const start = parseDayStr(input.workFrom);
-  const end = parseDayStr(input.workTo);
+  const start = parseDay(input.workFrom);
+  const end = parseDay(input.workTo);
   for (let t = start.getTime(); t <= end.getTime(); t += DAY) {
     const d = new Date(t);
     const key = dayStr(d);
@@ -119,8 +115,8 @@ export function claimedNonWorkingDays(
   workTo: string,
   holidays: HolidayLookup | undefined,
 ): number {
-  const start = parseDayStr(workFrom);
-  const end = parseDayStr(workTo);
+  const start = parseDay(workFrom);
+  const end = parseDay(workTo);
   let count = 0;
   for (let t = start.getTime(); t <= end.getTime(); t += DAY) {
     const d = new Date(t);

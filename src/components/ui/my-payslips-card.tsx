@@ -10,10 +10,7 @@ import { ArrowRight, Wallet } from "lucide-react";
 import type { PayslipT } from "@/lib/types";
 import { getMyPayslips } from "@/server-actions/payroll";
 import { useApp } from "@/store/app-store";
-
-function money(n: number): string {
-  return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+import { formatMoney } from "@/lib/format";
 
 function monthLabel(period: string): string {
   const [y, m] = period.split("-").map(Number);
@@ -46,8 +43,8 @@ export function MyPayslipsCard() {
       </div>
       <div className="flex items-end justify-between gap-2">
         <div>
-          <div className="text-lg font-bold tabular-nums text-primary">{money(latest.net)}</div>
-          <div className="text-[0.625rem] text-muted-foreground">net · gross {money(latest.gross)}</div>
+          <div className="text-lg font-bold tabular-nums text-primary">{formatMoney(latest.net)}</div>
+          <div className="text-[0.625rem] text-muted-foreground">net · gross {formatMoney(latest.gross)}</div>
         </div>
         <button
           onClick={() => setView("my-payslips")}

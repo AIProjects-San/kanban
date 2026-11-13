@@ -2,28 +2,9 @@
 
 import { create } from "zustand";
 import { STORAGE_KEYS, LEGACY_STORAGE_KEYS, type ThemeCache } from "@/config/app";
-import { NAV_GROUPS, groupIdOfView } from "@/config/navigation";
+import { NAV_GROUPS, groupIdOfView, type ViewKey } from "@/config/navigation";
 
-export type ViewKey =
-  | "dashboard"
-  | "tasks"
-  | "projects"
-  | "calendar"
-  | "analytics"
-  | "team"
-  | "settings"
-  | "help"
-  | "audit"
-  | "users"
-  | "workspace-settings"
-  | "bugs"
-  | "leave"
-  | "hr"
-  | "hiring"
-  | "payroll"
-  | "my-payslips"
-  | "my-interviews"
-  | "my-attendance";
+export type { ViewKey };
 
 export type AccentTheme = "forest" | "ocean" | "plum" | "ember";
 
@@ -112,7 +93,8 @@ interface AppState {
   shortcutsOpen: boolean;
   setShortcutsOpen: (open: boolean) => void;
 
-  // Toast refresh trigger — bump to invalidate React Query
+  // Refresh trigger — bump to remount the active view (the `key={view-refreshTick}`
+  // idiom in app-shell); the view's fetch-on-mount does the actual reload.
   refreshTick: number;
   bumpRefresh: () => void;
 

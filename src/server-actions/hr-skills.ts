@@ -116,7 +116,7 @@ export async function getSkillMap(input: {
   return toResult(async () => {
     const auth = await requirePermission("settings:edit");
     const isSelf = !input.userId || input.userId === auth.userId;
-    const canManage = await checkPermission(auth.role as never, "hr:view" as never);
+    const canManage = await checkPermission(auth.role, "hr:view");
     if (!isSelf && !canManage) {
       throw new AuthorizationError("You can only view your own skill map.");
     }

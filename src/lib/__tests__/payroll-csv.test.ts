@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 // bank file).
 // ---------------------------------------------------------------------------
 
-import { csvEscape, salaryRegisterCsv, bankRemittanceCsv } from "@/lib/payroll-csv";
+import { salaryRegisterCsv, bankRemittanceCsv } from "@/lib/payroll-csv";
 
 const GENERATED_AT = new Date("2026-11-10T08:30:00.000Z");
 
@@ -26,23 +26,6 @@ const ROWS = [
     jobTitle: "Ops Specialist", gross: 4_100.555, deductions: 0, net: 4_100.56, lopDays: 0, withholdStatus: "RELEASED",
   },
 ];
-
-describe("payroll-csv — csvEscape (RFC 4180)", () => {
-  it("plain fields pass through unquoted", () => {
-    expect(csvEscape("Yuki Tanaka")).toBe("Yuki Tanaka");
-    expect(csvEscape(123)).toBe("123");
-    expect(csvEscape("")).toBe("");
-    expect(csvEscape(null)).toBe("");
-    expect(csvEscape(undefined)).toBe("");
-  });
-
-  it("commas, quotes, newlines and padded spaces force quoting; inner quotes double", () => {
-    expect(csvEscape("Solberg, Ingrid")).toBe('"Solberg, Ingrid"');
-    expect(csvEscape('say "hi"')).toBe('"say ""hi"""');
-    expect(csvEscape("line1\nline2")).toBe('"line1\nline2"');
-    expect(csvEscape(" padded ")).toBe('" padded "');
-  });
-});
 
 describe("payroll-csv — salaryRegisterCsv (PR-R01)", () => {
   const csv = salaryRegisterCsv({ period: "2026-11", generatedAt: GENERATED_AT, rows: ROWS });

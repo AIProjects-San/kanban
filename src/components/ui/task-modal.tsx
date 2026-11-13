@@ -26,6 +26,7 @@ import { TASK_STATUSES, BUG_SEVERITY_BADGE, BUG_SEVERITY_LABELS, BUG_STATUS_BADG
 import { cn } from "@/lib/utils";
 import { canDeleteTask, type TaskDeleteContext } from "@/lib/task-delete";
 import { useAppSession } from "@/hooks/use-app-session";
+import { usePermissions } from "@/hooks/use-permissions";
 import type { TaskT, TaskStatus, TaskTag, Priority, ProjectT, TeamMemberT, BugSeverity, BugStatus } from "@/lib/types";
 
 interface TaskModalProps {
@@ -71,7 +72,8 @@ export function TaskModal({ tasks, projects, members = [], managedUserIds = [] }
   const myTeamMemberId = sessionUser
     ? members.find((m) => m.userId === sessionUser.id)?.id ?? null
     : null;
-  const deleteCtx: TaskDeleteContext = { members, projects, myTeamMemberId, managedUserIds };
+  const { can } = usePermissions();
+  const deleteCtx: TaskDeleteContext = { members, projects, myTeamMemberId, managedUserIds, canTaskDelete: can("task:delete") };
   const showDelete = editing ? canDeleteTask(sessionUser, editing, deleteCtx) : false;
 
   return (

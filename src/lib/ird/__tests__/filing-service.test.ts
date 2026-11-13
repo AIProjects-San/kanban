@@ -33,7 +33,7 @@ const db = vi.hoisted((): DbMock => {
 });
 
 vi.mock("@/lib/db", () => ({ db }));
-vi.mock("@/server-actions/hr-shared", () => ({
+vi.mock("@/lib/server/holidays", () => ({
   getHolidayLookup: vi.fn(async () => new Map()),
 }));
 

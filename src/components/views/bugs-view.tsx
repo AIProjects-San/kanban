@@ -17,7 +17,6 @@ import {
   ArrowRightLeft, UserPlus, MessageSquare, Trash2, Link2, FolderKanban, GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
-import { hasPermission, type Role } from "@/lib/rbac";
 import {
   BUG_STATUSES, BUG_SEVERITIES, BUG_PRIORITIES,
   BUG_STATUS_LABELS, BUG_STATUS_BADGE, BUG_SEVERITY_LABELS, BUG_SEVERITY_BADGE,
@@ -35,7 +34,7 @@ import {
   assignBug, addBugComment, deleteBug, getBugBoard,
 } from "@/server-actions/bugs";
 import { getProjectAssignableUsers } from "@/server-actions/assignments";
-import { useAppSession } from "@/hooks/use-app-session";
+import { usePermissions } from "@/hooks/use-permissions";
 
 interface BugsViewProps {
   currentUser: { id: string; name: string; email: string; role: string };
@@ -109,8 +108,7 @@ type FilterKey = "all" | "mine" | "unassigned" | "high-severity";
 // ---------------------------------------------------------------------------
 
 export function BugsView({ currentUser, projects, tasks }: BugsViewProps) {
-  const { data: session } = useAppSession();
-  const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
+  const { can } = usePermissions();
   const [bugs, setBugs] = useState<BugCardData[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -148,7 +146,7 @@ export function BugsView({ currentUser, projects, tasks }: BugsViewProps) {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadBoard(); }, [loadBoard]);
 
-  const canCreate = hasPermission(role, "bug:create");
+  const canCreate = can("bug:create");
 
   const liveBugs = optimisticBugs ?? bugs;
 
@@ -727,8 +725,7 @@ function BugDetailDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const { data: session } = useAppSession();
-  const role = (session?.user as { role?: string } | undefined)?.role as Role | undefined;
+  const { can } = usePermissions();
   const [bug, setBug] = useState<BugDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [comment, setComment] = useState("");
@@ -754,9 +751,9 @@ function BugDetailDrawer({
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadBug(); }, [loadBug]);
 
-  const canEditAny = hasPermission(role, "bug:edit:any");
-  const canAssign = hasPermission(role, "bug:assign");
-  const canDelete = hasPermission(role, "bug:delete");
+  const canEditAny = can("bug:edit:any");
+  const canAssign = can("bug:assign");
+  const canDelete = can("bug:delete");
   const canEdit = bug && (canEditAny || bug.reporterUserId === currentUser.id || bug.assigneeUserId === currentUser.id);
 
   const handleStatusChange = async (newStatus: BugStatus, resolution?: BugResolution, statusComment?: string) => {

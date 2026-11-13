@@ -225,6 +225,20 @@ export const BUG_STATUS_BADGE: Record<BugStatus, string> = Object.fromEntries(
   BUG_STATUSES.map((s) => [s.key, s.badge]),
 ) as Record<BugStatus, string>;
 
+/** Payday-filing lifecycle statuses (PaydayFiling.status) — one badge map
+ *  for the runs list, the filings list, the per-run panel and the
+ *  employee-details view. */
+export const FILING_STATUS_BADGE: Record<string, string> = {
+  DRAFT: "bg-slate-500/10 text-slate-600",
+  GENERATED: "bg-sky-500/10 text-sky-600",
+  FILED: "bg-blue-500/10 text-blue-600",
+  ACCEPTED: "bg-emerald-500/10 text-emerald-600",
+  REJECTED: "bg-red-500/10 text-red-600",
+  AMENDED: "bg-orange-500/10 text-orange-600",
+};
+
+export const FILING_STATUSES = ["DRAFT", "GENERATED", "FILED", "ACCEPTED", "REJECTED", "AMENDED"];
+
 export const BUG_RESOLUTIONS: { key: BugResolution; label: string }[] = [
   { key: "FIXED", label: "Fixed" },
   { key: "WONT_FIX", label: "Won't Fix" },

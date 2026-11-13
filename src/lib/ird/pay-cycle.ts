@@ -49,6 +49,25 @@ export function mapPayCycle(frequency: PayrollFrequency | string): PayCycleCode 
   }
 }
 
+/** IRD pay cycle code → Fernly cadence — the inverse table. Ad hoc (AH)
+ *  and four-weekly (4W) have no Fernly cadence and pass through unchanged. */
+export function payCycleToFrequency(code: string): string {
+  switch (code) {
+    case "WK":
+      return "WEEKLY";
+    case "FT":
+      return "FORTNIGHTLY";
+    case "HM":
+      return "BIMONTHLY";
+    case "DA":
+      return "DAILY";
+    case "MT":
+      return "MONTHLY";
+    default:
+      return code;
+  }
+}
+
 /** True when the cadence has a confirmed pay cycle code (UI gating). */
 export function isFilingCadence(frequency: PayrollFrequency | string): boolean {
   return ["WEEKLY", "FORTNIGHTLY", "MONTHLY", "BIMONTHLY", "DAILY"].includes(frequency);

@@ -22,7 +22,7 @@ import type { ActionResult } from "@/lib/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { previewLwpCorrectionSchema, reverseLwpDaysSchema } from "@/lib/validation";
 import { planLwpCorrection, lwpCreditLabel } from "@/lib/lwp-correction";
-import { parsePayslipLines, LOP_LINE_KEY } from "@/lib/payroll-math";
+import { parsePayslipLines, LOP_LINE_KEY, round2 } from "@/lib/payroll-math";
 import type { LwpCorrectionPreviewT } from "@/lib/types";
 
 /** The stored facts + reversal state for one paid slip. Shared by the
@@ -69,10 +69,10 @@ export async function previewLwpCorrection(input: unknown): Promise<ActionResult
       period: slip.run.period,
       storedLopDays: slip.lopDays,
       storedLopAmount,
-      alreadyReversedDays: Math.round(alreadyReversedDays * 100) / 100,
-      reversibleDays: Math.round((slip.lopDays - alreadyReversedDays) * 100) / 100,
+      alreadyReversedDays: round2(alreadyReversedDays),
+      reversibleDays: round2((slip.lopDays - alreadyReversedDays)),
       perDay: storedLopAmount > 0 && slip.lopDays > 0
-        ? Math.round((storedLopAmount / slip.lopDays) * 100) / 100
+        ? round2((storedLopAmount / slip.lopDays))
         : 0,
     };
   });

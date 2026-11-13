@@ -8,12 +8,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { logError } from "@/lib/observability";
 import type { HolidayT } from "@/lib/types";
-import {
-  dayKey,
-  holidayLookupFrom,
-  workingDaysBetween,
-  type HolidayLookup,
-} from "@/lib/working-days";
+import { dayKey, workingDaysBetween } from "@/lib/working-days";
 import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
 import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/employment";
 import { resolveLeaveApprover } from "@/lib/hierarchy";
@@ -21,6 +16,16 @@ import type { LeavePeriodInput, LeaveWindow } from "@/lib/leave-period";
 import { resolveLeavePolicy, dueGrantOps, type EmploymentFacts, type GrantOp, type LeavePolicyRow } from "@/lib/leave-policy";
 import { assignedManualGrantDays, policyRowWithAnnualDays } from "@/lib/leave-policy-set";
 import { AuthorizationError } from "./auth-guard";
+
+// Holiday-calendar + leave-policy-override reads live in lib/server (the payroll
+// kernels and cron jobs use them without importing the action layer);
+// re-exported here for the hr-* action files' existing imports.
+export { getHolidayLookup } from "@/lib/server/holidays";
+export {
+  assignmentOverridesFor,
+  assignmentOverridesForUsers,
+  type BucketPolicyOverrides,
+} from "@/lib/server/leave-overrides";
 
 // ---------------------------------------------------------------------------
 // Working-day math. Dates travel as "yyyy-mm-dd" strings from the client
@@ -30,23 +35,9 @@ import { AuthorizationError } from "./auth-guard";
 // lib/working-days.ts for the exact semantics.
 // ---------------------------------------------------------------------------
 
-export function parseDay(s: string): Date {
-  // Validate the shape first — a bad string must throw, not silently
-  // become Invalid Date arithmetic (NaN days).
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    throw new Error(`Invalid date: ${s}`);
-  }
-  const d = new Date(`${s}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(`Invalid date: ${s}`);
-  }
-  return d;
-}
-
-/** Whole calendar days from a (inclusive) to b (exclusive). */
-export function daysBetween(a: Date, b: Date): number {
-  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
-}
+export { parseDay, daysBetween } from "@/lib/working-days";
+import { parseDay, daysBetween } from "@/lib/working-days";
+void parseDay; void daysBetween;
 
 /**
  * Count Mon–Fri days in [start, end] inclusive. Holiday-free variant kept
@@ -56,21 +47,6 @@ export function daysBetween(a: Date, b: Date): number {
  */
 export function workingDays(start: Date, end: Date): number {
   return workingDaysBetween(start, end);
-}
-
-// ---------------------------------------------------------------------------
-// F1.1 — holiday-calendar access. One read per range; the lookup feeds
-// workingDaysBetween (leave counting) and workingDaysInPeriod (payroll
-// denominators). Rows are date-only UTC-midnight values, so inclusive
-// gte/lte bounds on the same convention match exactly.
-// ---------------------------------------------------------------------------
-
-export async function getHolidayLookup(start: Date, end: Date): Promise<HolidayLookup> {
-  const rows = await db.holidayCalendarEntry.findMany({
-    where: { date: { gte: start, lte: end } },
-    select: { date: true, isHalfDay: true },
-  });
-  return holidayLookupFrom(rows);
 }
 
 /** Holiday entries as client-shaped rows ("yyyy-mm-dd" + label), used by the
@@ -162,86 +138,6 @@ export async function assertLeaveDecider(
 // No assignment → undefined override → the row passes through untouched
 // (byte-identical pre-P28 behavior; the empty-table default the suites pin).
 // ---------------------------------------------------------------------------
-
-/** One assignment's resolved overrides for a bucket. */
-export interface BucketPolicyOverrides {
-  setId: string;
-  setName: string;
-  annualDaysByType: Map<string, number>;
-}
-
-/** The override for ONE user's bucket (null = no assignment — the global
- * per-type policy world). Two reads when an assignment exists (the doc +
- * its items), zero when it does not — the common case stays a single read. */
-export async function assignmentOverridesFor(
-  userId: string,
-  bucketYear: number,
-): Promise<BucketPolicyOverrides | null> {
-  const assignment = await db.leavePolicyAssignment.findUnique({
-    where: { userId_bucketYear: { userId, bucketYear } },
-    select: { setId: true },
-  });
-  if (!assignment) return null;
-  const [set, items] = await Promise.all([
-    db.leavePolicySet.findUnique({
-      where: { id: assignment.setId },
-      select: { name: true },
-    }),
-    db.leavePolicySetItem.findMany({
-      where: { setId: assignment.setId },
-      select: { leaveTypeId: true, annualDays: true },
-    }),
-  ]);
-  // An orphaned setId (set hard-deleted behind an assignment — the delete
-  // action refuses exactly this) degrades to NO override, loudly honest:
-  // the engine falls back to the global policy rather than inventing days.
-  if (!set) return null;
-  return {
-    setId: assignment.setId,
-    setName: set.name,
-    annualDaysByType: new Map(items.map((i) => [i.leaveTypeId, i.annualDays])),
-  };
-}
-
-/** The overrides for EVERY user assigned to a bucket (the cron job's
- * batched read: one query per table, never per user). */
-export async function assignmentOverridesForUsers(
-  bucketYear: number,
-): Promise<Map<string, BucketPolicyOverrides>> {
-  const assignments = await db.leavePolicyAssignment.findMany({
-    where: { bucketYear },
-    select: { userId: true, setId: true },
-  });
-  if (assignments.length === 0) return new Map();
-  const setIds = [...new Set(assignments.map((a) => a.setId))];
-  const [sets, items] = await Promise.all([
-    db.leavePolicySet.findMany({ where: { id: { in: setIds } }, select: { id: true, name: true } }),
-    db.leavePolicySetItem.findMany({
-      where: { setId: { in: setIds } },
-      select: { setId: true, leaveTypeId: true, annualDays: true },
-    }),
-  ]);
-  const nameById = new Map(sets.map((s) => [s.id, s.name]));
-  const itemsBySet = new Map<string, Map<string, number>>();
-  for (const item of items) {
-    let byType = itemsBySet.get(item.setId);
-    if (!byType) {
-      byType = new Map<string, number>();
-      itemsBySet.set(item.setId, byType);
-    }
-    byType.set(item.leaveTypeId, item.annualDays);
-  }
-  const result = new Map<string, BucketPolicyOverrides>();
-  for (const a of assignments) {
-    if (!nameById.has(a.setId)) continue; // orphaned set — no override
-    result.set(a.userId, {
-      setId: a.setId,
-      setName: nameById.get(a.setId)!,
-      annualDaysByType: itemsBySet.get(a.setId) ?? new Map<string, number>(),
-    });
-  }
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // Balance access — lazily materialized from the type's policy so a user who

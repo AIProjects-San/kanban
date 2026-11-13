@@ -25,7 +25,7 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
-vi.mock("@/server-actions/shared", () => ({
+vi.mock("@/lib/server/audit", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
 }));
 

@@ -8,8 +8,8 @@
 // are invoked from client components and therefore return ActionResults.
 
 import { db } from "@/lib/db";
-import { getSession, AuthorizationError } from "./auth-guard";
-import { getScopedProjectIds, getWorkspaceLimit } from "./shared";
+import { getSession, getSessionOrThrow } from "./auth-guard";
+import { getScopedProjectIds, getWorkspaceLimit, visibleMemberWhere } from "./shared";
 import { getSubtreeUserIds } from "@/lib/hierarchy";
 import { getEffectivePermissions } from "@/lib/config-loader";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
@@ -108,25 +108,12 @@ export async function getDashboardData(): Promise<DashboardData> {
       }
     : projectVisibilityFilter;
 
-  // For scoped users, only show team members who have tasks in the user's
-  // projects or who are explicitly assigned to those projects. Admins see all.
-  // PR-53 — the same member-visibility rule is mirrored in getVisibleMemberIds
-  // (shared.ts) for the paginated time-entries read path. If you change the
-  // rule here, update that helper too — both are commented to point at each
-  // other so the scopes can't drift apart.
+  // For scoped users, only show members visible in the user's projects
+  // (the shared visibleMemberWhere rule — see shared.ts). Admins see all.
   let memberWhere: Prisma.TeamMemberWhereInput | undefined;
   if (isScoped && scopedProjectIds && scopedProjectIds.size > 0) {
-    const projectIdArray = Array.from(scopedProjectIds);
-    const assignedUserIds = await db.projectAssignment.findMany({
-      where: { projectId: { in: projectIdArray } },
-      select: { userId: true },
-    }).then((assignments) => assignments.map((a) => a.userId));
     memberWhere = {
-      OR: [
-        { tasks: { some: { projectId: { in: projectIdArray } } } },
-        { userId: { in: assignedUserIds } },
-        { userId: currentUserId }, // always include yourself
-      ],
+      ...(await visibleMemberWhere(Array.from(scopedProjectIds), currentUserId)),
       ...notDeleted,
     };
   } else if (isScoped) {
@@ -480,8 +467,7 @@ export async function getProjectMembers(projectId: string): Promise<ActionResult
   }>
 >> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
 
     const project = await db.project.findUnique({
       where: { id: projectId },

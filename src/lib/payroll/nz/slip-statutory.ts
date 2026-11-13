@@ -32,6 +32,10 @@
 import type { PayslipStatutoryT } from "@/lib/types";
 import {
   LOP_LINE_KEY,
+  ACC_LEVY_LINE_KEY,
+  KIWISAVER_LINE_KEY,
+  PAYE_LINE_KEY,
+  STUDENT_LOAN_LINE_KEY,
   isStatutoryLineKey,
   lineSum,
   lopBasisGross,
@@ -208,23 +212,23 @@ export function statutoryDeductionLines(result: NzStatutoryResult): PayslipLine[
   const paye = Math.max(0, result.paye.tax);
   if (paye > 0) {
     lines.push({
-      key: "paye",
+      key: PAYE_LINE_KEY,
       label: `PAYE income tax (${result.taxCodeApplied})`,
       amount: paye,
     });
   }
   if (result.paye.acc > 0) {
-    lines.push({ key: "acc", label: "ACC earners' levy", amount: result.paye.acc });
+    lines.push({ key: ACC_LEVY_LINE_KEY, label: "ACC earners' levy", amount: result.paye.acc });
   }
   if (result.kiwisaver.employee > 0) {
     lines.push({
-      key: "ks",
+      key: KIWISAVER_LINE_KEY,
       label: `KiwiSaver employee ${percentLabel(result.kiwisaver.employeeRate)}`,
       amount: result.kiwisaver.employee,
     });
   }
   if (result.studentLoan > 0) {
-    lines.push({ key: "sl", label: "Student loan repayment", amount: result.studentLoan });
+    lines.push({ key: STUDENT_LOAN_LINE_KEY, label: "Student loan repayment", amount: result.studentLoan });
   }
   return lines;
 }

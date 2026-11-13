@@ -29,37 +29,17 @@ import {
   downloadAmendmentFile,
 } from "@/server-actions/payday-filing";
 import type { PaydayFilingSummaryT, PayrollFilingSettingsT, RunFilingPanelT } from "@/lib/ird/filing-types";
-
-const money = (cents: number) =>
-  (cents / 100).toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+import { formatMoneyCents, downloadBlob } from "@/lib/format";
+import { FILING_STATUS_BADGE } from "@/lib/config";
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
 
-const STATUS_STYLE: Record<string, string> = {
-  DRAFT: "bg-slate-500/10 text-slate-600",
-  GENERATED: "bg-sky-500/10 text-sky-600",
-  FILED: "bg-blue-500/10 text-blue-600",
-  ACCEPTED: "bg-emerald-500/10 text-emerald-600",
-  REJECTED: "bg-red-500/10 text-red-600",
-  AMENDED: "bg-orange-500/10 text-orange-600",
-};
-
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`text-[0.625rem] font-semibold px-1.5 py-0.5 rounded ${STATUS_STYLE[status] ?? "bg-slate-500/10 text-slate-600"}`}>
+    <span className={`text-[0.625rem] font-semibold px-1.5 py-0.5 rounded ${FILING_STATUS_BADGE[status] ?? FILING_STATUS_BADGE.DRAFT}`}>
       {status}
     </span>
   );
-}
-
-function downloadBlob(csv: string, filename: string) {
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 export function PaydayFilingPanel({
@@ -334,12 +314,12 @@ export function PaydayFilingPanel({
         {filing && (
           <div className="px-4 py-3 grid gap-x-8 gap-y-1.5 text-sm sm:grid-cols-2">
             <div className="flex justify-between"><span className="text-muted-foreground">Employee lines</span><span className="font-medium">{filing.totalEmployeeLines}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Gross (EI field 11)</span><span className="font-medium">${money(filing.totalGrossCents)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">PAYE income tax (field 15)</span><span className="font-medium">${money(filing.totalPayeCents)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Student loan (field 19)</span><span className="font-medium">${money(filing.totalStudentLoanCents)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">KiwiSaver employee (field 22)</span><span className="font-medium">${money(filing.totalKiwisaverEmployeeCents)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Employer KiwiSaver net (field 23)</span><span className="font-medium">${money(filing.totalKiwisaverEmployerNetCents)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">ESCT (field 24)</span><span className="font-medium">${money(filing.totalEsctCents)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Gross (EI field 11)</span><span className="font-medium">{formatMoneyCents(filing.totalGrossCents)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">PAYE income tax (field 15)</span><span className="font-medium">{formatMoneyCents(filing.totalPayeCents)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Student loan (field 19)</span><span className="font-medium">{formatMoneyCents(filing.totalStudentLoanCents)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">KiwiSaver employee (field 22)</span><span className="font-medium">{formatMoneyCents(filing.totalKiwisaverEmployeeCents)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Employer KiwiSaver net (field 23)</span><span className="font-medium">{formatMoneyCents(filing.totalKiwisaverEmployerNetCents)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">ESCT (field 24)</span><span className="font-medium">{formatMoneyCents(filing.totalEsctCents)}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Pay cycle</span><span className="font-medium font-mono">{filing.payCycle}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Generated</span><span className="font-medium">{day(filing.generatedAt)}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Uploaded to myIR</span><span className="font-medium">{day(filing.filedAt)}{filing.irdReference ? ` · ref ${filing.irdReference}` : ""}</span></div>
@@ -389,7 +369,7 @@ export function PaydayFilingPanel({
               </table>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              ACC earners&apos; levy total (never filed — IRD derives it): ${money(panel.reconciliation.accLevyCents)}.
+              ACC earners&apos; levy total (never filed — IRD derives it): {formatMoneyCents(panel.reconciliation.accLevyCents)}.
               Check 2 is informational; checks 1, 3–8 must pass before a file can be generated.
             </p>
           </div>
@@ -507,7 +487,7 @@ function AmendmentForm({ filing, onDone }: { filing: PaydayFilingSummaryT; onDon
             <div key={l.employeeId} className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-3 py-2">
               <div className="min-w-40">
                 <div className="text-sm font-medium">{l.employeeName}</div>
-                <div className="text-xs text-muted-foreground">filed: gross ${money(l.grossCents)} · PAYE ${money(l.payeCents)}</div>
+                <div className="text-xs text-muted-foreground">filed: gross {formatMoneyCents(l.grossCents)} · PAYE {formatMoneyCents(l.payeCents)}</div>
               </div>
               {(["gross", "paye", "studentLoan", "kiwisaverEmployee"] as const).map((f) => (
                 <label key={f} className="text-xs">

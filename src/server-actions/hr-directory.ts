@@ -136,7 +136,7 @@ export async function getDirectory(): Promise<
     }
     return {
       profiles,
-      canAdmin: hasPermission(auth.role as never, "hr:admin"),
+      canAdmin: hasPermission(auth.role, "hr:admin"),
       retirementAge: config.workspace.retirementAge,
     };
   });

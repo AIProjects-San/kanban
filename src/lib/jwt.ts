@@ -36,9 +36,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const JWT_ALG = "HS256";
 const JWT_TYP = "JWT";
-const DEFAULT_TTL_SEC = 60 * 60; // 1 hour
+/** The default bearer-token lifetime — auth-tokens.ts issues with it. */
+export const DEFAULT_TOKEN_TTL_SEC = 60 * 60;
 
-const WEAK_SECRET_PREFIX = "fernly-dev-secret";
+/** The dev-fallback secret prefix — shared with auth-better.ts so both
+ *  stacks refuse the same weak secrets. */
+export const WEAK_SECRET_PREFIX = "fernly-dev-secret";
 
 // Cache the dev-fallback secret so sign + verify use the same ephemeral
 // value within a process (matches resolveBetterSecret's module-load
@@ -93,7 +96,7 @@ function base64urlDecode(input: string): Buffer {
  */
 export function signJwt(
   payload: Omit<JwtPayload, "iat" | "exp">,
-  ttlSec: number = DEFAULT_TTL_SEC,
+  ttlSec: number = DEFAULT_TOKEN_TTL_SEC,
 ): string {
   const now = Math.floor(Date.now() / 1000);
   const fullPayload: JwtPayload = { ...payload, iat: now, exp: now + ttlSec };

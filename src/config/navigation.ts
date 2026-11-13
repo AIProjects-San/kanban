@@ -19,10 +19,50 @@ import {
   Wallet,
   CalendarCheck,
 } from "lucide-react";
-// Type-only import — erased at runtime, so the store may import this module
-// (for group bookkeeping) without creating a require cycle.
-import type { ViewKey } from "@/store/app-store";
 import type { Permission } from "@/lib/rbac";
+
+// The view registry — the single source of the SPA's view keys. ViewKey is
+// derived from this tuple, so a key missing here (or typo'd in NAV_GROUPS)
+// fails to compile. The store re-exports the type; nothing imports upward.
+export const VIEW_KEYS = [
+  "dashboard",
+  "tasks",
+  "projects",
+  "calendar",
+  "analytics",
+  "team",
+  "settings",
+  "help",
+  "audit",
+  "users",
+  "workspace-settings",
+  "bugs",
+  "leave",
+  "hr",
+  "hiring",
+  "payroll",
+  "my-payslips",
+  "my-interviews",
+  "my-attendance",
+] as const;
+
+export type ViewKey = (typeof VIEW_KEYS)[number];
+
+/** Views rendered full-width (wide console tables); everything else is
+ * centered at max-w-7xl. Derived here so adding a wide view is a registry
+ * edit, not a render-condition edit buried in app-shell. */
+export const WIDE_VIEWS: readonly ViewKey[] = [
+  "settings",
+  "users",
+  "audit",
+  "workspace-settings",
+  "help",
+  "bugs",
+  "leave",
+  "hr",
+  "hiring",
+  "payroll",
+];
 
 // ---------------------------------------------------------------------------
 // PR-58 — Grouped navigation, single source of truth.

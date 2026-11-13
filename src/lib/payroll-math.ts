@@ -28,9 +28,8 @@ export interface PayslipLine {
   statistical?: boolean;
 }
 
-export function round2(n: number): number {
-  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
-}
+export { round2, toCents } from "@/lib/money";
+import { round2 } from "@/lib/money";
 
 /** Days in a "YYYY-MM" period (the month's length). */
 export function daysInPeriod(period: string): number {

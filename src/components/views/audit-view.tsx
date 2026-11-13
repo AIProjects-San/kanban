@@ -6,15 +6,16 @@ import {
   ChevronDown, Activity, CalendarDays, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ROLE_LABELS, hasPermission, type Role } from "@/lib/rbac";
+import { ROLE_LABELS, type Role  } from "@/lib/rbac";
 import { getAuditLogs } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-errors";
+import { actionErrorMessage } from "@/lib/action-result";
 import { Avatar } from "../ui/avatar";
 import { StatCard } from "../ui/stat-card";
 import { FilterBar } from "../ui/filter-bar";
 import { timeAgo } from "@/lib/time";
 import { getActionMeta, getEntityBadge, AUDIT_FILTERS } from "@/lib/audit-meta";
 import { toast } from "sonner";
+import { usePermissions } from "@/hooks/use-permissions";
 
 interface AuditEntryT {
   id: string;
@@ -34,8 +35,9 @@ interface AuditViewProps {
 }
 
 export function AuditView({ currentUser }: AuditViewProps) {
+  const { can } = usePermissions();
   const role = currentUser.role as Role;
-  const canView = hasPermission(role, "audit:view");
+  const canView = can("audit:view");
 
   const [logs, setLogs] = useState<AuditEntryT[]>([]);
   const [loading, setLoading] = useState(true);

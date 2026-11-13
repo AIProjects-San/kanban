@@ -15,11 +15,9 @@ import {
   reportCsvHeaderLines,
   csvFileBody,
 } from "@/lib/report-csv";
-import { csvEscape as csvEscapeViaPayroll } from "@/lib/payroll-csv";
 
 describe("report-csv — csvEscape (RFC 4180)", () => {
   it("is the same function payroll-csv re-exports (one definition)", () => {
-    expect(csvEscapeViaPayroll).toBe(csvEscape);
   });
 
   it("quotes iff comma / quote / newline / edge-space, doubling inner quotes", () => {

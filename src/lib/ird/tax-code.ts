@@ -15,14 +15,12 @@
 // Pure: no DB, no clock.
 // ---------------------------------------------------------------------------
 
-/** The closed set of tax codes IRD accepts on filing lines. */
-export const EI_TAX_CODES: ReadonlySet<string> = new Set([
-  "M", "ME", "M SL", "ME SL",
-  "NSW",
-  "SB", "S", "SH", "ST", "SA",
-  "SB SL", "S SL", "SH SL", "ST SL", "SA SL",
-  "CAE", "EDW", "ND", "STC", "WT",
-]);
+/** The closed set of tax codes IRD accepts on filing lines — the IR330
+ *  vocabulary (+ SL forms + filing-only codes), single-sourced in the
+ *  engine's tax-codes module. */
+import { filingTaxCodes } from "@/lib/payroll/nz/tax-codes";
+
+export const EI_TAX_CODES: ReadonlySet<string> = new Set(filingTaxCodes());
 
 /**
  * Validate a tax code for filing. Fernly stores the IR330 declaration

@@ -18,7 +18,6 @@
 
 import { csvEscape, csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
 
-export { csvEscape } from "@/lib/report-csv";
 
 function money(n: number): string {
   return (Math.round(n * 100) / 100).toFixed(2);

@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { createSalaryRevision } from "@/server-actions/salary-assignments";
 import type { SalaryAssignmentT } from "@/lib/types";
+import { formatMoney } from "@/lib/format";
 
 const inputCls =
   "h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
@@ -35,9 +36,6 @@ const REASON_LABELS: Record<string, string> = {
   PROMOTION: "Promotion",
   TRANSFER: "Transfer",
 };
-
-const money = (n: number) =>
-  `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
 const day = (iso: string) => iso.slice(0, 10);
 
@@ -78,7 +76,7 @@ export function SalaryHistoryView({ history, today }: { history: HistoryT; today
       if (res.data.arrears.length > 0) {
         const total = res.data.arrears.reduce((s, a) => s + a.delta, 0);
         toast.warning(
-          `Revision saved — ${res.data.arrears.length} locked period(s) detected in arrears (net ${money(total)}). Posting the adjustment is a later step.`,
+          `Revision saved — ${res.data.arrears.length} locked period(s) detected in arrears (net ${formatMoney(total)}). Posting the adjustment is a later step.`,
           { duration: 8000 },
         );
       } else {
@@ -141,9 +139,9 @@ export function SalaryHistoryView({ history, today }: { history: HistoryT; today
                 <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                   {a.toDate ? day(a.toDate) : "— current —"}
                 </td>
-                <td className="px-4 py-3 text-right font-medium tabular-nums">{money(a.base)}</td>
+                <td className="px-4 py-3 text-right font-medium tabular-nums">{formatMoney(a.base)}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                  {a.variable > 0 ? money(a.variable) : "—"}
+                  {a.variable > 0 ? formatMoney(a.variable) : "—"}
                 </td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">

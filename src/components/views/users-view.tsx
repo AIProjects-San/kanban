@@ -11,7 +11,7 @@ import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
 import {
   getAllUsers, deleteUser, getUserProjectAssignments } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-errors";
+import { actionErrorMessage } from "@/lib/action-result";
 import {
   type Role,
   ROLE_LABELS, ALL_PERMISSIONS,
@@ -44,10 +44,9 @@ interface ProjectAssignment {
 
 interface UsersViewProps {
   currentUser: { id: string; name: string; email: string; role: string };
-  projects: Array<{ id: string; name: string; color: string; status: string }>;
 }
 
-export function UsersView({ currentUser, projects: _projects }: UsersViewProps) {
+export function UsersView({ currentUser }: UsersViewProps) {
   const { openUserModal, openAssignmentModal } = useApp();
   const refresh = useRefresh();
   const [users, setUsers] = useState<UserRecord[]>([]);

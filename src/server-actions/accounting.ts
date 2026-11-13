@@ -32,6 +32,8 @@ import { parseOrThrow, reverseJournalEntrySchema } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+import { csvEscape } from "@/lib/report-csv";
+import { round2 } from "@/lib/money";
 
 export interface TrialBalanceRowT {
   code: string;
@@ -112,9 +114,9 @@ export async function getTrialBalance(periodId: string): Promise<ActionResult<Tr
     }
 
     const rows: TrialBalanceRowT[] = accounts.map((a) => {
-      const opening = Math.round((openingById.get(a.id) ?? 0) * 100) / 100;
-      const debits = Math.round((debitById.get(a.id) ?? 0) * 100) / 100;
-      const credits = Math.round((creditById.get(a.id) ?? 0) * 100) / 100;
+      const opening = round2(openingById.get(a.id) ?? 0);
+      const debits = round2(debitById.get(a.id) ?? 0);
+      const credits = round2(creditById.get(a.id) ?? 0);
       return {
         code: a.code,
         name: a.name,
@@ -122,11 +124,11 @@ export async function getTrialBalance(periodId: string): Promise<ActionResult<Tr
         opening,
         debits,
         credits,
-        closing: Math.round((opening + debits - credits) * 100) / 100,
+        closing: round2(opening + debits - credits),
       };
     });
 
-    const sum = (sel: (r: TrialBalanceRowT) => number) => Math.round(rows.reduce((s, r) => s + sel(r), 0) * 100) / 100;
+    const sum = (sel: (r: TrialBalanceRowT) => number) => round2(rows.reduce((s, r) => s + sel(r), 0));
     return {
       period: {
         id: period.id,
@@ -151,10 +153,9 @@ export async function exportTrialBalanceCsv(
   return toResult(async () => {
     await requirePermission("payroll:manage");
     const res = await getTrialBalance(periodId);
-    if (!res.ok) throw new AuthorizationError(res.error);
+    if (!res.ok) throw new Error(res.error);
     const { period, rows, totals } = res.data;
-    const cell = (c: string | number) =>
-      typeof c === "string" && /[",]/.test(c) ? `"${c.replace(/"/g, '""')}"` : String(c);
+    const cell = csvEscape;
     const lines = [
       `Trial balance,${period.startDate.slice(0, 10)},${period.endDate.slice(0, 10)}`,
       "Code,Account,Type,Opening,Debits,Credits,Closing",

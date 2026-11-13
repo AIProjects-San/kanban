@@ -2,7 +2,9 @@
 //
 // Runs against the PRODUCTION standalone build (start it first):
 //   PORT=3100 bash scripts/run-with-env.sh bun .next/standalone/server.js &
-//   bun scripts/load-smoke.mjs http://localhost:3100 60
+//   bash scripts/run-with-env.sh bun scripts/load-smoke.mjs http://localhost:3100 60
+// (run-with-env.sh loads NEXT_PUBLIC_DEMO_PASSWORD from .env — the demo
+// password's only home; there is no hardcoded fallback.)
 //
 // Scenarios (mix approximates real traffic):
 //   • browse  — 35 concurrent GETs of / (SSR login/dashboard shell, the heaviest page)
@@ -15,12 +17,17 @@
 // k6 scenarios in scripts/load-test.k6.js remain the reference for real
 // capacity planning on production hardware.
 
+import { demoPassword } from "./lib/demo-env.mjs";
+
 const BASE = process.argv[2] || "http://localhost:3100";
 const DURATION_S = Number(process.argv[3] || 60);
 // Worker counts are tunable so the same script covers a normal-traffic
 // profile (LOGIN_VUS=2) and a login-storm profile (LOGIN_VUS=8).
 const LOGIN_VUS = Number(process.env.LOGIN_VUS || 8);
-const PASSWORD = process.env.NEXT_PUBLIC_DEMO_PASSWORD || "fernly123";
+// Secret hygiene (docs/SECURITY.md): the demo password's only home is .env
+// (NEXT_PUBLIC_DEMO_PASSWORD) — read it through the shared helper so there is
+// exactly one place to change it, and no hardcoded fallback.
+const PASSWORD = demoPassword();
 
 const results = {
   browse: { latencies: [], errors: 0 },

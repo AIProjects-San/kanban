@@ -7,8 +7,8 @@
 // decision §9.2 — the mailer has no attachment support.
 // ---------------------------------------------------------------------------
 
-import { parsePayslipLines } from "@/lib/payroll-math";
-import { escapeHtml } from "@/lib/utils";
+import { parsePayslipLines, round2 } from "@/lib/payroll-math";
+import { emailHtml } from "@/lib/email-html";
 
 function nz(n: number): string {
   return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -18,7 +18,7 @@ function nz(n: number): string {
  * parsePayslipLines is defensive: a malformed column reads as [] and the
  * total as 0 — the money lives in gross/net anyway). */
 export function deductionTotal(deductions: string): number {
-  return Math.round(parsePayslipLines(deductions).reduce((s, l) => s + l.amount, 0) * 100) / 100;
+  return round2(parsePayslipLines(deductions).reduce((s, l) => s + l.amount, 0));
 }
 
 /** The subject names the period only — no amounts (privacy: subjects leak
@@ -58,10 +58,7 @@ export function payslipEmailText(
   ].join("\n");
 }
 
+/** The payslip mail body: the shared wrap with the net-pay line bolded. */
 export function payslipEmailHtml(text: string): string {
-  const body = text
-    .split("\n")
-    .map((l) => (l.startsWith("Net pay:") ? `<strong>${escapeHtml(l)}</strong>` : escapeHtml(l)))
-    .join("<br />");
-  return `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #111;">${body}</div>`;
+  return emailHtml(text, { bold: (line) => line.startsWith("Net pay:") });
 }

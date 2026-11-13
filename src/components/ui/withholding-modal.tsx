@@ -19,10 +19,7 @@ import {
 } from "@/server-actions/payroll-withholding";
 import { currentPeriod } from "@/lib/payroll-math";
 import type { SalaryWithholdingT } from "@/lib/types";
-
-function money(n: number): string {
-  return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+import { formatMoney } from "@/lib/format";
 
 export function WithholdingModal({
   open,
@@ -86,7 +83,7 @@ export function WithholdingModal({
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
     toast.success(
-      `Released — ${res.data.adjustmentCount} held payslip(s) totalling ${money(res.data.total)} pay on the ${releasePeriod} run.`,
+      `Released — ${res.data.adjustmentCount} held payslip(s) totalling ${formatMoney(res.data.total)} pay on the ${releasePeriod} run.`,
     );
     setReleasingId(null);
     await load();
@@ -120,7 +117,7 @@ export function WithholdingModal({
                     </span>
                     {r.status === "ACTIVE" ? (
                       <span className="text-xs text-muted-foreground ml-auto">
-                        held: {r.heldSlipCount} slip(s) · {money(r.heldTotal)}
+                        held: {r.heldSlipCount} slip(s) · {formatMoney(r.heldTotal)}
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground ml-auto">
@@ -143,7 +140,7 @@ export function WithholdingModal({
                               disabled={busy || r.heldSlipCount === 0}
                               onClick={() => void submitRelease(r.id)}
                               data-testid="withholding-release-confirm">
-                              <PlayCircle size={13} /> Release {money(r.heldTotal)}
+                              <PlayCircle size={13} /> Release {formatMoney(r.heldTotal)}
                             </button>
                             <button type="button" className="f-btn f-btn-ghost text-xs"
                               onClick={() => setReleasingId(null)}>

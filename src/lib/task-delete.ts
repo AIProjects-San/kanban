@@ -26,6 +26,10 @@ export interface TaskDeleteContext {
   myTeamMemberId?: string | null;
   /** MANAGER-only: user ids in the signed-in manager's reporting subtree. */
   managedUserIds?: string[];
+  /** The effective `task:delete` permission (DB ceiling included) — the
+   *  mirror of the server's rule 1. Falls back to the static ADMIN check
+   *  when a caller has no permission set. */
+  canTaskDelete?: boolean;
 }
 
 export function canDeleteTask(
@@ -35,8 +39,10 @@ export function canDeleteTask(
 ): boolean {
   if (!sessionUser) return false;
 
-  // 1. ADMIN — blanket permission (mirror of task:delete in lib/rbac.ts).
-  if (sessionUser.role === "ADMIN") return true;
+  // 1. Blanket task:delete permission (the server's hasPermission floor OR
+  //    the DB ceiling) — the effective set when available, else the static
+  //    ADMIN role that always holds it.
+  if (ctx.canTaskDelete ?? sessionUser.role === "ADMIN") return true;
 
   // 2. The assigned user may delete their own task.
   if (task.assigneeId && task.assigneeId === ctx.myTeamMemberId) return true;

@@ -8,7 +8,7 @@
 // rationale in the original review §P1-15).
 
 import { db } from "@/lib/db";
-import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { requirePermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
 import { hasPermission } from "@/lib/rbac";
 import { getWorkspaceLimit } from "./shared";
 import { toResult } from "./result";
@@ -62,8 +62,7 @@ export async function getAuditLogsForEntity(
   }>
 >> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     if (!entityId) return [];
     // Deep-dive review F-03 — entityType was previously unrestricted, so any
     // signed-in MEMBER could read the audit trail of arbitrary entities —

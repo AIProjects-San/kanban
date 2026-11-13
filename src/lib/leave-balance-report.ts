@@ -25,6 +25,8 @@
 
 import { csvRow, reportCsvHeaderLines, csvFileBody } from "@/lib/report-csv";
 
+import { round2 } from "@/lib/payroll-math";
+
 export interface LedgerRowForReport {
   userId: string;
   leaveTypeId: string;
@@ -50,11 +52,6 @@ export interface LeaveBalanceReportRow {
   taken: number;
   expired: number;
   closing: number;
-}
-
-function round2(n: number): number {
-  const r = Math.round(n * 100) / 100;
-  return r === 0 ? 0 : r;
 }
 
 /** Build the report rows from raw ledger rows for the target year. */

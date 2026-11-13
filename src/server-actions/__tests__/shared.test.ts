@@ -30,7 +30,7 @@ vi.mock("next/headers", () => ({
   headers: async () => mockHeaderBag.current,
 }));
 
-import { getClientInfo, getWorkspaceLimit, fmtDay } from "../shared";
+import { getClientInfo, getWorkspaceLimit, fmtDayDate } from "../shared";
 
 describe("getClientInfo (P1 audit context)", () => {
   beforeEach(() => {
@@ -38,15 +38,23 @@ describe("getClientInfo (P1 audit context)", () => {
     mockHeaderBag.current = new Headers();
   });
 
-  it("reads the first x-forwarded-for hop and the user agent", async () => {
+  it("reads the LAST x-forwarded-for hop and the user agent (trusted-proxy convention)", async () => {
     mockHeaderBag.current = new Headers({
       "x-forwarded-for": "203.0.113.10, 10.0.0.1, 10.0.0.2",
       "user-agent": "Mozilla/5.0 (X11; Linux x86_64)",
     });
     expect(await getClientInfo()).toEqual({
-      ip: "203.0.113.10",
+      ip: "10.0.0.2",
       userAgent: "Mozilla/5.0 (X11; Linux x86_64)",
     });
+  });
+
+  it("prefers x-real-ip over x-forwarded-for when the edge sets it", async () => {
+    mockHeaderBag.current = new Headers({
+      "x-real-ip": "198.51.100.7",
+      "x-forwarded-for": "203.0.113.10, 10.0.0.1",
+    });
+    expect((await getClientInfo()).ip).toBe("198.51.100.7");
   });
 
   it("falls back to 'unknown' for both fields when headers are absent", async () => {
@@ -59,18 +67,17 @@ describe("getClientInfo (P1 audit context)", () => {
     expect(info.userAgent).toHaveLength(500);
   });
 
-  it("returns unknown/unknown when headers() throws (outside a request context)", async () => {
-    // PR-22 — headers() throws outside a request context (background jobs,
-    // tests); the helper must degrade to unknown, never crash the caller.
+  it("returns empty fields when headers() throws, so audit columns keep their defaults", async () => {
+    // headers() throws outside a request context (background jobs, tests);
+    // the helper must degrade to empty fields, never crash the caller.
     const orig = mockHeaderBag.current;
     // @ts-expect-error — deliberately poison the bag for one call
     mockHeaderBag.current = { get() { throw new Error("no request context"); } };
     try {
-      expect(await getClientInfo()).toEqual({ ip: "unknown", userAgent: "unknown" });
-      expect(logErrorSpy).toHaveBeenCalledWith(
-        "[shared] getClientInfo failed (outside request context?):",
-        expect.any(Error),
-      );
+      // No error log either — outside a request context is the normal case
+      // for cron jobs and tests, not a degradation worth a log line.
+      expect(await getClientInfo()).toEqual({ ip: "", userAgent: "" });
+      expect(logErrorSpy).not.toHaveBeenCalled();
     } finally {
       mockHeaderBag.current = orig;
     }
@@ -121,6 +128,6 @@ describe("getWorkspaceLimit (PR-18)", () => {
 
 describe("fmtDay", () => {
   it("formats a Date as 'D Mon' (en-GB)", () => {
-    expect(fmtDay(new Date(Date.UTC(2026, 9, 5)))).toBe("5 Oct");
+    expect(fmtDayDate(new Date(Date.UTC(2026, 9, 5)))).toBe("5 Oct");
   });
 });

@@ -34,6 +34,7 @@ import {
   withholdingReleaseLabel,
 } from "@/lib/salary-withholding";
 import type { SalaryWithholdingT } from "@/lib/types";
+import { round2 } from "@/lib/money";
 
 export async function listSalaryWithholdings(): Promise<ActionResult<SalaryWithholdingT[]>> {
   return toResult(async () => {
@@ -52,7 +53,7 @@ export async function listSalaryWithholdings(): Promise<ActionResult<SalaryWithh
     for (const s of heldSlips) {
       const cur = heldByUser.get(s.userId) ?? { count: 0, total: 0 };
       cur.count += 1;
-      cur.total = Math.round((cur.total + s.net) * 100) / 100;
+      cur.total = round2(cur.total + s.net);
       heldByUser.set(s.userId, cur);
     }
     return rows.map((r) => ({

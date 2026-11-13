@@ -9,7 +9,7 @@ import { Avatar } from "../ui/avatar";
 import { toast } from "sonner";
 import { updateProfile, changePassword, updateUserSettings } from "@/server-actions/data";
 import { exportMyData } from "@/server-actions/data-export";
-import { actionErrorMessage } from "@/lib/action-errors";
+import { actionErrorMessage } from "@/lib/action-result";
 import { Section } from "../ui/section";
 import { EmployeeProfileSection } from "./hr-directory";
 import { MyReviewsSection } from "./hr-reviews";
@@ -24,6 +24,7 @@ import { AvatarColorPicker } from "../ui/avatar-color-picker";
 import { Toggle } from "../ui/toggle";
 import { ACCENTS, TIMEZONES } from "@/lib/constants";
 import { APP } from "@/config/app";
+import { downloadBlob } from "@/lib/format";
 
 interface SettingsViewProps {
   user: {
@@ -317,19 +318,13 @@ function PrivacySection({ userId }: { userId: string }) {
       }
       // Serialize + trigger a browser download. Filename includes the userId
       // prefix and ISO date so multiple exports don't collide.
-      const blob = new Blob([JSON.stringify(res.data, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${APP.slug}-data-export-${userId.slice(0, 8)}-${new Date()
-        .toISOString()
-        .slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBlob(
+        JSON.stringify(res.data, null, 2),
+        `${APP.slug}-data-export-${userId.slice(0, 8)}-${new Date()
+          .toISOString()
+          .slice(0, 10)}.json`,
+        "application/json",
+      );
       toast.success("Data export ready", {
         description:
           "Your personal data has been downloaded as a JSON file.",

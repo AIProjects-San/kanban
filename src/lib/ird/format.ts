@@ -16,6 +16,8 @@
 // ---------------------------------------------------------------------------
 
 /** A structural problem in a would-be IRD file line. Always fatal. */
+import { toCents as dollarsToCents } from "@/lib/payroll-math";
+
 export class IrdFormatError extends Error {
   constructor(message: string) {
     super(message);
@@ -33,7 +35,7 @@ export function toCents(amount: number, field: string): number {
   if (!Number.isFinite(amount)) {
     throw new IrdFormatError(`${field}: amount is not a finite number.`);
   }
-  const cents = Math.round(amount * 100);
+  const cents = dollarsToCents(amount);
   if (Math.abs(cents) > Number.MAX_SAFE_INTEGER) {
     throw new IrdFormatError(`${field}: amount out of range.`);
   }

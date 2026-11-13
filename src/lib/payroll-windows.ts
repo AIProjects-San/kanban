@@ -46,6 +46,14 @@ export type PayrollFrequency =
   | "ANNUAL";
 
 /** Zod-enum-friendly literal tuple (validation.ts reuses it). */
+/** Narrow a stored frequency string to the union (unknown/legacy values
+ *  collapse to MONTHLY, the historical default). */
+export function parsePayrollFrequency(value: string | null | undefined): PayrollFrequency {
+  return (PAYROLL_FREQUENCY_VALUES as readonly string[]).includes(value ?? "")
+    ? (value as PayrollFrequency)
+    : "MONTHLY";
+}
+
 export const PAYROLL_FREQUENCY_VALUES = [
   "MONTHLY",
   "BIMONTHLY",

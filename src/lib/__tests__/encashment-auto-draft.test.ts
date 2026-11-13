@@ -39,7 +39,7 @@ vi.mock("@/lib/config-loader", () => ({
 
 const queueOutboxMailMock = vi.fn();
 const deliverOutboxMailMock = vi.fn();
-vi.mock("@/server-actions/shared", () => ({
+vi.mock("@/lib/server/mail-outbox", () => ({
   queueOutboxMail: (...a: unknown[]) => queueOutboxMailMock(...a),
   deliverOutboxMail: (...a: unknown[]) => deliverOutboxMailMock(...a),
 }));

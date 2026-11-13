@@ -28,17 +28,23 @@ const {
 Before({ tags: "@hr-qa" }, async function () {
   // The cucumber process is not run through scripts/run-with-env.sh, so the
   // datasource URL has to be resolved here with the SAME precedence that
-  // wrapper implements: .env overrides the system environment when it exists
-  // (this sandbox exports a platform-wide DATABASE_URL pointing at a
-  // different sqlite file — db/custom.db — which would silently hit the
-  // wrong database), while CI injects its own DATABASE_URL and has no .env
-  // (it is gitignored), so the environment wins there.
+  // wrapper implements (scripts/README.md, "Environment precedence"): a
+  // DATABASE_URL already set in the environment WINS over .env. Capture the
+  // preset BEFORE parsing .env and restore it afterwards, so .env can never
+  // silently repoint a preset URL (the duplicate-reversal-JE incident class).
+  // An unset/empty preset still lets .env decide (the normal dev path), and
+  // CI — which injects its own DATABASE_URL and has no .env (it is
+  // gitignored) — keeps its environment value.
+  const presetDatabaseUrl = process.env.DATABASE_URL || "";
   const envFile = path.join(__dirname, "..", "..", ".env");
   if (fs.existsSync(envFile)) {
     for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
       const m = line.match(/^\s*DATABASE_URL\s*=\s*(.+?)\s*$/);
       if (m) process.env.DATABASE_URL = m[1];
     }
+  }
+  if (presetDatabaseUrl) {
+    process.env.DATABASE_URL = presetDatabaseUrl;
   }
   const { PrismaClient } = require("@prisma/client");
   console.log("[qa-cleanup] effective DATABASE_URL:", process.env.DATABASE_URL);

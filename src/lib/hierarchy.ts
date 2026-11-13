@@ -26,7 +26,7 @@
 
 import { db } from "@/lib/db";
 import { outranks, type Role } from "@/lib/rbac";
-import { AuthorizationError } from "@/server-actions/auth-guard";
+import { AuthorizationError } from "@/lib/server/authorization-error";
 
 /**
  * Walk up the `managerId` chain from `userId` and return the ordered list

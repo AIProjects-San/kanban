@@ -10,7 +10,7 @@ import { useRefresh } from "@/hooks/use-refresh";
 import { usePermissions } from "@/hooks/use-permissions";
 import { toast } from "sonner";
 import { deleteProject } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-errors";
+import { actionErrorMessage } from "@/lib/action-result";
 import { EmptyState } from "../ui/empty-state";
 import { FilterBar } from "../ui/filter-bar";
 import { PROJECT_STATUSES, PROJECT_STATUS_MAP, priorityClass } from "@/lib/config";

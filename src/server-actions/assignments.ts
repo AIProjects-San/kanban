@@ -5,7 +5,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requirePermission, getSession, AuthorizationError } from "./auth-guard";
+import { requirePermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -108,8 +108,7 @@ export async function getProjectAssignments(projectId: string): Promise<ActionRe
   }>
 >> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     // PR-54 — scope gate (mirrors getProjectMembers in dashboard.ts).
     // Without this, any signed-in MEMBER could pass an arbitrary projectId
     // and receive that project's full staff roster (including emails +
@@ -161,8 +160,7 @@ export async function getProjectAssignableUsers(projectId: string): Promise<Acti
   }>
 >> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
 
     const project = await db.project.findUnique({
       where: { id: projectId },

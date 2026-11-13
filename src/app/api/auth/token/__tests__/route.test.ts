@@ -9,9 +9,21 @@ const { getSessionMock, logAuditMock, mockHeaderBag } = vi.hoisted(() => ({
   mockHeaderBag: { current: new Headers() },
 }));
 
-vi.mock("@/server-actions/auth-guard", () => ({
-  getSession: () => getSessionMock(),
-}));
+vi.mock("@/server-actions/auth-guard", () => {
+  class AuthorizationError extends Error {
+    readonly digest = "AuthorizationError";
+    constructor(m: string) { super(m); this.name = "AuthorizationError"; }
+  }
+  return {
+    getSession: () => getSessionMock(),
+    getSessionOrThrow: async () => {
+      const a = await getSessionMock();
+      if (!a) throw new AuthorizationError("You must be signed in.");
+      return a;
+    },
+  
+  };
+});
 vi.mock("@/server-actions/shared", () => ({
   logAudit: (entry: unknown) => logAuditMock(entry),
 }));

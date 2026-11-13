@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePermission } from "./auth-guard";
 import { createEventSchema, parseOrThrow } from "@/lib/validation";
-import { logAudit, fmtDay } from "./shared";
+import { logAudit, fmtDayDate } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -39,7 +39,7 @@ export async function createEvent(input: {
       entityType: "EVENT",
       entityId: event.id,
       entityLabel: event.title,
-      detail: `Scheduled “${event.title}” on ${fmtDay(event.date)} at ${event.time}`,
+      detail: `Scheduled “${event.title}” on ${fmtDayDate(event.date)} at ${event.time}`,
     });
     revalidatePath("/");
   });

@@ -25,27 +25,21 @@
 // No I/O, no clock, no db.
 // ---------------------------------------------------------------------------
 
-import {
-  monthlyEarningsFromStructure,
-  windowDeductionsFromStructure,
-  payslipTotals,
-  scaleEarningsToPaidDays,
-  lopBasisGross,
-  withLopLine,
-  withRoundingLine,
-  round2,
-  type PayslipLine,
-} from "@/lib/payroll-math";
-import { applyAdjustments, structureNetDeductionRows } from "@/lib/pay-adjustment";
+import { payslipTotals, withRoundingLine, round2 } from "@/lib/payroll-math";
+import { deriveSlipLines } from "@/lib/payroll/slip-derivation";
 import { parseComponents, type OfferComponent } from "@/lib/offer-math";
 import type { PayrollRoundingMode } from "@/lib/payroll-math";
+import type { PayrollFrequency } from "@/lib/payroll-windows";
 
 /** The stored facts one slip contributes to the simulation. */
 export interface ArrearsSlipFacts {
   payslipId: string;
   userId: string;
-  /** The LOCKED run's period ("YYYY-MM"). */
+  /** The LOCKED run's period ("YYYY-MM" or "YYYY-Wnn"). */
   period: string;
+  /** The run's cadence — the per-window resolution basis (a weekly run's
+   *  slip must re-simulate on weekly windows, never monthly). */
+  frequency: PayrollFrequency;
   /** The run's holiday-aware working-day denominator (F1.1). */
   workingDays: number;
   /** The slip's snapshotted paid days (S5; null = pre-S5 full period). */
@@ -96,29 +90,24 @@ export function simulateArrearsForSlip(
     return { ...base, reason: "no active salary structure" };
   }
 
-  // The run-creation pipeline, replayed with today's structure. P23 — the
-  // replay mirrors the NEW chain too: the structure's flat deduction lines
-  // materialize (windowDeductionsFromStructure) and its percent-of-net
-  // lines resolve through the same two-pass kernel (structure rows only —
-  // the stored slip's ADJUSTMENTS were consumed at lock time and are facts
-  // of history, not of the structure; the delta discipline stays the same:
-  // a current structure that now deducts more simulates LOWER net → a
-  // negative delta is reported as overpayment, never arrears).
-  const earnings = scaleEarningsToPaidDays(
-    monthlyEarningsFromStructure(components),
-    facts.paidDays,
-    facts.workingDays > 0 ? facts.workingDays : undefined,
-  );
-  const structureDeductions = windowDeductionsFromStructure(components, "MONTHLY", 2024);
-  const baseDeductions = facts.lopDays > 0
-    ? withLopLine(structureDeductions, lopBasisGross(earnings), facts.lopDays, facts.period, facts.workingDays > 0 ? facts.workingDays : undefined)
-    : structureDeductions;
-  const applied = applyAdjustments(
-    { earnings, deductions: baseDeductions },
-    structureNetDeductionRows(components),
-    facts.period,
-  );
-  const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
+  // The run-creation pipeline, replayed with today's structure through the
+  // shared derivation kernel (no overtime, no adapter rows — the stored
+  // slip's ADJUSTMENTS were consumed at lock time and are facts of history,
+  // not of the structure; the delta discipline stays the same: a current
+  // structure that now deducts more simulates LOWER net → a negative delta
+  // is reported as overpayment, never arrears).
+  const derived = deriveSlipLines({
+    components,
+    frequency: facts.frequency,
+    earningsYear: Number(facts.period.slice(0, 4)),
+    workingDays: facts.workingDays,
+    paidDays: facts.paidDays,
+    lopDays: facts.lopDays,
+    periodKey: facts.period,
+    overtime: { enabled: false, minutes: null },
+    adapterRows: [],
+  });
+  const { earnings: finalEarnings, deductions } = withRoundingLine(derived.earnings, derived.deductions, roundingMode);
   const { net: simulatedNet } = payslipTotals(finalEarnings, deductions);
 
   const delta = round2(simulatedNet - facts.storedNet);
@@ -153,5 +142,3 @@ export function arrearsAdjustmentLabel(period: string, slipNo: string): string {
 export function arrearsComponents(structureComponentsJson: string): OfferComponent[] {
   return parseComponents(structureComponentsJson);
 }
-
-export type { PayslipLine };

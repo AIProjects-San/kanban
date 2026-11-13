@@ -213,7 +213,7 @@ export async function getMyLeaveData(): Promise<
         policy: t.policy ? policyDto(t.policy) : null,
       })),
       year,
-      canManage: hasPermission(auth.role as never, "hr:view"),
+      canManage: hasPermission(auth.role, "hr:view"),
       holidays,
     };
   });
@@ -229,10 +229,10 @@ export async function getLeaveQueue(): Promise<
 > {
   return toResult(async () => {
     const auth = await requirePermission("hr:view");
-    const canAdmin = hasPermission(auth.role as never, "hr:admin");
+    const canAdmin = hasPermission(auth.role, "hr:admin");
     // F1.3 — the Attendance tab's gate. Same ADMIN+HR audience as canAdmin
     // today, but its OWN permission so a DB ceiling can diverge them.
-    const canManageAttendance = hasPermission(auth.role as never, "attendance:manage");
+    const canManageAttendance = hasPermission(auth.role, "attendance:manage");
 
     let visibleUserIds: string[] | null = null;
     if (auth.role === "MANAGER") {

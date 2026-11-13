@@ -26,11 +26,10 @@ import {
 } from "@/server-actions/hr-reviews";
 import { getDirectory } from "@/server-actions/hr-directory";
 import { useApp } from "@/store/app-store";
+import { fmtDay } from "@/lib/format";
 
 function fmtPeriod(r: PerformanceReviewT): string {
-  const fmt = (iso: string) =>
-    new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-  return `${fmt(r.periodStart)} → ${fmt(r.periodEnd)}`;
+  return `${fmtDay(r.periodStart)} → ${fmtDay(r.periodEnd)}`;
 }
 
 // ---------------------------------------------------------------------------

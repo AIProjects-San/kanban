@@ -26,6 +26,7 @@ import { getSessionOrThrow } from "./auth-guard";
 import { signJwt } from "@/lib/jwt";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+import { DEFAULT_TOKEN_TTL_SEC } from "@/lib/jwt";
 
 export interface IssuedToken {
   /** The JWT string — pass as `Authorization: Bearer <token>`. */
@@ -39,7 +40,7 @@ export interface IssuedToken {
   tokenType: "Bearer";
 }
 
-const TOKEN_TTL_SEC = 60 * 60; // 1 hour — matches signJwt's default.
+const TOKEN_TTL_SEC = DEFAULT_TOKEN_TTL_SEC;
 
 export async function issueAuthToken(): Promise<ActionResult<IssuedToken>> {
   return toResult(async () => {

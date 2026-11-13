@@ -14,10 +14,7 @@ import { toast } from "sonner";
 import type { PayslipT } from "@/lib/types";
 import { getMyPayslips } from "@/server-actions/payroll";
 import { PayslipModal } from "../ui/payslip-modal";
-
-function money(n: number): string {
-  return `$${n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+import { formatMoney } from "@/lib/format";
 
 function monthLabel(period: string): string {
   const [y, m] = period.split("-").map(Number);
@@ -63,7 +60,7 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {slips.length > 0
-              ? `${slips.length} payslip${slips.length === 1 ? "" : "s"} · net paid this year ${money(Math.round(ytdThisYear * 100) / 100)} · ${currentUser.name}`
+              ? `${slips.length} payslip${slips.length === 1 ? "" : "s"} · net paid this year ${formatMoney(Math.round(ytdThisYear * 100) / 100)} · ${currentUser.name}`
               : `Payslips appear here once a month is finalized (locked) · ${currentUser.name}`}
           </p>
         </div>
@@ -74,27 +71,27 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
         <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 flex flex-wrap items-center gap-x-8 gap-y-2" data-testid="my-payslips-latest">
           <div>
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Latest pay</div>
-            <div className="text-lg font-bold tabular-nums text-primary">{money(latest.net)}</div>
+            <div className="text-lg font-bold tabular-nums text-primary">{formatMoney(latest.net)}</div>
             <div className="text-xs text-muted-foreground">{monthLabel(latest.runPeriod)} · {latest.slipNo}</div>
           </div>
           <div>
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Gross</div>
-            <div className="text-sm font-semibold tabular-nums">{money(latest.gross)}</div>
+            <div className="text-sm font-semibold tabular-nums">{formatMoney(latest.gross)}</div>
           </div>
           <div>
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Deductions</div>
-            <div className="text-sm font-semibold tabular-nums text-destructive">{money(Math.round((latest.gross - latest.net) * 100) / 100)}</div>
+            <div className="text-sm font-semibold tabular-nums text-destructive">{formatMoney(Math.round((latest.gross - latest.net) * 100) / 100)}</div>
           </div>
           <div>
             <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
               Net YTD {latest.runPeriod.slice(0, 4)}
               <span className="ml-1 normal-case font-normal" title="Your view counts locked (paid) runs only — the HR console's YTD also includes the currently open month.">(paid runs only)</span>
             </div>
-            <div className="text-sm font-semibold tabular-nums">{money(latest.ytdNet)}</div>
+            <div className="text-sm font-semibold tabular-nums">{formatMoney(latest.ytdNet)}</div>
             {/* P11 (PR-B09) — the month-to-date net: this calendar month's
                 paid slips so far (several runs can land in one month). */}
             <div className="text-xs text-muted-foreground mt-0.5" title="The net paid so far this calendar month (all of this month's finalized slips, this one included)">
-              this month: {money(latest.mtdNet)}
+              this month: {formatMoney(latest.mtdNet)}
             </div>
           </div>
           <button className="f-btn f-btn-secondary ml-auto" onClick={() => setOpen(latest)} data-testid="my-payslips-latest-open">
@@ -137,12 +134,12 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
                   )}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  gross {money(p.gross)} · deductions {money(Math.round((p.gross - p.net) * 100) / 100)}
+                  gross {formatMoney(p.gross)} · deductions {formatMoney(Math.round((p.gross - p.net) * 100) / 100)}
                   {p.lopDays > 0 ? ` · LOP ${p.lopDays}d (${p.lopSource === "MANUAL" ? "manual" : "auto"})` : ""}
                 </span>
               </span>
-              <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {money(p.ytdNet)}</span>
-              <span className="font-semibold tabular-nums text-primary shrink-0">{money(p.net)}</span>
+              <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">YTD {formatMoney(p.ytdNet)}</span>
+              <span className="font-semibold tabular-nums text-primary shrink-0">{formatMoney(p.net)}</span>
             </button>
           ))}
           {loaded && slips.length === 0 && (

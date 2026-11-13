@@ -8,7 +8,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getSession, getSessionOrThrow, requirePermission, requirePermissionForTarget, AuthorizationError } from "./auth-guard";
+import { getSessionOrThrow, requirePermission, requirePermissionForTarget, AuthorizationError } from "./auth-guard";
 import { revokeUserSessionsIfActive } from "@/lib/auth-revoke";
 import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/rbac";
 import { getEffectivePermissions } from "@/lib/config-loader";
@@ -82,8 +82,7 @@ export async function getMyPermissions(): Promise<ActionResult<string[]>> {
 // ---------------------------------------------------------------------------
 
 export async function getUserSettings(userId: string) {
-  const auth = await getSession();
-  if (!auth) throw new AuthorizationError("You must be signed in.");
+  const auth = await getSessionOrThrow();
   // PR-03 (production-readiness audit) — ownership check. Previously any
   // signed-in user could read any other user's settings by passing their id
   // (an IDOR; updateUserSettings already enforced ownership, this read path
@@ -131,8 +130,7 @@ export async function updateUserSettings(userId: string, input: Partial<{
   notifProduct: boolean;
 }>): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     if (auth.userId !== userId) {
       throw new AuthorizationError("You can only update your own settings.");
     }
@@ -170,8 +168,7 @@ export async function updateProfile(userId: string, input: {
   avatarColor: string;
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     if (auth.userId !== userId) {
       throw new AuthorizationError("You can only update your own profile.");
     }
@@ -224,8 +221,7 @@ export async function changePassword(input: {
   newPassword: string;
 }): Promise<ActionResult<void>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     if (auth.userId !== input.userId) {
       throw new AuthorizationError("You can only change your own password.");
     }

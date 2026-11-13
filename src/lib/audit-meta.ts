@@ -64,6 +64,7 @@ export type AuditAction =
   | "audit.pruned" // L-P1-20 — records when the audit log was pruned
   | "project.restored" // L-P2-33 — restored from the trash
   | "user.restored" // L-P2-33
+  | "user.erased" // the GDPR-style hard erase (trash.ts)
   | "message.restored" // L-P2-33
   // Bug tracking lifecycle
   | "bug.created"
@@ -320,6 +321,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "user.created": { icon: UserPlus, cls: "text-primary bg-primary/10" },
   "user.updated": { icon: UserCog, cls: "text-blue-500 bg-blue-500/10" },
   "user.deleted": { icon: UserMinus, cls: "text-destructive bg-destructive/10" },
+  "user.erased": { icon: UserMinus, cls: "text-destructive bg-destructive/10" },
   "user.account_created": { icon: UserPlus, cls: "text-primary bg-primary/10" },
 
   "profile.updated": { icon: Settings, cls: "text-blue-500 bg-blue-500/10" },

@@ -236,6 +236,7 @@ describe("updateUserSettings anonymous guard", () => {
     // Uncovered branch: `if (!auth) throw new AuthorizationError(...)` —
     // the main suites always call this signed in.
     getSessionMock.mockResolvedValue(null);
+    getSessionOrThrowMock.mockRejectedValue(Object.assign(new Error("You must be signed in."), { name: "AuthorizationError", digest: "AuthorizationError" }));
     const res = await updateUserSettings("u-mia", { dark: true });
     expectErr(res, "AUTH");
     if (!res.ok) expect(res.error).toMatch(/signed in/i);
@@ -253,6 +254,7 @@ describe("updateProfile guards", () => {
     // Uncovered branch: anonymous `if (!auth) throw` — the profile-update
     // path is only exercised signed-in by the main suites.
     getSessionMock.mockResolvedValue(null);
+    getSessionOrThrowMock.mockRejectedValue(Object.assign(new Error("You must be signed in."), { name: "AuthorizationError", digest: "AuthorizationError" }));
     const res = await updateProfile("u-mia", {
       name: "Mia", timezone: "UTC", bio: "", avatarColor: "forest",
     });
@@ -284,6 +286,7 @@ describe("changePassword guards", () => {
   it("rejects with AUTH when the caller has no session (line 210)", async () => {
     // Uncovered branch: anonymous `if (!auth) throw` before any policy check.
     getSessionMock.mockResolvedValue(null);
+    getSessionOrThrowMock.mockRejectedValue(Object.assign(new Error("You must be signed in."), { name: "AuthorizationError", digest: "AuthorizationError" }));
     const res = await changePassword({
       userId: "u-mia", currentPassword: "old-pass-1", newPassword: "fresh-pass-1",
     });

@@ -14,7 +14,7 @@ import {
   assignmentInForce,
   assignmentsInForceWhere,
   type AssignmentReader,
-} from "../resolve-assignment";
+} from "@/lib/payroll/resolve-assignment";
 
 const d = (iso: string) => new Date(iso);
 

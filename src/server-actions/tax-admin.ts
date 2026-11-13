@@ -61,20 +61,14 @@ import { calculatePaye } from "@/lib/payroll/nz/paye";
 import { autoEnrolDueDate } from "@/lib/payroll/nz/kiwisaver";
 import { resolveNzRateSet } from "@/lib/payroll/nz/calculate";
 import { dec, isoDay, pct, splitTaxCode, utcMidnight, isValidIrdNumber } from "@/lib/tax-profile-preview";
+import { SECONDARY_RATE_CODES } from "@/lib/payroll/nz/tax-codes";
+import { RATE_SET_INCLUDE } from "@/lib/payroll/nz/calculate";
 
 // ---------------------------------------------------------------------------
 // Task 3.1 — tax years (the StatutoryRateSet family as the editor sees it).
 // ---------------------------------------------------------------------------
 
-const RATE_SET_INCLUDE = {
-  payeTiers: { orderBy: { fromAnnual: "asc" as const } },
-  secondaryRates: { orderBy: { code: "asc" as const } },
-  accLevy: true,
-  ietc: true,
-  kiwiSaver: true,
-  esctTiers: { orderBy: { fromAnnual: "asc" as const } },
-  studentLoan: true,
-} as const;
+
 
 type RateSetRow = Prisma.StatutoryRuleGetPayload<{ include: typeof RATE_SET_INCLUDE }>;
 
@@ -189,7 +183,7 @@ export async function getTaxYears(): Promise<ActionResult<TaxYearAdminT[]>> {
 // Slab validation (shared by 3.1's direct save and 3.2's versioned save).
 // ---------------------------------------------------------------------------
 
-const CANONICAL_SECONDARY = ["SB", "S", "SH", "ST", "SA", "ND"];
+const CANONICAL_SECONDARY = [...SECONDARY_RATE_CODES, "ND"];
 
 /** Accepts both stored rows (id required) and zod-parsed input (id optional). */
 type SlabRowInput = Omit<TaxSlabRowT, "id"> & { id?: string };

@@ -23,7 +23,7 @@
 
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
-import { getHolidayLookup } from "@/server-actions/hr-shared";
+import { getHolidayLookup } from "@/lib/server/holidays";
 import { holidayLookupFrom, type HolidayLookup } from "@/lib/working-days";
 import type { PayslipStatutoryT } from "@/lib/types";
 import { buildEiFile, type EiEmployeeLine } from "./ei-file";
@@ -39,6 +39,7 @@ import {
   runReconciliation,
   type ReconciliationReport,
 } from "./reconciliation";
+import { payCycleToFrequency } from "./pay-cycle";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -753,7 +754,7 @@ export async function generateAmendmentFiling(
     employmentEnd: l.employmentEnd,
     periodStart: l.periodStart,
     periodEnd: l.periodEnd,
-    frequency: l.payCycle === "WK" ? "WEEKLY" : l.payCycle === "FT" ? "FORTNIGHTLY" : l.payCycle === "HM" ? "BIMONTHLY" : l.payCycle === "DA" ? "DAILY" : l.payCycle === "MT" ? "MONTHLY" : l.payCycle,
+    frequency: payCycleToFrequency(l.payCycle),
     hoursPaidCents: l.hoursPaidCents,
     grossCents: l.grossCents,
     priorGrossAdjCents: l.priorGrossAdjCents,

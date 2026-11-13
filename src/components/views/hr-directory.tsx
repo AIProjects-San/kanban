@@ -43,6 +43,7 @@ import {
   exportDirectoryCsv,
 } from "@/server-actions/hr-directory";
 import { transitionEmployment } from "@/server-actions/employment";
+import { downloadBlob } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Self-service card (Settings view)
@@ -242,21 +243,15 @@ export function DirectoryTab() {
     [profiles],
   );
 
-  // P32 (EM-R02) — the employee_information report CSV (the analytics Blob
-  // pattern; the action builds the RFC 4180 file and audits the export like
-  // every report CSV).
+  // P32 (EM-R02) — the employee_information report CSV (the shared
+  // downloadBlob kit; the action builds the RFC 4180 file and audits the
+  // export like every report CSV).
   const exportCsv = async () => {
     setExporting(true);
     const res = await exportDirectoryCsv();
     setExporting(false);
     if (!res.ok) { toast.error(res.error); return; }
-    const blob = new Blob([res.data.csv], { type: res.data.mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = res.data.filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data.csv, res.data.filename, res.data.mime);
     toast.success(`Employee information report exported (${res.data.filename}).`);
   };
 

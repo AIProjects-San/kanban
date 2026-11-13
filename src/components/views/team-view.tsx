@@ -10,7 +10,7 @@ import { cn, barWidthClass } from "@/lib/utils";
 import { useRefresh } from "@/hooks/use-refresh";
 import { toast } from "sonner";
 import { sendMessage } from "@/server-actions/data";
-import { actionErrorMessage } from "@/lib/action-errors";
+import { actionErrorMessage } from "@/lib/action-result";
 import { EntityHistorySection } from "../ui/entity-history-section";
 import { TASK_STATUS_ACCENT, tagClass, DEPARTMENT_LABELS } from "@/lib/config";
 import type { TeamMemberT, Department, TaskT, ProjectT, TimeEntryT } from "@/lib/types";

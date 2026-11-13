@@ -43,10 +43,7 @@ import {
   dueEncashmentAutoDrafts,
   type EncashmentAutoDraftSwitches,
 } from "@/lib/leave-encashment";
-import {
-  queueOutboxMail,
-  deliverOutboxMail,
-} from "@/server-actions/shared";
+import { queueOutboxMail, deliverOutboxMail } from "@/lib/server/mail-outbox";
 import {
   encashmentDraftFailureEmailSubject,
   encashmentDraftFailureEmailText,

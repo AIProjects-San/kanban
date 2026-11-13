@@ -8,7 +8,9 @@
 // ---------------------------------------------------------------------------
 
 import { autoEnrolDueDate, resolveKiwiSaverDecision } from "@/lib/payroll/nz/kiwisaver";
+import { isValidIrdNumberForFiling } from "@/lib/ird/ird-number";
 import { parseNzTaxCode } from "@/lib/payroll/nz/types";
+import { IR330_BASE_CODES } from "@/lib/payroll/nz/tax-codes";
 import type { EmployeeTaxProfileT, TaxProfilePreviewT } from "@/lib/types";
 
 /** UTC midnight for a YYYY-MM-DD string (the house date-only convention). */
@@ -32,9 +34,7 @@ export function dec(v: number): number {
   return Math.round(v * 10_000) / 1_000_000;
 }
 
-const KNOWN_TAX_CODES = new Set([
-  "M", "ME", "SB", "S", "SH", "ST", "SA", "ND", "STC", "CAE", "NSW", "EDW",
-]);
+const KNOWN_TAX_CODES = new Set<string>(IR330_BASE_CODES);
 
 /** Parse an IR330 declaration into base + student-loan flag (unknown bases
  * fall back to M — the editor's dropdown only offers known codes). */
@@ -43,24 +43,16 @@ export function splitTaxCode(taxCode: string): { base: string; studentLoan: bool
   return { base: KNOWN_TAX_CODES.has(base) ? base : "M", studentLoan };
 }
 
-/** NZ IRD number mod-11 check (IRD's published algorithm: two weight sets,
- * 8–9 digits, zero-padded to 9). Empty is allowed ("not recorded"). */
+/** NZ IRD number mod-11 check — delegates to the spec-exact validator
+ * (IRD "Payday Filing File Upload Specification" appendix 5.8, verified
+ * against its four worked examples). Empty is allowed ("not recorded").
+ * The pre-Phase-2 local copy transposed the remainder-0/remainder-1 rules
+ * and rejected IRD's own example numbers; the write path and the filing
+ * layer must never disagree. */
 export function isValidIrdNumber(raw: string): boolean {
   const digits = raw.replace(/\D/g, "");
   if (digits.length === 0) return true;
-  if (!/^\d{8,9}$/.test(digits)) return false;
-  const n = digits.padStart(9, "0").split("").map(Number);
-  const weightsA = [3, 2, 7, 6, 5, 4, 3, 2];
-  const weightsB = [7, 4, 3, 2, 5, 2, 7, 6];
-  const checkDigit = (weights: number[]): number => {
-    const sum = weights.reduce((acc, w, i) => acc + w * n[i], 0);
-    const rem = sum % 11;
-    if (rem === 0) return 10;
-    return rem === 1 ? 0 : 11 - rem;
-  };
-  let c = checkDigit(weightsA);
-  if (c === 10) c = checkDigit(weightsB);
-  return c === n[8];
+  return isValidIrdNumberForFiling(digits);
 }
 
 /** The live auto-enrolment preview: resolved KiwiSaver status against

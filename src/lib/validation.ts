@@ -10,6 +10,7 @@
 import { z } from "zod";
 
 import { parsePayrollPeriodKey, PAYROLL_FREQUENCY_VALUES } from "@/lib/payroll-windows";
+import { IR330_BASE_CODES } from "@/lib/payroll/nz/tax-codes";
 
 const cuidish = z.string().min(1).max(64);
 const isoDate = z.string().min(4).max(40);
@@ -1494,7 +1495,7 @@ export const saveTaxYearSlabsSchema = z.object({
 /** Task 3.1 — the Simulate button (runs the saved set through the engine). */
 export const simulateTaxSchema = z.object({
   rateSetId: cuidish,
-  code: z.enum(["M", "ME", "SB", "S", "SH", "ST", "SA", "ND", "STC", "CAE", "EDW", "NSW"]),
+  code: z.enum(IR330_BASE_CODES),
   gross: z.number().finite().min(0).max(1_000_000_000),
   frequency: z.enum(["WEEKLY", "FORTNIGHTLY", "BIMONTHLY", "MONTHLY", "QUARTERLY", "ANNUAL"]),
   stcCertificateRate: percentRate.nullable().default(null),
@@ -1539,7 +1540,7 @@ export const componentTaxMappingSchema = z.object({
 export const employeeTaxProfileSchema = z.object({
   userId: cuidish,
   irdNumber: z.string().trim().max(20).default(""),
-  taxCodeBase: z.enum(["M", "ME", "SB", "S", "SH", "ST", "SA", "ND", "STC", "CAE", "NSW", "EDW"]),
+  taxCodeBase: z.enum(IR330_BASE_CODES),
   studentLoan: z.boolean().default(false),
   taxCodeEffectiveFrom: yyyymmdd.nullable().default(null),
   stcCertificateRate: percentRate.nullable().default(null),

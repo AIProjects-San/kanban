@@ -16,8 +16,8 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getSession, requirePermission, AuthorizationError } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { requirePermission, checkPermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
+import { type Role } from "@/lib/rbac";
 import {
   BUG_STATUS_LABELS,
   BUG_STATUS_TRANSITIONS,
@@ -25,7 +25,7 @@ import {
   BUG_PRIORITY_LABELS,
   BUG_RESOLUTION_LABELS,
 } from "@/lib/config";
-import type { BugStatus } from "@/lib/types";
+import type { BugPriority, BugResolution, BugSeverity, BugStatus } from "@/lib/types";
 import {
   createBugSchema,
   updateBugSchema,
@@ -38,6 +38,7 @@ import {
 import { logAudit, getScopedProjectIds, assertUserAssociatedWithProject, getProjectAssociatedUserIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
+import { safeCursor, pageOf } from "./pagination";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,10 +50,10 @@ import type { ActionResult } from "@/lib/action-result";
  * edit any bug. Mirrors the assertTaskEditPermission pattern.
  */
 async function assertBugEditPermission(
-  auth: { userId: string; role: string },
+  auth: { userId: string; role: Role },
   bug: { reporterUserId: string; assigneeUserId: string | null },
 ) {
-  if (hasPermission(auth.role as never, "bug:edit:any")) return;
+  if (await checkPermission(auth.role, "bug:edit:any")) return;
   if (bug.reporterUserId === auth.userId) return;
   if (bug.assigneeUserId === auth.userId) return;
   throw new AuthorizationError("You can only edit bugs you reported or are assigned to.");
@@ -124,7 +125,7 @@ export async function createBug(input: {
       entityType: "BUG",
       entityId: bug.id,
       entityLabel: bug.title,
-      detail: `Bug “${bug.title}” raised (${BUG_SEVERITY_LABELS[bug.severity as never] ?? bug.severity}, ${BUG_PRIORITY_LABELS[bug.priority as never] ?? bug.priority})`,
+      detail: `Bug “${bug.title}” raised (${BUG_SEVERITY_LABELS[bug.severity as BugSeverity] ?? bug.severity}, ${BUG_PRIORITY_LABELS[bug.priority as BugPriority] ?? bug.priority})`,
     });
     revalidatePath("/");
     return { id: bug.id };
@@ -169,8 +170,7 @@ export async function getBug(id: string): Promise<ActionResult<{
   }>;
 }>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    await getSessionOrThrow();
 
     const bug = await db.bug.findUnique({
       where: { id },
@@ -258,8 +258,7 @@ export async function getBugsPage(input?: {
   hasMore: boolean;
 }>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    await getSessionOrThrow();
 
     const limit = Math.min(Math.max(input?.limit ?? 50, 1), 200);
     const search = input?.search?.trim() ?? "";
@@ -280,10 +279,7 @@ export async function getBugsPage(input?: {
     if (input?.projectId) where.projectId = input.projectId;
 
     // Cursor (validate format to avoid P2015).
-    const rawCursor = input?.cursor?.trim() ?? "";
-    const cursor = rawCursor.length >= 20 && rawCursor.length <= 32 && /^[a-z0-9]+$/i.test(rawCursor)
-      ? rawCursor
-      : null;
+    const cursor = safeCursor(input?.cursor);
 
     const rows = await db.bug.findMany({
       where,
@@ -297,8 +293,7 @@ export async function getBugsPage(input?: {
       },
     });
 
-    const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
+    const { items, hasMore } = pageOf(rows, limit);
 
     // Resolve names in bulk (reporter + assignee + project).
     const userIds = new Set<string>();
@@ -542,9 +537,9 @@ export async function changeBugStatus(
       "bug.status_changed";
     const detail =
       newStatus === "RESOLVED"
-        ? `Resolved as ${resolution ? BUG_RESOLUTION_LABELS[resolution as never] ?? resolution : "FIXED"}`
+        ? `Resolved as ${resolution ? BUG_RESOLUTION_LABELS[resolution as BugResolution] ?? resolution : "FIXED"}`
         : newStatus === "CLOSED"
-          ? `Closed${resolution ? ` (${BUG_RESOLUTION_LABELS[resolution as never] ?? resolution})` : ""}`
+          ? `Closed${resolution ? ` (${BUG_RESOLUTION_LABELS[resolution as BugResolution] ?? resolution})` : ""}`
           : newStatus === "REOPENED"
             ? "Reopened"
             : `Status: ${BUG_STATUS_LABELS[currentStatus] ?? currentStatus} → ${BUG_STATUS_LABELS[newStatus] ?? newStatus}`;
@@ -570,8 +565,7 @@ export async function addBugComment(input: {
   body: string;
 }): Promise<ActionResult<{ id: string }>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    const auth = await getSessionOrThrow();
     const data = parseOrThrow(createBugCommentSchema, input);
 
     const bug = await db.bug.findUnique({ where: { id: data.bugId }, select: { title: true } });
@@ -698,7 +692,7 @@ export async function moveBug(
         "bug.status_changed";
       const detail =
         newStatus === "RESOLVED"
-          ? `Resolved as ${BUG_RESOLUTION_LABELS[resolution as never] ?? resolution} (board move)`
+          ? `Resolved as ${BUG_RESOLUTION_LABELS[resolution as BugResolution] ?? resolution} (board move)`
           : `Dragged from ${BUG_STATUS_LABELS[currentStatus] ?? currentStatus} to ${BUG_STATUS_LABELS[newStatus] ?? newStatus}`;
       await logAudit({
         actor: auth,
@@ -808,8 +802,7 @@ export async function getBugBoard(): Promise<ActionResult<{
   }>;
 }>> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    await getSessionOrThrow();
 
     const rows = await db.bug.findMany({
       orderBy: [{ boardOrder: "asc" }, { createdAt: "desc" }],
@@ -888,8 +881,7 @@ export async function getTaskLinkedBugs(taskId: string): Promise<ActionResult<
   }>
 >> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    await getSessionOrThrow();
 
     const bugs = await db.bug.findMany({
       where: { taskId },
@@ -908,8 +900,7 @@ export async function getLinkableBugs(taskId: string, search?: string): Promise<
   Array<{ id: string; title: string; severity: string; status: string }>
 >> {
   return toResult(async () => {
-    const auth = await getSession();
-    if (!auth) throw new AuthorizationError("You must be signed in.");
+    await getSessionOrThrow();
 
     // Project association rule — a bug can only be linked to a task in the
     // SAME project (linkBugToTask enforces this server-side too). Resolve

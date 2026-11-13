@@ -28,9 +28,7 @@
 
 import { basicKeyOf, computeOffer, type OfferComponent, type OfferTotals } from "@/lib/offer-math";
 
-function round2(n: number): number {
-  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
-}
+import { round2 } from "@/lib/payroll-math";
 
 export interface CtcSolveInput {
   components: OfferComponent[];

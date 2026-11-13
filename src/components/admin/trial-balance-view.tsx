@@ -16,6 +16,7 @@ import {
   exportTrialBalanceCsv,
 } from "@/server-actions/accounting";
 import type { TrialBalanceT } from "@/server-actions/accounting";
+import { formatMoney, downloadBlob } from "@/lib/format";
 
 interface PeriodT {
   id: string;
@@ -24,9 +25,6 @@ interface PeriodT {
   isClosed: boolean;
   entryCount: number;
 }
-
-const money = (n: number) =>
-  n.toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const TYPE_LABELS: Record<string, string> = {
   ASSET: "Asset",
@@ -62,13 +60,7 @@ export function TrialBalanceView({
         toast.error(res.error);
         return;
       }
-      const blob = new Blob([res.data.csv], { type: res.data.mime });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = res.data.filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(res.data.csv, res.data.filename, res.data.mime);
     });
   }
 
@@ -145,8 +137,8 @@ export function TrialBalanceView({
         }`}
       >
         {balanced ? "In balance —" : "OUT OF BALANCE —"} total debits{" "}
-        {money(balance.totals.debits)} vs total credits{" "}
-        {money(balance.totals.credits)}
+        {formatMoney(balance.totals.debits)} vs total credits{" "}
+        {formatMoney(balance.totals.credits)}
         {balanced ? " ; opening balances net to zero." : "."}
       </p>
 
@@ -172,16 +164,16 @@ export function TrialBalanceView({
                   {TYPE_LABELS[r.type] ?? r.type}
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
-                  {r.opening ? money(r.opening) : "—"}
+                  {r.opening ? formatMoney(r.opening) : "—"}
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums">
-                  {r.debits ? money(r.debits) : "—"}
+                  {r.debits ? formatMoney(r.debits) : "—"}
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums">
-                  {r.credits ? money(r.credits) : "—"}
+                  {r.credits ? formatMoney(r.credits) : "—"}
                 </td>
                 <td className="px-4 py-2.5 text-right font-medium tabular-nums">
-                  {r.closing ? money(r.closing) : "—"}
+                  {r.closing ? formatMoney(r.closing) : "—"}
                 </td>
               </tr>
             ))}
@@ -191,10 +183,10 @@ export function TrialBalanceView({
               <td className="px-4 py-3" colSpan={3}>
                 TOTALS
               </td>
-              <td className="px-4 py-3 text-right tabular-nums">{money(balance.totals.opening)}</td>
-              <td className="px-4 py-3 text-right tabular-nums">{money(balance.totals.debits)}</td>
-              <td className="px-4 py-3 text-right tabular-nums">{money(balance.totals.credits)}</td>
-              <td className="px-4 py-3 text-right tabular-nums">{money(balance.totals.closing)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{formatMoney(balance.totals.opening)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{formatMoney(balance.totals.debits)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{formatMoney(balance.totals.credits)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{formatMoney(balance.totals.closing)}</td>
             </tr>
           </tfoot>
         </table>

@@ -38,13 +38,14 @@
 import { db } from "@/lib/db";
 import { logError, logInfo } from "@/lib/observability";
 import { getWorkspaceConfig } from "@/lib/config-loader";
-import { queueOutboxMail, deliverOutboxMail } from "@/server-actions/shared";
-import { escapeHtml } from "@/lib/utils";
+import { queueOutboxMail, deliverOutboxMail } from "@/lib/server/mail-outbox";
 import {
   resolveNotificationTemplate,
   renderTemplate,
   type ResolvedNotificationTemplate,
 } from "@/lib/notification-template";
+import { daysBetween } from "@/lib/working-days";
+import { emailHtml } from "@/lib/email-html";
 
 // ---------------------------------------------------------------------------
 // The pure kernel
@@ -118,13 +119,6 @@ function wholeYearsSince(hireDate: string, asOf: string): number {
   return years;
 }
 
-/** The holiday advance match: exactly N days from asOf (UTC calendar days). */
-function daysBetweenUtc(from: string, to: string): number {
-  const a = Date.UTC(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)));
-  const b = Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 1, Number(to.slice(8, 10)));
-  return Math.round((b - a) / 86_400_000);
-}
-
 function listNames(items: string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
@@ -186,7 +180,7 @@ export function dueEngagementReminders(input: {
   if (input.switches.remindHolidays) {
     const daysAhead = Math.min(Math.max(Math.round(input.switches.holidayReminderDaysAhead) || 7, 1), 30);
     for (const h of input.holidays) {
-      const gap = daysBetweenUtc(input.asOf, h.date);
+      const gap = daysBetween(input.asOf, h.date);
       if (gap === daysAhead) {
         events.push({
           eventKey: "HOLIDAY_UPCOMING",
@@ -418,11 +412,7 @@ export async function runEmployeeRemindersJob(): Promise<EmployeeRemindersJobRep
   return report;
 }
 
-/** The plain-text digest → the shared mail HTML wrap (escaped per line). */
+/** The plain-text digest → the shared mail HTML wrap. */
 export function engagementEmailHtml(text: string): string {
-  const body = text
-    .split("\n")
-    .map((l) => (l.startsWith("Holiday:") || l.startsWith("Work anniversaries") || l.startsWith("Birthdays") ? `<strong>${escapeHtml(l)}</strong>` : escapeHtml(l)))
-    .join("<br />");
-  return `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #111;">${body}</div>`;
+  return emailHtml(text, { bold: (line) => (line.startsWith("Holiday:") || line.startsWith("Work anniversaries") || line.startsWith("Birthdays")) });
 }

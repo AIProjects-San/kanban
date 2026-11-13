@@ -86,7 +86,7 @@ describe("maintenance lock (PR-30)", () => {
 
   it("uses the namespaced lock key and the min-interval as TTL", async () => {
     const setImpl = vi.fn(
-      async (_key: string, _value: string, _mode: "PX", _ttl: number, _nx: "NX") =>
+      async (_key: string, _value: string, _mode?: "PX", _ttl?: number, _nx?: "NX") =>
         "OK" as const,
     );
     const client = fakeRedis({ setImpl });

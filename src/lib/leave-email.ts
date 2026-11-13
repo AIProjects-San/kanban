@@ -12,7 +12,7 @@
 //   "Your leave application has been {status}".
 // ---------------------------------------------------------------------------
 
-import { escapeHtml } from "@/lib/utils";
+import { emailHtml } from "@/lib/email-html";
 
 function days(n: number): string {
   return `${n % 1 === 0 ? n : n.toFixed(1)} day${n === 1 ? "" : "s"}`;
@@ -69,12 +69,9 @@ export function leaveDecidedEmailText(
   ].join("\n");
 }
 
+/** The leave mail body: the shared wrap with the verdict lines bolded. */
 export function leaveEmailHtml(text: string): string {
-  const body = text
-    .split("\n")
-    .map((l) => (l.startsWith("Duration:") || l.endsWith("approved") || l.endsWith("rejected") ? `<strong>${escapeHtml(l)}</strong>` : escapeHtml(l)))
-    .join("<br />");
-  return `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #111;">${body}</div>`;
+  return emailHtml(text, { bold: (line) => (line.startsWith("Duration:") || line.endsWith("approved") || line.endsWith("rejected")) });
 }
 
 // ---------------------------------------------------------------------------

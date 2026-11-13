@@ -15,6 +15,7 @@ import type { LeaveTypeT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { getLeaveBalanceReport, exportLeaveBalanceReportCsv } from "@/server-actions/hr-leave";
 import type { LeaveBalanceReportRow } from "@/lib/leave-balance-report";
+import { downloadBlob } from "@/lib/format";
 
 function fmtDays(n: number): string {
   return n % 1 === 0 ? String(n) : n.toFixed(2);
@@ -57,7 +58,7 @@ export function BalancesTab({ types }: { types: LeaveTypeT[] }) {
     });
   }, [rows, typeFilter, search]);
 
-  // P21 (LV-R01) — the CSV download (the analytics Blob pattern; the action
+  // P21 (LV-R01) — the CSV download (the shared downloadBlob kit; the action
   // builds the RFC 4180 file and audits the export like the payroll CSVs).
   const exportCsv = async () => {
     setBusy(true);
@@ -67,13 +68,7 @@ export function BalancesTab({ types }: { types: LeaveTypeT[] }) {
     });
     setBusy(false);
     if (!res.ok) { toast.error(res.error); return; }
-    const blob = new Blob([res.data.csv], { type: res.data.mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = res.data.filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(res.data.csv, res.data.filename, res.data.mime);
     toast.success(`Leave balance report for ${reportYear} exported (${res.data.filename}).`);
   };
 

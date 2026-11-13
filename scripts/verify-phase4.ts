@@ -63,10 +63,10 @@ import {
   fiscalYearOf,
 } from "../src/lib/payroll-windows";
 import { workingDaysBetween } from "../src/lib/working-days";
-import { getHolidayLookup } from "../src/server-actions/hr-shared";
+import { getHolidayLookup } from "../src/lib/server/holidays";
 import { getWorkspaceConfig } from "../src/lib/config-loader";
 import { computeRunningAggregates, type AggregateSlip } from "../src/lib/payslip-aggregates";
-import { logAudit } from "../src/server-actions/shared";
+import { logAudit } from "../src/lib/server/audit";
 import type { PayrollRoundingMode } from "../src/lib/payroll-math";
 
 // fileURLToPath(new URL(".", import.meta.url)) — the portable spelling of
