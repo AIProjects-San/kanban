@@ -14,18 +14,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 //     monitoring target that reports its own death beats one that vanishes.
 // ---------------------------------------------------------------------------
 
-vi.mock("@/lib/health-probes", () => ({
+vi.mock("@/lib/infra/health-probes", () => ({
   probeDb: vi.fn(),
   probeRedis: vi.fn(),
   measureEventLoopLagMs: vi.fn(async () => 1.5),
 }));
 
-vi.mock("@/lib/maintenance-lock", () => ({
+vi.mock("@/lib/infra/maintenance-lock", () => ({
   getMaintenanceLastRun: vi.fn(),
 }));
 
-const { probeDb, probeRedis } = await import("@/lib/health-probes");
-const { getMaintenanceLastRun } = await import("@/lib/maintenance-lock");
+const { probeDb, probeRedis } = await import("@/lib/infra/health-probes");
+const { getMaintenanceLastRun } = await import("@/lib/infra/maintenance-lock");
 const { GET } = await import("../route");
 
 const SECRET = "metrics-cron-secret-0123456789"; // ≥16 chars

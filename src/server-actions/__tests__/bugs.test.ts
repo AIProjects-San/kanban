@@ -23,7 +23,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const getSessionMock = vi.fn();
 const requirePermissionMock = vi.fn();
@@ -43,7 +43,7 @@ vi.mock("@/server-actions/auth-guard", () => {
     // The DB-aware probe, mocked to its static floor — these tests exercise
     // the role matrix, not the DB ceiling.
     checkPermission: async (role: unknown, perm: unknown) => {
-      const rbac = await vi.importActual<typeof import("@/lib/rbac")>("@/lib/rbac");
+      const rbac = await vi.importActual<typeof import("@/lib/auth/rbac")>("@/lib/auth/rbac");
       return rbac.hasPermission(role as never, perm as never);
     },
     AuthorizationError,

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2, Lock, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import type { PayslipT } from "@/lib/types";
-import { getMyPayslips } from "@/server-actions/payroll";
+import { getMyPayslips } from "@/server-actions/payroll-self-service";
 import { PayslipModal } from "../ui/payslip-modal";
 import { formatMoney } from "@/lib/format";
 

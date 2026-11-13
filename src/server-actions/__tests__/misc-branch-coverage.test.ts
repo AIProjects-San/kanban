@@ -21,7 +21,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const getSessionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();

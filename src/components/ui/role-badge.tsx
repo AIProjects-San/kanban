@@ -2,7 +2,7 @@
 
 import { Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ROLE_LABELS, type Role } from "@/lib/rbac";
+import { ROLE_LABELS, type Role } from "@/lib/auth/rbac";
 
 const ROLE_STYLES: Record<Role, string> = {
   SUPER_ADMIN: "bg-violet-500/10 text-violet-600 dark:text-violet-400",

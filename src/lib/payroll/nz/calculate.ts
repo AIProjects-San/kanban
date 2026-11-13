@@ -25,7 +25,7 @@
 // reduce net pay.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { calculatePaye } from "./paye";
 import {
   calculateKiwiSaver,

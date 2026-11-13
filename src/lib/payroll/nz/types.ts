@@ -24,7 +24,7 @@
 // on every verified row — see the Task 1.1 acceptance tests.
 // ---------------------------------------------------------------------------
 
-import type { PayrollFrequency } from "@/lib/payroll-windows";
+import type { PayrollFrequency } from "@/lib/payroll/payroll-windows";
 
 /** Pay cadences the statutory engine understands (house vocabulary, no DAILY). */
 export type NzPayFrequency = Exclude<PayrollFrequency, "DAILY">;

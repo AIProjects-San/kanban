@@ -24,7 +24,7 @@ import {
   sampleTemplateVars,
   renderTemplate,
   type NotificationTemplateEventDef,
-} from "@/lib/notification-template";
+} from "@/lib/email/notification-template";
 
 interface WorkspaceSettingsViewProps {
   currentUser: { id: string; name: string; role: string };

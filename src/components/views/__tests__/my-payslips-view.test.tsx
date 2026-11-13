@@ -11,10 +11,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const { getMyPayslips } = vi.hoisted(() => ({ getMyPayslips: vi.fn() }));
 
-vi.mock("@/server-actions/payroll", () => ({
+vi.mock("@/server-actions/payroll-self-service", () => ({
   getMyPayslips,
+}));
+vi.mock("@/server-actions/payroll", () => ({
   // PayslipModal (rendered for real, not stubbed) imports updatePayslip
-  // from the same module — unreachable for LOCKED slips, but mocked so the
+  // from the core module — unreachable for LOCKED slips, but mocked so the
   // factory stays complete.
   updatePayslip: vi.fn(),
 }));

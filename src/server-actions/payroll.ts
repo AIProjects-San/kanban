@@ -4,6 +4,11 @@
 // Recruitment R7 — payroll server actions
 // (docs/RECRUITMENT_MODULE_PLAN.md §5, milestone R7).
 //
+// Split: structures → payroll-structures.ts, adjustments →
+// payroll-adjustments.ts, reports → payroll-reports.ts, self-service →
+// payroll-self-service.ts. This file keeps the run + payslip + statutory
+// core (the verify-phase-1a pins on it stay here).
+//
 // RBAC: everything here is `payroll:manage` (ADMIN + HR) — salary data is
 // the most sensitive information in the workspace; MANAGERs (interviewers on
 // the hiring board) and MEMBERs never reach any of these paths.
@@ -19,33 +24,27 @@
 //     is OPEN (bonuses, fixes, LOP). Locking freezes the period; YTD is
 //     computed at read time across the same-year periods.
 // ---------------------------------------------------------------------------
-
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { Prisma, type SalaryStructure } from "@prisma/client";
-import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
-import type { PayslipT, PayrollRunT, SalaryStructureT, PayAdjustmentT, LopDetailT, OpeningYtdRowT } from "@/lib/types";
+import { requirePermission, AuthorizationError } from "./auth-guard";
+import type { PayslipT, PayrollRunT, SalaryStructureT, LopDetailT } from "@/lib/types";
 import {
-  saveSalaryStructureSchema,
   createPayrollRunSchema,
-  bulkAssignStructureSchema,
   updatePayslipSchema,
   lockPayrollRunSchema,
-  exportPayrollCsvSchema,
   addPayslipSchema,
-  createPayAdjustmentSchema,
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
-import { parseComponents, type OfferComponent } from "@/lib/offer-math";
+import { parseComponents } from "@/lib/offer-math";
 import { workingDaysBetween, paymentWindowBetween, type HolidayLookup } from "@/lib/working-days";
-import { deriveLopBreakdownBetween, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/lop-derivation";
-import { getWorkspaceConfig } from "@/lib/config-loader";
+import { deriveLopBreakdownBetween, parseLopDetail, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/payroll/lop-derivation";
+import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import { getHolidayLookup } from "./hr-shared";
-import { payslipEmailSubject, payslipEmailText, payslipEmailHtml } from "@/lib/payslip-email";
-import { salaryRegisterCsv, bankRemittanceCsv } from "@/lib/payroll-csv";
+import { payslipEmailSubject, payslipEmailText, payslipEmailHtml } from "@/lib/payroll/payslip-email";
 import {
   payslipTotals,
   lopBasisGross,
@@ -56,21 +55,19 @@ import {
   round2,
   isStatutoryLineKey,
   type PayslipLine,
-} from "@/lib/payroll-math";
+} from "@/lib/payroll/payroll-math";
 import { deriveSlipLines } from "@/lib/payroll/slip-derivation";
 // P1 (PR-12/PR-B10, F2.3) — the universal adjustment adapter kernel.
 import {
-  applyAdjustments,
   isDueInPeriod,
-  validateAdjustmentInput,
   type PayAdjustmentRow,
-} from "@/lib/pay-adjustment";
+} from "@/lib/payroll/pay-adjustment";
 // P5 (PR-18, F3.2) — the benefits accrual pricing (lock hook).
-import { accrualAmount } from "@/lib/benefits";
+import { accrualAmount } from "@/lib/payroll/benefits";
 // P8 (PR-19/PR-B13, F3.3) — the salary-withholding hold-window predicate.
-import { isPeriodHeld } from "@/lib/salary-withholding";
+import { isPeriodHeld } from "@/lib/payroll/salary-withholding";
 // P9 (PR-B26, AT-09 lite) — the overtime → payslip bridge kernel.
-import { sumOvertimeMinutes } from "@/lib/overtime-bridge";
+import { sumOvertimeMinutes } from "@/lib/payroll/overtime-bridge";
 // P10 (PR-B05) — the payroll-windows kernel: every cadence resolves to ONE
 // window {start, end, periodKey}; period-string comparisons became window
 // comparisons so mixed cadences stay chronological.
@@ -80,18 +77,13 @@ import {
   runWindowStart,
   fiscalYearOf,
   type PayrollFrequency,
-} from "@/lib/payroll-windows";
+} from "@/lib/payroll/payroll-windows";
 // P11 (PR-B09) — read-time payslip aggregates (YTD gross/net, MTD net,
 // per-component YTD) — ONE kernel for both the HR and self-service reads.
 // P16 (PR-11) — the kernel now also takes the fiscal-year basis + the SSA
 // opening entries (both default to the pre-P16 behavior).
-import {
-  computeRunningAggregates,
-  type OpeningYtdEntry,
-} from "@/lib/payslip-aggregates";
-// P22 (PR-C01–04, PR-N01–06) — the pure analytics kernel behind the Payroll
-// view's charts + cards panel.
-import { buildPayrollAnalytics, type PayrollAnalytics } from "@/lib/payroll-analytics";
+import { computeRunningAggregates } from "@/lib/payroll/payslip-aggregates";
+import { openingEntriesForUsers } from "@/lib/payroll/opening-ytd";
 // Phase 2 (engine wiring) — the NZ statutory engine meets the payroll run:
 // the slip kernel (pure), the rate-set resolver (impure seam) and the error
 // type every statutory failure surfaces as.
@@ -113,111 +105,9 @@ import {
 } from "@/lib/payroll/nz/slip-statutory";
 // Phase 1C (G2) — the GL posting engine (lock hook).
 import { postPayrollRun } from "@/lib/accounting/post-payroll-run";
-// ---------------------------------------------------------------------------
-// Serialization helpers
-// ---------------------------------------------------------------------------
+// The view bundle calls the structures module (split sibling).
+import { getSalaryStructures } from "./payroll-structures";
 
-type StructureRow = {
-  id: string; userId: string; components: string; notes: string;
-  effectiveFrom: Date; isActive: boolean; createdAt: Date;
-  maxBenefits?: number | null;
-  frequency?: string | null;
-  openingYtd?: unknown;
-  isDefault?: boolean | null;
-};
-
-/** P16 (PR-04) — parse a structure's stored opening rows defensively
- * (null / malformed → null; the write path guarantees the shape). */
-function parseOpeningYtd(raw: unknown): OpeningYtdRowT[] | null {
-  if (raw == null) return null;
-  if (Array.isArray(raw)) {
-    const rows = raw.filter(
-      (r): r is OpeningYtdRowT =>
-        !!r && typeof r === "object" &&
-        typeof (r as { key?: unknown }).key === "string" && (r as { key: string }).key.length > 0 &&
-        ((r as { side?: unknown }).side === "EARNING" || (r as { side?: unknown }).side === "DEDUCTION") &&
-        Number.isFinite((r as { amount?: unknown }).amount),
-    );
-    if (rows.length === 0) return null;
-    return rows.map((r) => ({
-      key: r.key,
-      label: typeof r.label === "string" ? r.label : r.key,
-      side: r.side,
-      amount: Math.max(0, Number(r.amount) || 0),
-    }));
-  }
-  return null;
-}
-
-function serializeStructure(
-  s: StructureRow,
-  user: { name: string } | undefined,
-  profile: { jobTitle: string; department: string } | undefined,
-  fromOffer: boolean,
-): SalaryStructureT {
-  return {
-    id: s.id,
-    userId: s.userId,
-    userName: user?.name ?? "Unknown",
-    jobTitle: profile?.jobTitle ?? "",
-    department: profile?.department ?? "",
-    source: fromOffer ? "OFFER" : "MANUAL",
-    components: parseComponents(s.components),
-    notes: s.notes,
-    effectiveFrom: s.effectiveFrom.toISOString(),
-    isActive: s.isActive,
-    createdAt: s.createdAt.toISOString(),
-    maxBenefits: s.maxBenefits ?? 0,
-    frequency: (s.frequency || "MONTHLY") as SalaryStructureT["frequency"],
-    // P16 — the SSA opening YTD rows (null = none).
-    openingYtd: parseOpeningYtd(s.openingYtd),
-    // P23 — the workspace default package flag (pre-P23 rows read false).
-    isDefault: s.isDefault ?? false,
-  };
-}
-
-/** Was this structure's employee hired through the pipeline with a signed
- * offer? (Display hint "copied from offer" — resolved per user.) */
-async function signedOfferUserIds(): Promise<Set<string>> {
-  const rows = await db.candidate.findMany({
-    where: { status: "HIRED", userId: { not: null } },
-    select: { userId: true },
-  });
-  return new Set(rows.map((r) => r.userId).filter((u): u is string => !!u));
-}
-
-/** P16 (PR-04) — the SSA opening entries for the aggregate kernel: every
- * structure (active OR retired — an opening is a fact of what was earned)
- * whose parsed opening rows exist and whose effectiveFrom falls in a fiscal
- * year ANY of the given users has (or will have) a slip in. The entry's
- * fiscalStartYear is resolved through the SAME fiscalYearOf the kernel uses,
- * so basis flips re-attribute openings consistently on the next read. */
-async function openingEntriesForUsers(
-  userIds: string[],
-  fiscalYearStartMonth: number,
-): Promise<OpeningYtdEntry[]> {
-  if (userIds.length === 0) return [];
-  const structures = await db.salaryStructure.findMany({
-    where: { userId: { in: userIds } },
-    select: { userId: true, effectiveFrom: true, openingYtd: true },
-  });
-  const out: OpeningYtdEntry[] = [];
-  for (const s of structures) {
-    const rows = parseOpeningYtd(s.openingYtd);
-    if (!rows) continue;
-    out.push({
-      userId: s.userId,
-      fiscalStartYear: fiscalYearOf(s.effectiveFrom.getTime(), fiscalYearStartMonth),
-      components: rows.map((r) => ({
-        key: r.key,
-        label: r.label || r.key,
-        side: r.side,
-        amount: r.amount,
-      })),
-    });
-  }
-  return out;
-}
 
 // ---------------------------------------------------------------------------
 // Phase 2 (engine wiring) — statutory context loading + auto-enrolment.
@@ -344,356 +234,6 @@ async function auditAutoEnrolments(
 }
 
 // ---------------------------------------------------------------------------
-// Salary structures
-// ---------------------------------------------------------------------------
-
-/** All structures (newest first) + the employee context, payroll:manage. */
-export async function getSalaryStructures(): Promise<ActionResult<SalaryStructureT[]>> {
-  return toResult(async () => {
-    await requirePermission("payroll:manage");
-    const rows = await db.salaryStructure.findMany({ orderBy: { createdAt: "desc" } });
-    const [users, profiles, offerUsers] = await Promise.all([
-      db.user.findMany({ select: { id: true, name: true } }),
-      db.employeeProfile.findMany({ select: { userId: true, jobTitle: true, department: true } }),
-      signedOfferUserIds(),
-    ]);
-    const userMap = new Map(users.map((u) => [u.id, u]));
-    const profileMap = new Map(profiles.map((p) => [p.userId, p]));
-    return rows.map((s) =>
-      serializeStructure(
-        s,
-        userMap.get(s.userId),
-        profileMap.get(s.userId),
-        offerUsers.has(s.userId),
-      ),
-    );
-  });
-}
-
-/** Create or revise an employee's salary structure. Saving a new ACTIVE
- * structure for a user deactivates their previous one (one active at a
- * time; history preserved with effectiveFrom). */
-export async function saveSalaryStructure(input: unknown): Promise<ActionResult<{ id: string }>> {
-  return toResult(async () => {
-    const auth = await requirePermission("payroll:manage");
-    const data = parseOrThrow(saveSalaryStructureSchema, input);
-    const user = await db.user.findUnique({ where: { id: data.userId }, select: { id: true, name: true } });
-    if (!user) throw new AuthorizationError("Employee not found.");
-    if (data.components.length === 0) {
-      throw new AuthorizationError("A structure needs at least one component.");
-    }
-    if (!data.isActive) {
-      throw new AuthorizationError("Deactivate a structure by saving its replacement — history must keep an active record.");
-    }
-    const effectiveFrom = data.effectiveFrom
-      ? new Date(`${data.effectiveFrom}T00:00:00Z`)
-      : new Date();
-    const effectiveDay = effectiveFrom.toISOString().slice(0, 10);
-
-    // P16 (PR-04 duplicate guard) — one structure per employee per effective
-    // date (the benchmark's SSA duplicate guard; the retire-on-revision
-    // discipline already guarantees one ACTIVE, this refuses a SECOND row
-    // for the same day — a revision must move the date forward, history
-    // must stay addressable by date). Updates keep their own day.
-    const sameDay = await db.salaryStructure.findFirst({
-      where: { userId: data.userId, effectiveFrom: { gte: effectiveFrom, lt: new Date(`${effectiveDay}T23:59:59.999Z`) } },
-      select: { id: true },
-    });
-    if (sameDay && sameDay.id !== data.id) {
-      throw new AuthorizationError(
-        `${user.name} already has a structure effective ${effectiveDay} — revise it or pick another effective date.`,
-      );
-    }
-
-    // P16 (PR-11 component effective windows) — a structure's lines must be
-    // valid ON the structure's effectiveFrom (the catalog row owns the
-    // window; structures keep snapshot copies, so this check bites only at
-    // write time for the NEW row). Friendly error names the row + window.
-    const catalogRows = await db.salaryComponent.findMany({
-      select: { code: true, effectiveFrom: true, effectiveTo: true },
-    });
-    const windowByCode = new Map(catalogRows.map((r) => [r.code, r]));
-    for (const c of data.components) {
-      const cat = windowByCode.get(c.key);
-      if (!cat) continue; // unseen codes auto-register unbounded at creation
-      const fromOk = !cat.effectiveFrom || cat.effectiveFrom.getTime() <= effectiveFrom.getTime();
-      const toOk = !cat.effectiveTo || effectiveFrom.getTime() <= cat.effectiveTo.getTime();
-      if (!fromOk || !toOk) {
-        throw new AuthorizationError(
-          `Component "${c.key}" is not in its catalog window (${cat.effectiveFrom ? cat.effectiveFrom.toISOString().slice(0, 10) : "—"} → ${cat.effectiveTo ? cat.effectiveTo.toISOString().slice(0, 10) : "—"}) at the structure's effective date ${effectiveDay}.`,
-        );
-      }
-    }
-
-    const payload = {
-      userId: data.userId,
-      components: JSON.stringify(data.components),
-      notes: data.notes,
-      effectiveFrom,
-      isActive: true,
-      createdById: auth.userId,
-      // P5 — the flexible-benefit cap rides the structure (0 = no cap).
-      ...(data.maxBenefits !== undefined ? { maxBenefits: data.maxBenefits } : {}),
-      // P10 — the cadence this structure pays on (default MONTHLY).
-      frequency: data.frequency,
-      // P23 (PR-03) — the workspace default package flag; the wire omits
-      // it to keep the stored value (the maxBenefits convention), so it is
-      // only written when the caller sends it.
-      ...(data.isDefault !== undefined ? { isDefault: data.isDefault } : {}),
-      // P16 (PR-04) — the opening YTD rows. Absent = the key is omitted
-      // entirely (update keeps the stored rows, create stores none); an
-      // explicitly emptied list clears the column (DbNull — the same
-      // discipline updatePayslip uses to clear lopDetail).
-      ...(data.openingYtd !== undefined
-        ? {
-            openingYtd:
-              data.openingYtd && data.openingYtd.length > 0
-                ? (data.openingYtd as unknown as Prisma.InputJsonValue)
-                : Prisma.DbNull,
-          }
-        : {}),
-    };
-    // P23 — at most ONE default package per workspace: saving this row as
-    // the default clears every other holder. The clear + write must be ONE
-    // transaction (a crash between them could leave two defaults — the
-    // F-R1 discipline). Retirement of the old default is NOT automatic: a
-    // retired default still prefills (the flag is a package pointer, not
-    // employment state); HR moves it by marking the new structure.
-    const clearOtherDefaults =
-      data.isDefault === true
-        ? { isDefault: true as const, ...(data.id ? { id: { not: data.id } } : {}) }
-        : null;
-    let row: { id: string };
-    if (data.id) {
-      // openingYtd is absent from payload when the wire omitted it → the
-      // column stays untouched (Prisma only writes given keys).
-      row = clearOtherDefaults
-        ? await db.$transaction(async (tx) => {
-            await tx.salaryStructure.updateMany({ where: clearOtherDefaults, data: { isDefault: false } });
-            return tx.salaryStructure.update({ where: { id: data.id }, data: payload });
-          })
-        : await db.salaryStructure.update({ where: { id: data.id }, data: payload });
-    } else {
-      // One ACTIVE structure per employee: retire the previous one.
-      // F-R1: retire + create in ONE transaction — two separate writes could
-      // leave an employee with zero ACTIVE structures between them (silently
-      // dropping them from every future run). The transaction makes the
-      // hand-off atomic: either the new row exists and the old one is
-      // retired, or neither happened.
-      row = await db.$transaction(async (tx) => {
-        await tx.salaryStructure.updateMany({
-          where: { userId: data.userId, isActive: true },
-          data: { isActive: false },
-        });
-        if (clearOtherDefaults) {
-          await tx.salaryStructure.updateMany({ where: clearOtherDefaults, data: { isDefault: false } });
-        }
-        return tx.salaryStructure.create({ data: payload });
-      });
-    }
-    await logAudit({
-      actor: auth,
-      action: "payroll.structure_saved",
-      entityType: "SALARY_STRUCTURE",
-      entityId: row.id,
-      entityLabel: user.name,
-      detail: `${auth.name} ${data.id ? "revised" : "created"} the salary structure for ${user.name} (${data.components.length} components, effective ${payload.effectiveFrom.toISOString().slice(0, 10)}${data.isDefault === true ? " — now the workspace default package" : ""}).`,
-    });
-    revalidatePath("/");
-    return { id: row.id };
-  });
-}
-
-/** Copy the employee's SIGNED offer components into a new ACTIVE structure —
- * the natural path right after "Mark joined" (research B: first payroll must
- * match the appointment letter). */
-export async function createStructureFromOffer(input: { userId: string }): Promise<ActionResult<{ id: string }>> {
-  return toResult(async () => {
-    const auth = await requirePermission("payroll:manage");
-    const userId = String(input?.userId ?? "").trim();
-    if (!userId) throw new AuthorizationError("An employee id is required.");
-    const candidate = await db.candidate.findFirst({
-      where: { userId, status: "HIRED" },
-      select: { id: true, fullName: true },
-    });
-    if (!candidate) throw new AuthorizationError("No hired candidate links to this employee.");
-    const offer = await db.offerRecord.findFirst({
-      where: { candidateId: candidate.id, status: "SIGNED" },
-      orderBy: { signedAt: "desc" },
-    });
-    if (!offer) throw new AuthorizationError("No signed offer found for this employee.");
-    const components = parseComponents(offer.components);
-    if (components.length === 0) throw new AuthorizationError("The signed offer has no components to copy.");
-
-    // F1.5 — map the offer's lines through the component catalog: for codes
-    // the catalog knows, the structure line takes the catalog's canonical
-    // label/kind/mode (the offer snapshot keeps its own copy verbatim — the
-    // appointment letter never rewrites); the AMOUNT always stays the offer's
-    // actual, never the catalog's suggestion. Codes the catalog has never
-    // seen are auto-registered (with the offer's sighting as the suggested
-    // amount) so the catalog converges on everything actually in use — the
-    // structure editor's picker then offers them next time.
-    const catalogRows = await db.salaryComponent.findMany({
-      select: { code: true, label: true, kind: true, mode: true, dependsOnPaymentDays: true },
-    });
-    const catalogByCode = new Map(catalogRows.map((r) => [r.code, r]));
-    const toRegister = components.filter((c) => !catalogByCode.has(c.key));
-    const mapped = components.map((c) => {
-      const cat = catalogByCode.get(c.key);
-      // S6 — the catalog's depends_on_payment_days rides the snapshot
-      // (sparse: only false is written into the JSON).
-      return cat
-        ? {
-            ...c,
-            label: cat.label,
-            kind: cat.kind as OfferComponent["kind"],
-            mode: cat.mode as OfferComponent["mode"],
-            ...(cat.dependsOnPaymentDays === false ? { dependsOnPaymentDays: false } : { dependsOnPaymentDays: undefined }),
-          }
-        : c;
-    });
-
-    // F-R1: retire + create (+ F1.5 auto-registration of unseen codes) in
-    // ONE transaction — a crash between the writes could otherwise leave the
-    // employee with zero ACTIVE structures, silently dropping them from
-    // every future run.
-    const row = await db.$transaction(async (tx) => {
-      for (const c of toRegister) {
-        await tx.salaryComponent.create({
-          data: {
-            code: c.key,
-            label: c.label,
-            kind: c.kind,
-            mode: c.mode,
-            defaultAmount: c.amount,
-            // S6 — offer lines carry no exemption knowledge; new codes
-            // register as payment-day scaled (the default knob).
-            dependsOnPaymentDays: true,
-            isActive: true,
-            sortOrder: 1000,
-          },
-        });
-      }
-      await tx.salaryStructure.updateMany({
-        where: { userId, isActive: true },
-        data: { isActive: false },
-      });
-      return tx.salaryStructure.create({
-        data: {
-          userId,
-          components: JSON.stringify(mapped),
-          notes: `Copied from the signed offer (${offer.templateLabel || "custom"}).`,
-          isActive: true,
-          createdById: auth.userId,
-        },
-      });
-    });
-    await logAudit({
-      actor: auth,
-      action: "payroll.structure_from_offer",
-      entityType: "SALARY_STRUCTURE",
-      entityId: row.id,
-      entityLabel: candidate.fullName,
-      detail: `${auth.name} copied ${candidate.fullName}'s signed offer (${offer.templateLabel || "custom"}) into a salary structure${toRegister.length > 0 ? `, auto-registering ${toRegister.length} new component code(s): ${toRegister.map((c) => c.key).join(", ")}` : ""}.`,
-    });
-    revalidatePath("/");
-    return { id: row.id };
-  });
-}
-
-// ---------------------------------------------------------------------------
-// P14 (PR-33 / PR-04) — bulk tools: the bulk structure assignment + the
-// run's employee filter.
-// ---------------------------------------------------------------------------
-
-/** P14 (PR-33) — assign ONE component set to many employees at once. Each
- * employee's ACTIVE structure is replaced in their OWN transaction
- * (retire + create — the F-R1 discipline, so a crash can never leave an
- * employee with zero ACTIVE structures), with per-employee isolation: one
- * bad record never blocks the rest, the summary is loud and the counts
- * honest (the P13 pattern). Employees without an existing structure simply
- * get their first one (nothing to retire). */
-export async function bulkAssignStructure(input: unknown): Promise<ActionResult<{ replaced: number; createdFresh: number; failures: Array<{ userId: string; reason: string }> }>> {
-  return toResult(async () => {
-    const auth = await requirePermission("payroll:manage");
-    const data = parseOrThrow(bulkAssignStructureSchema, input);
-
-    // The employees must exist (a typo'd id is a per-employee failure, not
-    // a silent skip).
-    const users = await db.user.findMany({
-      where: { id: { in: data.userIds } },
-      select: { id: true, name: true },
-    });
-    const nameById = new Map(users.map((u) => [u.id, u.name]));
-    const existingActive = await db.salaryStructure.findMany({
-      where: { userId: { in: data.userIds }, isActive: true },
-      select: { userId: true },
-    });
-    const hadActive = new Set(existingActive.map((s) => s.userId));
-
-    const componentsJson = JSON.stringify(data.components);
-    const effectiveFrom = data.effectiveFrom ? new Date(`${data.effectiveFrom}T00:00:00Z`) : new Date();
-    const failures: Array<{ userId: string; reason: string }> = [];
-    let replaced = 0;
-    let createdFresh = 0;
-
-    for (const userId of data.userIds) {
-      if (!nameById.has(userId)) {
-        failures.push({ userId, reason: "employee not found" });
-        continue;
-      }
-      try {
-        await db.$transaction(async (tx) => {
-          if (hadActive.has(userId)) {
-            await tx.salaryStructure.updateMany({
-              where: { userId, isActive: true },
-              data: { isActive: false },
-            });
-          }
-          await tx.salaryStructure.create({
-            data: {
-              userId,
-              components: componentsJson,
-              notes: data.notes,
-              frequency: data.frequency,
-              effectiveFrom,
-              isActive: true,
-              createdById: auth.userId,
-            },
-          });
-        });
-        if (hadActive.has(userId)) replaced += 1;
-        else createdFresh += 1;
-      } catch (e) {
-        failures.push({
-          userId,
-          reason: e instanceof Error ? e.message : "unknown error",
-        });
-      }
-    }
-
-    const done = replaced + createdFresh;
-    if (done === 0) {
-      // Nothing landed at all — refuse loudly rather than pretending.
-      throw new AuthorizationError(
-        `Bulk assignment created no structures — ${failures.length} failure(s): ${failures.map((f) => `${nameById.get(f.userId) ?? f.userId} (${f.reason})`).join("; ")}.`,
-      );
-    }
-
-    await logAudit({
-      actor: auth,
-      action: "payroll.structures_bulk_assigned",
-      entityType: "SALARY_STRUCTURE",
-      entityId: data.userIds[0],
-      entityLabel: `${done} employee(s)`,
-      detail: `${auth.name} bulk-assigned a ${data.frequency.toLowerCase()} structure (${data.components.length} components) to ${done} employee(s) — ${replaced} replaced an active structure, ${createdFresh} first structure${failures.length > 0 ? `; ${failures.length} FAILED: ${failures.map((f) => `${nameById.get(f.userId) ?? f.userId} (${f.reason})`).join("; ")}` : ""}.`,
-    });
-    revalidatePath("/");
-    return { replaced, createdFresh, failures };
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Runs + payslips
 // ---------------------------------------------------------------------------
 
@@ -708,7 +248,7 @@ function slipNumber(period: string, seq: number): string {
 
 /** Per-user loss-of-pay days for a period, derived from attendance marks
  * (ABSENT / HALF_DAY) and approved leave (paid types shield the day, unpaid
- * types charge it — lib/lop-derivation.ts has the exact per-day semantics).
+ * types charge it — lib/payroll/lop-derivation.ts has the exact per-day semantics).
  * Charges only working days (weekends/holidays never charge); days with no
  * record and no leave charge 0 (unless PR-B07's ABSENT mode). Runs at
  * run/slip CREATION only — the value is then a snapshot on the payslip
@@ -838,31 +378,6 @@ async function deriveLopDaysForUsers(
     });
   }
   return result;
-}
-
-/** P15 (PR-06) — null-safe read of the frozen charge breakdown (Prisma's
- * JsonValue narrowed to the stored shape; anything malformed reads as null
- * rather than crashing the payroll views — the money lives in lopDays and
- * the LOP line, the detail is display). */
-function parseLopDetail(v: unknown): LopDetailT | null {
-  if (v == null || typeof v !== "object") return null;
-  const d = v as Record<string, unknown>;
-  const num = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
-  const leave = Array.isArray(d.leave)
-    ? d.leave.map((r) => {
-        const row = (r ?? {}) as Record<string, unknown>;
-        return {
-          leaveTypeId: typeof row.leaveTypeId === "string" ? row.leaveTypeId : "",
-          code: typeof row.code === "string" ? row.code : "—",
-          name: typeof row.name === "string" ? row.name : "(unknown leave)",
-          takenDays: num(row.takenDays),
-          chargedDays: num(row.chargedDays),
-          fraction: num(row.fraction),
-          paid: row.paid === true,
-        };
-      })
-    : [];
-  return { absentDays: num(d.absentDays), halfDays: num(d.halfDays), unmarkedDays: num(d.unmarkedDays), leave };
 }
 
 /** The runs list (newest window first — P10: sorted by the run's real
@@ -2256,76 +1771,6 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
   });
 }
 
-/** P20 (PR-R01/PR-R02) — the per-run CSV exports (payroll:manage). LOCKED
- * runs only: paid money is the only money worth exporting — an OPEN run's
- * numbers are drafts HR may still edit. The register lists every slip
- * (gross/deductions/net + LOP + withhold state); the bank remittance lists
- * the DISBURSED payments (WITHHELD nets never reach the bank file) with
- * the account column blank — Fernly stores no bank details, the employer's
- * bank maps accounts from its records. Both carry the non-statutory
- * disclaimer; the build is pure (lib/payroll-csv.ts, golden-file tested).
- * Audited: payroll.run_exported. */
-export async function exportPayrollRunCsv(input: unknown): Promise<ActionResult<{ filename: string; csv: string; mime: string }>> {
-  return toResult(async () => {
-    const auth = await requirePermission("payroll:manage");
-    const data = parseOrThrow(exportPayrollCsvSchema, input);
-    const run = await db.payrollRun.findUnique({
-      where: { id: data.runId },
-      select: { id: true, period: true, status: true },
-    });
-    if (!run) throw new AuthorizationError("Payroll run not found.");
-    if (run.status !== "LOCKED") {
-      throw new AuthorizationError("Only paid (locked) runs export — an open run's numbers are still drafts.");
-    }
-    // The slips + the identity joins in memory (Payslip/User carry no
-    // relations — the P17/P18 pattern).
-    const slips = await db.payslip.findMany({
-      where: { runId: run.id },
-      select: {
-        slipNo: true, userId: true, gross: true, net: true, lopDays: true,
-        withholdStatus: true, deductions: true,
-      },
-      orderBy: { slipNo: "asc" },
-    });
-    const [users, profiles] = await Promise.all([
-      db.user.findMany({ where: { id: { in: [...new Set(slips.map((s) => s.userId))] } }, select: { id: true, name: true } }),
-      db.employeeProfile.findMany({ where: { userId: { in: [...new Set(slips.map((s) => s.userId))] } }, select: { userId: true, employeeNumber: true, jobTitle: true } }),
-    ]);
-    const nameById = new Map(users.map((u) => [u.id, u.name]));
-    const profileByUser = new Map(profiles.map((p) => [p.userId, p]));
-    const rows = slips.map((s) => {
-      const profile = profileByUser.get(s.userId);
-      return {
-        slipNo: s.slipNo,
-        employeeNumber: profile?.employeeNumber ?? null,
-        employeeName: nameById.get(s.userId) ?? "(deleted user)",
-        jobTitle: profile?.jobTitle ?? "",
-        gross: s.gross,
-        deductions: round2(parsePayslipLines(s.deductions).reduce((sum, l) => sum + l.amount, 0)),
-        net: s.net,
-        lopDays: s.lopDays,
-        withholdStatus: s.withholdStatus,
-      };
-    });
-    const generatedAt = new Date();
-    const csv = data.kind === "REGISTER"
-      ? salaryRegisterCsv({ period: run.period, generatedAt, rows })
-      : bankRemittanceCsv({ period: run.period, generatedAt, rows });
-    const filename = data.kind === "REGISTER"
-      ? `salary-register-${run.period}.csv`
-      : `bank-remittance-${run.period}.csv`;
-    await logAudit({
-      actor: auth,
-      action: "payroll.run_exported",
-      entityType: "PAYROLL_RUN",
-      entityId: run.id,
-      entityLabel: run.period,
-      detail: `${auth.name} exported the ${data.kind === "REGISTER" ? "salary register" : "bank remittance"} CSV for the ${run.period} run (${rows.length} payslip row(s)).`,
-    });
-    return { filename, csv, mime: "text/csv; charset=utf-8" };
-  });
-}
-
 /** The Payroll view bundle: structures + runs in one call (the view fetches
  * the selected run's payslips separately via getPayrollRun). */
 export async function getPayrollData(): Promise<ActionResult<{ structures: SalaryStructureT[]; runs: PayrollRunT[] }>> {
@@ -2334,455 +1779,5 @@ export async function getPayrollData(): Promise<ActionResult<{ structures: Salar
     if (!structuresRes.ok) throw new AuthorizationError(structuresRes.error);
     if (!runsRes.ok) throw new AuthorizationError(runsRes.error);
     return { structures: structuresRes.data, runs: runsRes.data };
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Payslip self-service (persona-audit P0-1 / D-02)
-// ---------------------------------------------------------------------------
-
-/** The signed-in employee's OWN payslips — LOCKED runs only.
- *
- * "Published" semantics, matching class-leading payroll ESS (greytHR only
- * exposes payslips after Payroll → Published Info; Rippling/Keka show stubs
- * once finalized): an OPEN run is still a draft HR may edit, so it must never
- * reach the employee. YTD is therefore a running net total over the same
- * locked-only basis per calendar year — draft money can never leak into an
- * employee-visible number.
- *
- * RBAC: no permission required — this is the caller's own data (the ESS
- * baseline every role holds, like leave self-service). The action takes zero
- * inputs, so the query is self-scoped by construction: there is no parameter
- * through which another user's slip could ever be requested. Unauthenticated
- * calls are rejected by getSessionOrThrow. */
-export async function getMyPayslips(): Promise<ActionResult<PayslipT[]>> {
-  return toResult(async () => {
-    const auth = await getSessionOrThrow();
-    const [slips, profile, fiscalYearStartMonth] = await Promise.all([
-      db.payslip.findMany({
-        where: { userId: auth.userId, run: { status: "LOCKED" } },
-        include: { run: { select: { period: true, workingDays: true, startDate: true, endDate: true } } },
-      }),
-      db.employeeProfile.findUnique({
-        where: { userId: auth.userId },
-        select: { jobTitle: true },
-      }),
-      getWorkspaceConfig().then((c) => c.workspace.fiscalYearStartMonth),
-    ]);
-
-    // P11 (PR-B09) — read-time aggregates through the ONE kernel both
-    // surfaces share (self-service basis: LOCKED runs only, held/released
-    // money carried forward, never accumulated). Ordering + year/month
-    // attribution by the run's REAL window end (P10). P16 — the same fiscal
-    // basis as the HR surface + this employee's opening rows, so the two
-    // surfaces can never disagree.
-    const runEndMs = (p: { run: { period: string; startDate: Date | null; endDate: Date | null } }) =>
-      runWindowEnd(p.run.period, p.run.endDate)?.getTime() ?? 0;
-    const openings = await openingEntriesForUsers([auth.userId], fiscalYearStartMonth);
-    const aggregates = computeRunningAggregates(
-      slips.map((s) => ({
-        id: s.id,
-        userId: s.userId,
-        slipNo: s.slipNo,
-        gross: s.gross,
-        net: s.net,
-        withholdStatus: s.withholdStatus,
-        earnings: s.earnings,
-        deductions: s.deductions,
-        windowEndMs: runEndMs(s),
-      })),
-      { fiscalYearStartMonth, openings },
-    );
-
-    // P17 (PR-B25) — the employee's own live leave balances when the toggle
-    // is on (read-time, current-year rows, latest year per type; names join
-    // in memory — LeaveBalance has no LeaveType relation, just the id).
-    const showLeaveBalances = (
-      await getWorkspaceConfig()
-    ).workspace.showLeaveBalancesOnSlip;
-    const myBalances: { typeName: string; availableDays: number }[] = [];
-    if (showLeaveBalances) {
-      const latest = slips.reduce((m, s) => Math.max(m, runEndMs(s)), 0);
-      const year = latest > 0 ? new Date(latest).getUTCFullYear() : new Date().getUTCFullYear();
-      const [rows, types] = await Promise.all([
-        db.leaveBalance.findMany({
-          where: { userId: auth.userId, year: { gte: year } },
-          select: { year: true, entitled: true, carriedOver: true, used: true, leaveTypeId: true },
-          orderBy: { year: "desc" },
-        }),
-        db.leaveType.findMany({ select: { id: true, name: true } }),
-      ]);
-      const nameById = new Map(types.map((t) => [t.id, t.name]));
-      const seen = new Set<string>();
-      for (const r of rows) {
-        // Dedupe by type id (not name): the freshest year per type wins.
-        if (seen.has(r.leaveTypeId)) continue;
-        seen.add(r.leaveTypeId);
-        myBalances.push({
-          typeName: nameById.get(r.leaveTypeId) ?? "(deleted type)",
-          availableDays: round2(r.entitled + r.carriedOver - r.used),
-        });
-      }
-    }
-
-    return [...slips]
-      .sort((a, b) => runEndMs(b) - runEndMs(a) || a.slipNo.localeCompare(b.slipNo))
-      .map((p) => ({
-        id: p.id,
-        runId: p.runId,
-        runPeriod: p.run.period,
-        runStatus: "LOCKED" as const,
-        runWorkingDays: p.run.workingDays,
-        userId: auth.userId,
-        userName: auth.name,
-        jobTitle: profile?.jobTitle ?? "",
-        slipNo: p.slipNo,
-        earnings: parsePayslipLines(p.earnings),
-        deductions: parsePayslipLines(p.deductions),
-        note: p.note,
-        lopDays: p.lopDays,
-        lopSource: (p.lopSource === "MANUAL" ? "MANUAL" : "AUTO") as "AUTO" | "MANUAL",
-        lopDetail: parseLopDetail(p.lopDetail),
-        version: p.version,
-        paidDays: p.paidDays ?? null,
-        gross: p.gross,
-        net: p.net,
-        // P11 — the kernel's aggregates (self-service basis: locked runs
-        // only).
-        ytdNet: aggregates.get(p.id)?.ytdNet ?? p.net,
-        ytdGross: aggregates.get(p.id)?.ytdGross ?? p.gross,
-        mtdNet: aggregates.get(p.id)?.mtdNet ?? p.net,
-        componentYtd: aggregates.get(p.id)?.componentYtd ?? [],
-        // P16 — the fiscal basis behind these numbers (the modal's chip).
-        fiscalYearStartMonth,
-        // P17 — the employee's own live balances when the toggle is on.
-        ...(showLeaveBalances ? { leaveBalances: myBalances } : {}),
-        withholdStatus: (p.withholdStatus === "WITHHELD" || p.withholdStatus === "RELEASED" ? p.withholdStatus : "") as "" | "WITHHELD" | "RELEASED",
-        // Phase 2 — the frozen statutory snapshot (null = pre-engine slip).
-        statutory: parseStatutorySnapshot(p.statutory),
-      }));
-  });
-}
-
-// ---------------------------------------------------------------------------
-// P22 (PR-C01–04, PR-N01–06) — read-time payroll analytics
-// ---------------------------------------------------------------------------
-
-/** The Payroll view's analytics panel: the four charts (outgoing salary,
- * department-wise salary, designation-wise salary, benefit claims) and the
- * six number cards, over LOCKED runs only — draft money never reaches an
- * analytics surface (the same published-only basis as self-service).
- *
- * RBAC: payroll:manage (the view itself already requires it — this keeps the
- * action independently safe). Read-only: no audit row (the export gate audits
- * file downloads; reads are not side effects). */
-export async function getPayrollAnalytics(): Promise<ActionResult<PayrollAnalytics>> {
-  return toResult(async () => {
-    await requirePermission("payroll:manage");
-
-    const [slipRows, structureCount, claimRows, incentiveRows] = await Promise.all([
-      db.payslip.findMany({
-        where: { run: { status: "LOCKED" } },
-        select: {
-          userId: true,
-          gross: true,
-          net: true,
-          withholdStatus: true,
-          run: { select: { period: true, endDate: true } },
-        },
-      }),
-      db.salaryStructure.count({ where: { isActive: true } }),
-      db.benefitAccrual.findMany({
-        where: { entryType: "CLAIM" },
-        select: { delta: true, period: true, createdAt: true },
-      }),
-      db.payAdjustment.findMany({
-        where: { sourceType: "INCENTIVE" },
-        select: { amount: true },
-      }),
-    ]);
-
-    // The claims ledger stores negative deltas (the append-only discipline);
-    // the kernel consumes magnitudes.
-    const claims = claimRows.map((c) => ({
-      amount: Math.abs(c.delta),
-      // windowEndMs: the claim's consuming month — the stored period when
-      // present (the locking run's period), else createdAt's month.
-      windowEndMs: c.period
-        ? runWindowEnd(c.period)?.getTime() ?? c.createdAt.getTime()
-        : c.createdAt.getTime(),
-    }));
-
-    // Join the profile dimensions for the dimension charts (one read; users
-    // without a profile keep the honest "No department" bucket).
-    const profileRows = await db.employeeProfile.findMany({
-      select: { userId: true, department: true, jobTitle: true },
-    });
-    const profileByUser = new Map(profileRows.map((p) => [p.userId, p]));
-    const dimensionedSlips = slipRows.map((s) => {
-      const profile = profileByUser.get(s.userId);
-      return {
-        userId: s.userId,
-        gross: s.gross,
-        net: s.net,
-        withholdStatus: s.withholdStatus,
-        department: profile?.department ?? "",
-        jobTitle: profile?.jobTitle ?? "",
-        windowEndMs: runWindowEnd(s.run.period, s.run.endDate)?.getTime() ?? 0,
-      };
-    });
-
-    return buildPayrollAnalytics({
-      slips: dimensionedSlips,
-      claims,
-      incentives: incentiveRows.map((i) => ({ amount: i.amount })),
-      activeStructures: structureCount,
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// P1 (PR-12/PR-B10, F2.3) — the PayAdjustment universal adapter
-// ---------------------------------------------------------------------------
-
-/** Serialize one adapter row for the payroll view's Adjustments panel. */
-function serializeAdjustment(
-  row: PayAdjustmentRow & { createdAt: Date },
-  userName: string,
-  consumedRunPeriod: string,
-): PayAdjustmentT {
-  return {
-    id: row.id,
-    userId: row.userId,
-    userName,
-    sourceType: row.sourceType,
-    sourceId: row.sourceId,
-    componentCode: row.componentCode,
-    label: row.label || row.componentCode,
-    side: (row.side === "DEDUCTION" ? "DEDUCTION" : "EARNING") as "EARNING" | "DEDUCTION",
-    recurrence: (["ONE_SHOT", "RECURRING", "OVERWRITE"].includes(row.recurrence)
-      ? row.recurrence
-      : "ONE_SHOT") as "ONE_SHOT" | "RECURRING" | "OVERWRITE",
-    calcMode: (["FIXED", "PERCENT_OF_GROSS", "PERCENT_OF_NET"].includes(row.calcMode)
-      ? row.calcMode
-      : "FIXED") as "FIXED" | "PERCENT_OF_GROSS" | "PERCENT_OF_NET",
-    percent: row.percent ?? null,
-    amount: row.amount,
-    period: row.period,
-    endPeriod: row.endPeriod ?? null,
-    lastConsumedPeriod: row.lastConsumedPeriod,
-    status: (["PENDING", "CONSUMED", "SKIPPED"].includes(row.status) ? row.status : "PENDING") as
-      | "PENDING"
-      | "CONSUMED"
-      | "SKIPPED",
-    skipReason: row.skipReason,
-    note: row.note,
-    consumedRunPeriod,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-/** The manual adjustment writer (payroll:manage). Shape validation in the
- * zod schema; the semantic matrix (percent-vs-side, endPeriod order,
- * label-or-code) in the pure kernel's validateAdjustmentInput — one rule
- * shared with the UI. MANUAL/INCENTIVE sources only: feature-owned sources
- * (ENCASHMENT, ARREARS, …) are written by their own actions with their own
- * provenance, never through this hand-made path. */
-export async function createPayAdjustment(input: unknown): Promise<ActionResult<{ id: string }>> {
-  return toResult(async () => {
-    const auth = await requirePermission("payroll:manage");
-    const data = parseOrThrow(createPayAdjustmentSchema, input);
-    const semanticError = validateAdjustmentInput({
-      side: data.side,
-      recurrence: data.recurrence,
-      calcMode: data.calcMode,
-      percent: data.percent ?? null,
-      amount: data.amount,
-      period: data.period,
-      endPeriod: data.endPeriod ?? null,
-      label: data.label,
-      componentCode: data.componentCode,
-    });
-    if (semanticError) throw new AuthorizationError(semanticError);
-    const user = await db.user.findUnique({ where: { id: data.userId }, select: { id: true, name: true } });
-    if (!user) throw new AuthorizationError("Employee not found.");
-    // A locked period never takes new adjustments: paid runs are immutable
-    // and no new run will ever consume the row (dead input by construction).
-    const targetRun = await db.payrollRun.findUnique({
-      where: { period: data.period },
-      select: { status: true },
-    });
-    if (targetRun?.status === "LOCKED") {
-      throw new AuthorizationError("That period is already locked — paid runs never take new adjustments.");
-    }
-    const row = await db.payAdjustment.create({
-      data: {
-        userId: data.userId,
-        sourceType: data.sourceType,
-        sourceId: "",
-        componentCode: data.componentCode,
-        label: data.label,
-        side: data.side,
-        recurrence: data.recurrence,
-        calcMode: data.calcMode,
-        percent: data.percent ?? null,
-        amount: data.amount,
-        period: data.period,
-        endPeriod: data.endPeriod ?? null,
-        note: data.note,
-        createdById: auth.userId,
-      },
-    });
-    await logAudit({
-      actor: auth,
-      action: "payroll.adjustment_created",
-      entityType: "PAY_ADJUSTMENT",
-      entityId: row.id,
-      entityLabel: `${user.name} — ${data.label || data.componentCode}`,
-      detail: `${auth.name} added a ${data.recurrence.toLowerCase()} ${data.side.toLowerCase()} adjustment for ${user.name}: ${
-        data.calcMode === "FIXED"
-          ? `$${data.amount.toLocaleString("en-NZ")}`
-          : `${data.percent}% of ${data.calcMode === "PERCENT_OF_GROSS" ? "gross" : "net"}`
-      }, first period ${data.period}${data.endPeriod ? ` through ${data.endPeriod}` : ""}.`,
-    });
-    revalidatePath("/");
-    return { id: row.id };
-  });
-}
-
-/** Every adapter row (newest first, capped) with names + the consuming
- * run's period — the Adjustments panel's data. payroll:manage. */
-export async function listPayAdjustments(): Promise<ActionResult<PayAdjustmentT[]>> {
-  return toResult(async () => {
-    await requirePermission("payroll:manage");
-    const rows = await db.payAdjustment.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
-    if (rows.length === 0) return [];
-    const userIds = [...new Set(rows.map((r) => r.userId))];
-    const users = await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } });
-    const nameById = new Map(users.map((u) => [u.id, u.name]));
-    const runIds = [...new Set(rows.map((r) => r.consumedRunId).filter((id) => id !== ""))];
-    const runs = runIds.length > 0
-      ? await db.payrollRun.findMany({ where: { id: { in: runIds } }, select: { id: true, period: true } })
-      : [];
-    const periodByRunId = new Map(runs.map((r) => [r.id, r.period]));
-    return rows.map((row) =>
-      serializeAdjustment(
-        row,
-        nameById.get(row.userId) ?? "Unknown",
-        periodByRunId.get(row.consumedRunId) ?? "",
-      ),
-    );
-  });
-}
-
-/** Explicitly apply the period's PENDING adjustments to an OPEN run's
- * existing payslips (created after the run was). The rows resolve through
- * the same two-pass kernel onto the STORED lines (manual edits preserved;
- * the stale rounding line is re-derived after), each touched slip's
- * optimistic-lock version increments, and the row updates commit in one
- * transaction with the line writes — no silent re-derivation, ever. */
-export async function applyPayAdjustmentsToRun(
-  input: unknown,
-): Promise<ActionResult<{ applied: number; skipped: number; slipsTouched: number }>> {
-  return toResult(async () => {
-    const auth = await requirePermission("payroll:manage");
-    const data = parseOrThrow(lockPayrollRunSchema, input);
-    const run = await db.payrollRun.findUnique({ where: { id: data.runId } });
-    if (!run) throw new AuthorizationError("Payroll run not found.");
-    if (run.status !== "OPEN") throw new AuthorizationError("The run is locked — payslips are immutable once paid.");
-
-    const pendingAdjustments = await db.payAdjustment.findMany({
-      // P10 — no period-string pre-filter: the window-aware predicate
-      // decides due-ness (isDueInPeriod below).
-      where: { status: "PENDING" },
-      orderBy: { createdAt: "asc" },
-    });
-    const dueRows = pendingAdjustments.filter((row) => isDueInPeriod(row, run.period));
-    if (dueRows.length === 0) return { applied: 0, skipped: 0, slipsTouched: 0 };
-
-    const dueByUser = new Map<string, PayAdjustmentRow[]>();
-    for (const row of dueRows) {
-      const list = dueByUser.get(row.userId);
-      if (list) list.push(row);
-      else dueByUser.set(row.userId, [row]);
-    }
-    const slips = await db.payslip.findMany({ where: { runId: run.id } });
-    const slipUserIds = new Set(slips.map((s) => s.userId));
-    const roundingMode = (await getWorkspaceConfig()).workspace.payrollRoundingMode;
-
-    type ConsumedEntry = { row: PayAdjustmentRow; final: boolean };
-    const consumedEntries: ConsumedEntry[] = [];
-    const skipById = new Map<string, string>();
-    // Due rows whose employee has no slip: ONE_SHOT/OVERWRITE periods never
-    // come back — SKIPPED with reason; RECURRING stays PENDING for the future.
-    const noSlipSkips = dueRows.filter(
-      (row) => !slipUserIds.has(row.userId) && row.recurrence !== "RECURRING",
-    );
-
-    let slipsTouched = 0;
-    await db.$transaction(async (tx) => {
-      for (const slip of slips) {
-        const due = dueByUser.get(slip.userId) ?? [];
-        if (due.length === 0) continue;
-        // The stored lines (manual edits included) are the base; the stale
-        // rounding line is cleaned and re-derived by withRoundingLine after
-        // the adjustments land (replaces, never duplicates).
-        const applied = applyAdjustments(
-          { earnings: parsePayslipLines(slip.earnings), deductions: parsePayslipLines(slip.deductions) },
-          due,
-          run.period,
-        );
-        if (applied.consumed.length === 0 && applied.skipped.length === 0) continue;
-        for (const c of applied.consumed) {
-          const row = due.find((r) => r.id === c.id);
-          if (row) consumedEntries.push({ row, final: c.final });
-        }
-        for (const s of applied.skipped) skipById.set(s.id, s.reason);
-        const { earnings: finalEarnings, deductions } = withRoundingLine(applied.earnings, applied.deductions, roundingMode);
-        const { gross, net } = payslipTotals(finalEarnings, deductions);
-        await tx.payslip.update({
-          where: { id: slip.id },
-          data: {
-            earnings: JSON.stringify(finalEarnings),
-            deductions: JSON.stringify(deductions),
-            gross,
-            net,
-            version: slip.version + 1,
-          },
-        });
-        slipsTouched++;
-      }
-      for (const row of noSlipSkips) {
-        skipById.set(row.id, `no payslip for the employee in the ${run.period} run`);
-      }
-      for (const { row, final } of consumedEntries) {
-        await tx.payAdjustment.update({
-          where: { id: row.id },
-          data: {
-            status: final ? "CONSUMED" : "PENDING",
-            lastConsumedPeriod: run.period,
-            consumedRunId: run.id,
-          },
-        });
-      }
-      for (const [id, reason] of skipById) {
-        await tx.payAdjustment.update({ where: { id }, data: { status: "SKIPPED", skipReason: reason } });
-      }
-    });
-
-    const appliedCount = consumedEntries.length;
-    const skippedCount = skipById.size;
-    if (appliedCount > 0 || skippedCount > 0) {
-      await logAudit({
-        actor: auth,
-        action: "payroll.adjustments_applied",
-        entityType: "PAYROLL_RUN",
-        entityId: run.id,
-        entityLabel: run.period,
-        detail: `${auth.name} applied pending adjustments to the ${run.period} run — ${appliedCount} consumed onto ${slipsTouched} payslip(s)${skippedCount > 0 ? `, ${skippedCount} skipped with reason` : ""}.`,
-      });
-      revalidatePath("/");
-    }
-    return { applied: appliedCount, skipped: skippedCount, slipsTouched };
   });
 }

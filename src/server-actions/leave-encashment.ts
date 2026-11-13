@@ -25,18 +25,18 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { requestLeaveEncashmentSchema, decideLeaveEncashmentSchema } from "@/lib/validation";
-import { resolveLeavePolicy } from "@/lib/leave-policy";
-import { planLeaveEncashment, encashmentDailyRate, encashmentAmount } from "@/lib/leave-encashment";
+import { resolveLeavePolicy } from "@/lib/leave/leave-policy";
+import { planLeaveEncashment, encashmentDailyRate, encashmentAmount } from "@/lib/leave/leave-encashment";
 import { workingDaysInPeriod } from "@/lib/working-days";
 import { parseComponents, computeOffer } from "@/lib/offer-math";
-import { round2 } from "@/lib/payroll-math";
+import { round2 } from "@/lib/payroll/payroll-math";
 import {
   getHolidayLookup,
   todayUTC,
@@ -45,7 +45,7 @@ import {
   materializeLeaveBalanceTx,
   getApproverIdsFor,
 } from "./hr-shared";
-import { hasPermission } from "@/lib/rbac";
+import { hasPermission } from "@/lib/auth/rbac";
 import type { LeaveEncashmentT } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ export async function getEncashmentQueue(): Promise<
 
     let visibleUserIds: string[] | null = null;
     if (auth.role === "MANAGER") {
-      const { getSubtreeUserIds } = await import("@/lib/hierarchy");
+      const { getSubtreeUserIds } = await import("@/lib/auth/hierarchy");
       visibleUserIds = [...(await getSubtreeUserIds(auth.userId))];
     }
 

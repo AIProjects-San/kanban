@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { parseOrThrow, createSalaryRevisionSchema } from "@/lib/validation";
 import { logAudit } from "./shared";

@@ -4,8 +4,8 @@
 // L-P2-29 — parse @Name mentions from a text body and emit MENTION
 // notifications to the referenced users.
 
-import { logError } from "@/lib/observability";
-import { db } from "@/lib/db";
+import { logError } from "@/lib/infra/observability";
+import { db } from "@/lib/infra/db";
 import { extractMentionedNames, normaliseNameForMention } from "@/lib/mentions";
 
 export interface MentionContext {

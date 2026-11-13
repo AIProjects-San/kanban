@@ -31,7 +31,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -62,7 +62,7 @@ import {
   simulateTax,
 } from "../tax-admin";
 import { AuthorizationError } from "@/server-actions/auth-guard";
-import { isValidIrdNumber } from "@/lib/tax-profile-preview";
+import { isValidIrdNumber } from "@/lib/payroll/tax-profile-preview";
 
 const SUPER = { userId: "u-super", role: "SUPER_ADMIN" as const, name: "Nova Kaur", email: "super@x.co" };
 

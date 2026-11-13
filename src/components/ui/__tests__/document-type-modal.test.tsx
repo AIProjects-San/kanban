@@ -15,7 +15,7 @@ const { getDocumentTypes, saveDocumentType, deleteDocumentType } = vi.hoisted(()
   deleteDocumentType: vi.fn(),
 }));
 
-vi.mock("@/server-actions/hiring", () => ({
+vi.mock("@/server-actions/hiring-formalities", () => ({
   getDocumentTypes,
   saveDocumentType,
   deleteDocumentType,

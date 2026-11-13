@@ -48,12 +48,16 @@ const {
 }));
 
 vi.mock("@/server-actions/hiring", () => ({
-  scheduleInterview,
-  saveScorecard,
   advanceStage,
   decideCandidate,
   addCandidateStage,
   setStageStatus,
+}));
+vi.mock("@/server-actions/hiring-interviews", () => ({
+  scheduleInterview,
+  saveScorecard,
+}));
+vi.mock("@/server-actions/hiring-formalities", () => ({
   getJoiningFormalities,
   requestDocument,
   receiveDocument,
@@ -61,6 +65,8 @@ vi.mock("@/server-actions/hiring", () => ({
   rejectDocument,
   initiateBackgroundCheck,
   updateBackgroundCheck,
+}));
+vi.mock("@/server-actions/hiring-onboarding", () => ({
   markJoined,
 }));
 

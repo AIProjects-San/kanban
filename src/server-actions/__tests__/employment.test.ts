@@ -28,7 +28,7 @@ const db = vi.hoisted(() => {
   );
   return obj;
 });
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -42,7 +42,7 @@ vi.mock("@/server-actions/auth-guard", () => ({
 // P33 — the promotion/transfer writer routes manager changes through the
 // ONE cycle guard; mocked so the refusal test can pin the call.
 const assertNoCycleMock = vi.fn();
-vi.mock("@/lib/hierarchy", () => ({
+vi.mock("@/lib/auth/hierarchy", () => ({
   assertNoCycle: (...a: unknown[]) => assertNoCycleMock(...a),
   getManagerChain: vi.fn(async () => [] as string[]),
   getSubtreeUserIds: vi.fn(async () => new Set<string>()),

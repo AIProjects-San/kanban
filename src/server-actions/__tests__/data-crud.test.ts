@@ -38,7 +38,7 @@ const { db, getBetterSession } = vi.hoisted(() => {
   return { db, getBetterSession };
 });
 
-vi.mock("@/lib/auth-better", () => ({
+vi.mock("@/lib/auth/auth-better", () => ({
   // The Better Auth session seam (PR-49 default stack). revokeUserSessions
   // is stubbed so password-change flows that call the revocation bridge
   // never touch a real instance.
@@ -46,7 +46,7 @@ vi.mock("@/lib/auth-better", () => ({
   revokeUserSessions: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 import {
   getDashboardData,

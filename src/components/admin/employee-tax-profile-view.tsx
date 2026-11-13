@@ -28,7 +28,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, CalendarClock, CheckCircle2, Save, ShieldCheck } from "lucide-react";
 import { saveEmployeeTaxProfile } from "@/server-actions/tax-admin";
-import { buildTaxProfilePreview, isValidIrdNumber } from "@/lib/tax-profile-preview";
+import { buildTaxProfilePreview, isValidIrdNumber } from "@/lib/payroll/tax-profile-preview";
 import type { EmployeeTaxProfileT } from "@/lib/types";
 
 const inputCls =

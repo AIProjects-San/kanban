@@ -15,14 +15,14 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { createRetentionBonusSchema } from "@/lib/validation";
-import { planRetentionBonus, periodPlusMonths, retentionBonusLabel } from "@/lib/retention-bonus";
+import { planRetentionBonus, periodPlusMonths, retentionBonusLabel } from "@/lib/payroll/retention-bonus";
 
 export async function createRetentionBonus(input: unknown): Promise<ActionResult<{ adjustmentId: string }>> {
   return toResult(async () => {

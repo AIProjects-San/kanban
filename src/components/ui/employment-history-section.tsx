@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { ChevronDown, ArrowUpRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getEmploymentHistory } from "@/server-actions/employment";
-import { EMPLOYMENT_PROPERTY_LABELS, EMPLOYMENT_CHANGE_KIND_LABELS } from "@/lib/employment-change";
+import { EMPLOYMENT_PROPERTY_LABELS, EMPLOYMENT_CHANGE_KIND_LABELS } from "@/lib/hr/employment-change";
 import type { EmploymentPropertyHistoryT } from "@/lib/types";
 
 // ---------------------------------------------------------------------------

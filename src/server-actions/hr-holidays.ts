@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import type { HolidayT } from "@/lib/types";
 import type { ActionResult } from "@/lib/action-result";

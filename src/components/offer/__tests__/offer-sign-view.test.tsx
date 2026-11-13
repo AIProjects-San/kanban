@@ -14,7 +14,7 @@ const { signOffer, declineOffer } = vi.hoisted(() => ({
   declineOffer: vi.fn(),
 }));
 
-vi.mock("@/server-actions/hiring", () => ({ signOffer, declineOffer }));
+vi.mock("@/server-actions/hiring-offers", () => ({ signOffer, declineOffer }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { OfferSignView, OfferLinkInvalid, type PublicOfferT } from "@/components/offer/offer-sign-view";

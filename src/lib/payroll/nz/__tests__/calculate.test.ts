@@ -13,7 +13,7 @@ const db = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 import {
   calculateNzStatutory,

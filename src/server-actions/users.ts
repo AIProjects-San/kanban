@@ -7,14 +7,14 @@
 // ActionResult.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSessionOrThrow, requirePermission, requirePermissionForTarget, AuthorizationError } from "./auth-guard";
-import { revokeUserSessionsIfActive } from "@/lib/auth-revoke";
-import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/rbac";
-import { getEffectivePermissions } from "@/lib/config-loader";
-import { assertNoCycle } from "@/lib/hierarchy";
-import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/password";
-import { assertPasswordNotBreached } from "@/lib/breach-check";
+import { revokeUserSessionsIfActive } from "@/lib/auth/auth-revoke";
+import { hasPermission, isValidRole, ROLE_LABELS } from "@/lib/auth/rbac";
+import { getEffectivePermissions } from "@/lib/infra/config-loader";
+import { assertNoCycle } from "@/lib/auth/hierarchy";
+import { getMinPasswordLength, hashPassword, verifyPassword } from "@/lib/auth/password";
+import { assertPasswordNotBreached } from "@/lib/auth/breach-check";
 import { emailSchema, updateProfileSchema, updateUserSettingsSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";

@@ -59,7 +59,7 @@ export function LoginScreen() {
     e.preventDefault();
     setLoading(true);
     // appSignIn drives the Better Auth /sign-in/email endpoint
-    // (src/lib/auth-client-better.ts). redirect stays ours: the reload keeps
+    // (src/lib/auth/auth-client-better.ts). redirect stays ours: the reload keeps
     // the current origin (critical behind reverse proxies / previews) and
     // picks up the session cookie set by the POST response.
     const res = await appSignIn(email, password);

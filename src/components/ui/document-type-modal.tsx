@@ -12,7 +12,7 @@ import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
 import { cn } from "@/lib/utils";
 import type { DocumentTypeConfigT } from "@/lib/types";
-import { getDocumentTypes, saveDocumentType, deleteDocumentType } from "@/server-actions/hiring";
+import { getDocumentTypes, saveDocumentType, deleteDocumentType } from "@/server-actions/hiring-formalities";
 
 interface Draft {
   id?: string;

@@ -29,7 +29,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 const getSessionMock = vi.fn();

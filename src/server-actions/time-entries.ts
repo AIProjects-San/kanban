@@ -10,9 +10,9 @@
 //   deleteTimeEntry  — remove an entry (own entries, or task:edit:any)
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSessionOrThrow, requirePermission, AuthorizationError } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { hasPermission } from "@/lib/auth/rbac";
 import { logAudit, getMyTeamMemberId, getScopedProjectIds, assertTaskEditPermission } from "./shared";
 import { findApprovedLeaveOn } from "./hr-shared";
 import { logTimeSchema, logTaskTimeSchema, parseOrThrow } from "@/lib/validation";

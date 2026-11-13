@@ -22,9 +22,9 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { hasPermission, type Role } from "@/lib/rbac";
+import { hasPermission, type Role } from "@/lib/auth/rbac";
 import type { OnboardingChecklistT, OnboardingTemplateTaskT } from "@/lib/types";
 import {
   createChecklistSchema,
@@ -35,13 +35,13 @@ import {
   parseOrThrow,
 } from "@/lib/validation";
 import { logAudit, readOnboardingTemplate, instantiateChecklist } from "./shared";
-import { checklistCompletion } from "@/lib/onboarding-template";
+import { checklistCompletion } from "@/lib/hr/onboarding-template";
 import { addWorkingDays, holidayLookupFrom } from "@/lib/working-days";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 
 // F2.10 (F-R8) — the template source is now the OnboardingTemplateTask table
-// (with the canonical constants in lib/onboarding-template.ts as the
+// (with the canonical constants in lib/hr/onboarding-template.ts as the
 // empty-table fallback). The DEFAULT_TEMPLATE / DEFAULT_SEPARATION_TEMPLATE /
 // templateFor constants that used to live here are GONE — this file, the
 // inline copy inside markJoined, and the client copy in joiner-handout.tsx

@@ -1,6 +1,6 @@
 "use client";
 
-import { hasPermission, type Permission, type Role } from "@/lib/rbac";
+import { hasPermission, type Permission, type Role } from "@/lib/auth/rbac";
 import { useAppSession } from "@/hooks/use-app-session";
 import { useApp } from "@/store/app-store";
 

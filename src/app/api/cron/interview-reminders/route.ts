@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { runInterviewRemindersJob } from "@/lib/interview-reminders";
-import { captureError } from "@/lib/observability";
-import { tryAcquireMaintenanceLock, INTERVIEW_REMINDERS_LOCK_KEY } from "@/lib/maintenance-lock";
+import { runInterviewRemindersJob } from "@/lib/hiring/interview-reminders";
+import { captureError } from "@/lib/infra/observability";
+import { tryAcquireMaintenanceLock, INTERVIEW_REMINDERS_LOCK_KEY } from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // P26 (PL-03/RJ-B18) — the interview-reminders cron endpoint (docs/
 // Fernly_HR_Payroll_Enhancement_Plan.md §7.2.2 P26; the benchmark's daily
 // send_interview_reminder job, workspace-scoped to a day-of interviewer
-// nudge). The engine lives in src/lib/interview-reminders.ts; this route
+// nudge). The engine lives in src/lib/hiring/interview-reminders.ts; this route
 // (and the daily dispatcher, which carries it beside the other HR jobs)
 // makes it schedulable — same security contract as /api/cron/prune-audit,
 // leave-allocation and employee-reminders:

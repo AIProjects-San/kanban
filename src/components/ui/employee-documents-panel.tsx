@@ -16,7 +16,7 @@ import { Field } from "./field";
 import { Section } from "./section";
 import { cn } from "@/lib/utils";
 import type { EmployeeDocumentT } from "@/lib/types";
-import { EMPLOYEE_DOC_STATUS_LABELS } from "@/lib/employee-documents";
+import { EMPLOYEE_DOC_STATUS_LABELS } from "@/lib/hr/employee-documents";
 import {
   getEmployeeDocuments,
   requestEmployeeDocument,

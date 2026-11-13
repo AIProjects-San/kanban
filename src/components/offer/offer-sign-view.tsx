@@ -14,7 +14,7 @@
 import { useState } from "react";
 import { Leaf, Loader2, PenLine, Printer, ShieldCheck, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { signOffer, declineOffer } from "@/server-actions/hiring";
+import { signOffer, declineOffer } from "@/server-actions/hiring-offers";
 import { formatMoney } from "@/lib/offer-math";
 
 /** The public (token-gated) projection of an offer — internal notes and the

@@ -13,7 +13,7 @@
 // `pruneAuditLogs` (L-P1-20); a hard-erase workflow is follow-up.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { AuthorizationError, getSessionOrThrow } from "./auth-guard";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";

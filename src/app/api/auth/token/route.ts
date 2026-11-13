@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/server-actions/auth-guard";
 import { logAudit } from "@/server-actions/shared";
-import { signJwt } from "@/lib/jwt";
-import { extractClientIp } from "@/lib/client-ip";
+import { signJwt } from "@/lib/auth/jwt";
+import { extractClientIp } from "@/lib/auth/client-ip";
 import { headers } from "next/headers";
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ import { headers } from "next/headers";
 // a new token while the old one is still live). No session → 401.
 //
 // Security notes:
-//   • Same JWT mechanics as src/lib/jwt.ts: HS256, BETTER_AUTH_SECRET,
+//   • Same JWT mechanics as src/lib/auth/jwt.ts: HS256, BETTER_AUTH_SECRET,
 //     1-hour expiry, constant-time signature comparison.
 //   • Every issuance writes an `auth.token_issued` audit row with IP + UA
 //     (best-effort — an audit failure never blocks minting), so operators

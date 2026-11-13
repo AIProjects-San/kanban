@@ -22,7 +22,7 @@ vi.mock("@/server-actions/auth-guard", () => ({
 process.env.BETTER_AUTH_SECRET = "auth-tokens-test-secret-0123456789a";
 
 const { issueAuthToken } = await import("../auth-tokens");
-const { verifyJwt } = await import("@/lib/jwt");
+const { verifyJwt } = await import("@/lib/auth/jwt");
 // The mocked module's class — toResult() instanceof-checks against THIS
 // constructor, so the rejection must be a real instance of it.
 const { AuthorizationError } = await import("@/server-actions/auth-guard");

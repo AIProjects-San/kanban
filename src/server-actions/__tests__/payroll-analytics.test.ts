@@ -17,7 +17,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -31,7 +31,7 @@ vi.mock("@/server-actions/auth-guard", () => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { getPayrollAnalytics } from "../payroll";
+import { getPayrollAnalytics } from "../payroll-reports";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
 

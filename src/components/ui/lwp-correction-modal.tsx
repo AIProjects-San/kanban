@@ -12,8 +12,8 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { LwpCorrectionPreviewT } from "@/lib/types";
 import { previewLwpCorrection, reverseLwpDays } from "@/server-actions/payroll-lwp";
-import { planLwpCorrection } from "@/lib/lwp-correction";
-import { currentPeriod } from "@/lib/payroll-math";
+import { planLwpCorrection } from "@/lib/payroll/lwp-correction";
+import { currentPeriod } from "@/lib/payroll/payroll-math";
 
 export function LwpCorrectionModal({
   open,

@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { runLeaveAllocationJob, sendLeaveJobFailureAlarm } from "@/lib/leave-allocation-core";
-import { captureError, logError } from "@/lib/observability";
-import { tryAcquireMaintenanceLock, LEAVE_ALLOCATION_LOCK_KEY } from "@/lib/maintenance-lock";
+import { runLeaveAllocationJob, sendLeaveJobFailureAlarm } from "@/lib/leave/leave-allocation-core";
+import { captureError, logError } from "@/lib/infra/observability";
+import { tryAcquireMaintenanceLock, LEAVE_ALLOCATION_LOCK_KEY } from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // F2.4 — leave-allocation cron endpoint (docs/Fernly_HR_Payroll_
 // Enhancement_Plan.md §7.2 F2.4; the benchmark's daily
 // allocate_earned_leaves job, LV-J03).
 //
-// The engine itself lives in src/lib/leave-allocation-core.ts (the three
+// The engine itself lives in src/lib/leave/leave-allocation-core.ts (the three
 // ledger writers: strategy grants, year-end rollover, carry lapse). This
 // route makes it schedulable — same security contract as /api/cron/
 // prune-audit:

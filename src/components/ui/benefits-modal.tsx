@@ -13,8 +13,8 @@ import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
 import type { BenefitsOverviewT } from "@/lib/types";
 import { getBenefitsOverview, electBenefit, cancelBenefitElection, claimBenefit } from "@/server-actions/payroll-benefits";
-import { planBenefitElection, planBenefitClaim } from "@/lib/benefits";
-import { currentPeriod } from "@/lib/payroll-math";
+import { planBenefitElection, planBenefitClaim } from "@/lib/payroll/benefits";
+import { currentPeriod } from "@/lib/payroll/payroll-math";
 
 interface Props {
   open: boolean;

@@ -2,17 +2,17 @@ import { NextResponse } from "next/server";
 import {
   runEncashmentAutoDraftJob,
   sendEncashmentAutoDraftFailureAlarm,
-} from "@/lib/encashment-auto-draft";
-import { captureError, logError } from "@/lib/observability";
-import { tryAcquireMaintenanceLock, ENCASHMENT_AUTO_DRAFT_LOCK_KEY } from "@/lib/maintenance-lock";
+} from "@/lib/leave/encashment-auto-draft";
+import { captureError, logError } from "@/lib/infra/observability";
+import { tryAcquireMaintenanceLock, ENCASHMENT_AUTO_DRAFT_LOCK_KEY } from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // P31 (LV-J02 / LV-09's remainder) — the encashment auto-draft cron
 // endpoint (docs/Fernly_HR_Payroll_Enhancement_Plan.md §7.2.2 P31; the
 // benchmark's daily generate_leave_encashment job).
 //
-// The engine lives in src/lib/encashment-auto-draft.ts (the pure planner
-// in lib/leave-encashment.ts + the scheduled writer). This route makes it
+// The engine lives in src/lib/leave/encashment-auto-draft.ts (the pure planner
+// in lib/leave/leave-encashment.ts + the scheduled writer). This route makes it
 // individually schedulable — same security contract as every cron route:
 //
 //   curl -fsS -H "Authorization: Bearer $CRON_SECRET" \

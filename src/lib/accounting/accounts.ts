@@ -10,7 +10,7 @@
 // Pure code mapping + one db read; no clock, no writes.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 
 /** The statutory liability + payroll expense chart (seed/accounting.ts). */
 export const STATUTORY_ACCOUNT_CODES = {

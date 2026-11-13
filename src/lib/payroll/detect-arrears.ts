@@ -14,11 +14,11 @@
 // never writes anything.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { workingDaysBetween } from "@/lib/working-days";
-import { windowsInYear, type PayrollFrequency } from "@/lib/payroll-windows";
-import { round2 } from "@/lib/payroll-math";
-import { getHolidayLookup } from "@/lib/server/holidays";
+import { windowsInYear, type PayrollFrequency } from "@/lib/payroll/payroll-windows";
+import { round2 } from "@/lib/payroll/payroll-math";
+import { getHolidayLookup } from "@/lib/holidays";
 
 
 

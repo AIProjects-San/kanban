@@ -17,7 +17,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 // $transaction mock — takes an array of PrismaPromises, awaits them all,
 // returns their results in order (matches Prisma's batch-transaction API).

@@ -23,7 +23,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({

@@ -5,9 +5,9 @@
 // read sees the change.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { bumpConfigCache, getWorkspaceConfig, type WorkspaceConfig } from "@/lib/config-loader";
+import { bumpConfigCache, getWorkspaceConfig, type WorkspaceConfig } from "@/lib/infra/config-loader";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
@@ -19,7 +19,7 @@ const PROTECTED_PERMS = ["role:manage"];
 
 /**
  * Client-facing config loader. `getWorkspaceConfig` itself lives in
- * lib/config-loader (plain server code); this wrapper makes it callable
+ * lib/infra/config-loader (plain server code); this wrapper makes it callable
  * from client components as a server action, returning a result object.
  */
 export async function loadWorkspaceConfig(): Promise<ActionResult<WorkspaceConfig>> {
@@ -53,25 +53,25 @@ export async function updateWorkspaceSettings(input: Partial<{
   /** F2.10 — the joining-gate toggle (Settings → General). */
   joiningGateEnabled?: boolean;
   /** AT-B02/B03 (S2) — the reference day (HH:MM) behind the late/early
-   * flags + working hours (Settings → General; lib/attendance-flags.ts). */
+   * flags + working hours (Settings → General; lib/hr/attendance-flags.ts). */
   attendanceDayStart?: string;
   attendanceDayEnd?: string;
   /** PR-B07 (S4) — consider_unmarked_attendance_as (Settings → General;
-   * lib/lop-derivation.ts consumes it at run creation). */
+   * lib/payroll/lop-derivation.ts consumes it at run creation). */
   unmarkedAttendanceMode?: "IGNORED" | "ABSENT";
   /** PR-B23 (S7) — the payslip rounding policy (Settings → General;
-   * lib/payroll-math.ts withRoundingLine consumes it). */
+   * lib/payroll/payroll-math.ts withRoundingLine consumes it). */
   payrollRoundingMode?: "ROUND_2DP" | "ROUND_NET_NEAREST";
   /** P9 (PR-B26) — pay attendance overtime into payroll (Settings →
-   * General; lib/overtime-bridge.ts prices the slip line). */
+   * General; lib/payroll/overtime-bridge.ts prices the slip line). */
   overtimePayEnabled?: boolean;
   /** P16 (PR-11) — the month the fiscal year starts (1–12; 1 = calendar
-   * year; Settings → General; lib/payslip-aggregates.ts resets YTD at the
+   * year; Settings → General; lib/payroll/payslip-aggregates.ts resets YTD at the
    * fiscal boundary). */
   fiscalYearStartMonth?: number;
   /** P17 (PR-B27) — who decides the daily LOP charge: HYBRID (default,
    * leave-wins) / LEAVE / ATTENDANCE (Settings → General;
-   * lib/lop-derivation.ts consumes it at run/slip creation). */
+   * lib/payroll/lop-derivation.ts consumes it at run/slip creation). */
   lopBasisMode?: "HYBRID" | "LEAVE" | "ATTENDANCE";
   /** P17 (PR-B25) — show live leave balances on the payslip surfaces
    * (read-time; default OFF). */

@@ -13,15 +13,17 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { CandidateT, HiringFunnelT, HiringStageConfigT, MailOutboxT, OfferRecordT } from "@/lib/types";
 import {
-  approveOffer,
   getHiringBoard,
   getHiringFunnel,
   getHiringPermissions,
   getMailOutbox,
-  getMyInterviews,
+} from "@/server-actions/hiring";
+import { getMyInterviews } from "@/server-actions/hiring-interviews";
+import {
+  approveOffer,
   getOfferRecords,
   getOffersAwaitingApproval,
-} from "@/server-actions/hiring";
+} from "@/server-actions/hiring-offers";
 import { CandidateModal } from "../ui/candidate-modal";
 import { CandidateDetailModal } from "../ui/candidate-detail-modal";
 import { OfferBuilderModal } from "../ui/offer-builder-modal";

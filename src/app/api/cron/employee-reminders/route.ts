@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { runEmployeeRemindersJob } from "@/lib/employee-reminders";
-import { captureError } from "@/lib/observability";
-import { tryAcquireMaintenanceLock, EMPLOYEE_REMINDERS_LOCK_KEY } from "@/lib/maintenance-lock";
+import { runEmployeeRemindersJob } from "@/lib/hr/employee-reminders";
+import { captureError } from "@/lib/infra/observability";
+import { tryAcquireMaintenanceLock, EMPLOYEE_REMINDERS_LOCK_KEY } from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // P25 (PL-02/EM-J01–03) — the engagement-reminders cron endpoint (docs/

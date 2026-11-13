@@ -16,7 +16,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { toResult } from "./result";
 import { AuthorizationError } from "./auth-guard";
 import { requirePermission } from "./auth-guard";
@@ -49,7 +49,7 @@ import type {
   RunFilingPanelT,
 } from "@/lib/ird/filing-types";
 import type { PaydayFiling, EmployeeDetailsFiling, PaydayAmendmentFiling, PayrollRun } from "@prisma/client";
-import { toCents } from "@/lib/payroll-math";
+import { toCents } from "@/lib/payroll/payroll-math";
 
 const cuidish = z.string().trim().min(1);
 

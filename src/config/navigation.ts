@@ -19,7 +19,7 @@ import {
   Wallet,
   CalendarCheck,
 } from "lucide-react";
-import type { Permission } from "@/lib/rbac";
+import type { Permission } from "@/lib/auth/rbac";
 
 // The view registry — the single source of the SPA's view keys. ViewKey is
 // derived from this tuple, so a key missing here (or typo'd in NAV_GROUPS)

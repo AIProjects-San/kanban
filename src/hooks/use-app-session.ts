@@ -6,7 +6,7 @@
 // Every client consumer that once imported next-auth/react directly
 // (useSession / signIn / signOut / SessionProvider) funnels through the
 // helpers in this file. They drive the Better Auth client
-// (src/lib/auth-client-better.ts).
+// (src/lib/auth/auth-client-better.ts).
 //
 // Shape contract (what components consume):
 //   { data: { user: { id, name, email, role } } | null, status }
@@ -14,7 +14,7 @@
 // Better Auth's { user, session } payload so not one component changes.
 // ---------------------------------------------------------------------------
 
-import { authClient } from "@/lib/auth-client-better";
+import { authClient } from "@/lib/auth/auth-client-better";
 
 export type AppSessionStatus = "loading" | "authenticated" | "unauthenticated";
 

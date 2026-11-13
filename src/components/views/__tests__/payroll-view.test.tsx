@@ -27,8 +27,16 @@ vi.mock("@/server-actions/payroll", () => ({
   getPayrollRun,
   createPayrollRun,
   lockPayrollRun,
+}));
+vi.mock("@/server-actions/payroll-reports", () => ({
   exportPayrollRunCsv,
   getPayrollAnalytics,
+}));
+vi.mock("@/server-actions/payroll-adjustments", () => ({
+  applyPayAdjustmentsToRun: vi.fn(),
+  // pay-adjustment-modal (rendered un-stubbed inside the view) imports these
+  createPayAdjustment: vi.fn(),
+  listPayAdjustments: vi.fn(),
 }));
 
 vi.mock("@/server-actions/hr-directory", () => ({ getDirectory }));

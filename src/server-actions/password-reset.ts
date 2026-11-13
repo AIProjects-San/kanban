@@ -26,13 +26,13 @@
 //     unescaped they could inject markup into mail clients).
 // ---------------------------------------------------------------------------
 
-import { logError,logWarn } from "@/lib/observability";
-import { db } from "@/lib/db";
-import { revokeUserSessionsIfActive } from "@/lib/auth-revoke";
-import { hashPassword, getMinPasswordLength } from "@/lib/password";
-import { assertPasswordNotBreached } from "@/lib/breach-check";
-import { createMailer } from "@/lib/mailer";
-import { createPasswordResetLimiter } from "@/lib/rate-limit-redis";
+import { logError,logWarn } from "@/lib/infra/observability";
+import { db } from "@/lib/infra/db";
+import { revokeUserSessionsIfActive } from "@/lib/auth/auth-revoke";
+import { hashPassword, getMinPasswordLength } from "@/lib/auth/password";
+import { assertPasswordNotBreached } from "@/lib/auth/breach-check";
+import { createMailer } from "@/lib/email/mailer";
+import { createPasswordResetLimiter } from "@/lib/infra/rate-limit-redis";
 import { validationError } from "@/lib/validation";
 import { escapeHtml } from "@/lib/utils";
 import { toResult } from "./result";

@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
 import { getGratuityRule, saveGratuityRule } from "@/server-actions/payroll-gratuity";
-import { computeGratuity, validateGratuityRuleInput, GRATUITY_DISCLAIMER } from "@/lib/gratuity";
+import { computeGratuity, validateGratuityRuleInput, GRATUITY_DISCLAIMER } from "@/lib/payroll/gratuity";
 import type { GratuityRuleT } from "@/lib/types";
 
 /** A slab as the editor holds it (strings while typing, parsed on save). */

@@ -26,7 +26,7 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 // Stub the Better Auth client's useSession — the sidebar resolves the role
 // through it (same pattern as command-palette.test.tsx).
 const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
-vi.mock("@/lib/auth-client-better", () => ({
+vi.mock("@/lib/auth/auth-client-better", () => ({
   authClient: { useSession },
 }));
 

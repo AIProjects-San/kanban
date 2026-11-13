@@ -11,7 +11,7 @@ import {
   getAllUsers } from "@/server-actions/data";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { type Role } from "@/lib/rbac";
+import { type Role } from "@/lib/auth/rbac";
 import { EntityHistorySection } from "./entity-history-section";
 import { Field, FormRow } from "./field";
 import { FormActions } from "./form-actions";

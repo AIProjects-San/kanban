@@ -5,7 +5,7 @@ import { useApp } from "@/store/app-store";
 import { usePermissions } from "@/hooks/use-permissions";
 import { usePersistAppearance } from "@/hooks/use-appearance-sync";
 import { navLeaves } from "@/config/navigation";
-import type { Permission } from "@/lib/rbac";
+import type { Permission } from "@/lib/auth/rbac";
 
 // ---------------------------------------------------------------------------
 // L-P0-15 — Permission gates for G-prefix view shortcuts.

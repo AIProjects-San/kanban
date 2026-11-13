@@ -12,11 +12,11 @@
 // contract it calls.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit, recalcMemberStats, getProjectAssociatedUserIds } from "./shared";
 import { bulkTaskPatchSchema, parseOrThrow } from "@/lib/validation";
-import { hasPermission } from "@/lib/rbac";
+import { hasPermission } from "@/lib/auth/rbac";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";

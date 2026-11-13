@@ -44,7 +44,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const getSessionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();
@@ -73,14 +73,14 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 const getMinPasswordLengthMock = vi.fn();
 const hashPasswordMock = vi.fn();
 const verifyPasswordMock = vi.fn();
-vi.mock("@/lib/password", () => ({
+vi.mock("@/lib/auth/password", () => ({
   getMinPasswordLength: () => getMinPasswordLengthMock(),
   hashPassword: (...a: unknown[]) => hashPasswordMock(...a),
   verifyPassword: (...a: unknown[]) => verifyPasswordMock(...a),
 }));
 
 const assertPasswordNotBreachedMock = vi.fn();
-vi.mock("@/lib/breach-check", () => ({
+vi.mock("@/lib/auth/breach-check", () => ({
   assertPasswordNotBreached: (...a: unknown[]) => assertPasswordNotBreachedMock(...a),
   checkPasswordBreach: vi.fn(async () => ({ breached: false, checked: false })),
   isBreachCheckEnabled: vi.fn(() => false),
@@ -89,14 +89,14 @@ vi.mock("@/lib/breach-check", () => ({
 }));
 
 const revokeUserSessionsIfActiveMock = vi.fn();
-vi.mock("@/lib/auth-revoke", () => ({
+vi.mock("@/lib/auth/auth-revoke", () => ({
   revokeUserSessionsIfActive: (...a: unknown[]) => revokeUserSessionsIfActiveMock(...a),
 }));
 
 // PR-64 — getMyPermissions (live RBAC) delegates to the config-loader; the
 // loader has its own suite (config-loader.test.ts), so mock it here.
 const getEffectivePermissionsMock = vi.fn();
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   getEffectivePermissions: (...a: unknown[]) => getEffectivePermissionsMock(...a),
 }));
 

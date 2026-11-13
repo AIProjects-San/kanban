@@ -24,8 +24,8 @@ const CONFIG_CONSUMERS = [
   "src/components/views/help-view.tsx",
   "src/server-actions/password-reset.ts",
   "src/server-actions/ics-export.ts",
-  "src/lib/mailer.ts",
-  "src/lib/config-loader.ts",
+  "src/lib/email/mailer.ts",
+  "src/lib/infra/config-loader.ts",
   "src/lib/i18n.ts",
   "src/store/app-store.ts",
 ];

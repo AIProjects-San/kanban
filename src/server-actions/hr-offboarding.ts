@@ -26,12 +26,12 @@
 //                  "settlement locks editing")
 //
 // RBAC: every action rides hr:admin (ADMIN + HR — the console audience).
-// The pure math lives in lib/full-and-final.ts (asOf injected, no I/O).
+// The pure math lives in lib/hr/full-and-final.ts (asOf injected, no I/O).
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
-import { logError } from "@/lib/observability";
+import { db } from "@/lib/infra/db";
+import { logError } from "@/lib/infra/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { parseOrThrow } from "@/lib/validation";
 import {
@@ -46,10 +46,10 @@ import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseComponents } from "@/lib/offer-math";
-import { monthlyEarningsFromStructure, lineSum } from "@/lib/payroll-math";
+import { monthlyEarningsFromStructure, lineSum } from "@/lib/payroll/payroll-math";
 import { workingDaysInPeriod } from "@/lib/working-days";
-import { runWindowEnd, runWindowStart } from "@/lib/payroll-windows";
-import { projectLeaveBalance } from "@/lib/leave-ledger";
+import { runWindowEnd, runWindowStart } from "@/lib/payroll/payroll-windows";
+import { projectLeaveBalance } from "@/lib/leave/leave-ledger";
 import {
   computeFullAndFinal,
   parseFnFLines,
@@ -64,11 +64,11 @@ import {
   type FnFPendingAdjustment,
   type FnFPendingEncashment,
   type FnFOpenAdvance,
-} from "@/lib/full-and-final";
+} from "@/lib/hr/full-and-final";
 import { getOrCreateBalancesBatch, getHolidayLookup, todayUTC } from "./hr-shared";
 // P35 — the DERIVED boarding status kernel (the same one hr-onboarding's
 // serializer uses, so the two can never drift).
-import { checklistCompletion } from "@/lib/onboarding-template";
+import { checklistCompletion } from "@/lib/hr/onboarding-template";
 import type {
   ExitInterviewT,
   ExitInterviewStatus,
@@ -249,7 +249,7 @@ async function pendingAdjustmentsFor(userId: string): Promise<FnFPendingAdjustme
   // isDueInPeriod uses): mixed cadences make raw period-string comparison
   // wrong ("2026-W45" sorts after "2026-12" lexically but STARTS before
   // it), so the walk compares window starts.
-  const { parsePayrollPeriodKey } = await import("@/lib/payroll-windows");
+  const { parsePayrollPeriodKey } = await import("@/lib/payroll/payroll-windows");
   const boundaryStart =
     (lastLocked ? parsePayrollPeriodKey(lastLocked.period)?.start ?? null : null);
   return rows.map((r) => {
@@ -327,7 +327,7 @@ async function openAdvancesFor(userId: string): Promise<FnFOpenAdvance[]> {
     _sum: { amount: true },
   });
   const consumedBySource = new Map(consumed.map((c) => [c.sourceId, c._sum.amount ?? 0]));
-  const { outstandingAdvance } = await import("@/lib/salary-advances");
+  const { outstandingAdvance } = await import("@/lib/payroll/salary-advances");
   return rows.map((r) => ({
     id: r.id,
     amount: r.amount,

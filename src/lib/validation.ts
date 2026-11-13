@@ -9,7 +9,7 @@
 
 import { z } from "zod";
 
-import { parsePayrollPeriodKey, PAYROLL_FREQUENCY_VALUES } from "@/lib/payroll-windows";
+import { parsePayrollPeriodKey, PAYROLL_FREQUENCY_VALUES } from "@/lib/payroll/payroll-windows";
 import { IR330_BASE_CODES } from "@/lib/payroll/nz/tax-codes";
 
 const cuidish = z.string().min(1).max(64);
@@ -281,7 +281,7 @@ export const leavePeriodDeleteSchema = z.object({
 /** P28 (LV-02/LV-03) — the leave policy set master + assignment payloads.
  * The set's SEMANTICS (item count bounds, per-item dedupe, the 0–365
  * allocation bound) are the pure kernel's own refusals
- * (lib/leave-policy-set.ts validatePolicySet); zod carries the structural
+ * (lib/leave/leave-policy-set.ts validatePolicySet); zod carries the structural
  * pass only. */
 export const leavePolicySetItemSchema = z.object({
   leaveTypeId: z.string().trim().min(1).max(64),
@@ -1103,7 +1103,7 @@ export const PAYROLL_PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /** P10 (PR-B05) — any cadence's period key (2026-11, 2026-11-A, 2026-W45,
  * 2026-F23, 2026-11-09, 2026-Q4, 2026) — the adjustment adapter's target
- * periods accept all of them (lib/payroll-windows.ts is the single
+ * periods accept all of them (lib/payroll/payroll-windows.ts is the single
  * authority on what parses). */
 export const payrollPeriodKey = z
   .string()

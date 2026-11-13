@@ -4,7 +4,7 @@
 // projects. Includes the read helpers used by the assignment modal.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, logAudit } from "./shared";
 import { toResult } from "./result";

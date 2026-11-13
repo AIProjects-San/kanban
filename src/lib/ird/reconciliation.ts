@@ -30,7 +30,7 @@
 //   • Ledger side   — the POSTED JournalEntry's credits per account code.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import {
   parsePayslipLines,
   toCents,
@@ -38,7 +38,7 @@ import {
   ACC_LEVY_LINE_KEY,
   KIWISAVER_LINE_KEY,
   STUDENT_LOAN_LINE_KEY,
-} from "@/lib/payroll-math";
+} from "@/lib/payroll/payroll-math";
 import { STATUTORY_ACCOUNT_CODES } from "@/lib/accounting/accounts";
 import type { PayslipStatutoryT } from "@/lib/types";
 

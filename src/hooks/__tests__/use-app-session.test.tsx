@@ -16,7 +16,7 @@ import { renderHook } from "@testing-library/react";
 
 const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
 
-vi.mock("@/lib/auth-client-better", () => ({
+vi.mock("@/lib/auth/auth-client-better", () => ({
   authClient: { useSession },
 }));
 

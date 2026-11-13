@@ -34,7 +34,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -343,7 +343,7 @@ describe("the read surfaces", () => {
 
   it("getCompensatoryQueue scopes a MANAGER to their subtree", async () => {
     requirePermissionMock.mockResolvedValue({ ...ADMIN_AUTH, role: "MANAGER", userId: "u-mgr" });
-    const hierarchy = await import("@/lib/hierarchy");
+    const hierarchy = await import("@/lib/auth/hierarchy");
     const spy = vi.spyOn(hierarchy, "getSubtreeUserIds").mockResolvedValue(new Set(["u-yuki"]));
     db.compensatoryLeaveRequest.findMany.mockResolvedValue([]);
     const res = await getCompensatoryQueue();

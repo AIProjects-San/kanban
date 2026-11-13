@@ -16,7 +16,7 @@ import {
   type Role,
   ROLE_LABELS, ALL_PERMISSIONS,
   hasPermission,
-} from "@/lib/rbac";
+} from "@/lib/auth/rbac";
 import { Avatar } from "../ui/avatar";
 import { RoleBadge } from "../ui/role-badge";
 import { FilterBar } from "../ui/filter-bar";

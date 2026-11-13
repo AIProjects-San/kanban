@@ -20,7 +20,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -40,8 +40,8 @@ vi.mock("@/server-actions/shared", () => ({
 // asserted (and so they don't spam the console). Everything but logError
 // stays real, matching the __tests__/shared.test.ts convention.
 const logErrorSpy = vi.fn();
-vi.mock("@/lib/observability", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/observability")>();
+vi.mock("@/lib/infra/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/infra/observability")>();
   return { ...actual, logError: (...args: unknown[]) => logErrorSpy(...args) };
 });
 

@@ -3,7 +3,7 @@
 // Team member CRUD (the roster — distinct from User accounts).
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission } from "./auth-guard";
 import { createMemberSchema, updateMemberSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";

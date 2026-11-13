@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // success. It must never leak audit contents.
 // ---------------------------------------------------------------------------
 
-vi.mock("@/lib/db", () => ({
+vi.mock("@/lib/infra/db", () => ({
   db: {
     workspace: { findUnique: vi.fn().mockResolvedValue({ auditRetentionDays: 180 }) },
     $executeRaw: vi.fn().mockResolvedValue(0),
@@ -25,11 +25,11 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-vi.mock("@/lib/server/audit", () => ({
+vi.mock("@/lib/audit/audit", () => ({
   logAudit: vi.fn(),
 }));
 
-vi.mock("@/lib/observability", () => ({
+vi.mock("@/lib/infra/observability", () => ({
   captureError: vi.fn(),
   logWarn: vi.fn(),
   logInfo: vi.fn(),
@@ -108,7 +108,7 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
     // The session deleteMany counts: give it a non-zero count and verify
     // it flows through to the response (the sweep actually ran, not just
     // silently failed into its catch).
-    const { db } = await import("@/lib/db");
+    const { db } = await import("@/lib/infra/db");
     (db.session.deleteMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 7 });
     const { GET } = await import("../route");
     const res = await GET(mockRequest({ authorization: `Bearer ${SECRET}` }));
@@ -124,7 +124,7 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
   it("PR-56: a failing session sweep never blocks the other purges", async () => {
     // Sessions table absent (pre-Phase-1 environments) → deleteMany throws
     // → the counter is 0 and the run still reports success.
-    const { db } = await import("@/lib/db");
+    const { db } = await import("@/lib/infra/db");
     (db.session.deleteMany as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error("table does not exist"),
     );
@@ -156,9 +156,9 @@ describe("/api/cron/prune-audit (launch gate 12)", () => {
   });
 
   it("returns 500 and captures the error when the prune throws", async () => {
-    const { db } = await import("@/lib/db");
+    const { db } = await import("@/lib/infra/db");
     (db.$executeRaw as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("db gone"));
-    const { captureError } = await import("@/lib/observability");
+    const { captureError } = await import("@/lib/infra/observability");
     const { GET } = await import("../route");
     const res = await GET(mockRequest({ authorization: `Bearer ${SECRET}` }));
     expect(res.status).toBe(500);

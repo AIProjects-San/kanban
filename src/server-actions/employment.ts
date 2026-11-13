@@ -30,15 +30,15 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { parseOrThrow, employmentTransitionSchema, employmentChangeSchema } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import type { OfferComponent } from "@/lib/offer-math";
-import { assertNoCycle } from "@/lib/hierarchy";
-import { logError } from "@/lib/observability";
+import { assertNoCycle } from "@/lib/auth/hierarchy";
+import { logError } from "@/lib/infra/observability";
 import { DEPARTMENT_LABELS } from "@/lib/config";
 import {
   EMPLOYMENT_STATUS_LABELS,
@@ -46,7 +46,7 @@ import {
   PROBATION_REVIEW_SATISFIED_STATUSES,
   canTransition,
   defaultProbationEndsAt,
-} from "@/lib/employment";
+} from "@/lib/hr/employment";
 import {
   planEmploymentChange,
   raiseStructure,
@@ -54,7 +54,7 @@ import {
   formatAnnualGross,
   EMPLOYMENT_PROPERTY_LABELS,
   type EmploymentChangeKind,
-} from "@/lib/employment-change";
+} from "@/lib/hr/employment-change";
 import type { EmploymentStatus, EmploymentPropertyHistoryT } from "@/lib/types";
 
 function label(status: EmploymentStatus): string {
@@ -205,7 +205,7 @@ export async function transitionEmployment(
 //   1. RBAC: hr:admin (the HR-console audience — the change is employment
 //      state, so the structure revision inside this transaction rides THIS
 //      gate, not payroll:manage: one change, one transaction, one audit).
-//   2. The pure diff (lib/employment-change.ts planEmploymentChange): one
+//   2. The pure diff (lib/hr/employment-change.ts planEmploymentChange): one
 //      structured row per property whose display value actually changes
 //      (jobTitle / department / grade / manager / salary); an empty diff is
 //      refused — a change that changes nothing is not recorded as history

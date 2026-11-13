@@ -13,7 +13,7 @@ const db = vi.hoisted(() => ({
   $executeRaw: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -25,12 +25,12 @@ vi.mock("@/server-actions/auth-guard", () => ({
 }));
 
 const logAuditMock = vi.fn();
-vi.mock("@/lib/server/audit", () => ({
+vi.mock("@/lib/audit/audit", () => ({
   logAudit: (...a: unknown[]) => logAuditMock(...a),
 }));
 
 import { pruneAuditLogs, getAuditRetentionInfo } from "../audit-retention";
-import { DEFAULT_AUDIT_RETENTION_DAYS, MIN_AUDIT_RETENTION_DAYS } from "@/lib/audit-retention-config";
+import { DEFAULT_AUDIT_RETENTION_DAYS, MIN_AUDIT_RETENTION_DAYS } from "@/lib/audit/audit-retention-config";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN", name: "Admin", email: "a@x" };
 

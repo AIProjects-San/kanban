@@ -17,13 +17,12 @@ import { cn } from "@/lib/utils";
 import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
 import {
   createPayrollRun,
-  getPayrollAnalytics,
   getPayrollData,
   getPayrollRun,
   lockPayrollRun,
-  applyPayAdjustmentsToRun,
-  exportPayrollRunCsv,
 } from "@/server-actions/payroll";
+import { getPayrollAnalytics, exportPayrollRunCsv } from "@/server-actions/payroll-reports";
+import { applyPayAdjustmentsToRun } from "@/server-actions/payroll-adjustments";
 // Phase 2 (payday filing) — the per-run EI filing badge.
 import { getRunFilingStatus } from "@/server-actions/payday-filing";
 import { computeOffer } from "@/lib/offer-math";
@@ -36,7 +35,7 @@ import {
   payrollPeriodLabel,
   resolvePayrollWindow,
   type PayrollFrequency,
-} from "@/lib/payroll-windows";
+} from "@/lib/payroll/payroll-windows";
 import { StructureModal } from "../ui/structure-modal";
 // P39 (EM-16 advances half) — the salary-advances modal.
 import { SalaryAdvancesModal } from "../ui/salary-advances-modal";
@@ -54,7 +53,7 @@ import { getDirectory } from "@/server-actions/hr-directory";
 // P22 (PR-C01–04, PR-N01–06) — the analytics payload type + the shared
 // dependency-free SVG chart pair (recharts stays in the lazy Analytics chunk —
 // L-P1-17 bundle budget) + the StatCard the six number cards ride.
-import type { PayrollAnalytics } from "@/lib/payroll-analytics";
+import type { PayrollAnalytics } from "@/lib/payroll/payroll-analytics";
 import { TrendChart, BarListChart } from "../ui/svg-charts";
 import { StatCard } from "../ui/stat-card";
 

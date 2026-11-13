@@ -14,23 +14,23 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { arrearsPreviewSchema, generateArrearsSchema } from "@/lib/validation";
-import { getWorkspaceConfig } from "@/lib/config-loader";
+import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import {
   simulateArrearsRun,
   arrearsComponents,
   arrearsAdjustmentLabel,
   type ArrearsSlipFacts,
-} from "@/lib/arrears";
-import { round2 } from "@/lib/payroll-math";
+} from "@/lib/payroll/arrears";
+import { round2 } from "@/lib/payroll/payroll-math";
 import type { ArrearsPreviewT } from "@/lib/types";
-import { parsePayrollFrequency } from "@/lib/payroll-windows";
+import { parsePayrollFrequency } from "@/lib/payroll/payroll-windows";
 
 /** The shared read: one LOCKED run + its slips + the current structures,
  * simulated through the pure kernel. Both the preview and the generator

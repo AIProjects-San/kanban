@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, checkPermission, AuthorizationError } from "./auth-guard";
 import {
   saveSkillSchema,
@@ -33,7 +33,7 @@ import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import type { SkillT, EmployeeSkillT, SkillMapT } from "@/lib/types";
-import { skillMapSummary, skillProficiencyLabel } from "@/lib/skills";
+import { skillMapSummary, skillProficiencyLabel } from "@/lib/hr/skills";
 
 // ---------------------------------------------------------------------------
 // The master (EM-19 / PF-07)

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // L-P0-4 regression — the health endpoint.
-vi.mock("@/lib/db", () => ({
+vi.mock("@/lib/infra/db", () => ({
   db: { $queryRaw: vi.fn() },
 }));
 
-const { db } = await import("@/lib/db");
+const { db } = await import("@/lib/infra/db");
 const { GET } = await import("../route");
 
 function mockRequest(query = "", headers: Record<string, string> = {}): Request {
@@ -83,7 +83,7 @@ describe("/api/health (L-P0-4)", () => {
       (db.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([{ "?column?": 1 }]);
       // getSharedRedisClient returns undefined when construction fails —
       // simulate by mocking the dynamic import.
-      vi.doMock("@/lib/redis-client", () => ({
+      vi.doMock("@/lib/infra/redis-client", () => ({
         getSharedRedisClient: () => undefined,
       }));
       // Re-import the route so it picks up the doMock.
@@ -96,7 +96,7 @@ describe("/api/health (L-P0-4)", () => {
       expect(body.status).toBe("ok");
     } finally {
       process.env.REDIS_URL = previous;
-      vi.doUnmock("@/lib/redis-client");
+      vi.doUnmock("@/lib/infra/redis-client");
       vi.resetModules();
     }
   });

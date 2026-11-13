@@ -4,7 +4,7 @@
 // never compiles this file — see the comment there.
 // ---------------------------------------------------------------------------
 
-import { captureError, logError } from "@/lib/observability";
+import { captureError, logError } from "@/lib/infra/observability";
 
 let shuttingDown = false;
 

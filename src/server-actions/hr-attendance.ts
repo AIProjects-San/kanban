@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import type { AttendanceT, AttendanceMonthT, AttendanceStatus, AttendanceSource } from "@/lib/types";
 import type { ActionResult } from "@/lib/action-result";
@@ -30,10 +30,10 @@ import { attendanceRecordSchema, deleteAttendanceRecordSchema, parseOrThrow } fr
 import { logAudit } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import { parseDay } from "./hr-shared";
-import { deriveAttendanceTiming, type AttendanceTimingFacts } from "@/lib/attendance-flags";
-import { getWorkspaceConfig } from "@/lib/config-loader";
+import { deriveAttendanceTiming, type AttendanceTimingFacts } from "@/lib/hr/attendance-flags";
+import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import { nonWorkingDayReason } from "@/lib/working-days";
-import { monthlyAttendanceSheetCsv } from "@/lib/attendance-sheet";
+import { monthlyAttendanceSheetCsv } from "@/lib/hr/attendance-sheet";
 
 /** Clamp/normalize a (year, month) pair; invalid input falls back to the
  * current UTC month (getHolidayCalendar's year convention). */

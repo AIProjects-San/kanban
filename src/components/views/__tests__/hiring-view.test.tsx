@@ -28,10 +28,16 @@ vi.mock("@/server-actions/hiring", async (importOriginal) => ({
   getHiringBoard,
   getHiringPermissions,
   advanceStage,
-  getMyInterviews,
   getMailOutbox,
-  getOfferRecords,
   getHiringFunnel,
+}));
+vi.mock("@/server-actions/hiring-interviews", () => ({
+  getMyInterviews,
+}));
+vi.mock("@/server-actions/hiring-offers", () => ({
+  getOfferRecords,
+  getOffersAwaitingApproval: vi.fn(),
+  approveOffer: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

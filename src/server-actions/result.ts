@@ -3,7 +3,7 @@
 // NOTE: This file intentionally does NOT have "use server" — it exports a
 // non-async value and is imported by the action modules, not by clients.
 
-import { logError } from "@/lib/observability";
+import { logError } from "@/lib/infra/observability";
 import { ok, err, isValidationError, isAuthorizationError, type ActionResult } from "@/lib/action-result";
 
 /**

@@ -35,8 +35,8 @@
 // LOP exist on every seeded run).
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
-import { parsePayslipLines, isStatutoryLineKey, round2 } from "@/lib/payroll-math";
+import { db } from "@/lib/infra/db";
+import { parsePayslipLines, isStatutoryLineKey, round2 } from "@/lib/payroll/payroll-math";
 import {
   getSystemAccount,
   STATUTORY_ACCOUNT_CODES,

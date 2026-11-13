@@ -23,7 +23,7 @@ import {
   getOfferTemplates,
   sendOffer,
   updateOfferRecord,
-} from "@/server-actions/hiring";
+} from "@/server-actions/hiring-offers";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 
 const OFFER_STATUS_CLS: Record<string, string> = {

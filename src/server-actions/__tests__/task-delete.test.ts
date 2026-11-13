@@ -33,9 +33,9 @@ const { db, getBetterSession } = vi.hoisted(() => {
   return { db, getBetterSession };
 });
 
-vi.mock("@/lib/auth-better", () => ({ getBetterSession, revokeUserSessions: vi.fn() }));
+vi.mock("@/lib/auth/auth-better", () => ({ getBetterSession, revokeUserSessions: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 import { deleteTask, getDashboardData } from "@/server-actions/data";
 import type { ActionResult } from "@/lib/action-result";

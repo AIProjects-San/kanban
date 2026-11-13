@@ -13,7 +13,7 @@
 // (mode: "insensitive"). All actions apply the L-P0-14 soft-delete filter.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, getVisibleMemberIds } from "./shared";
 import { toResult } from "./result";

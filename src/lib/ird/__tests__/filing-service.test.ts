@@ -32,8 +32,8 @@ const db = vi.hoisted((): DbMock => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
-vi.mock("@/lib/server/holidays", () => ({
+vi.mock("@/lib/infra/db", () => ({ db }));
+vi.mock("@/lib/holidays", () => ({
   getHolidayLookup: vi.fn(async () => new Map()),
 }));
 

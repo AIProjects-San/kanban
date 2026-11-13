@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
@@ -32,7 +32,7 @@ import {
   validateWithholdingWindow,
   windowsOverlap,
   withholdingReleaseLabel,
-} from "@/lib/salary-withholding";
+} from "@/lib/payroll/salary-withholding";
 import type { SalaryWithholdingT } from "@/lib/types";
 import { round2 } from "@/lib/money";
 

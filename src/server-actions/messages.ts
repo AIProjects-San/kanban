@@ -7,7 +7,7 @@
 // them for viewer-relative logic.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow, AuthorizationError } from "./auth-guard";
 import { sendMessageSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";

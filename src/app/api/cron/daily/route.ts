@@ -2,21 +2,21 @@ import { NextResponse } from "next/server";
 import {
   runLeaveAllocationJob,
   sendLeaveJobFailureAlarm,
-} from "@/lib/leave-allocation-core";
-import { runEmployeeRemindersJob } from "@/lib/employee-reminders";
-import { runInterviewRemindersJob } from "@/lib/interview-reminders";
+} from "@/lib/leave/leave-allocation-core";
+import { runEmployeeRemindersJob } from "@/lib/hr/employee-reminders";
+import { runInterviewRemindersJob } from "@/lib/hiring/interview-reminders";
 import {
   runEncashmentAutoDraftJob,
   sendEncashmentAutoDraftFailureAlarm,
-} from "@/lib/encashment-auto-draft";
-import { captureError, logError } from "@/lib/observability";
+} from "@/lib/leave/encashment-auto-draft";
+import { captureError, logError } from "@/lib/infra/observability";
 import {
   tryAcquireMaintenanceLock,
   LEAVE_ALLOCATION_LOCK_KEY,
   EMPLOYEE_REMINDERS_LOCK_KEY,
   INTERVIEW_REMINDERS_LOCK_KEY,
   ENCASHMENT_AUTO_DRAFT_LOCK_KEY,
-} from "@/lib/maintenance-lock";
+} from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // P26 (PL-03) — the DAILY DISPATCHER: one route carrying every HR job, the

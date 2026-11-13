@@ -12,13 +12,13 @@ const db = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const logErrorSpy = vi.fn();
-vi.mock("@/lib/observability", async (importOriginal) => {
+vi.mock("@/lib/infra/observability", async (importOriginal) => {
   // Partial mock: shared.ts (and its transitive imports) use more of the
   // module than logError — keep the real implementations for everything else.
-  const actual = await importOriginal<typeof import("@/lib/observability")>();
+  const actual = await importOriginal<typeof import("@/lib/infra/observability")>();
   return {
     ...actual,
     logError: (...args: unknown[]) => logErrorSpy(...args),

@@ -1,8 +1,8 @@
 // Shared Fernly types — mirror Prisma models but client-safe
 
-import type { PayrollFrequency } from "@/lib/payroll-windows";
+import type { PayrollFrequency } from "@/lib/payroll/payroll-windows";
 
-/** P10 — the payroll cadence union (lib/payroll-windows.ts owns it). */
+/** P10 — the payroll cadence union (lib/payroll/payroll-windows.ts owns it). */
 export type PayrollFrequencyT = PayrollFrequency;
 
 export type ProjectStatus = "RUNNING" | "ENDED" | "PENDING" | "PAUSED";
@@ -68,7 +68,7 @@ export interface AttendanceT {
   inTime: string | null;
   outTime: string | null;
   /** AT-B02/B03 (S2) — derived at write time against the workspace default
-   * day (lib/attendance-flags.ts). null = not computable. */
+   * day (lib/hr/attendance-flags.ts). null = not computable. */
   lateMinutes: number | null;
   earlyMinutes: number | null;
   workingHours: number | null;
@@ -96,7 +96,7 @@ export interface AttendanceMonthT {
 
 // F2.4 — leave allocation strategy vocabulary (docs/Fernly_Policy_Engine_
 // Design.md §4.1). Unions live here so lib/types stays dependency-free; the
-// pure kernel (lib/leave-policy.ts) and the DTOs share them.
+// pure kernel (lib/leave/leave-policy.ts) and the DTOs share them.
 export type LeaveAllocationStrategy = "MANUAL" | "ANNUAL_LUMP_SUM" | "EARNED" | "AFTER_SERVICE";
 export type LeaveAccrualFrequency = "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUAL";
 export type LeaveAllocateOnDay = "FIRST" | "LAST" | "DOJ_DAY";
@@ -209,7 +209,7 @@ export type EmploymentStatus = "" | "PROBATION" | "ACTIVE" | "SUSPENDED" | "EXIT
 // P33 (EM-06/EM-01) — the structured property history (the benchmark's
 // Employee Property History child) and the promotion/transfer change that
 // writes it. The promotable property registry + the pure diff/raise/retire
-// math live in lib/employment-change.ts; this is the shared wire type.
+// math live in lib/hr/employment-change.ts; this is the shared wire type.
 // ---------------------------------------------------------------------------
 
 /** One structured property-history row (property / current / new). */
@@ -217,7 +217,7 @@ export interface EmploymentPropertyHistoryT {
   id: string;
   userId: string;
   /** jobTitle | department | manager | salary (registry in
-   * lib/employment-change.ts; grade joins at P34). */
+   * lib/hr/employment-change.ts; grade joins at P34). */
   property: string;
   currentValue: string;
   newValue: string;
@@ -289,7 +289,7 @@ export interface OnboardingChecklistT {
   createdAt: string;
   /** P35 (EM-11) — the DERIVED boarding status: done/total/percent +
    * NOT_STARTED | IN_PROGRESS | COMPLETE + the open-required count.
-   * Computed per read (lib/onboarding-template's pure kernel) — never
+   * Computed per read (lib/hr/onboarding-template's pure kernel) — never
    * stored, so it can never drift from the task rows. */
   completion: {
     done: number;
@@ -348,7 +348,7 @@ export interface FnFLineT {
   amount: number;
 }
 
-/** The computed statement (pure output of lib/full-and-final.ts). */
+/** The computed statement (pure output of lib/hr/full-and-final.ts). */
 export interface FnFComputedT {
   /** yyyy-mm-dd — the asOf the computation ran at (injected clock). */
   asOf: string;
@@ -881,7 +881,7 @@ export interface OfferRecordT {
   startDate: string;
 }
 
-/** R7 — one monthly money line on a payslip (see lib/payroll-math.ts). */
+/** R7 — one monthly money line on a payslip (see lib/payroll/payroll-math.ts). */
 export interface PayslipLineT {
   key: string;
   label: string;

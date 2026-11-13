@@ -22,8 +22,8 @@
 // ---------------------------------------------------------------------------
 
 import { createHash } from "node:crypto";
-import { db } from "@/lib/db";
-import { getHolidayLookup } from "@/lib/server/holidays";
+import { db } from "@/lib/infra/db";
+import { getHolidayLookup } from "@/lib/holidays";
 import { holidayLookupFrom, type HolidayLookup } from "@/lib/working-days";
 import type { PayslipStatutoryT } from "@/lib/types";
 import { buildEiFile, type EiEmployeeLine } from "./ei-file";

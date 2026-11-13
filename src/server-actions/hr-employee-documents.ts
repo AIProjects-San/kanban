@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, checkPermission, AuthorizationError } from "./auth-guard";
 import {
   requestEmployeeDocumentSchema,
@@ -40,7 +40,7 @@ import {
   canSubmitEmployeeDocument,
   canDecideEmployeeDocument,
   employeeDocumentSummary,
-} from "@/lib/employee-documents";
+} from "@/lib/hr/employee-documents";
 
 // ---------------------------------------------------------------------------
 // Reads

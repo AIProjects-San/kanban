@@ -15,7 +15,7 @@ const { saveSalaryStructure, createStructureFromOffer, getSalaryComponents, getS
   // P23 — the default-package prefill fetches the structures list.
   getSalaryStructures: vi.fn(),
 }));
-vi.mock("@/server-actions/payroll", () => ({ saveSalaryStructure, createStructureFromOffer, getSalaryStructures }));
+vi.mock("@/server-actions/payroll-structures", () => ({ saveSalaryStructure, createStructureFromOffer, getSalaryStructures }));
 vi.mock("@/server-actions/payroll-components", () => ({ getSalaryComponents }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/components/ui/modal", () => ({

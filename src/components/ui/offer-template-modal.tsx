@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
 import type { OfferComponentT, OfferTemplateT } from "@/lib/types";
-import { getOfferTemplates, saveOfferTemplate, deleteOfferTemplate } from "@/server-actions/hiring";
+import { getOfferTemplates, saveOfferTemplate, deleteOfferTemplate } from "@/server-actions/hiring-offers";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 
 interface Draft {

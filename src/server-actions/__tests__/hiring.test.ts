@@ -24,7 +24,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();
@@ -60,23 +60,30 @@ vi.mock("@/server-actions/shared", async () => {
   };
 });
 
+// F-R5 — the lazy-lapse kernel (lib/hiring/offer-lapse.ts) writes its audit
+// row through lib/audit/audit directly, not the actions facade: mock the
+// same spy at the source so both paths hit one assertion surface.
+vi.mock("@/lib/audit/audit", () => ({
+  logAudit: (...a: unknown[]) => logAuditMock(...a),
+}));
+
 // R3 — injectable mailer: the default mock simulates a successful Resend
 // delivery; individual tests swap in dry-run / throwing mailers.
 const createMailerMock = vi.fn();
-vi.mock("@/lib/mailer", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/mailer")>("@/lib/mailer");
+vi.mock("@/lib/email/mailer", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/email/mailer")>("@/lib/email/mailer");
   return { ...actual, createMailer: (...a: unknown[]) => createMailerMock(...(a as [])) };
 });
 
 const getWorkspaceConfigMock = vi.fn();
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
 }));
 
 // R6 — password hashing for the auto-created hire account (deterministic
 // test value; the real hashPassword is covered by lib/password tests).
-vi.mock("@/lib/password", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/password")>("@/lib/password");
+vi.mock("@/lib/auth/password", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/auth/password")>("@/lib/auth/password");
   return { ...actual, hashPassword: vi.fn(async () => "hashed-test") };
 });
 
@@ -100,6 +107,10 @@ import {
   getHiringBoard,
   getHiringPermissions,
   getMailOutbox,
+  getHiringFunnel,
+} from "../hiring";
+import { scheduleInterview, saveScorecard, getMyInterviews } from "../hiring-interviews";
+import {
   getDocumentTypes,
   saveDocumentType,
   deleteDocumentType,
@@ -110,24 +121,22 @@ import {
   rejectDocument,
   initiateBackgroundCheck,
   updateBackgroundCheck,
+} from "../hiring-formalities";
+import {
   getOfferTemplates,
   saveOfferTemplate,
   deleteOfferTemplate,
   createOfferRecord,
   updateOfferRecord,
   getOfferRecords,
-  scheduleInterview,
-  saveScorecard,
-  getMyInterviews,
-  getHiringFunnel,
   sendOffer,
   getOfferByToken,
   signOffer,
   declineOffer,
-  markJoined,
   approveOffer,
   getOffersAwaitingApproval,
-} from "../hiring";
+} from "../hiring-offers";
+import { markJoined } from "../hiring-onboarding";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
 const MANAGER_AUTH = { userId: "u-mgr", role: "MANAGER" as const, name: "Ingrid", email: "ingrid@x.co" };

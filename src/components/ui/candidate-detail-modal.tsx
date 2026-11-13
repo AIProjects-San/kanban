@@ -31,8 +31,9 @@ import {
   setStageStatus,
   decideCandidate,
   addCandidateStage,
-  scheduleInterview,
-  saveScorecard,
+} from "@/server-actions/hiring";
+import { scheduleInterview, saveScorecard } from "@/server-actions/hiring-interviews";
+import {
   getJoiningFormalities,
   requestDocument,
   receiveDocument,
@@ -40,8 +41,8 @@ import {
   rejectDocument,
   initiateBackgroundCheck,
   updateBackgroundCheck,
-  markJoined,
-} from "@/server-actions/hiring";
+} from "@/server-actions/hiring-formalities";
+import { markJoined } from "@/server-actions/hiring-onboarding";
 import { getDirectory } from "@/server-actions/hr-directory";
 import { SCORECARD_RECOMMENDATIONS } from "@/lib/validation";
 import { JoinerHandoutModal, type JoinerHandout } from "./joiner-handout";

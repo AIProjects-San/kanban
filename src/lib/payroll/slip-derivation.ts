@@ -23,16 +23,16 @@ import {
   lopBasisGross,
   lineSum,
   type PayslipLine,
-} from "@/lib/payroll-math";
+} from "@/lib/payroll/payroll-math";
 import {
   applyAdjustments,
   structureNetDeductionRows,
   type AdjustmentApplication,
   type PayAdjustmentRow,
-} from "@/lib/pay-adjustment";
-import { OVERTIME_LINE_KEY, overtimeLineLabel, planOvertimePayout } from "@/lib/overtime-bridge";
+} from "@/lib/payroll/pay-adjustment";
+import { OVERTIME_LINE_KEY, overtimeLineLabel, planOvertimePayout } from "@/lib/payroll/overtime-bridge";
 import type { OfferComponent } from "@/lib/offer-math";
-import type { PayrollFrequency } from "@/lib/payroll-windows";
+import type { PayrollFrequency } from "@/lib/payroll/payroll-windows";
 
 export interface SlipDerivationInput {
   components: OfferComponent[];

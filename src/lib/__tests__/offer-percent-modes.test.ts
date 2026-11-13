@@ -22,13 +22,13 @@ import {
   withLopLine,
   lopBasisGross,
   lineSum,
-} from "@/lib/payroll-math";
+} from "@/lib/payroll/payroll-math";
 import {
   applyAdjustments,
   structureNetDeductionRows,
   type PayAdjustmentRow,
-} from "@/lib/pay-adjustment";
-import { solveBaseForCtc } from "@/lib/ctc-solver";
+} from "@/lib/payroll/pay-adjustment";
+import { solveBaseForCtc } from "@/lib/hiring/ctc-solver";
 
 function fixedRow(p: Partial<PayAdjustmentRow>): PayAdjustmentRow {
   return {

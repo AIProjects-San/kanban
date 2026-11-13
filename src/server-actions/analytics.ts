@@ -22,9 +22,9 @@
 // offers a scope the server would reject.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSessionOrThrow, AuthorizationError } from "./auth-guard";
-import { getSubtreeUserIds } from "@/lib/hierarchy";
+import { getSubtreeUserIds } from "@/lib/auth/hierarchy";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import type { TeamMemberT, TimeEntryT } from "@/lib/types";

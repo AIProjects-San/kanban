@@ -13,7 +13,7 @@
 // Usage: bash scripts/run-with-env.sh npx tsx scripts/seed-phase2-demo.ts
 // ---------------------------------------------------------------------------
 
-import { db } from "../src/lib/db";
+import { db } from "../src/lib/infra/db";
 import { resolveNzRateSet, calculateNzStatutoryWithSet, toNzTaxProfile, type NzTaxProfileRow } from "../src/lib/payroll/nz/calculate";
 import { serializeStatutorySnapshot, statutoryDeductionLines } from "../src/lib/payroll/nz/slip-statutory";
 import type { PayslipStatutoryT } from "../src/lib/types";

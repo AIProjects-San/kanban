@@ -11,7 +11,7 @@
 // asked for confirmation rather than trust: the brief's tentative "FN"
 // (fortnightly) is actually FT, and "SM" does not exist — the twice-a-month
 // code is HM. Fernly's BIMONTHLY cadence is twice a month (1st–15th /
-// 16th–end, lib/payroll-windows.ts), so it maps to HM, NOT to 4W.
+// 16th–end, lib/payroll/payroll-windows.ts), so it maps to HM, NOT to 4W.
 //
 // QUARTERLY and ANNUAL have no pay cycle code in the spec and are REFUSED:
 // guessing a code burns a filing cycle. (AH exists for ad hoc/irregular
@@ -21,7 +21,7 @@
 // Pure: no DB, no clock.
 // ---------------------------------------------------------------------------
 
-import type { PayrollFrequency } from "@/lib/payroll-windows";
+import type { PayrollFrequency } from "@/lib/payroll/payroll-windows";
 
 /** The spec-confirmed pay cycle codes (the closed set IRD accepts). */
 export const PAY_CYCLE_CODES = ["WK", "4W", "FT", "MT", "DA", "AH", "HM"] as const;

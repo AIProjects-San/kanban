@@ -29,13 +29,13 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseOrThrow, createCompLeaveRequestSchema, decideCompLeaveRequestSchema } from "@/lib/validation";
-import { earnedCompDays } from "@/lib/compensatory-leave";
+import { earnedCompDays } from "@/lib/leave/compensatory-leave";
 import { dayKey, holidayLookupFrom } from "@/lib/working-days";
 import {
   todayUTC,
@@ -46,7 +46,7 @@ import {
   loadLeavePeriods,
   windowArgFor,
 } from "./hr-shared";
-import { resolveActiveWindow } from "@/lib/leave-period";
+import { resolveActiveWindow } from "@/lib/leave/leave-period";
 import type { CompLeaveRequestT } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -484,7 +484,7 @@ export async function getCompensatoryQueue(): Promise<ActionResult<CompLeaveRequ
 
     let visibleUserIds: string[] | null = null;
     if (auth.role === "MANAGER") {
-      const { getSubtreeUserIds } = await import("@/lib/hierarchy");
+      const { getSubtreeUserIds } = await import("@/lib/auth/hierarchy");
       visibleUserIds = [...(await getSubtreeUserIds(auth.userId))];
     }
 

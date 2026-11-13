@@ -39,7 +39,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -58,8 +58,8 @@ vi.mock("@/server-actions/shared", () => ({
 // PR-56 — partial mock so the best-effort notification catch block can be
 // asserted without console spam.
 const logErrorSpy = vi.fn();
-vi.mock("@/lib/observability", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/observability")>();
+vi.mock("@/lib/infra/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/infra/observability")>();
   return { ...actual, logError: (...args: unknown[]) => logErrorSpy(args) };
 });
 

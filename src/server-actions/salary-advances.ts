@@ -19,14 +19,14 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { issueSalaryAdvanceSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import type { SalaryAdvanceT } from "@/lib/types";
-import { advanceSummary, installmentPlan } from "@/lib/salary-advances";
+import { advanceSummary, installmentPlan } from "@/lib/payroll/salary-advances";
 
 // ---------------------------------------------------------------------------
 // Reads

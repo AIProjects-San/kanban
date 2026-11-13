@@ -64,7 +64,7 @@ import { computeDueDate } from "../src/lib/ird/deadline";
 import type { OfferComponent } from "../src/lib/offer-math";
 
 async function main(): Promise<void> {
-const { db } = await import("../src/lib/db");
+const { db } = await import("../src/lib/infra/db");
 let pass = 0;
 let fail = 0;
 function ok(cond: boolean, label: string, detail?: string) {

@@ -1,4 +1,4 @@
-import { getBetterSession } from "@/lib/auth-better";
+import { getBetterSession } from "@/lib/auth/auth-better";
 import { getDashboardData, getUserProfile } from "@/server-actions/data";
 import { getGreeting, getTodayDateStr } from "@/lib/greeting";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";

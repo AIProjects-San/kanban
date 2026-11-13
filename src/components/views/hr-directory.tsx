@@ -25,14 +25,14 @@ import { EmploymentChangesSection } from "../ui/employment-history-section";
 import { EmployeeDocumentsPanel } from "../ui/employee-documents-panel";
 // P37 (EM-18) — the skill-map panel + the card's top-skills line.
 import { SkillMapPanel } from "../ui/skill-map-panel";
-import { topSkills } from "@/lib/skills";
+import { topSkills } from "@/lib/hr/skills";
 import { DEPARTMENT_LABELS, departmentLabel, EMPLOYMENT_TYPE_LABELS, employmentTypeLabel } from "@/lib/config";
-import { retirementProjection } from "@/lib/employment-change";
+import { retirementProjection } from "@/lib/hr/employment-change";
 import {
   EMPLOYMENT_STATUS_BADGE,
   EMPLOYMENT_STATUS_LABELS,
   EMPLOYMENT_STATUS_TRANSITIONS,
-} from "@/lib/employment";
+} from "@/lib/hr/employment";
 import type { EmployeeProfileT, EmploymentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {

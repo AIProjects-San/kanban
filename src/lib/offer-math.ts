@@ -32,7 +32,7 @@ export type OfferComponentMode =
   | "PERCENT_OF_GROSS"
   /** P23 — percent of the NET, resolved ONLY at payroll time (the run's
    * two-pass kernel, sequential on the window's running net — see
-   * lib/pay-adjustment.ts). Offers and offer templates REFUSE the mode
+   * lib/payroll/pay-adjustment.ts). Offers and offer templates REFUSE the mode
    * (net is not stable at offer time); computeOffer resolves it to 0 and
    * reports the key in `unresolved` so totals stay honest. Deduction-only
    * by validation (no stable earning basis). */
@@ -98,7 +98,7 @@ export function computeOffer(components: OfferComponent[]): OfferTotals {
   let deductions = 0;
 
   // P23 — the pass discipline the adjustment adapter kernel documents
-  // (lib/pay-adjustment.ts), mirrored at the ANNUAL resolution site:
+  // (lib/payroll/pay-adjustment.ts), mirrored at the ANNUAL resolution site:
   // gross-based lines resolve earnings-first (a percent-of-gross EARNING
   // sees the earnings resolved before it — sequential growth, no
   // iteration; a percent-of-gross deduction/employer line sees the gross

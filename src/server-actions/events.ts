@@ -3,7 +3,7 @@
 // Calendar events.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission } from "./auth-guard";
 import { createEventSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit, fmtDayDate } from "./shared";

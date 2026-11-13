@@ -19,8 +19,8 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
-import { logError } from "@/lib/observability";
+import { db } from "@/lib/infra/db";
+import { logError } from "@/lib/infra/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { REVIEW_STATUS_LABELS } from "@/lib/config";
 import {
@@ -47,11 +47,11 @@ import type { ActionResult } from "@/lib/action-result";
  * getManagerChain() as the resolution mechanism) — the guard used to
  * resolve ONE level only (User.managerId), so a grand-manager was rejected
  * with the same message. The chain walk excludes the subject themself and
- * caps at 32 hops (lib/hierarchy.ts).
+ * caps at 32 hops (lib/auth/hierarchy.ts).
  */
 async function assertReviewer(auth: { userId: string; role: string }, subjectId: string): Promise<void> {
   if (auth.role === "ADMIN" || auth.role === "HR") return;
-  const { getManagerChain } = await import("@/lib/hierarchy");
+  const { getManagerChain } = await import("@/lib/auth/hierarchy");
   const chain = await getManagerChain(subjectId);
   if (!chain.includes(auth.userId)) {
     throw new AuthorizationError("Only the employee's manager chain (or an admin) can review this cycle.");
@@ -124,7 +124,7 @@ export async function getReviewQueue(): Promise<
 
     let visibleUserIds: string[] | null = null;
     if (auth.role === "MANAGER") {
-      const { getSubtreeUserIds } = await import("@/lib/hierarchy");
+      const { getSubtreeUserIds } = await import("@/lib/auth/hierarchy");
       visibleUserIds = [...(await getSubtreeUserIds(auth.userId))];
     }
 
@@ -167,7 +167,7 @@ export async function createReview(input: {
     if (!subject || subject.deletedAt) throw new AuthorizationError("Employee not found.");
 
     if (auth.role === "MANAGER") {
-      const { getSubtreeUserIds } = await import("@/lib/hierarchy");
+      const { getSubtreeUserIds } = await import("@/lib/auth/hierarchy");
       const subtree = await getSubtreeUserIds(auth.userId);
       if (!subtree.has(data.userId)) {
         throw new AuthorizationError("You can only open review cycles for your own reports.");

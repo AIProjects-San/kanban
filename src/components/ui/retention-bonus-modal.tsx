@@ -11,8 +11,8 @@ import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
 import { createRetentionBonus } from "@/server-actions/payroll-retention";
-import { planRetentionBonus, periodPlusMonths } from "@/lib/retention-bonus";
-import { currentPeriod } from "@/lib/payroll-math";
+import { planRetentionBonus, periodPlusMonths } from "@/lib/payroll/retention-bonus";
+import { currentPeriod } from "@/lib/payroll/payroll-math";
 
 export function RetentionBonusModal({
   open,

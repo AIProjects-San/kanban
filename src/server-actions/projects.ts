@@ -3,7 +3,7 @@
 // Project CRUD.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission } from "./auth-guard";
 import { createProjectSchema, updateProjectSchema, parseOrThrow, validationError } from "@/lib/validation";
 import { logAudit } from "./shared";

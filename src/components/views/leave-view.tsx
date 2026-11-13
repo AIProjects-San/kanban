@@ -15,18 +15,18 @@ import type { LeaveBalanceT, LeaveRequestT, LeaveTypeT, HolidayT, LeaveEncashmen
 import { cn } from "@/lib/utils";
 import { getMyLeaveData, createLeaveRequest, cancelLeaveRequest } from "@/server-actions/hr-leave";
 import { holidayLookupFrom, workingDaysBetween } from "@/lib/working-days";
-import { capBalanceForConsumption, splitConsumptionAtCarryBoundary } from "@/lib/leave-policy";
+import { capBalanceForConsumption, splitConsumptionAtCarryBoundary } from "@/lib/leave/leave-policy";
 import { useApp } from "@/store/app-store";
 import { getMyEncashments, requestLeaveEncashment } from "@/server-actions/leave-encashment";
-import { planLeaveEncashment, type EncashmentPolicy } from "@/lib/leave-encashment";
-import { currentPeriod } from "@/lib/payroll-math";
+import { planLeaveEncashment, type EncashmentPolicy } from "@/lib/leave/leave-encashment";
+import { currentPeriod } from "@/lib/payroll/payroll-math";
 // P30 (LV-01/LV-11) — the compensatory claim flow (worked-holiday days
 // earned through the ledger).
 import {
   getMyCompensatoryRequests,
   createCompensatoryLeaveRequest,
 } from "@/server-actions/compensatory-leave";
-import { claimedNonWorkingDays } from "@/lib/compensatory-leave";
+import { claimedNonWorkingDays } from "@/lib/leave/compensatory-leave";
 import { fmtDay } from "@/lib/format";
 
 interface CurrentUser {

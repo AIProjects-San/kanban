@@ -15,8 +15,8 @@ import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field, FormRow } from "./field";
 import type { PayAdjustmentT } from "@/lib/types";
-import { createPayAdjustment, listPayAdjustments } from "@/server-actions/payroll";
-import { validateAdjustmentInput, ADJUSTMENT_CALC_MODES } from "@/lib/pay-adjustment";
+import { createPayAdjustment, listPayAdjustments } from "@/server-actions/payroll-adjustments";
+import { validateAdjustmentInput, ADJUSTMENT_CALC_MODES } from "@/lib/payroll/pay-adjustment";
 
 interface Props {
   open: boolean;

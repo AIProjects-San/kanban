@@ -10,7 +10,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 
 const { getMyPayslips } = vi.hoisted(() => ({ getMyPayslips: vi.fn() }));
 
-vi.mock("@/server-actions/payroll", () => ({ getMyPayslips }));
+vi.mock("@/server-actions/payroll-self-service", () => ({ getMyPayslips }));
 
 import { MyPayslipsCard } from "@/components/ui/my-payslips-card";
 import type { PayslipT } from "@/lib/types";

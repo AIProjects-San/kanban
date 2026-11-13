@@ -15,7 +15,7 @@ const { checkMock, hitMock } = vi.hoisted(() => ({
   hitMock: vi.fn(),
 }));
 
-vi.mock("@/lib/rate-limit-redis", () => ({
+vi.mock("@/lib/infra/rate-limit-redis", () => ({
   createClientErrorLimiter: () => ({
     check: (...a: unknown[]) => checkMock(...(a as [])),
     hit: (...a: unknown[]) => hitMock(...(a as [])),
@@ -24,7 +24,7 @@ vi.mock("@/lib/rate-limit-redis", () => ({
 }));
 
 const captureErrorMock = vi.fn();
-vi.mock("@/lib/observability", () => ({
+vi.mock("@/lib/infra/observability", () => ({
   captureError: (...a: unknown[]) => captureErrorMock(...(a as [])),
 }));
 

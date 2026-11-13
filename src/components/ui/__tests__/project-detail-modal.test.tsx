@@ -33,7 +33,7 @@ const {
   mockRouterRefresh: vi.fn(),
 }));
 
-vi.mock("@/lib/auth-client-better", () => ({
+vi.mock("@/lib/auth/auth-client-better", () => ({
   authClient: { useSession },
 }));
 

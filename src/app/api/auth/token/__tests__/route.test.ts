@@ -34,7 +34,7 @@ vi.mock("next/headers", () => ({
 process.env.BETTER_AUTH_SECRET = "token-route-test-secret-0123456789ab";
 
 const { POST, GET } = await import("../route");
-const { verifyJwt } = await import("@/lib/jwt");
+const { verifyJwt } = await import("@/lib/auth/jwt");
 
 const SESSION = {
   userId: "u-mia",

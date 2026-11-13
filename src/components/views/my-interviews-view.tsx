@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CalendarClock, ClipboardPen, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { SCORECARD_RECOMMENDATIONS } from "@/lib/validation";
-import { getMyInterviews, saveScorecard } from "@/server-actions/hiring";
+import { getMyInterviews, saveScorecard } from "@/server-actions/hiring-interviews";
 
 const RECOMMENDATION_LABEL: Record<string, string> = {
   STRONG_HIRE: "Strong hire",

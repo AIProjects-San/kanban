@@ -15,7 +15,7 @@
 // palette stays snappy.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds } from "./shared";
 import { toResult } from "./result";

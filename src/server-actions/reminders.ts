@@ -14,9 +14,9 @@
 // feature.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSessionOrThrow } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { hasPermission } from "@/lib/auth/rbac";
 import { AuthorizationError } from "./auth-guard";
 import { createReminderSchema, parseOrThrow } from "@/lib/validation";
 import { logAudit } from "./shared";

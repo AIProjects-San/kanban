@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import {
   DEFAULT_AUDIT_RETENTION_DAYS,
   MIN_AUDIT_RETENTION_DAYS,
-} from "../lib/audit-retention-config";
+} from "@/lib/audit/audit-retention-config";
 
 const repoRoot = resolve(__dirname, "../..");
 

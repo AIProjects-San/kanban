@@ -15,7 +15,7 @@
 //  - Must NOT rethrow the error (it would bubble to global-error).
 //  - L-P1-19: reports the error to the configured error tracker via
 //    `window[ERROR_BRIDGE_KEY]` (a client-safe bridge installed by
-//    src/lib/client-error-bridge.ts, mounted in providers.tsx). Falls back
+//    src/lib/infra/client-error-bridge.ts, mounted in providers.tsx). Falls back
 //    to console.error — importing the observability module directly would
 //    pull node:async_hooks into the browser bundle, which cannot run there.
 // ---------------------------------------------------------------------------

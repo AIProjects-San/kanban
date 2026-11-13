@@ -12,7 +12,7 @@ const db = vi.hoisted(() => ({
   statutoryRule: { findFirst: vi.fn(), findUnique: vi.fn() },
 }));
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 import {
   classifyComponentsForStatutory,
@@ -28,7 +28,7 @@ import {
 import { calculateNzStatutoryWithSet, toNzTaxProfile } from "@/lib/payroll/nz/calculate";
 import { NzStatutoryError } from "@/lib/payroll/nz/types";
 import { baseProfile, fy2026RateSet, utc } from "./fixtures";
-import type { PayslipLine } from "@/lib/payroll-math";
+import type { PayslipLine } from "@/lib/payroll/payroll-math";
 
 const SET = fy2026RateSet();
 

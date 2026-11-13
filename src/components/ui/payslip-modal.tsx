@@ -2,7 +2,7 @@
 
 // Recruitment R7 — the payslip editor + print view
 // (docs/RECRUITMENT_MODULE_PLAN.md §5). While the run is OPEN, earnings and
-// deduction lines are editable with live gross/net (lib/payroll-math.ts);
+// deduction lines are editable with live gross/net (lib/payroll/payroll-math.ts);
 // loss-of-pay is entered as DAYS and auto-computes the pro-rated "lop"
 // deduction line. LOCKED runs render the same modal read-only as the
 // print-friendly slip (the .print-area class scopes window.print() to the
@@ -18,11 +18,11 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { PayslipT, PayslipLineT } from "@/lib/types";
 import { updatePayslip } from "@/server-actions/payroll";
-import { computeLop, payslipTotals, lopBasisGross, withRoundingLine, isStatutoryLineKey, round2, LOP_LINE_KEY, ROUNDING_LINE_KEY, type PayrollRoundingMode } from "@/lib/payroll-math";
-import { componentYtdAmount } from "@/lib/payslip-aggregates";
+import { computeLop, payslipTotals, lopBasisGross, withRoundingLine, isStatutoryLineKey, round2, LOP_LINE_KEY, ROUNDING_LINE_KEY, type PayrollRoundingMode } from "@/lib/payroll/payroll-math";
+import { componentYtdAmount } from "@/lib/payroll/payslip-aggregates";
 // P16 (PR-11) — the fiscal-year label for the YTD chip ("2026/27" when the
 // workspace basis isn't the calendar year).
-import { fiscalYearLabel, fiscalYearOf, parsePayrollPeriodKey } from "@/lib/payroll-windows";
+import { fiscalYearLabel, fiscalYearOf, parsePayrollPeriodKey } from "@/lib/payroll/payroll-windows";
 import { formatMoney } from "@/lib/format";
 
 /** Percent label for the statutory box ("3.5%", "10%"). */

@@ -7,11 +7,11 @@
 // silently render an empty workspace). `getMyProjects` / `getProjectMembers`
 // are invoked from client components and therefore return ActionResults.
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSession, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, getWorkspaceLimit, visibleMemberWhere } from "./shared";
-import { getSubtreeUserIds } from "@/lib/hierarchy";
-import { getEffectivePermissions } from "@/lib/config-loader";
+import { getSubtreeUserIds } from "@/lib/auth/hierarchy";
+import { getEffectivePermissions } from "@/lib/infra/config-loader";
 import { EMPTY_DASHBOARD_DATA, type DashboardData } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 import { toResult } from "./result";

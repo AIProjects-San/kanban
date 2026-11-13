@@ -22,7 +22,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -41,7 +41,7 @@ vi.mock("@/server-actions/shared", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const bumpConfigCacheMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   bumpConfigCache: (...a: unknown[]) => bumpConfigCacheMock(...a),
 }));
 
@@ -49,7 +49,7 @@ import {
   updateNotificationTemplate,
   resetNotificationTemplate,
 } from "../notification-templates";
-import { NOTIFICATION_TEMPLATE_EVENTS } from "@/lib/notification-template";
+import { NOTIFICATION_TEMPLATE_EVENTS } from "@/lib/email/notification-template";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const, name: "Mira", email: "mira@x.co" };
 

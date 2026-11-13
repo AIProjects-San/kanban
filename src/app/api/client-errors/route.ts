@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { captureError } from "@/lib/observability";
-import { createClientErrorLimiter } from "@/lib/rate-limit-redis";
+import { captureError } from "@/lib/infra/observability";
+import { createClientErrorLimiter } from "@/lib/infra/rate-limit-redis";
 
 // ---------------------------------------------------------------------------
 // Client error ingestion endpoint (completes L-P1-19).
 //
-// `src/lib/client-error-bridge.ts` (browser) POSTs client-side errors here;
+// `src/lib/infra/client-error-bridge.ts` (browser) POSTs client-side errors here;
 // this route is the server-side half that hands them to the configured
 // error reporter with the current request id. The bridge lives in an API
 // route because `src/app/error.tsx` cannot import observability directly

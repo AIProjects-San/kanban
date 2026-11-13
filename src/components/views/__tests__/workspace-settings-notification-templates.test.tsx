@@ -35,8 +35,8 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 vi.mock("@/hooks/use-refresh", () => ({ useRefresh: () => () => Promise.resolve() }));
 
 import { WorkspaceSettingsView } from "@/components/views/workspace-settings-view";
-import type { WorkspaceConfig } from "@/lib/config-loader";
-import { NOTIFICATION_TEMPLATE_EVENTS } from "@/lib/notification-template";
+import type { WorkspaceConfig } from "@/lib/infra/config-loader";
+import { NOTIFICATION_TEMPLATE_EVENTS } from "@/lib/email/notification-template";
 
 function baseConfig(notificationTemplates: WorkspaceConfig["notificationTemplates"]): WorkspaceConfig {
   return {

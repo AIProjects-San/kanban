@@ -6,7 +6,7 @@
 //
 // Read + save of the workspace's ONE rule row and its slab rows. The rule
 // is configuration data only: the payout line is computed into the LIVE
-// full-and-final statement by lib/gratuity.ts (never here), so editing the
+// full-and-final statement by lib/payroll/gratuity.ts (never here), so editing the
 // rule can never move a settled statement — the freeze discipline holds
 // because this file writes no money anywhere.
 //
@@ -17,14 +17,14 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { saveGratuityRuleSchema } from "@/lib/validation";
-import { validateGratuityRuleInput } from "@/lib/gratuity";
+import { validateGratuityRuleInput } from "@/lib/payroll/gratuity";
 import type { GratuityRuleT } from "@/lib/types";
 
 /** The default world before HR configures anything: off, no slabs. */

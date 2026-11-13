@@ -38,7 +38,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();
@@ -61,7 +61,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // S4 (PR-B07) — createPayrollRun reads the workspace unmarked-day policy
 // through the cached config loader; default IGNORED = pre-S4 semantics.
 const getWorkspaceConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
   bumpConfigCache: vi.fn(),
 }));
@@ -72,11 +72,8 @@ import {
   deleteSalaryComponent,
 } from "../payroll-components";
 import type { SalaryComponentT } from "@/lib/types";
-import {
-  saveSalaryStructure,
-  createStructureFromOffer,
-  createPayrollRun,
-} from "../payroll";
+import { saveSalaryStructure, createStructureFromOffer } from "../payroll-structures";
+import { createPayrollRun } from "../payroll";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
 

@@ -11,7 +11,7 @@
 // Week/agenda views + RRULE recurrence + ICS import are follow-up.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSessionOrThrow } from "./auth-guard";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";

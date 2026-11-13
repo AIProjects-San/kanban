@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const { getBetterSession } = vi.hoisted(() => ({ getBetterSession: vi.fn() }));
-vi.mock("@/lib/auth-better", () => ({
+vi.mock("@/lib/auth/auth-better", () => ({
   getBetterSession,
   revokeUserSessions: vi.fn(),
 }));
@@ -18,7 +18,7 @@ vi.mock("@/lib/auth-better", () => ({
 // (target lookup + subtree walk) return deterministic data.
 const userFindUnique = vi.fn();
 const userFindMany = vi.fn();
-vi.mock("@/lib/db", () => ({
+vi.mock("@/lib/infra/db", () => ({
   db: {
     user: {
       findUnique: (...args: unknown[]) => userFindUnique(...args),
@@ -31,7 +31,7 @@ vi.mock("@/lib/db", () => ({
 // static matrix. Mock the config-loader so the DB-driven check is
 // deterministic per test. Default: DB returns false.
 const hasPermissionDbMock = vi.fn();
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   hasPermissionDb: (...args: unknown[]) => hasPermissionDbMock(...args),
 }));
 

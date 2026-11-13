@@ -19,7 +19,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 // Stub the Better Auth client's useSession so we can drive role-gating
 // (the default stack since PR-49 — useAppSession resolves through it).
 const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
-vi.mock("@/lib/auth-client-better", () => ({
+vi.mock("@/lib/auth/auth-client-better", () => ({
   authClient: { useSession },
 }));
 

@@ -15,11 +15,11 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const hashPasswordMock = vi.fn();
 const getMinPasswordLengthMock = vi.fn();
-vi.mock("@/lib/password", () => ({
+vi.mock("@/lib/auth/password", () => ({
   hashPassword: (...a: unknown[]) => hashPasswordMock(...a),
   getMinPasswordLength: () => getMinPasswordLengthMock(),
 }));
@@ -30,7 +30,7 @@ const limiterState = vi.hoisted(() => ({
   count: 0,
   hits: 0,
 }));
-vi.mock("@/lib/rate-limit-redis", () => {
+vi.mock("@/lib/infra/rate-limit-redis", () => {
   const makeLimiter = () => ({
     check: vi.fn(async () => ({ blocked: limiterState.blocked, count: limiterState.count, retryAfterSec: 0 })),
     hit: vi.fn(async () => {
@@ -58,13 +58,13 @@ vi.mock("next/headers", () => ({
       : new Headers({ "x-forwarded-for": "203.0.113.9" }),
 }));
 
-const { FakeMailer, NoopMailer, _resetMailerCacheForTests } = await import("@/lib/mailer");
+const { FakeMailer, NoopMailer, _resetMailerCacheForTests } = await import("@/lib/email/mailer");
 const fakeMailer = new FakeMailer();
 // Typed against the Mailer interface so a single test can swap in a
 // NoopMailer (the degraded-production branch) without a cast.
-const createMailerMock = vi.fn((): import("@/lib/mailer").Mailer => fakeMailer);
-vi.mock("@/lib/mailer", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/mailer")>("@/lib/mailer");
+const createMailerMock = vi.fn((): import("@/lib/email/mailer").Mailer => fakeMailer);
+vi.mock("@/lib/email/mailer", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/email/mailer")>("@/lib/email/mailer");
   return {
     ...actual,
     createMailer: (...a: unknown[]) => createMailerMock(...(a as [])),
@@ -391,7 +391,7 @@ describe("L-P1-11 mailer factory", () => {
   });
 
   it("ConsoleMailer does not throw", async () => {
-    const { ConsoleMailer } = await import("@/lib/mailer");
+    const { ConsoleMailer } = await import("@/lib/email/mailer");
     const m = new ConsoleMailer();
     // R3 — sendMail resolves a result object instead of void; console
     // logging is not a real delivery.

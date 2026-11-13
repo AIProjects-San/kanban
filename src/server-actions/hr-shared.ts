@@ -5,27 +5,27 @@
 // client components.
 
 import type { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
-import { logError } from "@/lib/observability";
+import { db } from "@/lib/infra/db";
+import { logError } from "@/lib/infra/observability";
 import type { HolidayT } from "@/lib/types";
 import { dayKey, workingDaysBetween } from "@/lib/working-days";
-import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave-ledger";
-import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/employment";
-import { resolveLeaveApprover } from "@/lib/hierarchy";
-import type { LeavePeriodInput, LeaveWindow } from "@/lib/leave-period";
-import { resolveLeavePolicy, dueGrantOps, type EmploymentFacts, type GrantOp, type LeavePolicyRow } from "@/lib/leave-policy";
-import { assignedManualGrantDays, policyRowWithAnnualDays } from "@/lib/leave-policy-set";
+import { projectLeaveBalance, type LeaveLedgerProjection } from "@/lib/leave/leave-ledger";
+import { formatEmployeeNumber, parseEmployeeNumber } from "@/lib/hr/employment";
+import { resolveLeaveApprover } from "@/lib/auth/hierarchy";
+import type { LeavePeriodInput, LeaveWindow } from "@/lib/leave/leave-period";
+import { resolveLeavePolicy, dueGrantOps, type EmploymentFacts, type GrantOp, type LeavePolicyRow } from "@/lib/leave/leave-policy";
+import { assignedManualGrantDays, policyRowWithAnnualDays } from "@/lib/leave/leave-policy-set";
 import { AuthorizationError } from "./auth-guard";
 
 // Holiday-calendar + leave-policy-override reads live in lib/server (the payroll
 // kernels and cron jobs use them without importing the action layer);
 // re-exported here for the hr-* action files' existing imports.
-export { getHolidayLookup } from "@/lib/server/holidays";
+export { getHolidayLookup } from "@/lib/holidays";
 export {
   assignmentOverridesFor,
   assignmentOverridesForUsers,
   type BucketPolicyOverrides,
-} from "@/lib/server/leave-overrides";
+} from "@/lib/leave/leave-overrides";
 
 // ---------------------------------------------------------------------------
 // Working-day math. Dates travel as "yyyy-mm-dd" strings from the client
@@ -80,7 +80,7 @@ export function todayUTC(): Date {
 export async function getApproverIdsFor(userId: string): Promise<string[]> {
   // S14 (EM-B04/LV-B13) — the employee's explicit override outranks the
   // reporting manager (resolveLeaveApprover); the pure rule lives in
-  // lib/hierarchy.ts, this is its one DB-backed reader.
+  // lib/auth/hierarchy.ts, this is its one DB-backed reader.
   const [user, profile] = await Promise.all([
     db.user.findUnique({
       where: { id: userId },

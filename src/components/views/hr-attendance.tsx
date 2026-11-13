@@ -17,7 +17,7 @@ import { Field, FormRow } from "../ui/field";
 import { ATTENDANCE_STATUS_CODE, ATTENDANCE_STATUS_LABELS } from "@/lib/config";
 import type { AttendanceT, AttendanceMonthT, AttendanceStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { deriveAttendanceTiming, describeAttendanceTiming } from "@/lib/attendance-flags";
+import { deriveAttendanceTiming, describeAttendanceTiming } from "@/lib/hr/attendance-flags";
 import { getAttendanceMonth, upsertAttendanceRecord, deleteAttendanceRecord, exportAttendanceSheetCsv } from "@/server-actions/hr-attendance";
 import { downloadBlob } from "@/lib/format";
 

@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import type { LeaveTypeT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { getLeaveBalanceReport, exportLeaveBalanceReportCsv } from "@/server-actions/hr-leave";
-import type { LeaveBalanceReportRow } from "@/lib/leave-balance-report";
+import type { LeaveBalanceReportRow } from "@/lib/leave/leave-balance-report";
 import { downloadBlob } from "@/lib/format";
 
 function fmtDays(n: number): string {

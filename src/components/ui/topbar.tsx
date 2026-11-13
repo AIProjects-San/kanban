@@ -14,7 +14,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { useApp } from "@/store/app-store";
-import { ROLE_LABELS, type Role } from "@/lib/rbac";
+import { ROLE_LABELS, type Role } from "@/lib/auth/rbac";
 import { Avatar } from "./avatar";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time";

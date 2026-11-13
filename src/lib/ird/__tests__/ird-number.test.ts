@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { isInIrdIssuedRange, isValidEmployerIrdNumber, isValidIrdNumberForFiling, isUnsuppliedIrd, normaliseIrd } from "../ird-number";
-import { isValidIrdNumber as phaseOneHelper } from "@/lib/tax-profile-preview";
+import { isValidIrdNumber as phaseOneHelper } from "@/lib/payroll/tax-profile-preview";
 
 describe("isValidIrdNumberForFiling — IRD spec 5.8 worked examples", () => {
   it("example 1: 49091850 is VALID (remainder 0 → check digit 0)", () => {

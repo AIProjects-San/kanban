@@ -15,7 +15,7 @@ const { getMyInterviews, saveScorecard } = vi.hoisted(() => ({
   saveScorecard: vi.fn(),
 }));
 
-vi.mock("@/server-actions/hiring", () => ({
+vi.mock("@/server-actions/hiring-interviews", () => ({
   getMyInterviews,
   saveScorecard,
 }));

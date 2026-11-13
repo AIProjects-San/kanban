@@ -33,7 +33,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const getSessionMock = vi.fn();
 const requirePermissionMock = vi.fn();
@@ -68,7 +68,7 @@ vi.mock("@/server-actions/shared", () => ({
 // mocked like payroll.test.ts (auth-guard is fully mocked too, so nothing
 // else in this import graph needs the real module).
 const getWorkspaceConfigMock = vi.fn();
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
 }));
 
@@ -76,8 +76,8 @@ vi.mock("@/lib/config-loader", () => ({
 // asserted (and so they don't spam the console). Everything but logError
 // stays real, matching the __tests__/shared.test.ts convention.
 const logErrorSpy = vi.fn();
-vi.mock("@/lib/observability", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/observability")>();
+vi.mock("@/lib/infra/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/infra/observability")>();
   return { ...actual, logError: (...args: unknown[]) => logErrorSpy(...args) };
 });
 
@@ -95,8 +95,8 @@ import {
   getLeaveBalanceReport,
   exportLeaveBalanceReportCsv,
 } from "../hr-leave";
-import { projectLeaveBalance } from "@/lib/leave-ledger";
-import { monthsInRange } from "@/lib/payroll-math";
+import { projectLeaveBalance } from "@/lib/leave/leave-ledger";
+import { monthsInRange } from "@/lib/payroll/payroll-math";
 import {
   parseDay,
   daysBetween,
@@ -2648,7 +2648,7 @@ describe("P21 (LV-T01/LV-T02) — opt-in leave email notifications", () => {
 
 describe("P21 — the leave email builders (pure)", () => {
   it("leavePendingEmailText renders the benchmark's table as plain text", async () => {
-    const { leavePendingEmailText } = await import("@/lib/leave-email");
+    const { leavePendingEmailText } = await import("@/lib/leave/leave-email");
     const text = leavePendingEmailText({
       requesterName: "Theo Jansen", typeName: "Annual Leave",
       startDate: "2026-12-30", endDate: "2027-01-04", days: 4,
@@ -2663,7 +2663,7 @@ describe("P21 — the leave email builders (pure)", () => {
   });
 
   it("leaveDecidedEmailText names the decider and the note; halves stay '0.5 days'", async () => {
-    const { leaveDecidedEmailText } = await import("@/lib/leave-email");
+    const { leaveDecidedEmailText } = await import("@/lib/leave/leave-email");
     const text = leaveDecidedEmailText(
       { requesterName: "Theo", typeName: "Sick Leave", startDate: "2026-11-02", endDate: "2026-11-02", days: 0.5 },
       "REJECT", "Ingrid", "Capacity crunch",
@@ -2674,7 +2674,7 @@ describe("P21 — the leave email builders (pure)", () => {
   });
 
   it("leaveJobFailureEmailText lists per-pair reasons and truncates past ten", async () => {
-    const { leaveJobFailureEmailText } = await import("@/lib/leave-email");
+    const { leaveJobFailureEmailText } = await import("@/lib/leave/leave-email");
     const failures = Array.from({ length: 12 }, (_, i) => ({
       leaveTypeName: `Type ${i}`, phase: "GRANT", reason: `boom ${i}`,
     }));
@@ -2688,7 +2688,7 @@ describe("P21 — the leave email builders (pure)", () => {
   });
 
   it("leaveEmailHtml escapes and bolds the strong lines", async () => {
-    const { leaveEmailHtml } = await import("@/lib/leave-email");
+    const { leaveEmailHtml } = await import("@/lib/leave/leave-email");
     const html = leaveEmailHtml("Hi <b>Theo</b>,\nDuration: 4 days\n— Fernly HR");
     expect(html).toContain("&lt;b&gt;Theo&lt;/b&gt;");
     expect(html).toContain("<strong>Duration: 4 days</strong>");

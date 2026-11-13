@@ -3,13 +3,13 @@
 // non-function values (the AuthorizationError re-export). It's imported by server
 // actions and server components, which is fine — it runs on the server only.
 
-import { logError } from "@/lib/observability";
-import { getBetterSession } from "@/lib/auth-better";
-import { hasPermission, isValidRole, type Permission, type Role } from "@/lib/rbac";
-import { canManageUser, getSubtreeUserIds } from "@/lib/hierarchy";
-import { hasPermissionDb } from "@/lib/config-loader";
-import { db } from "@/lib/db";
-import { AuthorizationError } from "@/lib/server/authorization-error";
+import { logError } from "@/lib/infra/observability";
+import { getBetterSession } from "@/lib/auth/auth-better";
+import { hasPermission, isValidRole, type Permission, type Role } from "@/lib/auth/rbac";
+import { canManageUser, getSubtreeUserIds } from "@/lib/auth/hierarchy";
+import { hasPermissionDb } from "@/lib/infra/config-loader";
+import { db } from "@/lib/infra/db";
+import { AuthorizationError } from "@/lib/auth/authorization-error";
 
 // The class lives in lib so lib kernels can throw it without importing the
 // action layer; re-exported here for the action files' existing imports.
@@ -68,7 +68,7 @@ async function hasPermissionEnforced(
  * requirePermission — static floor OR DB ceiling, cached identically.
  * Use this wherever a permission is CONSULTED rather than required (owner
  * exceptions, client capability probes); a raw `hasPermission(role, …)`
- * from lib/rbac checks the static floor only and silently ignores DB grants.
+ * from lib/auth/rbac checks the static floor only and silently ignores DB grants.
  */
 export async function checkPermission(
   role: Role,
@@ -111,7 +111,7 @@ export async function getSessionOrThrow(): Promise<AuthResult> {
  * Hierarchy-aware permission gate. Performs the standard role-based
  * permission check (`requirePermission`) AND a hierarchy check: the
  * signed-in user must be allowed to manage `targetUserId` per the
- * reporting tree (see `lib/hierarchy.ts` → `canManageUser`).
+ * reporting tree (see `lib/auth/hierarchy.ts` → `canManageUser`).
  *
  * Use this for any action that mutates or reads another user's data:
  * updateUser, deleteUser, getUserProfile (for non-self), assignManager,

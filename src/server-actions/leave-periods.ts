@@ -19,14 +19,14 @@
 // audit through the house logAudit convention.
 //
 // The window KERNEL (resolution, validation, buckets) lives in
-// src/lib/leave-period.ts (pure, test-pinned); the engine consumers in
+// src/lib/leave/leave-period.ts (pure, test-pinned); the engine consumers in
 // hr-leave.ts / hr-shared.ts / leave-allocation-core.ts.
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { validateLeavePeriod } from "@/lib/leave-period";
+import { validateLeavePeriod } from "@/lib/leave/leave-period";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";

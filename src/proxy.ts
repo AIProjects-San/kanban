@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { withRequestId, generateRequestId, log } from "@/lib/observability";
+import { withRequestId, generateRequestId, log } from "@/lib/infra/observability";
 import { randomBytes } from "node:crypto";
 
 // ---------------------------------------------------------------------------

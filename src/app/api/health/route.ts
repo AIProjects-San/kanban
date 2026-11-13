@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { probeDb, probeRedis } from "@/lib/health-probes";
+import { probeDb, probeRedis } from "@/lib/infra/health-probes";
 
 // ---------------------------------------------------------------------------
 // Health & readiness endpoint — closes L-P0-4.
@@ -22,7 +22,7 @@ import { probeDb, probeRedis } from "@/lib/health-probes";
 // protection is degraded. The on-call runbook alerts on `redis: "down"`.
 //
 // PR-32 (production-readiness round 2) — the probe implementations moved to
-// lib/health-probes.ts so /api/metrics can share them; behaviour here is
+// lib/infra/health-probes.ts so /api/metrics can share them; behaviour here is
 // unchanged. Prometheus scraping uses /api/metrics, NOT this endpoint.
 // ---------------------------------------------------------------------------
 

@@ -187,7 +187,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 vi.mock("@/server-actions/auth-guard", () => ({
@@ -209,7 +209,7 @@ vi.mock("@/server-actions/shared", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const getWorkspaceConfigMock = vi.fn();
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
   bumpConfigCache: vi.fn(),
 }));

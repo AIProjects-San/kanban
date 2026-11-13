@@ -38,7 +38,7 @@ const db = vi.hoisted(() => {
   return obj;
 });
 
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();
@@ -81,7 +81,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // S4 (PR-B07) — the LOP derivation reads the workspace unmarked-day
 // policy through the cached config loader; mocked so tests can flip it.
 const getWorkspaceConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
   bumpConfigCache: vi.fn(),
 }));
@@ -90,20 +90,24 @@ import {
   getSalaryStructures,
   saveSalaryStructure,
   createStructureFromOffer,
-  createPayrollRun,
   bulkAssignStructure,
+} from "../payroll-structures";
+import {
+  createPayrollRun,
   getPayrollRun,
   getPayrollRuns,
   updatePayslip,
   addPayslip,
   lockPayrollRun,
-  exportPayrollRunCsv,
   getPayrollData,
-  getMyPayslips,
+} from "../payroll";
+import { exportPayrollRunCsv } from "../payroll-reports";
+import { getMyPayslips } from "../payroll-self-service";
+import {
   createPayAdjustment,
   listPayAdjustments,
   applyPayAdjustmentsToRun,
-} from "../payroll";
+} from "../payroll-adjustments";
 
 const HR_AUTH = { userId: "u-hr", role: "HR" as const, name: "Remy", email: "remy@x.co" };
 
@@ -2529,12 +2533,12 @@ describe("P18 (PR-B16) — payslip email on lock", () => {
 
 describe("P18 — the payslip email builders (pure)", () => {
   it("payslipEmailSubject names the period only", async () => {
-    const { payslipEmailSubject } = await import("@/lib/payslip-email");
+    const { payslipEmailSubject } = await import("@/lib/payroll/payslip-email");
     expect(payslipEmailSubject("2026-11")).toBe("Your 2026-11 payslip is ready");
   });
 
   it("payslipEmailText summarizes the money with LOP and withheld notes", async () => {
-    const { payslipEmailText } = await import("@/lib/payslip-email");
+    const { payslipEmailText } = await import("@/lib/payroll/payslip-email");
     const text = payslipEmailText({
       slipNo: "PS-2026-11-004", gross: 3_400, net: 3_300, lopDays: 1.5, withholdStatus: "WITHHELD",
       deductions: JSON.stringify([{ key: "tax", label: "Tax", amount: 100 }]),
@@ -2551,7 +2555,7 @@ describe("P18 — the payslip email builders (pure)", () => {
   });
 
   it("payslipEmailHtml mirrors the text, bolds the net line, escapes HTML", async () => {
-    const { payslipEmailHtml } = await import("@/lib/payslip-email");
+    const { payslipEmailHtml } = await import("@/lib/payroll/payslip-email");
     const html = payslipEmailHtml("Hi <b>Ingrid</b>,\nNet pay: $3,300.00\n— Fernly Payroll");
     expect(html).toContain("&lt;b&gt;Ingrid&lt;/b&gt;");
     expect(html).toContain("<strong>Net pay: $3,300.00</strong>");

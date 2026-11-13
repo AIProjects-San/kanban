@@ -15,10 +15,10 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
-import { logError } from "@/lib/observability";
+import { db } from "@/lib/infra/db";
+import { logError } from "@/lib/infra/observability";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { hasPermission } from "@/lib/auth/rbac";
 import { LEAVE_STATUS_LABELS } from "@/lib/config";
 import type { LeaveStatus, LeaveRequestT, LeaveTypeT, LeaveBalanceT, HolidayT, LeaveAllocationStrategy, LeaveAccrualFrequency, LeaveAllocateOnDay, LeaveAccrualRounding, LeaveGrantOn } from "@/lib/types";
 import {
@@ -43,15 +43,15 @@ import {
   capBalanceForConsumption,
   splitConsumptionAtCarryBoundary,
   type LeavePolicyRow,
-} from "@/lib/leave-policy";
-import { planLeaveAdjustment } from "@/lib/leave-ledger";
-import { checkCrossRequestConsecutive } from "@/lib/leave-policy";
-import { getWorkspaceConfig } from "@/lib/config-loader";
-import { runWindowEnd, runWindowStart } from "@/lib/payroll-windows";
+} from "@/lib/leave/leave-policy";
+import { planLeaveAdjustment } from "@/lib/leave/leave-ledger";
+import { checkCrossRequestConsecutive } from "@/lib/leave/leave-policy";
+import { getWorkspaceConfig } from "@/lib/infra/config-loader";
+import { runWindowEnd, runWindowStart } from "@/lib/payroll/payroll-windows";
 // P27 (LV-08) — named allocation windows: the request/decide/cancel bucket
 // resolution + the consumption cap ride the same pure kernel the cron job
 // advances. No periods = the implicit calendar year = pre-P27 behavior.
-import { windowForDate, resolveActiveWindow } from "@/lib/leave-period";
+import { windowForDate, resolveActiveWindow } from "@/lib/leave/leave-period";
 // P24 — the leave pair rides the notification template engine: the four
 // rendered surfaces (in-app title/message + email subject/body) come from
 // resolveNotificationTemplate (workspace override row → registry default,
@@ -62,14 +62,14 @@ import {
   resolveNotificationTemplate,
   renderTemplate,
   formatLeaveDays,
-} from "@/lib/notification-template";
-import { leaveEmailHtml } from "@/lib/leave-email";
+} from "@/lib/email/notification-template";
+import { leaveEmailHtml } from "@/lib/leave/leave-email";
 import {
   buildLeaveBalanceReportRows,
   leaveBalanceReportCsv,
   type ReportLabel,
   type LeaveBalanceReportRow,
-} from "@/lib/leave-balance-report";
+} from "@/lib/leave/leave-balance-report";
 import {
   parseDay,
   daysBetween,
@@ -238,7 +238,7 @@ export async function getLeaveQueue(): Promise<
     if (auth.role === "MANAGER") {
       // The manager's subtree — they can only decide for their reports, so
       // the queue must not leak other teams' leave reasons to them.
-      const { getSubtreeUserIds } = await import("@/lib/hierarchy");
+      const { getSubtreeUserIds } = await import("@/lib/auth/hierarchy");
       const subtree = await getSubtreeUserIds(auth.userId);
       visibleUserIds = [...subtree];
     }

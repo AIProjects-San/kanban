@@ -27,7 +27,7 @@
 // — import those directly; they are not remote procedures.
 // ---------------------------------------------------------------------------
 
-export type { WorkspaceConfig } from "@/lib/config-loader";
+export type { WorkspaceConfig } from "@/lib/infra/config-loader";
 
 export {
   getDashboardData,
@@ -98,7 +98,7 @@ export {
   pruneAuditLogs,
   getAuditRetentionInfo,
 } from "./audit-retention";
-export type { PruneResult } from "@/lib/audit-retention-config";
+export type { PruneResult } from "@/lib/audit/audit-retention-config";
 // L-P2-30 — global data search.
 export {
   searchWorkspace,

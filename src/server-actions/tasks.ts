@@ -4,7 +4,7 @@
 // `res.ok` instead of try/catching thrown errors across the boundary.
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow } from "./auth-guard";
 import { AuthorizationError } from "./auth-guard";
 import { TASK_STATUS_LABELS } from "@/lib/config";

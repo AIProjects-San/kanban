@@ -34,7 +34,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import {
   parseOrThrow,
@@ -60,7 +60,7 @@ import { NzStatutoryError, type NzPayFrequency } from "@/lib/payroll/nz/types";
 import { calculatePaye } from "@/lib/payroll/nz/paye";
 import { autoEnrolDueDate } from "@/lib/payroll/nz/kiwisaver";
 import { resolveNzRateSet } from "@/lib/payroll/nz/calculate";
-import { dec, isoDay, pct, splitTaxCode, utcMidnight, isValidIrdNumber } from "@/lib/tax-profile-preview";
+import { dec, isoDay, pct, splitTaxCode, utcMidnight, isValidIrdNumber } from "@/lib/payroll/tax-profile-preview";
 import { SECONDARY_RATE_CODES } from "@/lib/payroll/nz/tax-codes";
 import { RATE_SET_INCLUDE } from "@/lib/payroll/nz/calculate";
 

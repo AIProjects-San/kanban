@@ -14,15 +14,15 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
 import { parseOrThrow } from "@/lib/validation";
 import { previewLwpCorrectionSchema, reverseLwpDaysSchema } from "@/lib/validation";
-import { planLwpCorrection, lwpCreditLabel } from "@/lib/lwp-correction";
-import { parsePayslipLines, LOP_LINE_KEY, round2 } from "@/lib/payroll-math";
+import { planLwpCorrection, lwpCreditLabel } from "@/lib/payroll/lwp-correction";
+import { parsePayslipLines, LOP_LINE_KEY, round2 } from "@/lib/payroll/payroll-math";
 import type { LwpCorrectionPreviewT } from "@/lib/types";
 
 /** The stored facts + reversal state for one paid slip. Shared by the

@@ -12,7 +12,7 @@ import { Modal } from "./modal";
 import { Field } from "./field";
 import type { ArrearsPreviewT } from "@/lib/types";
 import { previewArrearsRun, generateArrears } from "@/server-actions/payroll-arrears";
-import { currentPeriod } from "@/lib/payroll-math";
+import { currentPeriod } from "@/lib/payroll/payroll-math";
 
 export function ArrearsModal({
   open,

@@ -14,7 +14,7 @@ import { Field } from "./field";
 import { Section } from "./section";
 import { cn } from "@/lib/utils";
 import type { EmployeeSkillT, SkillT } from "@/lib/types";
-import { SKILL_PROFICIENCY_LABELS } from "@/lib/skills";
+import { SKILL_PROFICIENCY_LABELS } from "@/lib/hr/skills";
 import {
   getSkillMap,
   upsertEmployeeSkill,

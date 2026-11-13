@@ -22,8 +22,8 @@ import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field } from "../ui/field";
 import { cn, barWidthClass } from "@/lib/utils";
-import { EMPLOYMENT_STATUS_BADGE, EMPLOYMENT_STATUS_LABELS } from "@/lib/employment";
-import { EXIT_INTERVIEW_STATUS_LABELS } from "@/lib/full-and-final";
+import { EMPLOYMENT_STATUS_BADGE, EMPLOYMENT_STATUS_LABELS } from "@/lib/hr/employment";
+import { EXIT_INTERVIEW_STATUS_LABELS } from "@/lib/hr/full-and-final";
 import { createChecklist, setTaskDone } from "@/server-actions/hr-onboarding";
 import {
   getOffboardingOverview,

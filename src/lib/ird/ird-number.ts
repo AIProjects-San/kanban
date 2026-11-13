@@ -6,7 +6,7 @@
 // would reject must never reach a generated EI/ED line.
 //
 // Why a new validator instead of reusing isValidIrdNumber
-// (lib/tax-profile-preview.ts)? The Phase 1 helper transposes the
+// (lib/payroll/tax-profile-preview.ts)? The Phase 1 helper transposes the
 // remainder-0 and remainder-1 rules (it returns check digit 10 when the
 // remainder is 0 and 0 when it is 1; the spec — and its own worked
 // examples 1 and 3 — say the opposite). Concretely, the Phase 1 helper

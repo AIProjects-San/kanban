@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 /** A structural problem in a would-be IRD file line. Always fatal. */
-import { toCents as dollarsToCents } from "@/lib/payroll-math";
+import { toCents as dollarsToCents } from "@/lib/payroll/payroll-math";
 
 export class IrdFormatError extends Error {
   constructor(message: string) {

@@ -37,7 +37,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { db } from "../src/lib/db";
+import { db } from "../src/lib/infra/db";
 import { resolveNzRateSet } from "../src/lib/payroll/nz/calculate";
 import {
   classifyComponentsForStatutory,
@@ -57,17 +57,17 @@ import {
   withRoundingLine,
   parsePayslipLines,
   type PayslipLine,
-} from "../src/lib/payroll-math";
+} from "../src/lib/payroll/payroll-math";
 import {
   resolvePayrollWindow,
   fiscalYearOf,
-} from "../src/lib/payroll-windows";
+} from "../src/lib/payroll/payroll-windows";
 import { workingDaysBetween } from "../src/lib/working-days";
-import { getHolidayLookup } from "../src/lib/server/holidays";
-import { getWorkspaceConfig } from "../src/lib/config-loader";
-import { computeRunningAggregates, type AggregateSlip } from "../src/lib/payslip-aggregates";
-import { logAudit } from "../src/lib/server/audit";
-import type { PayrollRoundingMode } from "../src/lib/payroll-math";
+import { getHolidayLookup } from "../src/lib/holidays";
+import { getWorkspaceConfig } from "../src/lib/infra/config-loader";
+import { computeRunningAggregates, type AggregateSlip } from "../src/lib/payroll/payslip-aggregates";
+import { logAudit } from "../src/lib/audit/audit";
+import type { PayrollRoundingMode } from "../src/lib/payroll/payroll-math";
 
 // fileURLToPath(new URL(".", import.meta.url)) — the portable spelling of
 // Bun's import.meta.dir (keeps the file out of bun-types' global leakage).

@@ -41,7 +41,7 @@ import {
   lopBasisGross,
   round2,
   type PayslipLine,
-} from "@/lib/payroll-math";
+} from "@/lib/payroll/payroll-math";
 import {
   calculateNzStatutoryWithSet,
   toNzTaxProfile,

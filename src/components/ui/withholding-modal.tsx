@@ -17,7 +17,7 @@ import {
   createSalaryWithholding,
   releaseSalaryWithholding,
 } from "@/server-actions/payroll-withholding";
-import { currentPeriod } from "@/lib/payroll-math";
+import { currentPeriod } from "@/lib/payroll/payroll-math";
 import type { SalaryWithholdingT } from "@/lib/types";
 import { formatMoney } from "@/lib/format";
 

@@ -1,4 +1,4 @@
-import { auth } from "@/lib/auth-better";
+import { auth } from "@/lib/auth/auth-better";
 
 // ---------------------------------------------------------------------------
 // PR-48 — Better Auth parallel stack mount (auth migration Phase 1).

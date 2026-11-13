@@ -4,28 +4,28 @@
 // non-async values and is imported by the domain action modules below,
 // never by client components.
 
-import { db } from "@/lib/db";
-import { hasPermission, type Role } from "@/lib/rbac";
-import { getSubtreeUserIds } from "@/lib/hierarchy";
+import { db } from "@/lib/infra/db";
+import { hasPermission, type Role } from "@/lib/auth/rbac";
+import { getSubtreeUserIds } from "@/lib/auth/hierarchy";
 import { checkPermission } from "./auth-guard";
-import { AuthorizationError } from "@/lib/server/authorization-error";
+import { AuthorizationError } from "@/lib/auth/authorization-error";
 import { Prisma } from "@prisma/client";
 import {
   resolveTemplateAssignee,
   templateForKind,
   type OnboardingTemplateTaskRow,
-} from "@/lib/onboarding-template";
+} from "@/lib/hr/onboarding-template";
 import { addWorkingDays, type HolidayLookup } from "@/lib/working-days";
 
 // Audit + outbox infrastructure lives in lib (cron jobs and lib kernels use
 // it without importing the action layer); re-exported here for the action
 // files' existing imports.
-export { logAudit, logAuditOn, getClientInfo } from "@/lib/server/audit";
+export { logAudit, logAuditOn, getClientInfo } from "@/lib/audit/audit";
 export {
   sendOutboxMail,
   queueOutboxMail,
   deliverOutboxMail,
-} from "@/lib/server/mail-outbox";
+} from "@/lib/email/mail-outbox";
 
 /** Short day-month for audit detail lines (Date input, no year — the
  *  detail string carries the full context). The client-side iso-string
@@ -393,7 +393,7 @@ export async function recalcMemberStats(memberId: string | null) {
 }
 
 // F2.10 — joining-hardening shared helpers (used by hiring.ts AND
-// hr-onboarding.ts). The outbox senders live in lib/server/mail-outbox.
+// hr-onboarding.ts). The outbox senders live in lib/email/mail-outbox.
 
 /**
  * F2.10 (F-R8) — read the onboarding template rows for a kind, falling back

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getOfferByToken } from "@/server-actions/hiring";
+import { getOfferByToken } from "@/server-actions/hiring-offers";
 import { OfferSignView, OfferLinkInvalid, type PublicOfferT } from "@/components/offer/offer-sign-view";
 
 // Recruitment R6 — the PUBLIC offer signing route. No session: the 256-bit

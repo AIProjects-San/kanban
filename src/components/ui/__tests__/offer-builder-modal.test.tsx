@@ -15,7 +15,7 @@ const { getOfferTemplates, getOfferRecords, createOfferRecord, updateOfferRecord
   sendOffer: vi.fn(),
 }));
 
-vi.mock("@/server-actions/hiring", () => ({
+vi.mock("@/server-actions/hiring-offers", () => ({
   getOfferTemplates,
   getOfferRecords,
   createOfferRecord,

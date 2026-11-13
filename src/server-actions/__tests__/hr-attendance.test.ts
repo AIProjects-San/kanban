@@ -21,7 +21,7 @@ const db = vi.hoisted(() => {
   }
   return obj;
 });
-vi.mock("@/lib/db", () => ({ db }));
+vi.mock("@/lib/infra/db", () => ({ db }));
 
 const requirePermissionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();
@@ -45,7 +45,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // through the cached config loader; mocked so the pure kernel stays the
 // unit under test and the day is fixture-controllable.
 const getWorkspaceConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/config-loader", () => ({
+vi.mock("@/lib/infra/config-loader", () => ({
   getWorkspaceConfig: (...a: unknown[]) => getWorkspaceConfigMock(...a),
   bumpConfigCache: vi.fn(),
 }));

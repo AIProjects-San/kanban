@@ -20,21 +20,21 @@
 //     how many rows the page shows silently changed how long logs live.
 //   • Batching is real: DELETE ... WHERE id IN (SELECT id ... LIMIT 10000).
 //
-// Launch gate 12 — the batched delete core moved to src/lib/audit-prune-core.ts
+// Launch gate 12 — the batched delete core moved to src/lib/audit/audit-prune-core.ts
 // so the CRON_SECRET-protected /api/cron/prune-audit route can run it on a
 // schedule without a user session; this action remains the admin-invocable
 // path (Workspace Config) and keeps the role:manage gate.
 //
 // NOTE: "use server" file — only async functions can be exported. Constants
-// + types live in src/lib/audit-retention-config.ts.
+// + types live in src/lib/audit/audit-retention-config.ts.
 // ---------------------------------------------------------------------------
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission } from "./auth-guard";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
-import type { PruneResult } from "@/lib/audit-retention-config";
-import { runAuditPrune, clampRetentionDays } from "@/lib/audit-prune-core";
+import type { PruneResult } from "@/lib/audit/audit-retention-config";
+import { runAuditPrune, clampRetentionDays } from "@/lib/audit/audit-prune-core";
 
 export async function pruneAuditLogs(): Promise<ActionResult<PruneResult>> {
   return toResult(async () => {

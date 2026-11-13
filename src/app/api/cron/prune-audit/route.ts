@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { runMaintenancePurge } from "@/lib/audit-prune-core";
-import { captureError } from "@/lib/observability";
+import { runMaintenancePurge } from "@/lib/audit/audit-prune-core";
+import { captureError } from "@/lib/infra/observability";
 import {
   tryAcquireMaintenanceLock,
   recordMaintenanceRun,
-} from "@/lib/maintenance-lock";
+} from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // Audit-log retention cron endpoint — closes launch gate 12 ("audit

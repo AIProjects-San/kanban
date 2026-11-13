@@ -15,9 +15,9 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, checkPermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
-import { type Role } from "@/lib/rbac";
+import { type Role } from "@/lib/auth/rbac";
 import {
   BUG_STATUS_LABELS,
   BUG_STATUS_TRANSITIONS,

@@ -14,14 +14,14 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
-import { bumpConfigCache } from "@/lib/config-loader";
+import { bumpConfigCache } from "@/lib/infra/config-loader";
 import {
   getNotificationTemplateEvent,
   unknownPlaceholdersByField,
   NOTIFICATION_TEMPLATE_EVENTS,
-} from "@/lib/notification-template";
+} from "@/lib/email/notification-template";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";

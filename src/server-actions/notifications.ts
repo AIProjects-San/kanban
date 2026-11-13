@@ -11,7 +11,7 @@
 //                             act of curation, not a personal action).
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { getSessionOrThrow, checkPermission } from "./auth-guard";
 import { AuthorizationError } from "./auth-guard";
 import { toResult } from "./result";

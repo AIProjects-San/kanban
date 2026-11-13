@@ -14,8 +14,8 @@ import { toast } from "sonner";
 import { Modal } from "./modal";
 import { Field } from "./field";
 import type { OfferComponentT, PayrollFrequencyT, SalaryStructureT } from "@/lib/types";
-import { PAYROLL_FREQUENCY_OPTIONS } from "@/lib/payroll-windows";
-import { bulkAssignStructure } from "@/server-actions/payroll";
+import { PAYROLL_FREQUENCY_OPTIONS } from "@/lib/payroll/payroll-windows";
+import { bulkAssignStructure } from "@/server-actions/payroll-structures";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 
 export function BulkStructureModal({

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { probeDb, probeRedis, measureEventLoopLagMs } from "@/lib/health-probes";
-import { getMaintenanceLastRun } from "@/lib/maintenance-lock";
+import { probeDb, probeRedis, measureEventLoopLagMs } from "@/lib/infra/health-probes";
+import { getMaintenanceLastRun } from "@/lib/infra/maintenance-lock";
 
 // ---------------------------------------------------------------------------
 // Prometheus metrics endpoint — PR-32 (production-readiness round 2, roadmap

@@ -36,12 +36,12 @@
 // balance rows, returning the employee to the global per-type policy world
 // (the lazy materializer rebuilds on next touch).
 //
-// The pure rules live in src/lib/leave-policy-set.ts; the engine
+// The pure rules live in src/lib/leave/leave-policy-set.ts; the engine
 // consumption in hr-shared.ts / leave-allocation-core.ts.
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError } from "./auth-guard";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
@@ -55,12 +55,12 @@ import {
   type BucketCandidate,
   type LeavePolicyAssignmentT,
   type LeavePolicySetT,
-} from "@/lib/leave-policy-set";
+} from "@/lib/leave/leave-policy-set";
 
 // Re-exported for the client (the UI imports the DTOs from the action
 // module — the P27 convention).
 export type { LeavePolicySetT, LeavePolicyAssignmentT, BucketCandidate };
-import { windowForBucket } from "@/lib/leave-period";
+import { windowForBucket } from "@/lib/leave/leave-period";
 import {
   bulkAssignLeavePolicySetSchema,
   leavePolicySetCreateSchema,

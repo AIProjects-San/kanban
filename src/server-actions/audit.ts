@@ -7,9 +7,9 @@
 // of a task you can edit is part of that task's context (see the full
 // rationale in the original review §P1-15).
 
-import { db } from "@/lib/db";
+import { db } from "@/lib/infra/db";
 import { requirePermission, AuthorizationError, getSessionOrThrow } from "./auth-guard";
-import { hasPermission } from "@/lib/rbac";
+import { hasPermission } from "@/lib/auth/rbac";
 import { getWorkspaceLimit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
