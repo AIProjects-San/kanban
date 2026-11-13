@@ -90,9 +90,9 @@ M − $10.00 (weekly) = $520 ÷ periods.
 
 | # | Parameter | Seeded value | IRD source to open |
 |---|---|---|---|
-| 19 | Default employee rate (auto-enrolment, no election) | **3.5%** | ird.govt.nz — "KiwiSaver rates" / IR341 Apr 2026 p.4: "If your employee has been automatically enrolled, the default KiwiSaver rate is 3.5%." |
-| 20 | Allowed employee rates | **3 / 3.5 / 4 / 6 / 8 / 10%** | same page (IR341 prints deduction columns 3.5/4/6/8/10; 3% is the opt-in floor) |
-| 21 | Compulsory employer contribution | **3.5%** minimum | ird.govt.nz — "KiwiSaver for employers" / IR341 p.4: "you must contribute a minimum of 3.5%" |
+| 19 | Default employee rate (auto-enrolment, no election) | **3.5%** | ird.govt.nz — "KiwiSaver rates" / IR341 Apr 2026 p.4: "If your employee has been automatically enrolled, the default KiwiSaver rate is 3.5%." Re-verified 2026-11-13 — see §2 log. |
+| 20 | Allowed employee rates | **3 / 3.5 / 4 / 6 / 8 / 10%** | same page (IR341 prints deduction columns 3.5/4/6/8/10; 3% is the temporary rate-reduction rate, held via IRD certificate — IRD news "Changes to the KiwiSaver contribution rate", Jan 2026) |
+| 21 | Compulsory employer contribution | **3.5%** minimum | ird.govt.nz — "KiwiSaver for employers" / IR341 p.4: "you must contribute a minimum of 3.5%". Re-verified 2026-11-13 — see §2 log. |
 
 Auto-enrolment time rules (engine `kiwisaver.ts`):
 
@@ -153,6 +153,25 @@ Downloaded from ird.govt.nz and cross-checked row-by-row against the engine:
 |---|---|---|
 | **IR341 Apr 2026** (four-weekly & monthly tables, 2027 tax year) | monthly $15,000 M (4,334.89 = 4,106.46 + 228.43); monthly $5,000 M/ME/SL/KS/CEC (939.20 printed — see §3); monthly $3,000 SL (118.72); monthly $2,000 ME; four-weekly $14,700 M (4,334.44); secondary monthly $5,000 (SB…SA); ESCT band table p.4; KS default/CEC minimum notes p.4; SL threshold notes p.4 | all match the seeded rates |
 | **IR340 Apr 2026** (weekly & fortnightly tables, 2027 tax year) | weekly $1,000 M (171.50) + secondary row (122.50/192.50/317.50/347.50/407.50); weekly $500 M (75.25) + SL (4.32) | all match |
+
+**KiwiSaver rate re-verification (2026-11-13, P0 pre-filing — machine
+check, not the human gate).** Opened and checked against rows 19–21:
+ird.govt.nz "KiwiSaver changes", "Employee contributions" ("The default
+rate is 3.5% if you do not choose a higher rate"), "Employer contributions
+to KiwiSaver and complying funds" (Jul 2026: "either 3.5%, 4%, 6%, 8% or
+10%"), the IRD news item "Changes to the KiwiSaver contribution rate"
+(Jan 2026 — temporary rate reductions to hold a sub-3.5% rate via
+certificate), plus two downloaded PDFs: the **Payroll Calculations &
+Business Rules Specification 2026** ("3% to 3.5% with effect for payday's
+on or after 1 April 2026"; employer "must contribute 3.5%"; members "can
+contribute 3.5%, 4%, 6%, 8% or 10%") and the **Payday Filing File Upload
+Specification 2026-27** (July 2026) — whose DEI field-22 note ("Must be
+one of 0, 3%, 4%, 6%, 8% or 10%") predates the rate change (spec
+finalized 23/03/2026; V1.1 change log shows the Jul 2026 update touched
+§2.4.1/2.5/3.2.2/3.3.1 only). Conclusion: rows 19–21 stand as seeded —
+3.5% default + 3.5% employer; 0% (savings suspension) and 3% (rate
+reduction) remain the only sub-3.5% filed rates. Full reasoning in
+ADR-018's P0 verification addendum (docs/DECISIONS.md).
 
 ---
 

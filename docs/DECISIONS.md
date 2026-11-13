@@ -801,9 +801,54 @@ Specification 2026-27 (PDF, downloaded from ird.govt.nz) and the myIR
     to equal both the payslip lines and the posted JournalEntry credits
     (2100/2120/2130/2140/2150) to the cent.
 
-**Known risk carried forward.** The seeded FY2026-27 rate set's default
-KiwiSaver employee rate is 3.5% (an allowed rate in the Fernly seed), but
-the EI spec notes field 22 "must be one of 0, 3%, 4%, 6%, 8% or 10%" of
-taxable gross — 3.5% is not an IRD KiwiSaver rate. Before the first real
-filing the rate set should be corrected to the statutory 3% default (a
-Phase 1 seed value; not modified in Phase 2).
+**Known risk — RESOLVED before first filing (P0 verification addendum,
+2026-11-13).** The Phase 2 report flagged that the EI spec's field-22 note
+says the KiwiSaver deduction "must be one of 0, 3%, 4%, 6%, 8% or 10%" of
+taxable gross and recommended correcting the seed to a 3% default. That
+recommendation is withdrawn: it trusted a stale spec note over IRD's rate
+guidance. Verification against IRD primary sources (all opened 2026-11-13):
+
+1. **The 3.5% default is correct — no seed change, no payslip re-run.**
+   ird.govt.nz "KiwiSaver changes" and "Employee contributions": the
+   default employee rate rose 3% → **3.5% on 1 April 2026** (4% from
+   1 April 2028), the minimum employer contribution rose to **3.5%**, and
+   elections are **3.5/4/6/8/10**. The Payroll Calculations & Business
+   Rules Specification 2026 (ird.govt.nz PDF, downloaded and checked)
+   states the same in normative text and works its ESCT examples at
+   employer 3.5%. Deducting 3% without a certificate would breach the
+   3.5% minimum — changing the seed would have traded a documentation
+   discrepancy for a real compliance breach.
+2. **The EI field-22 note is stale, not binding.** The file upload spec
+   was finalized 23/03/2026 — before the rate change took effect — and
+   its 09/07/2026 V1.1 update (change log §5.9) touched §2.4.1/2.5/3.2.2/
+   3.3.1, not §3.4.1.2. The sub-3.5% codes it lists are still real: 0 =
+   savings suspension, 3 = temporary rate reduction (IRD news Jan 2026:
+   employees who cannot afford the increase hold a reduced rate via
+   certificate, effective from the first payday on/after 1 April 2026).
+   A literal enforcement of the note would reject IRD's own statutory
+   default, so Fernly files the true deduction and treats the note as
+   documentation lag. **Escalation if myIR ever rejects a 3.5% line:** the
+   filed amounts still reconcile to the payslips and ledger to the cent;
+   the remedy is a rate-reduction certificate or IRD's spec update —
+   never a silent seed change.
+3. **Phase 1 IRD helper fixed.** `isValidIrdNumber`
+   (lib/payroll/tax-profile-preview.ts) now delegates to the spec-exact
+   validator and accepts IRD's worked examples **49091850** and
+   **136410132**; both are pinned as valid input in
+   `src/lib/ird/__tests__/ird-number.test.ts` (14 tests).
+4. **Tax profile UI warns on out-of-range IRDs.** A saved IRD that passes
+   mod-11 but sits outside IRD's issued range [10,000,000–200,000,000]
+   (every seeded demo IRD) shows a "demo data" warning on the editor:
+   those lines file with a myIR warning, not an error, and must be
+   replaced before the first real filing. The warning never blocks the
+   save (pinned in
+   `src/components/admin/__tests__/employee-tax-profile-view.test.tsx`).
+5. **Dry run complete (2026-11-13).** `scripts/verify-phase-2-live.ts`
+   against a throwaway copy of the dev DB, employer IRD 49091850 (IRD
+   spec 5.8 example 1 — non-production): 27 PASS · 0 FAIL — settings,
+   engine-priced locked run, GL posting, EI generation + all 8
+   reconciliation checks, KiwiSaver percent audit (every filed deduction
+   ∈ {0, 3, 3.5, 4}% of taxable gross — statutory), lifecycle, ED, EIA2
+   amendment, overdue flagging. Nothing transmits (decision 1). **The
+   filing path is ready for the first real filing**; the human
+   IRD_SIGNOFF.md gate remains the release blocker.

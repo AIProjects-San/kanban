@@ -12,6 +12,9 @@
 //   3. GL            — postPayrollRun posts the balanced JE.
 //   4. EI            — generatePaydayFiling builds + reconciles (the 8
 //                      Step-2.10 checks, with numbers) + persists.
+//   4b. KS audit     — every DEI field-22 amount is a statutory percent
+//                      (0/3/3.5/4/6/8/10) of the filed taxable gross;
+//                      the dry-run EI file content is printed in full.
 //   5. Lifecycle     — markFiled → markAccepted; regeneration refused.
 //   6. ED            — a new joiner + a departing employee; never-twice.
 //   7. EIA2          — an amendment for one employee; original → AMENDED.
@@ -118,25 +121,38 @@ try {
   const profiles = await db.employeeTaxProfile.findMany();
   const profileByUser = new Map(profiles.map((p) => [p.userId, p]));
 
-  // A structure holder with NO tax profile cannot be filed (the service
-  // refuses: no IRD number → ND required). Record the missing IR330 in
-  // the throwaway copy — exactly what an employer does before filing.
+  // A structure holder with NO tax profile — or one recorded without an
+  // IRD number (e.g. the Phase 4 auto-enrolment test profile carries "")
+  // — cannot be filed (the service refuses: no IRD number → ND required).
+  // Record the missing IR330 in the throwaway copy — exactly what an
+  // employer does before filing: collect an IR330 from anyone who has not
+  // handed one in yet.
   for (const s of structures) {
-    if (profileByUser.has(s.userId)) continue;
+    const existing = profileByUser.get(s.userId);
+    if (existing && existing.irdNumber.trim() !== "") continue;
     const user = await db.user.findUnique({ where: { id: s.userId }, select: { name: true } });
-    const created = await db.employeeTaxProfile.create({
-      data: {
-        userId: s.userId,
-        irdNumber: "49091869",
-        taxCode: "M",
-        kiwiSaverStatus: "ACTIVE",
-        employmentType: "PERMANENT",
-        employmentStartDate: new Date("2024-08-19T00:00:00.000Z"),
-        notes: `Phase 2 live-verify: IR330 recorded for ${user?.name ?? s.userId} (mod-11 valid demo IRD).`,
-      },
-    });
-    profileByUser.set(s.userId, created);
-    console.log(`    · recorded IR330 for ${user?.name ?? s.userId} (had no tax profile)`);
+    if (existing) {
+      await db.employeeTaxProfile.update({
+        where: { id: existing.id },
+        data: { irdNumber: "49091869" },
+      });
+      existing.irdNumber = "49091869";
+      console.log(`    · recorded IR330 for ${user?.name ?? s.userId} (profile existed with no IRD number)`);
+    } else {
+      const created = await db.employeeTaxProfile.create({
+        data: {
+          userId: s.userId,
+          irdNumber: "49091869",
+          taxCode: "M",
+          kiwiSaverStatus: "ACTIVE",
+          employmentType: "PERMANENT",
+          employmentStartDate: new Date("2024-08-19T00:00:00.000Z"),
+          notes: `Phase 2 live-verify: IR330 recorded for ${user?.name ?? s.userId} (mod-11 valid demo IRD).`,
+        },
+      });
+      profileByUser.set(s.userId, created);
+      console.log(`    · recorded IR330 for ${user?.name ?? s.userId} (had no tax profile)`);
+    }
   }
 
   const slips: Array<{
@@ -255,6 +271,48 @@ try {
   const esctTotal = filing.reconciliation.checks.find((c) => c.index === 5)!.filingCents;
   const slTotal = filing.reconciliation.checks.find((c) => c.index === 6)!.filingCents;
   console.log(`\n    Totals: gross ${money(grossTotal)} · PAYE ${money(payeTotal)} · SL ${money(slTotal)} · KS ee ${money(ksTotal)} · KS er net ${money(ksErTotal)} · ESCT ${money(esctTotal)}`);
+
+  // ---- 4b. KiwiSaver percent audit (P0 pre-filing item 1/2/5) ---------------
+  // Every DEI field-22 amount must be a statutory employee percent of the
+  // filed taxable gross (field 11): 2026-27 elections 3.5/4/6/8/10 (default
+  // 3.5% since 1 Apr 2026 — IRD "KiwiSaver changes" + the Payroll
+  // Calculations & Business Rules Spec 2026), plus 0 (savings suspension /
+  // opted out / not eligible) and 3 (temporary rate reduction, IRD news Jan
+  // 2026). The upload spec's field-22 note still lists only 0/3/4/6/8/10 —
+  // stale text finalized 23/03/2026, before the default rose to 3.5%; see
+  // the ADR-018 P0 verification addendum.
+  console.log("\n[4b] KiwiSaver percent audit (DEI field 22 vs taxable gross)");
+  const STATUTORY_KS_PERCENTS = [0, 3, 3.5, 4, 6, 8, 10];
+  const observedPercents = new Set<number>();
+  let percentFails = 0;
+  for (const l of storedFiling!.lines) {
+    if (l.grossCents <= 0) continue;
+    const matched = STATUTORY_KS_PERCENTS.find(
+      (p) => Math.abs(l.kiwisaverEmployeeCents - (l.grossCents * p) / 100) <= 1,
+    );
+    if (matched == null) {
+      percentFails += 1;
+      console.log(
+        `      ✗ ${l.employeeName}: KS ${l.kiwisaverEmployeeCents}c on taxable gross ${l.grossCents}c matches no statutory percent`,
+      );
+    } else {
+      observedPercents.add(matched);
+    }
+  }
+  ok(
+    percentFails === 0,
+    "Every filed KiwiSaver deduction is a statutory percent of taxable gross (±1c rounding)",
+    `observed: ${[...observedPercents].sort((a, b) => a - b).join("%, ")}%`,
+  );
+
+  // The dry-run EI file exactly as it would be uploaded to myIR. Nothing
+  // transmits (ADR-018 decision 1: Fernly builds files, the user uploads
+  // them); the employer IRD 049091850 is IRD's own spec 5.8 example 1, not
+  // a production employer.
+  console.log("\n    Dry-run EI file content (non-production employer IRD 049091850):");
+  for (const line of (storedFiling?.fileContent ?? "").split("\n")) {
+    console.log(`      ${line}`);
+  }
 
   // ---- 5. Lifecycle ----------------------------------------------------------
   console.log("\n[5] Status lifecycle");

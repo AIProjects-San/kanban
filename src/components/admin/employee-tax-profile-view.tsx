@@ -19,6 +19,9 @@
 // Guardrails:
 //   • STC without a certificate rate blocks the save (exact spec message).
 //   • Casual without holiday-pay-in-wages warns (save continues).
+//   • IRD outside the issued range [10,000,000–200,000,000] warns with a
+//     “demo data” tag (save continues — myIR accepts the line with a
+//     warning, not an error; every seeded demo IRD sits there). P0 item 4.
 //   • TEMPORARY → PERMANENT past day 28: the server action writes the
 //     REQUIRED auto-enrolment audit entry; the form shows the note.
 // ---------------------------------------------------------------------------
@@ -29,6 +32,7 @@ import { toast } from "sonner";
 import { AlertTriangle, CalendarClock, CheckCircle2, Save, ShieldCheck } from "lucide-react";
 import { saveEmployeeTaxProfile } from "@/server-actions/tax-admin";
 import { buildTaxProfilePreview, isValidIrdNumber } from "@/lib/payroll/tax-profile-preview";
+import { isInIrdIssuedRange } from "@/lib/ird/ird-number";
 import type { EmployeeTaxProfileT } from "@/lib/types";
 
 const inputCls =
@@ -97,6 +101,16 @@ export function EmployeeTaxProfileView({
 
   // IRD mod-11 (live).
   const irdInvalid = draft.irdNumber.trim().length > 0 && !isValidIrdNumber(draft.irdNumber);
+
+  // IRD issued range (live) — mod-11-valid but outside
+  // [10,000,000–200,000,000]: IRD has never issued the number (spec 5.8
+  // step 1). myIR accepts the filed line with a WARNING, not an error, so
+  // the save is not blocked — but all six seeded demo IRDs sit here, and
+  // an admin must catch that before the first real filing.
+  const irdOutsideIssuedRange =
+    draft.irdNumber.replace(/\D/g, "").length >= 8 &&
+    !irdInvalid &&
+    !isInIrdIssuedRange(draft.irdNumber);
 
   // Guardrail 2 — casual holiday-pay warning.
   const casualWarning =
@@ -227,6 +241,20 @@ export function EmployeeTaxProfileView({
             {irdInvalid && (
               <p className="mt-1 text-xs text-destructive">
                 Fails the mod-11 check digit — recheck the digits.
+              </p>
+            )}
+            {irdOutsideIssuedRange && (
+              <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <span className="mt-px shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                  demo data
+                </span>
+                <span>
+                  Outside IRD&rsquo;s issued range (10,000,000–200,000,000) — the
+                  number passes the check digit, but IRD has never issued it.
+                  It files with a myIR warning, not an error. Replace it with
+                  the employee&rsquo;s real IRD number before the first real
+                  filing.
+                </span>
               </p>
             )}
           </div>
