@@ -38,7 +38,7 @@ import {
 import { logAudit, getScopedProjectIds, assertUserAssociatedWithProject, getProjectAssociatedUserIds } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/action-result";
-import { safeCursor, pageOf } from "./pagination";
+import { safeCursor, pageOf } from "@/lib/pagination";
 
 // ---------------------------------------------------------------------------
 // Helpers

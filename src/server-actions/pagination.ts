@@ -17,6 +17,7 @@ import { db } from "@/lib/infra/db";
 import { requirePermission, getSessionOrThrow } from "./auth-guard";
 import { getScopedProjectIds, getVisibleMemberIds } from "./shared";
 import { toResult } from "./result";
+import { pageOf, safeCursor } from "@/lib/pagination";
 import type { ActionResult } from "@/lib/action-result";
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -27,35 +28,9 @@ function clampLimit(limit: number | undefined): number {
   return Math.min(limit, MAX_PAGE_SIZE);
 }
 
-/**
- * P2 (edge-case audit) — validate the cursor format before passing it to
- * Prisma. A malformed or stale cursor (not a cuid, points to a hard-deleted
- * row) previously caused Prisma's `cursor: { id }` to throw P2015 → 500 →
- * broken UI. Now: return null (treated as "first page") so the caller gets
- * a clean result instead of an error.
- *
- * CUIDs are 24-char lowercase base-36 (typically start with 'c'). We accept
- * any 20-32 char alphanumeric string as a permissive sanity check.
- */
-export function safeCursor(cursor: string | undefined): string | null {
-  if (!cursor || typeof cursor !== "string") return null;
-  const trimmed = cursor.trim();
-  if (trimmed.length < 20 || trimmed.length > 32) return null;
-  if (!/^[a-z0-9]+$/i.test(trimmed)) return null;
-  return trimmed;
-}
-
-/** Slice one page + the hasMore flag + the next cursor from an
- *  over-fetched row list (callers take limit+1 rows). */
-export function pageOf<T extends { id: string }>(
-  rows: T[],
-  limit: number,
-): { items: T[]; hasMore: boolean; nextCursor: string | null } {
-  const hasMore = rows.length > limit;
-  const items = hasMore ? rows.slice(0, limit) : rows;
-  const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
-  return { items, hasMore, nextCursor };
-}
+// safeCursor + pageOf live in @/lib/pagination (pure kernel): a "use
+// server" module may export async functions only — sync exports are a
+// Next.js build error ("Server Actions must be async functions").
 
 export interface PaginatedResult<T> {
   items: T[];
