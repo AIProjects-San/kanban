@@ -896,6 +896,7 @@ export async function getPayrollRuns(): Promise<ActionResult<PayrollRunT[]>> {
         frequency: r.frequency as PayrollRunT["frequency"],
         startDate: r.startDate ? r.startDate.toISOString() : null,
         endDate: r.endDate ? r.endDate.toISOString() : null,
+        payDate: r.payDate ? r.payDate.toISOString() : null,
         status: r.status as "OPEN" | "LOCKED",
         lockedBy: r.lockedById ? lockerMap.get(r.lockedById) ?? null : null,
         lockedAt: r.lockedAt ? r.lockedAt.toISOString() : null,
@@ -951,6 +952,30 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // (2026-02-30) are refused here, before any read.
     const window = resolvePayrollWindow(data.frequency, data.anchorDate);
     if (!window) throw new AuthorizationError("Pick a valid anchor date (YYYY-MM-DD) inside the window.");
+
+    // Phase 2 (payday filing) — the PAYDAY. The EI file is filed per
+    // payday and the 2-working-day deadline runs from it, so it is an
+    // explicit, editable input (the UI defaults it to the window end).
+    // Guards: never before the window end (you cannot pay a period
+    // before it finishes) and at most 7 days after it (a typo catcher —
+    // a real payday lags the period end by a day or two at most).
+    const payDateRaw = data.payDate ?? window.end.toISOString().slice(0, 10);
+    const payMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(payDateRaw);
+    let payDate: Date | null = payMatch
+      ? new Date(Date.UTC(Number(payMatch[1]), Number(payMatch[2]) - 1, Number(payMatch[3])))
+      : null;
+    if (payDate && (payDate.getUTCMonth() !== Number(payMatch![2]) - 1 || payDate.getUTCDate() !== Number(payMatch![3]))) payDate = null;
+    if (!payDate) throw new AuthorizationError("Pick a valid pay date (YYYY-MM-DD).");
+    if (payDate.getTime() < window.end.getTime()) {
+      throw new AuthorizationError(
+        `The pay date (${payDateRaw}) cannot be before the period ends (${window.end.toISOString().slice(0, 10)}) — the payday is the day the payment is made.`,
+      );
+    }
+    if (payDate.getTime() > window.end.getTime() + 7 * 86_400_000) {
+      throw new AuthorizationError(
+        `The pay date (${payDateRaw}) is more than 7 days after the period ends (${window.end.toISOString().slice(0, 10)}) — check for a typo.`,
+      );
+    }
 
     const existing = await db.payrollRun.findUnique({ where: { period: window.periodKey }, select: { id: true } });
     if (existing) throw new AuthorizationError(`A run for ${window.periodKey} already exists.`);
@@ -1302,6 +1327,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           frequency: window.frequency,
           startDate: window.start,
           endDate: window.end,
+          payDate,
           status: "OPEN",
           createdById: auth.userId,
           workingDays: runWorkingDays,
@@ -1580,6 +1606,7 @@ export async function getPayrollRun(
         frequency: run.frequency as PayrollRunT["frequency"],
         startDate: run.startDate ? run.startDate.toISOString() : null,
         endDate: run.endDate ? run.endDate.toISOString() : null,
+        payDate: run.payDate ? run.payDate.toISOString() : null,
         status: run.status as "OPEN" | "LOCKED",
         lockedBy: null,
         lockedAt: run.lockedAt ? run.lockedAt.toISOString() : null,

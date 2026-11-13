@@ -1207,6 +1207,11 @@ export const createPayrollRunSchema = z.object({
   // authority — the modal's preview imports the same pure functions).
   frequency: z.enum(PAYROLL_FREQUENCY_VALUES),
   anchorDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick an anchor date (YYYY-MM-DD) inside the window."),
+  // Phase 2 (payday filing) — the PAYDAY (the day the payment is made;
+  // the 2-working-day IRD filing deadline runs from it). Optional here
+  // for Phase 1 contract stability: omitted = the window's end date.
+  // The UI always sends it explicitly (defaulted, editable).
+  payDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a pay date (YYYY-MM-DD).").optional(),
   // P14 (PR-04, the payroll-entry employee filter lite) — restrict the run
   // to the selected employees' structures (still frequency-matched);
   // omitted/empty = every active structure of the cadence (the default).

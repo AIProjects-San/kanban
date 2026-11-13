@@ -710,3 +710,100 @@ StatutoryRateSet 1 (= model StatutoryRule), StatutoryPayeTier 5 (=
 model TaxSlab), StatutorySecondaryRate 6 (the combined rates above),
 StatutoryAccLevy 1, StatutoryIetc 1, StatutoryKiwiSaver 1,
 StatutoryEsctTier 5, StatutoryStudentLoan 1.
+
+---
+
+## ADR-018 — Phase 2 payday filing: EI/ED/EIA2 files for myIR upload
+
+**Date:** 2026-11-13 · **Status:** accepted · **Phase:** 2
+
+**Context.** Phase 2 builds IRD payday filing on the CSV file-upload
+route only: IRD moved its Gateway Services (SOAP) technical documentation
+behind the Gateway Customer Support Portal on 1 July 2025, so myIR "File
+or upload a return" and express file transfer (a zip of EI/ED files) are
+the only self-service channels. All field orders, codes and validation
+rules below were confirmed against the Payday Filing File Upload
+Specification 2026-27 (PDF, downloaded from ird.govt.nz) and the myIR
+"error information and help" page, including their worked examples.
+
+**Decision.**
+
+1. **Gateway Services are out of scope.** Fernly builds files; the user
+   downloads and uploads them to myIR. Nothing in Phase 2 transmits.
+2. **`PayrollRun.payDate`** is the payday the 2-working-day deadline
+   (TAA 1994 s 23D(4)) runs from. Migration `20261205000000_payday_filing`
+   backfilled every existing row with
+   `payDate = COALESCE(endDate, startDate, createdAt)` — the period end is
+   the best available proxy for legacy rows (documented assumption; the
+   guard on new runs is payDate ≥ endDate and ≤ endDate + 7 days).
+3. **Pay cycle codes are the spec's, not the brief's.** The Phase 2 task
+   brief tentatively said `FN`/`SM`/`BIMONTHLY→4W`; the spec §3.4.1.2
+   field 9 says **WK, 4W, FT, MT, DA, AH, HM**. Fernly maps WEEKLY→WK,
+   FORTNIGHTLY→**FT**, MONTHLY→MT, BIMONTHLY→**HM** (bimonthly is twice a
+   month — 1st–15th/16th–end — NOT four-weekly), DAILY→DA. QUARTERLY and
+   ANNUAL have no confirmed code and **refuse to file** rather than guess
+   (AH exists for ad hoc payments; silently mapping a quarterly salary
+   run onto it would be a guess).
+4. **EIA2 detail records are the DEI 27-field order, employment dates
+   included** (the brief said fields 5/6 are dropped; spec §3.5.2 and the
+   myIR sample show them present and optional). The EIA2 header is 7
+   fields (no email, no totals).
+5. **The ED file is HED2 + (DED + TED) per employee.** Spec §3.2.3: "A
+   TED record must be included with every Employee detail line record
+   (DED) filed, otherwise a validation error will be returned" — the
+   brief's field list omitted TED entirely. TED is 2 fields: `TED,<tax
+   code>`.
+6. **DEI field 13 (earnings not liable for ACC) files 0** — the same
+   YTD-ACC-cap deferral as ADR-017: the engine takes no YTD levy input,
+   so the cap excess cannot be computed. IRD applies the cap from
+   cumulative filed earnings; 0 is accepted.
+7. **DEI field 10 (hours paid) files 0** — the spec's explicit "Default 0
+   if not held": Fernly tracks paid days, not hours, and the spec forbids
+   translating other units into hours ("there is no compulsion to
+   translate the data held in to hours").
+8. **IRD number validation is spec-exact in the filing layer**
+   (`lib/ird/ird-number.ts`): weights [3,2,7,6,5,4,3,2] then
+   [7,4,3,2,5,2,7,6], remainder 0 → check digit 0, remainder 1 → 10 →
+   secondary set — pinned to the spec's four worked examples. The Phase 1
+   helper `isValidIrdNumber` (lib/tax-profile-preview.ts) transposes the
+   remainder-0/remainder-1 rules and rejects IRD's own examples 1 and 3
+   (49091850, 136410132); Phase 1 is frozen, so the filing layer carries
+   the correct copy. The issued-range check [10,000,000–200,000,000]
+   applies to the **employer** IRD only (a bad employer IRD rejects the
+   whole file): out-of-range employee numbers draw a myIR WARNING ("The
+   IRD number provided does not exist"), not an error, and the six seeded
+   demo IRDs are mod-11 valid but out of range.
+9. **The ED name split is a heuristic.** Fernly stores one display name;
+   ED field 5 (first) and field 7 (last) are mandatory (since Oct 2026 a
+   missing name fails validation). Split: first token = first name, last
+   token = last name, middle tokens = middle name; single-token names
+   refuse. EI/ED field 3 files "Surname Firstnames" (the sample files'
+   shape).
+10. **Opted-out KiwiSaver employees cannot be ED-filed from Fernly**: the
+    opted-out indicator (DED field 32 = Y) requires the signed opt-out
+    notice date (field 39) and the employee's bank account (fields
+    33-36, 38 — the refund target); Fernly holds neither. The builder
+    refuses loudly; those employees are filed on-screen in myIR.
+11. **Prior-period adjustment fields (DEI 12/16) file 0** and downward
+    corrections go through an EIA2 amendment (the spec's own error
+    guidance); arrears/off-cycle money lands in payslips of the period it
+    is paid, not in adjustment fields.
+12. **One EI per employer per payday** (`@@unique([employerIrd,
+    payDate])`); amendments are separate `PaydayAmendmentFiling` rows
+    (IRD allows any number of EIA2 per payday) and flip the original to
+    AMENDED. A payslip files exactly once (`PaydayFilingLine.payslipId
+    @unique`); REJECTED filings may regenerate (myIR: fix the file and
+    upload again); FILED/ACCEPTED/AMENDED never regenerate.
+13. **The filed PAYE (DEI field 15) is income tax only** — the separate
+    ACC levy line is never added to it (IRd derives the levy); the
+    reconciliation module logs the levy total for internal
+    cross-checking, and the pre-generation gate requires the filed totals
+    to equal both the payslip lines and the posted JournalEntry credits
+    (2100/2120/2130/2140/2150) to the cent.
+
+**Known risk carried forward.** The seeded FY2026-27 rate set's default
+KiwiSaver employee rate is 3.5% (an allowed rate in the Fernly seed), but
+the EI spec notes field 22 "must be one of 0, 3%, 4%, 6%, 8% or 10%" of
+taxable gross — 3.5% is not an IRD KiwiSaver rate. Before the first real
+filing the rate set should be corrected to the statutory 3% default (a
+Phase 1 seed value; not modified in Phase 2).

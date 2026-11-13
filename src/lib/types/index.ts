@@ -1162,6 +1162,10 @@ export interface PayrollRunT {
   frequency: "MONTHLY" | "BIMONTHLY" | "WEEKLY" | "FORTNIGHTLY" | "DAILY" | "QUARTERLY" | "ANNUAL";
   startDate: string | null;
   endDate: string | null;
+  /** Phase 2 (payday filing) — the PAYDAY: the day the payment is made.
+  * The EI filing deadline (payDate + 2 working days) runs from here.
+  * Null only for pre-Phase-2 rows (clients fall back to endDate). */
+  payDate: string | null;
   status: "OPEN" | "LOCKED";
   lockedBy: string | null;
   lockedAt: string | null;

@@ -49,12 +49,12 @@ import type { PayrollRunT, PayslipT, SalaryStructureT } from "@/lib/types";
 
 const RUNS: PayrollRunT[] = [
   {
-    id: "run-1", period: "2026-11", frequency: "MONTHLY", startDate: "2026-11-01T00:00:00.000Z", endDate: "2026-11-30T00:00:00.000Z",
+    id: "run-1", period: "2026-11", frequency: "MONTHLY", startDate: "2026-11-01T00:00:00.000Z", endDate: "2026-11-30T00:00:00.000Z", payDate: "2026-11-30T00:00:00.000Z",
     status: "OPEN", lockedBy: null, lockedAt: null,
     payslipCount: 3, totalGross: 20_100, totalNet: 19_600, workingDays: 21, createdAt: "2026-11-01T00:00:00.000Z",
   },
   {
-    id: "run-0", period: "2026-10", frequency: "MONTHLY", startDate: "2026-10-01T00:00:00.000Z", endDate: "2026-10-31T00:00:00.000Z",
+    id: "run-0", period: "2026-10", frequency: "MONTHLY", startDate: "2026-10-01T00:00:00.000Z", endDate: "2026-10-31T00:00:00.000Z", payDate: "2026-10-31T00:00:00.000Z",
     status: "LOCKED", lockedBy: "Remy", lockedAt: "2026-11-03T00:00:00.000Z",
     payslipCount: 3, totalGross: 19_600, totalNet: 19_600, workingDays: 21, createdAt: "2026-10-01T00:00:00.000Z",
   },
@@ -181,7 +181,9 @@ describe("PayrollView", () => {
     expect(screen.getByTestId("new-run-preview").textContent).toContain("2026-12");
     fireEvent.click(screen.getByTestId("create-run-btn"));
     await waitFor(() =>
-      expect(createPayrollRun).toHaveBeenCalledWith({ frequency: "MONTHLY", anchorDate: "2026-12-08" }),
+      // Phase 2 (payday filing) — the payday rides creation explicitly
+      // (defaulted to the resolved window's end; editable in the form).
+      expect(createPayrollRun).toHaveBeenCalledWith({ frequency: "MONTHLY", anchorDate: "2026-12-08", payDate: "2026-12-31" }),
     );
   });
 

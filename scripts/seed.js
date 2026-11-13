@@ -2861,6 +2861,9 @@ async function main() {
         frequency: "MONTHLY",
         startDate: prevPeriodStart,
         endDate: prevPeriodEnd,
+        // Phase 2 (payday filing) — the payday itself; seeded runs pay on
+        // the period's last day (the ADR-018 backfill assumption).
+        payDate: prevPeriodEnd,
         status: "LOCKED",
         lockedById: hrId,
         lockedAt: addDays(TODAY, -3),
@@ -3025,6 +3028,9 @@ async function main() {
         frequency: "MONTHLY",
         startDate: thisPeriodStart,
         endDate: thisPeriodEnd,
+        // Phase 2 (payday filing) — payday = period end (editable on
+        // real runs; the seed keeps the simple default).
+        payDate: thisPeriodEnd,
         status: "OPEN",
         createdById: hrId,
         workingDays: thisWorkingDays,
@@ -3208,6 +3214,8 @@ async function main() {
             frequency: "WEEKLY",
             startDate: weekStart,
             endDate: weekEnd,
+            // Phase 2 (payday filing) — payday = period end.
+            payDate: weekEnd,
             status: "LOCKED",
             lockedById: hrId,
             lockedAt: addDays(TODAY, -1),

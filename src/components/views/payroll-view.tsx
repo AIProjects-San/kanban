@@ -23,6 +23,8 @@ import {
   applyPayAdjustmentsToRun,
   exportPayrollRunCsv,
 } from "@/server-actions/payroll";
+// Phase 2 (payday filing) — the per-run EI filing badge.
+import { getRunFilingStatus } from "@/server-actions/payday-filing";
 import { computeOffer, formatMoney } from "@/lib/offer-math";
 // P10 — the pure windows kernel drives the new-run form's live preview and
 // the client-side period label for run rows (same functions the server
@@ -95,6 +97,11 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
   const [withholdingOpen, setWithholdingOpen] = useState(false);
   const [newFrequency, setNewFrequency] = useState<PayrollFrequency>("MONTHLY");
   const [newAnchorDate, setNewAnchorDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // Phase 2 (payday filing) — the PAYDAY (explicit + editable; defaults to
+  // the resolved window's end). The IRD filing deadline runs from it.
+  const [newPayDate, setNewPayDate] = useState("");
+  // Phase 2 — the per-run filing status badges (EI lifecycle).
+  const [filingStatus, setFilingStatus] = useState<Record<string, { status: string; filingId: string; dueDate: string }>>({});
   // P14 (PR-04) — the run's optional employee filter (empty = every active
   // structure of the cadence).
   const [runFilterUserIds, setRunFilterUserIds] = useState<Set<string>>(new Set());
@@ -127,6 +134,10 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     if (an.ok) setAnalytics(an.data);
     const dir = await getDirectory();
     if (dir.ok) setEmployees(dir.data.profiles.map((p) => ({ userId: p.userId, name: p.name })));
+    // Phase 2 — the filing badge per run (best-effort; a failure just
+    // hides the badges).
+    const badges = await getRunFilingStatus();
+    if (badges.ok) setFilingStatus(badges.data);
     setLoaded(true);
   }, []);
 
@@ -168,6 +179,9 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     const res = await createPayrollRun({
       frequency: newFrequency,
       anchorDate: newAnchorDate,
+      // Phase 2 — the payday (explicit; defaulted to the window end when
+      // the field is untouched).
+      payDate: newPayDate || previewWindow.end.toISOString().slice(0, 10),
       ...(runFilterUserIds.size > 0 ? { userIds: [...runFilterUserIds] } : {}),
     });
     setBusy(false);
@@ -465,6 +479,20 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
             data-testid="new-run-period"
           />
         </div>
+        {/* Phase 2 (payday filing) — the payday itself: explicit + editable
+            (the EI filing deadline runs from it). */}
+        <div className="min-w-[150px]">
+          <label htmlFor="payroll-paydate" className="block text-xs font-medium text-foreground mb-1.5">Pay date (payday)</label>
+          <input
+            id="payroll-paydate"
+            type="date"
+            className="f-input"
+            value={newPayDate || (previewWindow ? previewWindow.end.toISOString().slice(0, 10) : "")}
+            min={previewWindow ? previewWindow.end.toISOString().slice(0, 10) : undefined}
+            onChange={(e) => setNewPayDate(e.target.value)}
+            data-testid="new-run-paydate"
+          />
+        </div>
         <button type="submit" className="f-btn f-btn-primary" disabled={busy || !previewWindow} data-testid="create-run-btn">
           {busy ? <Loader2 size={15} className="animate-spin" /> : <CalendarPlus size={15} />} Create run
         </button>
@@ -535,6 +563,34 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
               )}>
                 {r.status}
               </span>
+              {/* Phase 2 — the per-run filing status (EI lifecycle). */}
+              {filingStatus[r.id] && (
+                <a
+                  href={`/admin/payroll/runs/${r.id}/filing`}
+                  className={cn(
+                    "text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0 hover:underline",
+                    filingStatus[r.id].status === "ACCEPTED" ? "bg-emerald-500/10 text-emerald-700"
+                      : filingStatus[r.id].status === "REJECTED" ? "bg-red-500/10 text-red-600"
+                      : filingStatus[r.id].status === "AMENDED" ? "bg-orange-500/10 text-orange-600"
+                      : filingStatus[r.id].status === "FILED" ? "bg-blue-500/10 text-blue-600"
+                      : "bg-sky-500/10 text-sky-600",
+                  )}
+                  title={`IRD filing: ${filingStatus[r.id].status} — due ${filingStatus[r.id].dueDate.slice(0, 10)}`}
+                  data-testid={`filing-badge-${r.period}`}
+                >
+                  EI {filingStatus[r.id].status}
+                </a>
+              )}
+              {r.status === "LOCKED" && !filingStatus[r.id] && (
+                <a
+                  href={`/admin/payroll/runs/${r.id}/filing`}
+                  className="text-[0.625rem] font-semibold px-1.5 py-0.5 rounded shrink-0 bg-slate-500/10 text-slate-600 hover:underline"
+                  title="Generate this run's Employment Information file for IRD"
+                  data-testid={`filing-badge-${r.period}`}
+                >
+                  EI filing…
+                </a>
+              )}
               {r.status === "LOCKED" && (
                 <>
                   <button

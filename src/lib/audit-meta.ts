@@ -222,6 +222,23 @@ export type AuditAction =
   // Phase 1C (G2) — GL posting at the lock seam.
   | "payroll.gl_posted"
   | "payroll.gl_posting_failed"
+  // Phase 2 (payday filing) — IRD Employment Information / Employee
+  // Details file lifecycle.
+  | "payday.settings_saved"
+  | "payday.filing_generated"
+  | "payday.filing_regenerated"
+  | "payday.filing_downloaded"
+  | "payday.filing_marked_filed"
+  | "payday.filing_marked_accepted"
+  | "payday.filing_marked_rejected"
+  | "payday.overdue_refreshed"
+  | "payday.employee_details_generated"
+  | "payday.employee_details_marked_filed"
+  | "payday.employee_details_marked_accepted"
+  | "payday.employee_details_marked_rejected"
+  | "payday.amendment_generated"
+  | "payday.amendment_marked_filed"
+  | "payday.amendment_marked_accepted"
   // Phase 1C (G2) — accounting actions.
   | "accounting.period_closed"
   | "accounting.entry_reversed"
@@ -446,6 +463,22 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.salary_revision": { icon: CircleDollarSign, cls: "text-violet-500 bg-violet-500/10" },
   "payroll.gl_posted": { icon: BookOpen, cls: "text-emerald-500 bg-emerald-500/10" },
   "payroll.gl_posting_failed": { icon: TriangleAlert, cls: "text-amber-500 bg-amber-500/10" },
+  // Phase 2 (payday filing) — IRD file lifecycle.
+  "payday.settings_saved": { icon: Landmark, cls: "text-violet-500 bg-violet-500/10" },
+  "payday.filing_generated": { icon: FilePlus2, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payday.filing_regenerated": { icon: FilePenLine, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payday.filing_downloaded": { icon: Download, cls: "text-sky-500 bg-sky-500/10" },
+  "payday.filing_marked_filed": { icon: Upload, cls: "text-blue-500 bg-blue-500/10" },
+  "payday.filing_marked_accepted": { icon: ShieldCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payday.filing_marked_rejected": { icon: FileWarning, cls: "text-red-500 bg-red-500/10" },
+  "payday.overdue_refreshed": { icon: TriangleAlert, cls: "text-amber-500 bg-amber-500/10" },
+  "payday.employee_details_generated": { icon: FilePlus2, cls: "text-violet-500 bg-violet-500/10" },
+  "payday.employee_details_marked_filed": { icon: Upload, cls: "text-blue-500 bg-blue-500/10" },
+  "payday.employee_details_marked_accepted": { icon: ShieldCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payday.employee_details_marked_rejected": { icon: FileWarning, cls: "text-red-500 bg-red-500/10" },
+  "payday.amendment_generated": { icon: FilePenLine, cls: "text-orange-500 bg-orange-500/10" },
+  "payday.amendment_marked_filed": { icon: Upload, cls: "text-blue-500 bg-blue-500/10" },
+  "payday.amendment_marked_accepted": { icon: ShieldCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "accounting.period_closed": { icon: Lock, cls: "text-slate-500 bg-slate-500/10" },
   "accounting.entry_reversed": { icon: Undo2, cls: "text-orange-500 bg-orange-500/10" },
   "payroll.lwp_credit_created": { icon: Undo2, cls: "text-teal-500 bg-teal-500/10" },

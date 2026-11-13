@@ -418,6 +418,8 @@ async function stagePost(): Promise<void> {
           frequency: "MONTHLY",
           startDate: window.start,
           endDate: window.end,
+          // Phase 2 (payday filing) — payday defaults to the window end.
+          payDate: window.end,
           status: "OPEN",
           createdById: actor.userId,
           workingDays: runWorkingDays,

@@ -56,6 +56,9 @@ error a compile-time error.)
 | `verify-arrears-math.ts` | Re-derive effective-dated salary allocation per run window |
 | `verify-trial-balance.ts` | Trial balance + period reconciliation to the cent |
 | `verify-phase1c-close.ts` | Phase 1C close gate (periods, GL, statutory lines) |
+| `seed-phase2-demo.ts` | Phase 2 demo data: employer filing profile + an engine-priced, GL-posted 2026-09 run for the filing UI |
+| `verify-phase-2-live.ts` | Phase 2 LIVE gate on a throwaway db copy: EI generation, the 8-check reconciliation, lifecycle, ED, EIA2, overdue |
+| `make-ei-golden.ts` | Regenerates the committed EI golden fixture from the IRD worked example |
 
 Verification harnesses for the nine-section protocol live in `.verify-tmp/`
 (not tracked as production tooling; scratch, deleted after the run).
