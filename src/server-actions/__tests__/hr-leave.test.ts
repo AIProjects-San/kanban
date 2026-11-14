@@ -97,6 +97,7 @@ import {
 } from "../hr-leave";
 import { projectLeaveBalance } from "@/lib/leave/leave-ledger";
 import { monthsInRange } from "@/lib/payroll/payroll-math";
+import { addDays } from "@/lib/hr/working-days";
 import {
   parseDay,
   daysBetween,
@@ -132,6 +133,49 @@ function isoDay(offset: number): string {
   d.setUTCDate(d.getUTCDate() + offset);
   return d.toISOString().slice(0, 10);
 }
+
+// ---------------------------------------------------------------------------
+// Weekday-pinned fixtures (the weekend-flakiness fix). A bare "today + n"
+// window lands on a weekend whenever the suite starts on the matching
+// weekday, so the F1.1 "no working days" guard fires ahead of whatever rail
+// the test means to pin — and a test that fails midway never runs its
+// mock-restoring tail, leaking its seeds into every LATER test (that is how
+// one weekend window cascaded into 20 failures). pinWeekday(n) walks to a
+// MON–THU day at least n WORKING days out; ranges then derive their end
+// from the pinned start with plain calendar arithmetic ([start, start+1],
+// [start, start+2]) so both the working-day counts and the calendar-day
+// F1.3 attendance derivations are identical on every weekday the suite can
+// run on (pinning start and end independently could straddle Fri → Mon,
+// which the day-by-day derivation would materialize as extra rows). The
+// walk also refuses to land in the last week of December: the LV-B14
+// year-cap shrinks `consumable` to the days left in the allocation year,
+// and these fixtures request 2–3 days — it steps into January instead.
+// ---------------------------------------------------------------------------
+
+/** A Mon–Thu weekday at least `offset` working days from today (ISO day). */
+function pinWeekday(offset: number): string {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  let workdays = 0;
+  for (;;) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) workdays += 1;
+    const daysLeftInYear = Math.round(
+      (Date.UTC(d.getUTCFullYear() + 1, 0, 1) - d.getTime()) / 86_400_000,
+    );
+    if (workdays >= offset && dow >= 1 && dow <= 4 && daysLeftInYear > 7) break;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+// The two shared request windows, computed ONCE at import so every consumer
+// (the PENDING_REQUEST fixture, seeded attendance marks, expected date
+// arrays) references the same days even if the run crosses UTC midnight.
+const PIN7_START = pinWeekday(7);
+const PIN7_END = addDays(PIN7_START, 1); // two contiguous weekdays
+const PIN3_START = pinWeekday(3);
+const PIN3_END = addDays(PIN3_START, 2); // three contiguous weekdays
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -185,6 +229,11 @@ beforeEach(() => {
   // reading them back; default to none (the whole-days fallback reversal).
   db.leaveLedgerEntry.findMany.mockResolvedValue([]);
   db.user.findUnique.mockResolvedValue(null);
+  // Same hygiene for the profile reader: vi.clearAllMocks() clears CALLS,
+  // not implementations, so a test that seeds a base value (an approver
+  // override, an EXITED status) and then fails before its restoring tail
+  // would leak it into every later test's approver resolution.
+  db.employeeProfile.findUnique.mockResolvedValue(undefined);
   db.user.findMany.mockResolvedValue([]);
   db.notification.create.mockResolvedValue({});
   db.notification.createMany.mockResolvedValue({ count: 0 });
@@ -280,7 +329,7 @@ describe("getApproverIdsFor / assertLeaveDecider", () => {
     db.payslip.findMany.mockResolvedValue([]);
     db.attendanceRecord.findMany.mockResolvedValue([]);
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "override routing",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "override routing",
     });
     expect(res.ok).toBe(true);
     expect(db.notification.createMany).toHaveBeenCalledWith(
@@ -433,7 +482,7 @@ describe("createLeaveRequest", () => {
 
   it("rejects an unknown or inactive leave type", async () => {
     db.leaveType.findUnique.mockResolvedValue({ ...ANNUAL_TYPE, active: false });
-    const res = await createLeaveRequest({ leaveTypeId: "lt-x", startDate: isoDay(7), endDate: isoDay(8) });
+    const res = await createLeaveRequest({ leaveTypeId: "lt-x", startDate: PIN7_START, endDate: PIN7_END });
     expect(res.ok).toBe(false);
     expect(db.leaveRequest.create).not.toHaveBeenCalled();
   });
@@ -444,7 +493,7 @@ describe("createLeaveRequest", () => {
     requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
     db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
     db.employeeProfile.findUnique.mockResolvedValueOnce({ employmentStatus: "EXITED" });
-    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(8) });
+    const res = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: PIN7_START, endDate: PIN7_END });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/exited/i);
     expect(db.leaveRequest.create).not.toHaveBeenCalled();
@@ -454,11 +503,11 @@ describe("createLeaveRequest", () => {
     requirePermissionMock.mockResolvedValue(MEMBER_AUTH);
     db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
     db.employeeProfile.findUnique.mockResolvedValueOnce({ employmentStatus: "ACTIVE" });
-    const active = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(8) });
+    const active = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: PIN7_START, endDate: PIN7_END });
     expect(active.ok).toBe(true);
 
     db.employeeProfile.findUnique.mockResolvedValue(null);
-    const untracked = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: isoDay(7), endDate: isoDay(8) });
+    const untracked = await createLeaveRequest({ leaveTypeId: "lt-annual", startDate: PIN7_START, endDate: PIN7_END });
     expect(untracked.ok).toBe(true);
     // Restore the permissive default for the suites after this one.
     db.employeeProfile.findUnique.mockResolvedValue(undefined);
@@ -549,8 +598,8 @@ const PENDING_REQUEST = {
   id: "lr-1",
   leaveTypeId: "lt-annual",
   userId: "u-theo",
-  startDate: parseDay(isoDay(7)),
-  endDate: parseDay(isoDay(8)),
+  startDate: parseDay(PIN7_START),
+  endDate: parseDay(PIN7_END),
   days: 2,
   reason: "",
   status: "PENDING",
@@ -823,7 +872,7 @@ describe("decideLeaveRequest", () => {
     const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
     expect(res.ok).toBe(true);
     expect(db.attendanceRecord.createMany).toHaveBeenCalledWith({
-      data: [parseDay(isoDay(7)), parseDay(isoDay(8))].map((d) => ({
+      data: [parseDay(PIN7_START), parseDay(PIN7_END)].map((d) => ({
         userId: "u-theo",
         date: d,
         status: "ON_LEAVE",
@@ -839,14 +888,14 @@ describe("decideLeaveRequest", () => {
     db.user.findUnique.mockResolvedValue({ managerId: "u-mgr" });
     db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
     // HR already marked day 7 WFH — only day 8 gets derived.
-    db.attendanceRecord.findMany.mockResolvedValue([{ date: parseDay(isoDay(7)) }]);
+    db.attendanceRecord.findMany.mockResolvedValue([{ date: parseDay(PIN7_START) }]);
 
     const res = await decideLeaveRequest({ requestId: "lr-1", decision: "APPROVE" });
     expect(res.ok).toBe(true);
     expect(db.attendanceRecord.createMany).toHaveBeenCalledWith({
       data: [{
         userId: "u-theo",
-        date: parseDay(isoDay(8)),
+        date: parseDay(PIN7_END),
         status: "ON_LEAVE",
         note: "Derived from approved Annual Leave leave",
         source: "DERIVED",
@@ -1036,8 +1085,8 @@ describe("cancelLeaveRequest", () => {
     // No other approved request overlaps the range.
     db.leaveRequest.findMany.mockResolvedValue([]);
     db.attendanceRecord.findMany.mockResolvedValue([
-      { date: parseDay(isoDay(7)) },
-      { date: parseDay(isoDay(8)) },
+      { date: parseDay(PIN7_START) },
+      { date: parseDay(PIN7_END) },
     ]);
 
     const res = await cancelLeaveRequest({ requestId: "lr-1" });
@@ -1047,7 +1096,7 @@ describe("cancelLeaveRequest", () => {
         userId: "u-theo",
         source: "DERIVED",
         status: "ON_LEAVE",
-        date: { in: [parseDay(isoDay(7)), parseDay(isoDay(8))] },
+        date: { in: [parseDay(PIN7_START), parseDay(PIN7_END)] },
       },
     });
   });
@@ -1058,11 +1107,11 @@ describe("cancelLeaveRequest", () => {
     db.leaveBalance.findUnique.mockResolvedValue({ entitled: 20, carriedOver: 0, used: 2 });
     // An overlapping approved request still covers day 7.
     db.leaveRequest.findMany.mockResolvedValue([
-      { startDate: parseDay(isoDay(7)), endDate: parseDay(isoDay(7)) },
+      { startDate: parseDay(PIN7_START), endDate: parseDay(PIN7_START) },
     ]);
     db.attendanceRecord.findMany.mockResolvedValue([
-      { date: parseDay(isoDay(7)) },
-      { date: parseDay(isoDay(8)) },
+      { date: parseDay(PIN7_START) },
+      { date: parseDay(PIN7_END) },
     ]);
 
     const res = await cancelLeaveRequest({ requestId: "lr-1" });
@@ -1073,7 +1122,7 @@ describe("cancelLeaveRequest", () => {
         userId: "u-theo",
         source: "DERIVED",
         status: "ON_LEAVE",
-        date: { in: [parseDay(isoDay(8))] },
+        date: { in: [parseDay(PIN7_END)] },
       },
     });
   });
@@ -1944,12 +1993,12 @@ describe("LV-B11 (S11) — attendance-conflict guard in the leave chain", () => 
       // The chain reads attendance twice: the conflict guard (statuses
       // filtered) answers with a clash; other reads stay empty.
       if (where?.status?.in?.includes("PRESENT")) {
-        return [{ date: new Date(`${isoDay(3)}T00:00:00Z`), status: "PRESENT" }];
+        return [{ date: new Date(`${PIN3_START}T00:00:00Z`), status: "PRESENT" }];
       }
       return [];
     });
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "clash",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "clash",
     });
     expect(res.ok).toBe(false);
     if (!res.ok) {
@@ -1967,13 +2016,13 @@ describe("LV-B11 (S11) — attendance-conflict guard in the leave chain", () => 
     db.attendanceRecord.findMany.mockImplementation(async ({ where }: { where?: { status?: { in?: string[] } } }) => {
       const statuses = where?.status?.in as string[] | undefined;
       if (statuses) {
-        const all = [{ date: new Date(`${isoDay(3)}T00:00:00Z`), status: "ON_LEAVE" }];
+        const all = [{ date: new Date(`${PIN3_START}T00:00:00Z`), status: "ON_LEAVE" }];
         return all.filter((r) => statuses.includes(r.status));
       }
-      return [{ date: new Date(`${isoDay(3)}T00:00:00Z`), status: "ON_LEAVE" }];
+      return [{ date: new Date(`${PIN3_START}T00:00:00Z`), status: "ON_LEAVE" }];
     });
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "over derived rows",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "over derived rows",
     });
     expect(res.ok).toBe(true);
   });
@@ -1987,7 +2036,7 @@ describe("LV-B11 (S11) — attendance-conflict guard in the leave chain", () => 
       return [{ date: new Date(`${isoDay(20)}T00:00:00Z`), status: "ABSENT" }];
     });
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unrelated mark",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "unrelated mark",
     });
     expect(res.ok).toBe(true);
   });
@@ -2010,32 +2059,40 @@ describe("LV-B10 (S10) — salary-processed guard on unpaid leave", () => {
       { run: { period: "2026-10" } },
     ]);
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unpaid stretch",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "unpaid stretch",
     });
-    // The default request window is the CURRENT month — a locked period
-    // equal to it makes the guard fire.
-    const currentPeriod = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
-    if (["2026-11", "2026-10"].includes(currentPeriod)) {
+    // Which months the pinned window touches decides whether the default
+    // locked periods (2026-11 / 2026-10) clash — near a month end the walk
+    // can carry [PIN3_START, PIN3_END] into the NEXT month, so the forced
+    // retry below locks a period taken from the range's own months instead
+    // of "the current month" (deterministic on every run day AND at month
+    // boundaries).
+    const touched = monthsInRange(parseDay(PIN3_START), parseDay(PIN3_END));
+    if (touched.some((m) => m === "2026-11" || m === "2026-10")) {
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.error).toContain("already been processed");
+      expect(db.leaveRequest.create).not.toHaveBeenCalled();
     } else {
-      // Far-period fixture: force the clash explicitly.
-      db.payslip.findMany.mockResolvedValue([{ run: { period: currentPeriod } }]);
+      // The first call legitimately created its request (its months are
+      // not locked); force the clash onto a month the range occupies.
+      db.payslip.findMany.mockResolvedValue([{ run: { period: touched[0] } }]);
       const res2 = await createLeaveRequest({
-        leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unpaid stretch",
+        leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "unpaid stretch",
       });
       expect(res2.ok).toBe(false);
       if (!res2.ok) expect(res2.error).toContain("already been processed");
+      expect(db.leaveRequest.create).toHaveBeenCalledTimes(1);
     }
-    expect(db.leaveRequest.create).not.toHaveBeenCalled();
   });
 
   it("P15: PARTIALLY-PAID leave is blocked like unpaid (it docks pay too), naming the fraction", async () => {
     db.leaveType.findUnique.mockResolvedValue({ ...ANNUAL_TYPE, salaryFraction: 0.5, name: "Half-pay Study Leave" });
-    const currentPeriod = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
-    db.payslip.findMany.mockResolvedValue([{ run: { period: currentPeriod, startDate: null, endDate: null } }]);
+    // Month-boundary-safe: lock a period the pinned window actually
+    // touches (near a month end the walk crosses into the next month).
+    const touched = monthsInRange(parseDay(PIN3_START), parseDay(PIN3_END));
+    db.payslip.findMany.mockResolvedValue([{ run: { period: touched[0], startDate: null, endDate: null } }]);
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "study days",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "study days",
     });
     expect(res.ok).toBe(false);
     if (!res.ok) {
@@ -2049,7 +2106,7 @@ describe("LV-B10 (S10) — salary-processed guard on unpaid leave", () => {
     db.leaveType.findUnique.mockResolvedValue(ANNUAL_TYPE);
     db.payslip.findMany.mockResolvedValue([{ run: { period: `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}` } }]);
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "paid stretch",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "paid stretch",
     });
     expect(res.ok).toBe(true);
   });
@@ -2058,7 +2115,7 @@ describe("LV-B10 (S10) — salary-processed guard on unpaid leave", () => {
     db.leaveType.findUnique.mockResolvedValue(UNPAID_TYPE);
     db.payslip.findMany.mockResolvedValue([{ run: { period: "1999-01" } }]);
     const res = await createLeaveRequest({
-      leaveTypeId: "lt-annual", startDate: isoDay(3), endDate: isoDay(5), reason: "unpaid future stretch",
+      leaveTypeId: "lt-annual", startDate: PIN3_START, endDate: PIN3_END, reason: "unpaid future stretch",
     });
     expect(res.ok).toBe(true);
   });
