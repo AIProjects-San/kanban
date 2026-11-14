@@ -852,3 +852,83 @@ guidance. Verification against IRD primary sources (all opened 2026-11-13):
    amendment, overdue flagging. Nothing transmits (decision 1). **The
    filing path is ready for the first real filing**; the human
    IRD_SIGNOFF.md gate remains the release blocker.
+
+## ADR-019 — Employment document approval kernel — separate from leave approval
+
+**Date:** 2026-11-14 · **Status:** accepted · **Phase:** 1 (P1 G6)
+
+**Context.** P1 G6 (Employee Transfer & Employee Promotion, commit
+`f1219c8`, migration `20261206000000_employee_transfer_promotion`) needed
+an approval-gated, effective-dated state machine:
+`DRAFT → PENDING_APPROVAL → APPROVED → EFFECTIVE`, any pre-EFFECTIVE
+state → `CANCELLED`. The codebase already had one approval chain — leave
+(`decideLeaveRequest`). The G6 brief mandated a reuse assessment before
+building anything: reuse the leave primitives if possible, otherwise STOP
+and escalate. The assessment found the leave chain's *discipline*
+reusable but its *machinery* domain-bound, so G6 built a small sibling
+kernel instead. This ADR records that boundary so the next approval
+workflow does not re-litigate it.
+
+**Decision.**
+
+1. **What was reused — the patterns, not the code.** Two leave-chain
+   disciplines carry over verbatim and are now house style for ANY
+   approval-gated writer:
+   - **The QA-16 guarded status flip**: every state transition is an
+     `updateMany` with the expected status in its `WHERE` clause; a
+     zero-row update aborts loudly ("no longer pending…") instead of
+     letting two concurrent approvers both win. No read-then-write
+     transitions, ever.
+   - **The single-writer effect rule**: exactly ONE function may perform
+     the state flip that makes a document effective
+     (`lib/hr/employment-doc-effect.ts` — the counterpart of the leave
+     ledger's split-writer discipline). The manual admin trigger and the
+     `/api/cron/daily` sweep both call it; the guarded flip itself is the
+     idempotency, so whichever fires first wins and the second is a
+     no-op.
+2. **What was NOT reused — the domain-bound leave primitives.**
+   `decideLeaveRequest` is not an approval engine with leave attached;
+   it is a leave engine: approving debits the leave ledger
+   (split-at-CF-boundary FIFO consumption), materializes missing balance
+   rows, derives ON_LEAVE attendance per calendar day, restores on
+   cancel, and emails through the leave template chain. Every one of
+   those writes is leave semantics. An employment transfer has no
+   balance to debit and no attendance to derive — its effect writes
+   profile facts, org-chart edges and EmployeePropertyHistory rows.
+   Sharing the chain would have meant parameterizing a function whose
+   every branch is leave-shaped: a major refactor of stable, fully
+   tested Phase-1-era code for zero behavioral gain (the exact
+   "STOP and report" condition the brief defined — reported, and the
+   separate kernel was chosen).
+3. **The boundary, for future workflows.**
+   - **Leave kernel** (`hr-leave.ts` + the ledger): the domain is
+     *balances + attendance derivation*. A workflow that consumes an
+     entitlement, restores it on undo, or derives attendance belongs
+     here — e.g. compensatory leave already rides it.
+   - **Employment document kernel** (`lib/hr/employment-documents.ts` +
+     `employment-doc-effect.ts`): the domain is *facts + org chart*. A
+     workflow whose effect is "on date D, the employee's recorded facts
+     change, with a pre/post snapshot and history" belongs here.
+     Transfers and promotions ride it; a future "employment status
+     change" or "location reassignment" document should too.
+   - **Picking rule**: reuse whichever kernel's EFFECT is closer to the
+     new workflow's effect — not whose status enum looks similar. If
+     neither effect fits (e.g. a workflow that moves money, like loan
+     approvals whose effect writes payroll deductions), propose a third
+     kernel with a new ADR rather than bending either existing one.
+4. **Roadmap note (surfaced by G6, out of scope for G6).** The transfer
+   and promotion documents carry department / jobTitle / grade / location
+   as STRING facts because Fernly has no Department / Designation /
+   Grade master tables (QA-19: controlled department key, free-form
+   title/grade/location on EmployeeProfile). P2 roadmap item: **build
+   those master tables and migrate the string facts to FKs** — including
+   the from/to columns on EmployeeTransfer / EmployeePromotion and the
+   P33 property-history registry. Until then, the documents validate
+   department keys against the controlled list at write time.
+
+**Consequences.** Two approval state machines exist; each is small
+(≈200-line kernel + one effect writer for employment documents), fully
+tested, and independently evolvable. The cost is duplicated
+status-enum plumbing (labels, badges, transition maps) — accepted
+duplication, chosen explicitly over coupling leave's ledger math to
+employment facts.
