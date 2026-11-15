@@ -96,6 +96,11 @@ model User {
   // P39 (EM-16 advances half) — salary advances issued to this employee.
   salaryAdvances SalaryAdvance[] @relation("SalaryAdvances")
 
+  // G3 — the employee's loans (the approval-gated, amortized documents;
+  // see Loan below — Restrict like the G6 employment documents: a
+  // soft-deleted user's loans stay queryable).
+  loans Loan[] @relation("Loans")
+
   // Phase 1B (G8) — the employee's effective-dated salary assignment
   // timeline (the pay history; see SalaryStructureAssignment).
   salaryStructureAssignments SalaryStructureAssignment[]
@@ -2458,10 +2463,10 @@ model Payslip {
 // P39 (EM-16's advances half, EX-03 lite) — salary advances: issue →
 // installment recovery through the PayAdjustment adapter → the FnF
 // receivable line. The recovery rides the P1 adapter as DEDUCTION-side
-// RECURRING rows (sourceType SALARY_ADVANCE, sourceId this row); the run
-// that consumes the final installment flips the row RECOVERED. Loans
-// proper stay the later un-decline epic; claim/return combos ride the
-// later expenses epic.
+// rows (sourceType SALARY_ADVANCE, sourceId this row). Loans proper are
+// now BUILT (G3 — the Loan / LoanType / LoanSchedule / LoanRepayment
+// models below ride the same adapter with sourceType LOAN_INSTALLMENT);
+// claim/return combos ride the later expenses epic.
 // ---------------------------------------------------------------------------
 model SalaryAdvance {
   id            String    @id @default(cuid())
@@ -2487,6 +2492,114 @@ model SalaryAdvance {
 
   @@index([userId])
   @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// G3 — full loan management: the approval-gated, amortized employee loans
+// with installment recovery through the PayAdjustment adapter (the P39
+// salary-advance precedent — ONE DEDUCTION-side ONE_SHOT adapter row per
+// installment, sourceType LOAN_INSTALLMENT, sourceId the LoanSchedule row;
+// the run consumes them generically, createPayrollRun needs no loan code).
+//
+// Spec adaptations (recorded in migration 20261207000000 + the G3 report):
+//   • money is Float, not @db.Decimal — the codebase's money convention
+//     (PayAdjustment.amount and every payroll kernel are float + round2;
+//     the amortization is cent-exact by construction: the LAST installment
+//     absorbs the rounding remainder, the salary-advance rule);
+//   • status starts at DRAFT (the spec's flow diagram and test list start
+//     there; the create writer sets it explicitly).
+// ---------------------------------------------------------------------------
+
+model LoanType {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  // Annual nominal interest as a FRACTION (0.05 = 5% p.a.; 0 = interest-free).
+  interestRate  Float    @default(0)
+  // Optional caps enforced at loan creation (null = uncapped).
+  maxAmount     Float?
+  maxTermMonths Int?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  loans         Loan[]
+}
+
+model Loan {
+  id                String    @id @default(cuid())
+  employeeId        String
+  employee          User      @relation("Loans", fields: [employeeId], references: [id], onDelete: Restrict)
+  loanTypeId        String
+  loanType          LoanType  @relation(fields: [loanTypeId], references: [id])
+  principal         Float
+  // Snapshotted from the type at creation (the type may change later; the
+  // loan's math never moves — the snapshot discipline).
+  interestRate      Float
+  termMonths        Int
+  // ISO-day-precise activation anchor (installment 1 due +1 month).
+  startDate         DateTime
+  status            String    @default("DRAFT")
+  // DRAFT | PENDING_APPROVAL | APPROVED | ACTIVE | CLOSED | REJECTED | CANCELLED
+  approvedById      String?
+  approvedAt        DateTime?
+  activatedAt       DateTime?
+  closedAt          DateTime?
+  // Set to principal at ACTIVATION, decremented by each repayment's
+  // principalPaid; reaching 0 flips the loan CLOSED (settleLoansForRun /
+  // the early-repayment writer own the walk).
+  outstandingBalance Float    @default(0)
+  reason            String    @default("")
+  createdById       String    @default("")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  schedules         LoanSchedule[]
+  repayments        LoanRepayment[]
+
+  @@index([employeeId])
+  @@index([status])
+}
+
+model LoanSchedule {
+  id            String   @id @default(cuid())
+  loanId        String
+  loan          Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  installmentNo Int
+  // UTC-midnight due day (startDate + n months, end-of-month clamped).
+  dueDate       DateTime
+  principalPortion Float
+  interestPortion  Float
+  totalAmount      Float
+  status        String   @default("SCHEDULED")
+  // SCHEDULED | PAID | SKIPPED | WRITTEN_OFF — the PAID flip is guarded
+  // (status-in-WHERE, the QA-16 discipline): settleLoansForRun and the
+  // early-repayment writer are idempotent by construction.
+  paidAt        DateTime?
+  // The payslip whose run consumed the installment's adapter row (null =
+  // not paid through payroll).
+  payslipId     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([loanId, installmentNo])
+  @@index([loanId, status])
+}
+
+model LoanRepayment {
+  id            String   @id @default(cuid())
+  loanId        String
+  loan          Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  // The payslip the repayment rode (PAYROLL source); null for MANUAL and
+  // FINAL_SETTLEMENT rows.
+  payslipId     String?
+  amount        Float
+  principalPaid Float
+  interestPaid  Float
+  paidAt        DateTime @default(now())
+  source        String
+  // PAYROLL | MANUAL | FINAL_SETTLEMENT
+  note          String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([loanId])
 }
 
 model PayAdjustment {

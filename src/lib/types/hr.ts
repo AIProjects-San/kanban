@@ -185,6 +185,7 @@ export interface ExitInterviewT {
 /** One money line on a full-and-final statement. */
 // P38 — BONUS (pending PayAdjustment earnings) and PENDING_ENCASHMENT
 // (APPROVED-unpaid encashment requests) join the line set.
+// G3 — LOAN_RECEIVABLE (active loans' outstanding balance) joins too.
 export type FnFLineKind =
   | "SALARY"
   | "ENCASHMENT"
@@ -192,7 +193,8 @@ export type FnFLineKind =
   | "GRATUITY"
   | "BONUS"
   | "PENDING_ENCASHMENT"
-  | "ADVANCE_RECEIVABLE";
+  | "ADVANCE_RECEIVABLE"
+  | "LOAN_RECEIVABLE";
 
 export interface FnFLineT {
   kind: FnFLineKind;

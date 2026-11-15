@@ -168,6 +168,10 @@ export interface FnFInput {
    *  their outstanding (amount − consumed installments): the money the
    *  paychecks have not yet returned, a receivable at exit. */
   openAdvances?: FnFOpenAdvance[];
+  /** G3 (loan management) — the employee's ACTIVE loans with their live
+   *  outstanding (stored balance − consumed-but-unsettled installments):
+   *  the offer to repay the loan balance from the final dues. */
+  openLoans?: FnFOpenLoan[];
 }
 
 /** One OPEN salary advance feeding the P39 receivable line. */
@@ -179,6 +183,20 @@ export interface FnFOpenAdvance {
   /** The still-outstanding portion (amount − consumed total). */
   outstanding: number;
   /** The installment count (display context). */
+  installments: number;
+}
+
+/** One ACTIVE loan feeding the G3 receivable line. */
+export interface FnFOpenLoan {
+  /** Loan.id. */
+  id: string;
+  /** The loan type's name (display context). */
+  typeName: string;
+  /** The loan's original principal. */
+  principal: number;
+  /** The still-outstanding principal (the live derivation). */
+  outstanding: number;
+  /** The term in months (display context). */
   installments: number;
 }
 
@@ -356,6 +374,22 @@ export function computeFullAndFinal(input: FnFInput): FnFComputedT {
       days: null,
       rate: null,
       amount: -round2(adv.outstanding), // negative = receivable side
+    });
+  }
+
+  // --- G3 (loan management): ACTIVE loans as receivables ---
+  // The offer to repay the outstanding loan balance from the final dues
+  // (spec §5): each active loan lands as a receivable line, and the early
+  // repayment action with source FINAL_SETTLEMENT books the payoff when
+  // the settlement is accepted.
+  for (const loan of input.openLoans ?? []) {
+    if (!(loan.outstanding > 0)) continue;
+    lines.push({
+      kind: "LOAN_RECEIVABLE",
+      label: `${loan.typeName} loan — $${loan.principal.toFixed(2)} over ${loan.installments} month${loan.installments === 1 ? "" : "s"} ($${loan.outstanding.toFixed(2)} outstanding)`,
+      days: null,
+      rate: null,
+      amount: -round2(loan.outstanding), // negative = receivable side
     });
   }
 

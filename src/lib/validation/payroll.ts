@@ -31,6 +31,47 @@ export const issueSalaryAdvanceSchema = z.object({
   reason: z.string().trim().max(2_000).default(""),
 }).strict();
 
+// -------------------------------------------------------------------------
+// G3 — loan management: types, the loan document lifecycle, and the
+// early/final repayment (lib/payroll/loans.ts owns the state machine and
+// the amortization the writers ride).
+// -------------------------------------------------------------------------
+
+export const loanTypeSchema = z.object({
+  name: z.string().trim().min(1, "A name is required.").max(80),
+  // Annual nominal rate as a fraction (0.05 = 5% p.a.; 0 = interest-free).
+  interestRate: z.number().min(0, "The rate cannot be negative.").max(1, "The rate must be at most 1 (0.08 = 8% p.a.)."),
+  maxAmount: z.number().min(0.01, "The cap must be positive.").max(10_000_000).nullable().default(null),
+  maxTermMonths: z.number().int().min(1, "At least one month.").max(360, "At most 360 months.").nullable().default(null),
+  isActive: z.boolean().default(true),
+}).strict();
+
+export const createLoanSchema = z.object({
+  employeeId: cuidish,
+  loanTypeId: cuidish,
+  principal: z.number().min(0.01, "The principal must be positive.").max(10_000_000),
+  termMonths: z.number().int().min(1, "At least one month.").max(360, "At most 360 months."),
+  // ISO day the loan activates from (installment 1 due +1 month).
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "The start date must be an ISO day (YYYY-MM-DD)."),
+  reason: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const loanActionSchema = z.object({
+  loanId: cuidish,
+  note: z.string().trim().max(2_000).default(""),
+}).strict();
+
+export const earlyRepayLoanSchema = z.object({
+  loanId: cuidish,
+  // Optional interest adjustment on top of the outstanding principal
+  // (the waived future interest; 0 = principal only).
+  interestAdjustment: z.number().min(0, "The interest adjustment cannot be negative.").max(1_000_000).default(0),
+  // MANUAL (a direct payment) or FINAL_SETTLEMENT (deducted from the FnF
+  // dues — the spec's "repay from final dues" offer).
+  source: z.enum(["MANUAL", "FINAL_SETTLEMENT"]).default("MANUAL"),
+  note: z.string().trim().max(2_000).default(""),
+}).strict();
+
 // ---------------------------------------------------------------------------
 // R7 — payroll (docs/RECRUITMENT_MODULE_PLAN.md §5). Salary structures reuse
 // the offer component schema (annual amounts); payslip lines are monthly

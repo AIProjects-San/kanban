@@ -418,3 +418,51 @@ describe("computeFullAndFinal — P39 advance receivables", () => {
     expect(out.netPayable).toBe(1_300);
   });
 });
+
+// ---------------------------------------------------------------------------
+// G3 (loan management) — ACTIVE loans as FnF receivables (the
+// repay-from-final-dues offer; the payoff itself books through the early
+// repayment action with source FINAL_SETTLEMENT).
+// ---------------------------------------------------------------------------
+
+describe("computeFullAndFinal — G3 loan receivables", () => {
+  it("an active loan's outstanding is a negative LOAN_RECEIVABLE line", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openLoans: [
+        { id: "loan-1", typeName: "Housing", principal: 8_000, outstanding: 3_250.5, installments: 24 },
+      ],
+    });
+    const line = out.lines.find((l) => l.kind === "LOAN_RECEIVABLE");
+    expect(line).toMatchObject({
+      label: expect.stringContaining("Housing loan — $8000.00"),
+      amount: -3_250.5,
+    });
+    expect(out.receivableTotal).toBe(3_250.5);
+    expect(out.netPayable).toBe(-3_250.5);
+  });
+
+  it("a fully-repaid loan (outstanding 0) produces no line", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openLoans: [{ id: "loan-1", typeName: "Housing", principal: 8_000, outstanding: 0, installments: 24 }],
+    });
+    expect(out.lines.find((l) => l.kind === "LOAN_RECEIVABLE")).toBeUndefined();
+  });
+
+  it("absent fact set behaves as before (backcompat)", () => {
+    const out = computeFullAndFinal({ ...BASE });
+    expect(out.lines.find((l) => l.kind === "LOAN_RECEIVABLE")).toBeUndefined();
+  });
+
+  it("loans and advances stack as separate receivable lines, netting honestly", () => {
+    const out = computeFullAndFinal({
+      ...BASE,
+      openRuns: [run({ payslipNet: 2_000 })],
+      openAdvances: [{ id: "sa-1", amount: 1_000, outstanding: 700, installments: 2 }],
+      openLoans: [{ id: "loan-1", typeName: "Vehicle", principal: 5_000, outstanding: 1_200, installments: 12 }],
+    });
+    expect(out.receivableTotal).toBe(1_900);
+    expect(out.netPayable).toBe(100); // 2000 payable − 700 advance − 1200 loan
+  });
+});

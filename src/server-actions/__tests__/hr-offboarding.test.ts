@@ -21,6 +21,9 @@ const db = vi.hoisted(() => {
     "payAdjustment", "leaveEncashment",
     // P39 — the OPEN salary advances as FnF receivables.
     "salaryAdvance",
+    // G3 — the ACTIVE loans as FnF receivables (openLoansFor reads loan +
+    // loanSchedule + loanType through the loans actions' reader).
+    "loan", "loanSchedule", "loanType",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -176,6 +179,10 @@ beforeEach(() => {
   db.payrollRun.findFirst.mockResolvedValue(null);
   // P39 — no OPEN advances by default.
   db.salaryAdvance.findMany.mockResolvedValue([]);
+  // G3 — no ACTIVE loans by default (the FnF receivable reads them).
+  db.loan.findMany.mockResolvedValue([]);
+  db.loanSchedule.findMany.mockResolvedValue([]);
+  db.loanType.findMany.mockResolvedValue([]);
   db.payAdjustment.groupBy.mockResolvedValue([]);
   requirePermissionMock.mockResolvedValue(HR_AUTH);
   seededFnFWorld();

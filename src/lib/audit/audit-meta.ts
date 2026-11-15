@@ -171,6 +171,17 @@ export type AuditAction =
   | "hr.employee_skill_removed"
   // P39 (EM-16 advances half) — salary advances.
   | "payroll.advance_issued"
+  // G3 — loan management (the full lifecycle + the settlement).
+  | "payroll.loan_type_created"
+  | "payroll.loan_type_updated"
+  | "payroll.loan_created"
+  | "payroll.loan_submitted"
+  | "payroll.loan_approved"
+  | "payroll.loan_rejected"
+  | "payroll.loan_cancelled"
+  | "payroll.loan_activated"
+  | "payroll.loan_early_repaid"
+  | "payroll.loan_settled"
   // Recruitment module lifecycle (docs/RECRUITMENT_MODULE_PLAN.md)
   | "hiring.candidate_created"
   | "hiring.candidate_updated"
@@ -435,6 +446,16 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.employee_skill_rated": { icon: Award, cls: "text-amber-500 bg-amber-500/10" },
   "hr.employee_skill_removed": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
   "payroll.advance_issued": { icon: CircleDollarSign, cls: "text-primary bg-primary/10" },
+  "payroll.loan_type_created": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
+  "payroll.loan_type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
+  "payroll.loan_created": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
+  "payroll.loan_submitted": { icon: Send, cls: "text-amber-500 bg-amber-500/10" },
+  "payroll.loan_approved": { icon: CheckCircle2, cls: "text-blue-500 bg-blue-500/10" },
+  "payroll.loan_rejected": { icon: XCircle, cls: "text-destructive bg-destructive/10" },
+  "payroll.loan_cancelled": { icon: XCircle, cls: "text-muted-foreground bg-muted" },
+  "payroll.loan_activated": { icon: ArrowUpRight, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.loan_early_repaid": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
+  "payroll.loan_settled": { icon: CircleDollarSign, cls: "text-sky-500 bg-sky-500/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "onboarding.template_task_saved": { icon: Plus, cls: "text-primary bg-primary/10" },
@@ -574,6 +595,9 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   LEAVE_PERIOD: { label: "Leave period", cls: "bg-lime-500/10 text-lime-700" },
   EMPLOYEE_TRANSFER: { label: "Transfer", cls: "bg-sky-500/10 text-sky-700" },
   EMPLOYEE_PROMOTION: { label: "Promotion", cls: "bg-teal-500/10 text-teal-700" },
+  SALARY_ADVANCE: { label: "Advance", cls: "bg-cyan-500/10 text-cyan-700" },
+  LOAN: { label: "Loan", cls: "bg-indigo-500/10 text-indigo-700" },
+  LOAN_TYPE: { label: "Loan type", cls: "bg-indigo-500/10 text-indigo-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -602,6 +626,7 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "bugs", label: "Bugs", types: ["BUG"] },
   { key: "hiring", label: "Hiring", types: ["CANDIDATE"] },
   { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE", "EMPLOYEE_TRANSFER", "EMPLOYEE_PROMOTION"] },
+  { key: "payroll-loans", label: "Payroll & Loans", types: ["LOAN", "LOAN_TYPE", "SALARY_ADVANCE"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },
   { key: "other", label: "Other", types: ["REMINDER", "TIME", "AUTH", "WORKSPACE", "CONFIG", "NOTIFICATION_TEMPLATE", "LEAVE_PERIOD"] },

@@ -64,6 +64,7 @@ import {
   type FnFPendingAdjustment,
   type FnFPendingEncashment,
   type FnFOpenAdvance,
+  type FnFOpenLoan,
 } from "@/lib/hr/full-and-final";
 import { getOrCreateBalancesBatch, getHolidayLookup, todayUTC } from "./hr-shared";
 // P35 — the DERIVED boarding status kernel (the same one hr-onboarding's
@@ -336,13 +337,22 @@ async function openAdvancesFor(userId: string): Promise<FnFOpenAdvance[]> {
   }));
 }
 
+/** G3 — the employee's ACTIVE loans as FnF receivable facts (the
+ *  openAdvancesFor twin; the live outstanding derivation — stored balance
+ *  minus consumed-but-unsettled installments — lives with the loan
+ *  actions, beside its writer). */
+async function openLoansForUser(userId: string): Promise<FnFOpenLoan[]> {
+  const { openLoansFor } = await import("./loans");
+  return openLoansFor(userId);
+}
+
 /** The LIVE statement for one user (pure kernel + the DB facts it reads).
  * Computed for anyone; the UI only surfaces it on the EXITED arc (the
  * F1.6 transition guard guarantees a lastWorkingDay there). */
 async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
   const now = todayUTC();
   const year = now.getUTCFullYear();
-  const [profile, monthlyGross, openRuns, accounts, pendingAdjustments, pendingEncashments, openAdvances] = await Promise.all([
+  const [profile, monthlyGross, openRuns, accounts, pendingAdjustments, pendingEncashments, openAdvances, openLoans] = await Promise.all([
     db.employeeProfile.findUnique({
       where: { userId },
       select: { lastWorkingDay: true },
@@ -355,6 +365,9 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
     pendingEncashmentsFor(userId),
     // P39 — the OPEN salary advances as receivables.
     openAdvancesFor(userId),
+    // G3 — the ACTIVE loans as receivables (the repay-from-final-dues
+    // offer; the live outstanding respects consumed-but-unsettled runs).
+    openLoansForUser(userId),
   ]);
   const lastWorkingDay = isoDateOrNull(profile?.lastWorkingDay ?? null);
   const ratePeriod = lastWorkingDay ? lastWorkingDay.slice(0, 7) : "";
@@ -374,6 +387,7 @@ async function computeFnFForUser(userId: string): Promise<FnFComputedT> {
     pendingAdjustments,
     pendingEncashments,
     openAdvances,
+    openLoans,
   });
 }
 

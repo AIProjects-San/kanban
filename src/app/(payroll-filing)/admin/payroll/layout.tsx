@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowLeft, FileText, Landmark, ShieldAlert, Users, Settings } from "lucide-react";
+import { ArrowLeft, Coins, FileText, Landmark, ShieldAlert, Users, Settings } from "lucide-react";
 import { getSession, checkPermission } from "@/server-actions/auth-guard";
 
 // ---------------------------------------------------------------------------
@@ -18,6 +18,7 @@ import { getSession, checkPermission } from "@/server-actions/auth-guard";
 const NAV = [
   { href: "/admin/payroll/filings", label: "EI filings", icon: FileText },
   { href: "/admin/payroll/employee-details", label: "Employee details", icon: Users },
+  { href: "/admin/payroll/loans", label: "Loans", icon: Coins },
   { href: "/admin/payroll/settings", label: "Filing profile", icon: Settings },
 ];
 

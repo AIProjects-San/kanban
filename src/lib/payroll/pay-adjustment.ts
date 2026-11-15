@@ -51,6 +51,10 @@ export const ADJUSTMENT_SOURCE_TYPES = [
   // P39 (EM-16 advances half) — salary-advance recovery installments
   // (DEDUCTION-side, sourceId = the SalaryAdvance row).
   "SALARY_ADVANCE",
+  // G3 (loan management) — loan installment deductions (DEDUCTION-side,
+  // sourceId = the LoanSchedule row; the settlement flips the schedule
+  // PAID off the consumedRunId back-link, the encashment precedent).
+  "LOAN_INSTALLMENT",
 ] as const;
 export type AdjustmentSourceType = (typeof ADJUSTMENT_SOURCE_TYPES)[number];
 

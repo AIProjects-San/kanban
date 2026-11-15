@@ -30,6 +30,85 @@ export interface SalaryAdvanceT {
   summary: string;
 }
 
+/** G3 — one loan type (the workspace's loan catalog row). */
+export interface LoanTypeT {
+  id: string;
+  name: string;
+  /** Annual nominal rate as a fraction (0.05 = 5% p.a.; 0 = interest-free). */
+  interestRate: number;
+  maxAmount: number | null;
+  maxTermMonths: number | null;
+  isActive: boolean;
+}
+
+/** G3 — one schedule installment of a loan. */
+export interface LoanScheduleT {
+  id: string;
+  installmentNo: number;
+  dueDay: string;
+  duePeriod: string;
+  principalPortion: number;
+  interestPortion: number;
+  totalAmount: number;
+  status: "SCHEDULED" | "PAID" | "SKIPPED" | "WRITTEN_OFF";
+  paidAt: string | null;
+  payslipId: string | null;
+}
+
+/** G3 — one repayment event (payroll deduction, manual/early, or FnF). */
+export interface LoanRepaymentT {
+  id: string;
+  amount: number;
+  principalPaid: number;
+  interestPaid: number;
+  paidAt: string;
+  source: "PAYROLL" | "MANUAL" | "FINAL_SETTLEMENT";
+  payslipId: string | null;
+  note: string;
+}
+
+/** G3 — one loan on the employee's page (list shape). */
+export interface LoanT {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  typeName: string;
+  principal: number;
+  interestRate: number;
+  termMonths: number;
+  startDay: string;
+  status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "ACTIVE" | "CLOSED" | "REJECTED" | "CANCELLED";
+  outstandingBalance: number;
+  reason: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  closedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  summary: string;
+}
+
+/** G3 — the loan detail read: the loan + its schedule + repayments. */
+export interface LoanDetailT extends LoanT {
+  schedule: LoanScheduleT[];
+  repayments: LoanRepaymentT[];
+}
+
+/** G3 — the payroll-admin loans overview row (all active loans, live). */
+export interface LoansOverviewRowT extends LoanT {
+  /** The installment due inside the given period (null = none due then). */
+  dueThisPeriod: LoanScheduleT | null;
+}
+
+/** G3 — the /admin/payroll/loans read: types + active loans + the period's
+ *  due installments. */
+export interface LoansOverviewT {
+  types: LoanTypeT[];
+  loans: LoansOverviewRowT[];
+  periodKey: string;
+}
+
 /** R7 — one monthly money line on a payslip (see lib/payroll/payroll-math.ts). */
 export interface PayslipLineT {
   key: string;
