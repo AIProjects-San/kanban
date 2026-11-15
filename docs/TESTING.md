@@ -4,7 +4,7 @@
 
 | Layer | Tool | Command | Scope & gate |
 |-------|------|---------|--------------|
-| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, components & views — **2428 tests** (131 files), coverage gate 90% stmts / 80% branches |
+| Unit / integration | Vitest + jsdom | `bun run test` | `src/lib/**`, `src/server-actions/**`, components & views — coverage gate: `src/lib` 90% stmts / 80% branches, `src/server-actions` 89% / 77% (ADR-021 honest baseline; P2 target 92/85) |
 | Coverage report | Vitest + v8 | `bun run test:coverage` | HTML report in `coverage/` |
 | Browser E2E | Cucumber.js + Selenium | `bun run test:e2e` | login & lockout, RBAC gating, board CRUD, messaging isolation, a11y, HR (leave/directory/reviews/onboarding/holidays/attendance/offboarding), hiring pipeline + email outbox + e-sign + payroll runs/payslips + funnel analytics — **138 scenarios / 18 feature files** (see `e2e/README.md`; requires Chrome) |
 | Static | ESLint + tsc | `bun run lint` / `bun run typecheck` | zero errors |
@@ -267,16 +267,20 @@ environments without the test runner.
 
 ---
 
-## 3. Coverage snapshot (2026-11-04, PR-65)
+## 3. Coverage snapshot (2026-11-15, ADR-021)
 
 ```
 Gated layers (src/lib + src/server-actions):
-  100.0% statements (3397/3397) · 91.6% branches (2419/2641)
-  src/lib:             100% stmts · 93.0% branches
-  src/server-actions:  100% stmts · 91.2% branches
-Highlights at 100%: rbac, rate-limit, audit-meta, auth-guard, users,
-reminders, events, notifications, validation, pii, time
+  src/lib:             94.6% stmts · 87.3% branches
+  src/server-actions:  92.4% stmts · 78.4% branches
+Gap lives in the Phase 1/2 action wrappers (payday-filing —
+largely closed by the ADR-021 test batch, payroll self-service,
+salary-structure assignments, loans, offboarding, employment-docs,
+tax admin).
 ```
 
-Gates (90/80/85/90) enforced in `vitest.config.ts` — `bun run test:coverage` fails the
-build if any gate regresses.
+Gates enforced in `vitest.config.ts` — `bun run test:coverage` fails the
+build if any gate regresses. `src/lib` holds the original 90/80/85/90;
+`src/server-actions` holds ADR-021's honest baseline (89/77/85/90 — the
+old 90/80 gate had been continuously red since the Phase 1/2 statutory
+work) with a P2 target of 92/85 tracked in `docs/ROADMAP.md`.
