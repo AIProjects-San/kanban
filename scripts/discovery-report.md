@@ -258,3 +258,39 @@ their own loans — repayments appear only as payslip deduction lines (P2)."
   Notifications, Appearance, Time & Locale, Privacy (Download my data).
 - Trash / reminders / bulk-task-update / workspace search / ICS export / auth
   tokens: no UI triggers → excluded (reasons recorded).
+
+## 9. PHASE 1 final verifications (2026-11-16, re-run after session restart)
+- Check E re-run via scripts/check-helpers-callers.py: 15 regex hits outside
+  server-actions, of which 13 are lib imports / code comments / name collisions
+  (getSession in layouts+lib, checkPermission in layouts, requirePermission in
+  lib, getScopedProjectIds comment-only, assertTaskDeletePermission→lib,
+  instantiateChecklist→lib, workingDays = local param name in payroll-math,
+  toResult = comment in leave-view, notifyMentionedUsers = comment in
+  settings-view + lib wrapper, requestPasswordReset = comment in
+  rate-limit-redis, resetPassword = updateUser FIELD in user-modal,
+  pruneAuditLogs = comment over the "Audit retention (days)" field).
+  Only 3 real UI invocations: exportMyData (Settings→Privacy),
+  refreshOverdueFilings (EI filings list button), matchPunchToEmployee
+  (Biometric Exceptions "match" button). Conclusion unchanged: 1 of 35
+  user-facing; +2 from wider excluded set.
+- Mentions notification toggle IS live (honoured server-side by
+  notifyMentionedUsers); email/push/digest toggles render disabled ("coming
+  soon" badge) — document in self-service/my-account.md.
+- My Attendance view does NOT embed timesheet drafting — it LINKS to
+  /admin/employees/[id]/timesheets ("My timesheets" link, session-scoped).
+  Corrections to marked days go to HR ("HR owns every record").
+- Payroll view = single console (runs list + payslips panel + 12 modals)
+  + analytics StatCards/TrendChart + exportPayrollRunCsv — reports fold into
+  payroll/runs.md; no separate reports file needed.
+- Workspace Config still has a "Departments" ConfigListEditor tab
+  (key/label/sortOrder) — ADR-022 mirror to Department master; document both
+  surfaces and their sync in workspace-config.md + hr/masters.md.
+- Messaging: MessageModal from Team view cards/drawer + shell InboxDrawer
+  (sendMessage / markThreadRead / deleteMessage). Notifications are
+  display-only (notifs prop); no notification-management UI. → one
+  work/team.md section + inbox note.
+- Help view: static help + keyboard-shortcuts modal + support links →
+  section of getting-started/workspace-tour.md.
+- Time entries: log/delete inside task-modal → covered by work/tasks.md.
+- Dashboard (KPI cards, payslips card) + Analytics (metric cards, charts)
+  are read-only views → one work/dashboard.md, two sections.
