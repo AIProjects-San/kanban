@@ -117,6 +117,13 @@ model User {
   timesheets       Timesheet[]
   shiftAssignments ShiftAssignment[]
 
+  // G5 — the biometric identity links: this employee's device-user
+  // mappings (see DeviceUserMapping below) and raw punches (see Punch
+  // below; punches carry employeeId only after reconciliation or a
+  // manual override).
+  deviceUserMappings DeviceUserMapping[]
+  punches            Punch[]
+
   @@index([managerId])
 }
 
@@ -1336,6 +1343,13 @@ model AttendanceRecord {
   shiftAssignment   ShiftAssignment? @relation(fields: [shiftAssignmentId], references: [id], onDelete: SetNull)
   note      String   @default("")
   source    String   @default("MANUAL")
+  // MANUAL | DERIVED (on_leave derivation writes "DERIVED") | BIOMETRIC
+  // (G5 — the reconcile engine's writer; a BIOMETRIC row is re-derived on
+  // every reconcile pass over its day, while a MANUAL/DERIVED row always
+  // outranks the engine and is never overwritten by it).
+  // G5 — the raw punches this mark was derived from (the reconcile
+  // engine links every contributing punch; empty on pre-G5 + manual rows).
+  punches   Punch[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3514,4 +3528,97 @@ model ShiftAssignment {
   @@unique([employeeId, rosterDate])
   @@index([rosterDate])
   @@index([shiftId])
+}
+
+// ---------------------------------------------------------------------------
+// G5 — biometric attendance (device-independent core).
+//
+// The punch pipeline is vendor-neutral by construction: devices WRITE raw
+// punches (HTTP push, CSV import — a vendor adapter only adds fetchPunches
+// later), the reconcile engine (lib/biometric/reconcile.ts) resolves
+// device users onto employees and derives day attendance. Vendor-specific
+// adapters (ZKTeco/Suprema/HikVision SDK or TCP protocols) are a follow-up
+// once vendor information arrives — see lib/biometric/adapter.ts.
+// ---------------------------------------------------------------------------
+
+// G5 — a physical biometric device (master data). vendor/protocol are free
+// strings pinned by the validation layer ("ZKTECO" | "SUPREMA" |
+// "HIKVISION" | "OTHER" / "ADMS_PUSH" | "TCP_POLL" | "SDK" | "CSV_IMPORT").
+// config carries the vendor-neutral settings: pushToken (the per-device
+// shared secret the HTTP endpoint authenticates), breakMinutes (the unpaid
+// break the reconcile engine deducts). Devices with punch history are
+// DEACTIVATED, never deleted (punches are payroll evidence — the Restrict
+// FKs enforce it).
+model BiometricDevice {
+  id         String   @id @default(cuid())
+  name       String
+  vendor     String
+  protocol   String
+  serial     String?  @unique
+  location   String?
+  lastSyncAt DateTime?
+  isActive   Boolean  @default(true)
+  config     Json?
+  punches        Punch[]
+  userMappings   DeviceUserMapping[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+// G5 — one row per device-side user id ↔ employee. The two composite
+// uniques pin both directions (a device user maps to exactly one employee
+// on that device; an employee has exactly one device user id per device).
+// Reconciliation resolves punches through this table only — an unmatched
+// punch (no row) lands in the exception queue for a manual override.
+model DeviceUserMapping {
+  id           String   @id @default(cuid())
+  deviceId     String
+  device       BiometricDevice @relation(fields: [deviceId], references: [id])
+  deviceUserId String
+  employeeId   String
+  employee     User     @relation(fields: [employeeId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([deviceId, deviceUserId])
+  @@unique([deviceId, employeeId])
+  @@index([employeeId])
+}
+
+// G5 — one raw punch as the device reported it. deviceUserId is stored AS
+// CAPTURED (may not map); employeeId is set by reconciliation or a manual
+// override. The lifecycle: PENDING (ingested) → MATCHED (mapping resolved,
+// incl. a manual override) → ATTENDED (contributed to an AttendanceRecord;
+// attendanceRecordId carries the link) with UNMATCHED (no mapping — the
+// exception queue), DUPLICATE (deduped against an identical/near-identical
+// punch) and IGNORED (admin dismissal) as the side exits. The
+// (deviceId, deviceUserId, punchedAt) unique is the re-delivery guard —
+// the ingest paths count and skip its collisions instead of erroring.
+model Punch {
+  id           String   @id @default(cuid())
+  deviceId     String
+  device       BiometricDevice @relation(fields: [deviceId], references: [id])
+  deviceUserId String
+  employeeId   String?
+  employee     User?    @relation(fields: [employeeId], references: [id])
+  punchedAt    DateTime
+  direction    String   @default("UNKNOWN") // IN | OUT | UNKNOWN
+  verifyMethod String?  // FINGERPRINT | FACE | CARD | PIN
+  rawPayload   Json?
+  matchedAt    DateTime?
+  // PENDING | MATCHED | ATTENDED | UNMATCHED | DUPLICATE | IGNORED
+  reconciliationStatus String @default("PENDING")
+  // G5 — the attendance mark this punch contributed to (the reconcile
+  // engine's link; SetNull so deleting a mark never orphans a punch id).
+  attendanceRecordId String?
+  attendanceRecord   AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([deviceId, deviceUserId, punchedAt])
+  @@index([employeeId, punchedAt])
+  @@index([reconciliationStatus])
+  @@index([attendanceRecordId])
 }

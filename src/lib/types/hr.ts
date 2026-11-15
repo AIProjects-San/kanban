@@ -528,3 +528,105 @@ export interface RosterDayT {
   day: string;
   assignments: ShiftAssignmentT[];
 }
+
+// ---------------------------------------------------------------------------
+// G5 — biometric attendance (client shapes).
+// ---------------------------------------------------------------------------
+
+/** A biometric device (master data), client-shaped. */
+export interface BiometricDeviceT {
+  id: string;
+  name: string;
+  vendor: string;
+  protocol: string;
+  serial: string | null;
+  location: string | null;
+  /** ISO instant or null. */
+  lastSyncAt: string | null;
+  isActive: boolean;
+  /** True when config.pushToken is set (the token itself never leaves
+   * the server). */
+  hasPushToken: boolean;
+  /** The unpaid break (minutes) the reconcile engine deducts. */
+  breakMinutes: number;
+  punchCount: number;
+  mappingCount: number;
+}
+
+/** One device-user ↔ employee mapping, client-shaped. */
+export interface DeviceMappingT {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  deviceUserId: string;
+  employeeId: string;
+  employeeName: string;
+  /** "yyyy-mm-dd". */
+  createdAt: string;
+}
+
+/** One raw punch in the admin log, client-shaped. */
+export interface PunchLogItemT {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  deviceUserId: string;
+  employeeId: string | null;
+  employeeName: string | null;
+  /** ISO instant. */
+  punchedAt: string;
+  /** The NZ calendar day, "yyyy-mm-dd". */
+  day: string;
+  /** The NZ wall-clock time, "HH:mm". */
+  time: string;
+  direction: string;
+  verifyMethod: string | null;
+  reconciliationStatus: string;
+  attendanceRecordId: string | null;
+}
+
+/** A derived missing-pair day (exception queue): a biometric record with
+ * only one side of the IN/OUT pair. */
+export interface MissingPunchDayT {
+  recordId: string;
+  employeeId: string;
+  employeeName: string;
+  /** "yyyy-mm-dd". */
+  day: string;
+  inTime: string | null;
+  outTime: string | null;
+}
+
+/** The /admin/attendance/exceptions payload: the four exception classes
+ * + the employee list for the manual-override picker. */
+export interface AttendanceExceptionsT {
+  /** Punches with no DeviceUserMapping — the manual-override queue. */
+  unmatched: PunchLogItemT[];
+  /** Punches the engine deduped (re-delivery / double-tap). */
+  duplicates: PunchLogItemT[];
+  /** Biometric days with an IN but no OUT. */
+  missingOut: MissingPunchDayT[];
+  /** Biometric days with an OUT but no IN. */
+  missingIn: MissingPunchDayT[];
+  /** Active employees (id + name) for the override select. */
+  employees: Array<{ id: string; name: string }>;
+}
+
+/** The reconcile report as the actions serialize it for the UI. */
+export interface ReconciliationReportT {
+  deviceId: string;
+  deviceName: string;
+  windowStart: string;
+  windowEnd: string;
+  processed: number;
+  matched: number;
+  unmatched: number;
+  attended: number;
+  duplicates: number;
+  recordsCreated: number;
+  recordsUpdated: number;
+  recordsSkippedExisting: number;
+  daysSkippedNonWorking: number;
+  missingOutDays: number;
+  missingInDays: number;
+}

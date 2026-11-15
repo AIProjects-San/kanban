@@ -17,6 +17,7 @@ import {
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
   ArrowUpRight, Upload, FileX, Archive, PiggyBank, TriangleAlert,
   ClipboardList, Moon, ArrowLeftRight, UserCheck,
+  Fingerprint, RefreshCw,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -184,6 +185,20 @@ export type AuditAction =
   | "hr.roster_status_changed"
   | "hr.roster_swapped"
   | "hr.roster_absences_marked"
+  // G5 — biometric attendance (device-independent core): devices,
+  // mappings, the CSV fallbacks, the reconcile pass, and the exception
+  // queue's manual actions.
+  | "biometric.device_created"
+  | "biometric.device_updated"
+  | "biometric.device_deleted"
+  | "biometric.device_tested"
+  | "biometric.mapping_created"
+  | "biometric.mapping_deleted"
+  | "biometric.mappings_imported"
+  | "biometric.punches_imported"
+  | "biometric.reconciled"
+  | "biometric.punch_matched"
+  | "biometric.punch_ignored"
   // P39 (EM-16 advances half) — salary advances.
   | "payroll.advance_issued"
   // G3 — loan management (the full lifecycle + the settlement).
@@ -481,6 +496,17 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.roster_status_changed": { icon: CalendarClock, cls: "text-sky-500 bg-sky-500/10" },
   "hr.roster_swapped": { icon: ArrowLeftRight, cls: "text-violet-500 bg-violet-500/10" },
   "hr.roster_absences_marked": { icon: Moon, cls: "text-destructive bg-destructive/10" },
+  "biometric.device_created": { icon: Fingerprint, cls: "text-indigo-500 bg-indigo-500/10" },
+  "biometric.device_updated": { icon: Pencil, cls: "text-indigo-500 bg-indigo-500/10" },
+  "biometric.device_deleted": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
+  "biometric.device_tested": { icon: RefreshCw, cls: "text-indigo-500 bg-indigo-500/10" },
+  "biometric.mapping_created": { icon: Link2, cls: "text-violet-500 bg-violet-500/10" },
+  "biometric.mapping_deleted": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
+  "biometric.mappings_imported": { icon: Upload, cls: "text-violet-500 bg-violet-500/10" },
+  "biometric.punches_imported": { icon: Upload, cls: "text-indigo-500 bg-indigo-500/10" },
+  "biometric.reconciled": { icon: RefreshCw, cls: "text-teal-500 bg-teal-500/10" },
+  "biometric.punch_matched": { icon: UserCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "biometric.punch_ignored": { icon: XCircle, cls: "text-zinc-500 bg-zinc-500/10" },
   "payroll.advance_issued": { icon: CircleDollarSign, cls: "text-primary bg-primary/10" },
   "payroll.loan_type_created": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
   "payroll.loan_type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
@@ -640,6 +666,9 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   TIMESHEET: { label: "Timesheet", cls: "bg-teal-500/10 text-teal-700" },
   SHIFT: { label: "Shift", cls: "bg-cyan-500/10 text-cyan-700" },
   SHIFT_ASSIGNMENT: { label: "Roster slot", cls: "bg-cyan-500/10 text-cyan-700" },
+  BIOMETRIC_DEVICE: { label: "Biometric device", cls: "bg-indigo-500/10 text-indigo-700" },
+  DEVICE_USER_MAPPING: { label: "Device mapping", cls: "bg-violet-500/10 text-violet-700" },
+  PUNCH: { label: "Punch", cls: "bg-indigo-500/10 text-indigo-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -668,7 +697,7 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "bugs", label: "Bugs", types: ["BUG"] },
   { key: "hiring", label: "Hiring", types: ["CANDIDATE"] },
   { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE", "EMPLOYEE_TRANSFER", "EMPLOYEE_PROMOTION"] },
-  { key: "attendance-roster", label: "Attendance & Roster", types: ["TIMESHEET", "SHIFT", "SHIFT_ASSIGNMENT"] },
+  { key: "attendance-roster", label: "Attendance & Roster", types: ["TIMESHEET", "SHIFT", "SHIFT_ASSIGNMENT", "BIOMETRIC_DEVICE", "DEVICE_USER_MAPPING", "PUNCH"] },
   { key: "payroll-loans", label: "Payroll & Loans", types: ["LOAN", "LOAN_TYPE", "SALARY_ADVANCE"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },
