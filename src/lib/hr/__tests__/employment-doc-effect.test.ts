@@ -11,17 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = [
-    "user",
-    "employeeProfile",
-    "employeeTransfer",
-    "employeePromotion",
-    "employeePropertyHistory",
-    "salaryStructureAssignment",
-    "salaryStructure",
-    "notification",
-    "auditLog",
-  ];
+  const models = ["user", "employeeProfile", "employeeTransfer", "employeePromotion", "employeePropertyHistory", "salaryStructureAssignment", "salaryStructure", "notification", "auditLog", "department", "designation", "grade"];
   const methods = [
     "findMany",
     "findUnique",
@@ -48,6 +38,25 @@ const db = vi.hoisted(() => {
   return obj;
 });
 vi.mock("@/lib/infra/db", () => ({ db }));
+
+// P2.1 (ADR-022) — the HR master models + deterministic resolver defaults:
+// find-first/find-unique resolve canonical refs (or null → create), so
+// the ensure* resolvers in lib/hr/masters.ts round-trip without a DB.
+db.department.findFirst.mockImplementation(async ({ where }: { where?: { OR?: { code?: string; name?: string }[] } }) => {
+  const first = where?.OR?.[0];
+  if (!first) return null;
+  return { id: `dept-${String(first.code ?? first.name).toLowerCase()}`, code: first.code ?? null, name: first.name ?? first.code ?? "" };
+});
+db.department.findUnique.mockResolvedValue(null);
+db.department.create.mockImplementation(async ({ data }: { data: { name: string; code: string | null } }) =>
+  ({ id: `dept-${String(data.code ?? data.name).toLowerCase()}`, code: data.code, name: data.name }));
+db.designation.findUnique.mockResolvedValue(null);
+db.designation.create.mockImplementation(async ({ data }: { data: { name: string } }) =>
+  ({ id: `desig-${data.name.toLowerCase().replace(/\s+/g, "-")}`, name: data.name }));
+db.grade.findUnique.mockResolvedValue(null);
+db.grade.aggregate.mockResolvedValue({ _max: { level: null } });
+db.grade.create.mockImplementation(async ({ data }: { data: { name: string } }) =>
+  ({ id: `grade-${data.name.toLowerCase()}`, name: data.name }));
 
 const logAuditMock = vi.fn();
 vi.mock("@/lib/audit/audit", () => ({
@@ -323,6 +332,9 @@ describe("G6 effect core — the transfer application", () => {
           jobTitle: "Principal Designer",
           department: "DESIGN",
           location: "Wellington",
+          // P2.1 (ADR-022) — the master links ride the same write.
+          departmentId: "dept-design",
+          designationId: "desig-principal-designer",
         },
       }),
     );
@@ -414,7 +426,7 @@ describe("G6 effect core — the promotion application + salary coexistence", ()
     expect(res.applied).toBe(2);
     expect(db.employeeProfile.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        update: { jobTitle: "Staff Engineer", grade: "L5" },
+        update: { jobTitle: "Staff Engineer", grade: "L5", designationId: "desig-staff-engineer", gradeId: "grade-l5" },
       }),
     );
     const history = db.employeePropertyHistory.createMany.mock.calls[0][0].data;

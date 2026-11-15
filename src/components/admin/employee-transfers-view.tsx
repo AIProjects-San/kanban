@@ -54,7 +54,13 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: "Cancelled",
 };
 
-const DEPARTMENTS = ["ENGINEERING", "DESIGN", "MARKETING", "MANAGEMENT"];
+/** P2.1 (ADR-022) — the master-picker option shape (from
+ *  getHrMasterOptions; empty when the read failed — the form falls back
+ *  to keeping the current department). */
+export interface DepartmentOptionT {
+  id: string;
+  label: string;
+}
 
 function tomorrow(): string {
   const d = new Date();
@@ -87,10 +93,12 @@ function changeLines(t: EmployeeTransferT): string[] {
 export function EmployeeTransfersView({
   context,
   transfers,
+  departments,
   today,
 }: {
   context: ContextT;
   transfers: EmployeeTransferT[];
+  departments: DepartmentOptionT[];
   today: string;
 }) {
   const router = useRouter();
@@ -101,7 +109,7 @@ export function EmployeeTransfersView({
 
   // The create form (placeholders carry the current facts).
   const [effectiveDate, setEffectiveDate] = useState(tomorrow());
-  const [toDepartment, setToDepartment] = useState("");
+  const [toDepartmentId, setToDepartmentId] = useState("");
   const [toJobTitle, setToJobTitle] = useState("");
   const [toManagerId, setToManagerId] = useState("");
   const [toLocation, setToLocation] = useState("");
@@ -124,7 +132,7 @@ export function EmployeeTransfersView({
       const res = await createEmployeeTransfer({
         employeeId: context.employee.id,
         effectiveDate,
-        ...(toDepartment ? { toDepartment } : {}),
+        ...(toDepartmentId ? { toDepartmentId } : {}),
         ...(toJobTitle.trim() ? { toJobTitle: toJobTitle.trim() } : {}),
         ...(toManagerId === "__clear__"
           ? { toManagerId: null }
@@ -139,7 +147,7 @@ export function EmployeeTransfersView({
         return;
       }
       setOpen(false);
-      setToDepartment("");
+      setToDepartmentId("");
       setToJobTitle("");
       setToManagerId("");
       setToLocation("");
@@ -365,14 +373,14 @@ export function EmployeeTransfersView({
                   Department
                 </label>
                 <select
-                  value={toDepartment}
-                  onChange={(e) => setToDepartment(e.target.value)}
+                  value={toDepartmentId}
+                  onChange={(e) => setToDepartmentId(e.target.value)}
                   className={inputCls}
                 >
                   <option value="">Keep current{cur.department ? ` (${departmentLabel(cur.department)})` : ""}</option>
-                  {DEPARTMENTS.map((d) => (
-                    <option key={d} value={d}>
-                      {departmentLabel(d)}
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.label}
                     </option>
                   ))}
                 </select>
@@ -458,7 +466,7 @@ export function EmployeeTransfersView({
                 disabled={
                   pending ||
                   !effectiveDate ||
-                  (!toDepartment && !toJobTitle.trim() && !toManagerId && !toLocation.trim())
+                  (!toDepartmentId && !toJobTitle.trim() && !toManagerId && !toLocation.trim())
                 }
                 className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >

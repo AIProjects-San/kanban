@@ -3,6 +3,7 @@ import {
   getEmployeeTransfers,
   getEmploymentDocumentContext,
 } from "@/server-actions/hr-employment-docs";
+import { getHrMasterOptions } from "@/server-actions/hr-masters";
 import { EmployeeTransfersView } from "@/components/admin/employee-transfers-view";
 
 // ---------------------------------------------------------------------------
@@ -18,9 +19,10 @@ export default async function EmployeeTransfersPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [ctx, list] = await Promise.all([
+  const [ctx, list, masters] = await Promise.all([
     getEmploymentDocumentContext(id),
     getEmployeeTransfers(id),
+    getHrMasterOptions(),
   ]);
   if (!ctx.ok) {
     // Unknown / deleted employee → the 404 (the id came from our own index).
@@ -30,6 +32,7 @@ export default async function EmployeeTransfersPage({
     <EmployeeTransfersView
       context={ctx.data}
       transfers={list.ok ? list.data : []}
+      departments={masters.ok ? masters.data.departments : []}
       today={new Date().toISOString().slice(0, 10)}
     />
   );

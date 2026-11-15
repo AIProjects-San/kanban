@@ -17,7 +17,7 @@ import {
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
   ArrowUpRight, Upload, FileX, Archive, PiggyBank, TriangleAlert,
   ClipboardList, Moon, ArrowLeftRight, UserCheck,
-  Fingerprint, RefreshCw,
+  Fingerprint, RefreshCw, Building2, Briefcase, Medal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -199,6 +199,13 @@ export type AuditAction =
   | "biometric.reconciled"
   | "biometric.punch_matched"
   | "biometric.punch_ignored"
+  // P2.1 (ADR-022) — the HR masters: Department / Designation / Grade.
+  | "hr.department_saved"
+  | "hr.department_deleted"
+  | "hr.designation_saved"
+  | "hr.designation_deleted"
+  | "hr.grade_saved"
+  | "hr.grade_deleted"
   // P39 (EM-16 advances half) — salary advances.
   | "payroll.advance_issued"
   // G3 — loan management (the full lifecycle + the settlement).
@@ -507,6 +514,12 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "biometric.reconciled": { icon: RefreshCw, cls: "text-teal-500 bg-teal-500/10" },
   "biometric.punch_matched": { icon: UserCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "biometric.punch_ignored": { icon: XCircle, cls: "text-zinc-500 bg-zinc-500/10" },
+  "hr.department_saved": { icon: Building2, cls: "text-blue-500 bg-blue-500/10" },
+  "hr.department_deleted": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
+  "hr.designation_saved": { icon: Briefcase, cls: "text-indigo-500 bg-indigo-500/10" },
+  "hr.designation_deleted": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
+  "hr.grade_saved": { icon: Medal, cls: "text-amber-600 bg-amber-500/10" },
+  "hr.grade_deleted": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
   "payroll.advance_issued": { icon: CircleDollarSign, cls: "text-primary bg-primary/10" },
   "payroll.loan_type_created": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
   "payroll.loan_type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },

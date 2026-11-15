@@ -40,6 +40,7 @@ import type { OfferComponent } from "@/lib/hiring/offer-math";
 import { assertNoCycle } from "@/lib/auth/hierarchy";
 import { logError } from "@/lib/infra/observability";
 import { DEPARTMENT_LABELS } from "@/lib/shared/config";
+import { ensureDepartmentByKeyOrName, ensureDesignationByName, ensureGradeByName } from "@/lib/hr/masters";
 import {
   EMPLOYMENT_STATUS_LABELS,
   PROBATION_DEFAULT_MONTHS,
@@ -390,7 +391,19 @@ export async function applyEmploymentChange(
 
       // The profile facts (jobTitle / department / grade) — upsert keeps the
       // profile-less member legal (neutral defaults like the transition).
+      // P2.1 (ADR-022): every axis write also maintains its master FK — an
+      // empty string clears the link, a value resolves-or-creates the
+      // master so the mirror string and the FK can never disagree.
       if (data.jobTitle !== undefined || data.department !== undefined || data.grade !== undefined) {
+        const deptRef = data.department !== undefined && data.department !== ""
+          ? await ensureDepartmentByKeyOrName(tx, data.department)
+          : null;
+        const desigRef = data.jobTitle !== undefined && data.jobTitle !== ""
+          ? await ensureDesignationByName(tx, data.jobTitle)
+          : null;
+        const gradeRef = data.grade !== undefined && data.grade !== ""
+          ? await ensureGradeByName(tx, data.grade)
+          : null;
         await tx.employeeProfile.upsert({
           where: { userId: targetUserId },
           create: {
@@ -398,6 +411,9 @@ export async function applyEmploymentChange(
             jobTitle: data.jobTitle ?? currentTitle,
             department: data.department ?? currentDepartment,
             grade: data.grade ?? currentGrade,
+            ...(data.department !== undefined ? { departmentId: deptRef ? deptRef.id : null } : {}),
+            ...(data.jobTitle !== undefined ? { designationId: desigRef ? desigRef.id : null } : {}),
+            ...(data.grade !== undefined ? { gradeId: gradeRef ? gradeRef.id : null } : {}),
             hireDate: null,
             employmentStatus: "",
           },
@@ -405,6 +421,9 @@ export async function applyEmploymentChange(
             ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
             ...(data.department !== undefined ? { department: data.department } : {}),
             ...(data.grade !== undefined ? { grade: data.grade } : {}),
+            ...(data.department !== undefined ? { departmentId: deptRef ? deptRef.id : null } : {}),
+            ...(data.jobTitle !== undefined ? { designationId: desigRef ? desigRef.id : null } : {}),
+            ...(data.grade !== undefined ? { gradeId: gradeRef ? gradeRef.id : null } : {}),
           },
         });
       }

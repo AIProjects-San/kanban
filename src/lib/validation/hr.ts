@@ -376,6 +376,10 @@ export const createEmployeeTransferSchema = z.object({
   employeeId: cuidish,
   effectiveDate: isoDateStr,
   toDepartment: departmentKey.optional(),
+  /** P2.1 (ADR-022) — the master-picker input (preferred): a real
+   * Department id. The writer resolves it, refuses unknowns, and stores
+   * the FK + the mirror string; the legacy enum key above still works. */
+  toDepartmentId: cuidish.optional(),
   toJobTitle: z.string().trim().min(1).max(120).optional(),
   /** null (or "") = clear the reporting line; undefined = leave untouched. */
   toManagerId: z.string().trim().max(64).nullable().optional(),
@@ -389,6 +393,9 @@ export const createEmployeePromotionSchema = z.object({
   /** Required — a promotion always names the new designation (spec §4:
    * it must differ from the current one; the action refuses same-title). */
   toJobTitle: z.string().trim().min(1).max(120),
+  /** P2.1 (ADR-022) — the master-picker input (preferred): a real
+   * Designation id; the writer resolves it and stores the FK + name. */
+  toDesignationId: cuidish.optional(),
   toGrade: z.string().trim().min(1).max(60).optional(),
   reason: z.string().trim().max(2_000).optional(),
   /** Optional pointer at a Phase 1B SalaryStructureAssignment belonging to
@@ -404,6 +411,48 @@ export const employmentDocumentRefSchema = z.object({
 export const cancelEmploymentDocumentSchema = employmentDocumentRefSchema.extend({
   reason: z.string().trim().max(2_000).optional(),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// P2.1 (ADR-022) — the HR masters' save/delete shapes. ids are optional on
+// save (absent = create); nullables are explicit clears; the band math
+// (min <= max, non-negative) is validated in the action through
+// lib/hr/masters.ts gradeBandError so the friendly message is one place.
+// ---------------------------------------------------------------------------
+
+export const saveDepartmentSchema = z.object({
+  id: cuidish.optional(),
+  name: z.string().trim().min(1, "Enter the department name.").max(80, "The name must be 80 characters or fewer."),
+  code: z.string().trim().max(40, "The code must be 40 characters or fewer.").nullable().optional(),
+  /** null = a root department. */
+  parentId: cuidish.nullable().optional(),
+  costCenter: z.string().trim().max(40, "The cost center must be 40 characters or fewer.").nullable().optional(),
+  isActive: z.boolean().optional(),
+}).strict();
+
+export const deleteDepartmentSchema = z.object({ id: cuidish }).strict();
+
+export const saveDesignationSchema = z.object({
+  id: cuidish.optional(),
+  name: z.string().trim().min(1, "Enter the designation name.").max(120, "The name must be 120 characters or fewer."),
+  code: z.string().trim().max(40, "The code must be 40 characters or fewer.").nullable().optional(),
+  /** null = no grade link. */
+  gradeId: cuidish.nullable().optional(),
+  isActive: z.boolean().optional(),
+}).strict();
+
+export const deleteDesignationSchema = z.object({ id: cuidish }).strict();
+
+export const saveGradeSchema = z.object({
+  id: cuidish.optional(),
+  name: z.string().trim().min(1, "Enter the grade name.").max(60, "The name must be 60 characters or fewer."),
+  level: z.number().int().min(1, "The level must be a positive integer.").max(999, "The level must be 999 or lower."),
+  /** null = open-ended on that side. */
+  minBase: z.number().nonnegative().nullable().optional(),
+  maxBase: z.number().nonnegative().nullable().optional(),
+  isActive: z.boolean().optional(),
+}).strict();
+
+export const deleteGradeSchema = z.object({ id: cuidish }).strict();
 
 // ---------------------------------------------------------------------------
 // G4 — timesheets + shifts (docs plan §"timesheet and shift").

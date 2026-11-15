@@ -3,6 +3,7 @@ import {
   getEmployeePromotions,
   getEmploymentDocumentContext,
 } from "@/server-actions/hr-employment-docs";
+import { getHrMasterOptions } from "@/server-actions/hr-masters";
 import { EmployeePromotionsView } from "@/components/admin/employee-promotions-view";
 
 // ---------------------------------------------------------------------------
@@ -18,9 +19,10 @@ export default async function EmployeePromotionsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [ctx, list] = await Promise.all([
+  const [ctx, list, masters] = await Promise.all([
     getEmploymentDocumentContext(id),
     getEmployeePromotions(id),
+    getHrMasterOptions(),
   ]);
   if (!ctx.ok) {
     notFound();
@@ -29,6 +31,8 @@ export default async function EmployeePromotionsPage({
     <EmployeePromotionsView
       context={ctx.data}
       promotions={list.ok ? list.data : []}
+      designations={masters.ok ? masters.data.designations : []}
+      grades={masters.ok ? masters.data.grades : []}
       today={new Date().toISOString().slice(0, 10)}
     />
   );

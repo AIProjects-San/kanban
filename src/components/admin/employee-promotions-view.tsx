@@ -69,13 +69,30 @@ function changeLines(p: EmployeePromotionT): string[] {
   return lines;
 }
 
+/** P2.1 (ADR-022) — the master-picker option shapes (getHrMasterOptions;
+ *  empty lists fall back to the free-text inputs). */
+export interface DesignationOptionT {
+  id: string;
+  label: string;
+  gradeId: string | null;
+}
+
+export interface GradeOptionT {
+  id: string;
+  label: string;
+}
+
 export function EmployeePromotionsView({
   context,
   promotions,
+  designations,
+  grades,
   today,
 }: {
   context: ContextT;
   promotions: EmployeePromotionT[];
+  designations: DesignationOptionT[];
+  grades: GradeOptionT[];
   today: string;
 }) {
   const router = useRouter();
@@ -84,8 +101,11 @@ export function EmployeePromotionsView({
   const [confirmCancel, setConfirmCancel] = useState<EmployeePromotionT | null>(null);
   const [cancelReason, setCancelReason] = useState("");
 
-  // The create form.
+  // The create form. P2.1 (ADR-022): the designation picker drives the
+  // master FK (toDesignationId) when the workspace has designations; the
+  // free-text fallback (a workspace without masters yet) sends the title.
   const [effectiveDate, setEffectiveDate] = useState(tomorrow());
+  const [toDesignationId, setToDesignationId] = useState("");
   const [toJobTitle, setToJobTitle] = useState("");
   const [toGrade, setToGrade] = useState("");
   const [reason, setReason] = useState("");
@@ -107,7 +127,9 @@ export function EmployeePromotionsView({
       const res = await createEmployeePromotion({
         employeeId: context.employee.id,
         effectiveDate,
-        toJobTitle: toJobTitle.trim(),
+        ...(toDesignationId
+          ? { toDesignationId, toJobTitle: designations.find((d) => d.id === toDesignationId)?.label ?? toJobTitle.trim() }
+          : { toJobTitle: toJobTitle.trim() }),
         ...(toGrade.trim() ? { toGrade: toGrade.trim() } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       });
@@ -348,13 +370,26 @@ export function EmployeePromotionsView({
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">
                   New designation <span className="text-destructive">*</span>
                 </label>
-                <input
-                  type="text"
-                  value={toJobTitle}
-                  placeholder={cur.jobTitle ? `Currently ${cur.jobTitle}` : "New designation"}
-                  onChange={(e) => setToJobTitle(e.target.value)}
-                  className={inputCls}
-                />
+                {designations.length > 0 ? (
+                  <select
+                    value={toDesignationId}
+                    onChange={(e) => setToDesignationId(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Pick the new designation…</option>
+                    {designations.map((d) => (
+                      <option key={d.id} value={d.id}>{d.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={toJobTitle}
+                    placeholder={cur.jobTitle ? `Currently ${cur.jobTitle}` : "New designation"}
+                    onChange={(e) => setToJobTitle(e.target.value)}
+                    className={inputCls}
+                  />
+                )}
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   A promotion must name a new designation — the current one
                   cannot be re-granted.
@@ -365,13 +400,26 @@ export function EmployeePromotionsView({
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">
                   Grade
                 </label>
-                <input
-                  type="text"
-                  value={toGrade}
-                  placeholder={cur.grade ? `Currently ${cur.grade}` : "New grade (optional)"}
-                  onChange={(e) => setToGrade(e.target.value)}
-                  className={inputCls}
-                />
+                {grades.length > 0 ? (
+                  <select
+                    value={toGrade}
+                    onChange={(e) => setToGrade(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">{cur.grade ? `Keep current (${cur.grade})` : "No grade change"}</option>
+                    {grades.map((g) => (
+                      <option key={g.id} value={g.label}>{g.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={toGrade}
+                    placeholder={cur.grade ? `Currently ${cur.grade}` : "New grade (optional)"}
+                    onChange={(e) => setToGrade(e.target.value)}
+                    className={inputCls}
+                  />
+                )}
               </div>
 
               <div>
@@ -404,7 +452,7 @@ export function EmployeePromotionsView({
               <button
                 type="button"
                 onClick={submitCreate}
-                disabled={pending || !effectiveDate || !toJobTitle.trim()}
+                disabled={pending || !effectiveDate || (!toDesignationId && !toJobTitle.trim())}
                 className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 {pending ? "Saving…" : "Draft promotion"}

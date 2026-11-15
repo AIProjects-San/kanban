@@ -50,6 +50,13 @@ import { AuthorizationError } from "@/lib/auth/authorization-error";
 import { assertNoCycle } from "@/lib/auth/hierarchy";
 import { DEPARTMENT_LABELS } from "@/lib/shared/config";
 import {
+  ensureDepartmentByKeyOrName,
+  ensureDesignationByName,
+  ensureGradeByName,
+  findDepartmentById,
+  findDesignationById,
+} from "@/lib/hr/masters";
+import {
   planEmploymentChange,
   EMPLOYMENT_PROPERTY_LABELS,
   type PropertyDiffRow,
@@ -303,6 +310,7 @@ export async function effectEmploymentDocument(input: {
         // manager axis = an explicit clear of the reporting line.
         const t = doc as {
           toDepartment: string | null;
+          toDepartmentId: string | null;
           toJobTitle: string | null;
           toManagerId: string | null;
           toLocation: string | null;
@@ -311,6 +319,18 @@ export async function effectEmploymentDocument(input: {
         if (t.toJobTitle !== null) requested.jobTitle = t.toJobTitle || "—";
         if (t.toManagerId !== null) requested.manager = toManagerName ?? "(none)";
         if (t.toLocation !== null) requested.location = t.toLocation || "—";
+
+        // P2.1 (ADR-022) — the master links beside the strings: prefer the
+        // document's FK (a master delete nulls it — then ensure by string
+        // so the profile never loses its link); free-form titles ensure
+        // their designation master organically.
+        const toDepartmentRef = t.toDepartment !== null
+          ? ((t.toDepartmentId ? await findDepartmentById(tx, t.toDepartmentId) : null) ??
+            await ensureDepartmentByKeyOrName(tx, t.toDepartment))
+          : null;
+        const toDesignationRef = t.toJobTitle !== null && t.toJobTitle !== ""
+          ? await ensureDesignationByName(tx, t.toJobTitle)
+          : null;
 
         // The profile facts (upsert keeps the profile-less member legal —
         // the P33 writer's own discipline).
@@ -322,6 +342,8 @@ export async function effectEmploymentDocument(input: {
               jobTitle: t.toJobTitle ?? facts.jobTitle,
               department: t.toDepartment ?? facts.department,
               location: t.toLocation ?? facts.location,
+              ...(toDepartmentRef ? { departmentId: toDepartmentRef.id } : {}),
+              ...(toDesignationRef ? { designationId: toDesignationRef.id } : {}),
               hireDate: null,
               employmentStatus: "",
             },
@@ -329,6 +351,8 @@ export async function effectEmploymentDocument(input: {
               ...(t.toJobTitle !== null ? { jobTitle: t.toJobTitle } : {}),
               ...(t.toDepartment !== null ? { department: t.toDepartment } : {}),
               ...(t.toLocation !== null ? { location: t.toLocation } : {}),
+              ...(toDepartmentRef ? { departmentId: toDepartmentRef.id } : {}),
+              ...(toDesignationRef ? { designationId: toDesignationRef.id } : {}),
             },
           });
         }
@@ -340,9 +364,20 @@ export async function effectEmploymentDocument(input: {
           });
         }
       } else {
-        const p = doc as { toJobTitle: string; toGrade: string | null };
+        const p = doc as { toJobTitle: string; toGrade: string | null; toDesignationId: string | null };
         requested.jobTitle = p.toJobTitle || "—";
         if (p.toGrade !== null) requested.grade = p.toGrade || "—";
+
+        // P2.1 (ADR-022) — the master links: the promotion's designation FK
+        // when it still resolves (a deleted master falls back to
+        // ensure-by-name), the grade ensures its master from the string.
+        const toDesignationRef = p.toJobTitle !== ""
+          ? ((p.toDesignationId ? await findDesignationById(tx, p.toDesignationId) : null) ??
+            await ensureDesignationByName(tx, p.toJobTitle))
+          : null;
+        const toGradeRef = p.toGrade !== null && p.toGrade !== ""
+          ? await ensureGradeByName(tx, p.toGrade)
+          : null;
 
         await tx.employeeProfile.upsert({
           where: { userId: employee.id },
@@ -350,12 +385,16 @@ export async function effectEmploymentDocument(input: {
             userId: employee.id,
             jobTitle: p.toJobTitle,
             grade: p.toGrade ?? facts.grade,
+            ...(toDesignationRef ? { designationId: toDesignationRef.id } : {}),
+            ...(toGradeRef ? { gradeId: toGradeRef.id } : {}),
             hireDate: null,
             employmentStatus: "",
           },
           update: {
             jobTitle: p.toJobTitle,
             ...(p.toGrade !== null ? { grade: p.toGrade } : {}),
+            ...(toDesignationRef ? { designationId: toDesignationRef.id } : {}),
+            ...(toGradeRef ? { gradeId: toGradeRef.id } : {}),
           },
         });
         // NOTE (spec §3): linkedSalaryAssignmentId is NEVER acted on — the

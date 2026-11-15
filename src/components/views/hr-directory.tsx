@@ -12,7 +12,8 @@
 // edit anyone including the HR-only `notes` field.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Download, Loader2, Search, Pencil, ArrowUpRight, IdCard, Award } from "lucide-react";
+import Link from "next/link";
+import { Briefcase, Download, Loader2, Search, Pencil, ArrowUpRight, IdCard, Award, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { Section } from "../ui/section";
 import { Field } from "../ui/field";
@@ -215,10 +216,16 @@ export function DirectoryTab() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
+  // P2.1 (ADR-022) — the department label groups through the FK's master
+  // name (a renamed department filters/displays under its NEW name); an
+  // unlinked legacy string falls back to the label lookup, never blank.
+  const deptLabelOf = (p: EmployeeProfileT): string =>
+    p.departmentName ?? (p.department ? DEPARTMENT_LABELS.find((d) => d.key === p.department)?.label ?? p.department : "");
+
   const visible = useMemo(() => {
     if (!profiles) return [];
     return profiles.filter((p) =>
-      (!filterDepartment || p.department === filterDepartment) &&
+      (!filterDepartment || deptLabelOf(p) === filterDepartment) &&
       (!filterType || p.employmentType === filterType) &&
       (!filterGrade || p.grade === filterGrade) &&
       (!filterBranch || p.branch === filterBranch)
@@ -226,11 +233,16 @@ export function DirectoryTab() {
       const q = query.trim().toLowerCase();
       if (!q) return true;
       return [
-        p.name, p.email, p.jobTitle, p.department, p.location, p.skills,
+        p.name, p.email, p.jobTitle, deptLabelOf(p), p.location, p.skills,
         p.grade, p.employmentType, p.branch,
       ].join(" ").toLowerCase().includes(q);
     });
   }, [profiles, query, filterDepartment, filterType, filterGrade, filterBranch]);
+
+  const departmentOptions = useMemo(
+    () => Array.from(new Set((profiles ?? []).map((p) => deptLabelOf(p)).filter(Boolean))).sort(),
+    [profiles],
+  );
 
   // The free-form axes' chip options are the roster's own distinct values
   // (sorted, deduped) — a workspace names its own grades and offices.
@@ -261,6 +273,16 @@ export function DirectoryTab() {
 
   return (
     <div className="space-y-3" data-testid="hr-directory">
+      {/* P2.1 (ADR-022) — the masters' home links (the attendance tab's
+          Timesheets/Roster pattern): the directory is the employee
+          master's surface, so its grouping axes' masters live one hop away. */}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        <Building2 size={13} aria-hidden />
+        <span>Grouping axes are masters now:</span>
+        <Link className="underline-offset-2 hover:underline" href="/admin/settings/hr/departments">Departments</Link>
+        <Link className="underline-offset-2 hover:underline" href="/admin/settings/hr/designations">Designations</Link>
+        <Link className="underline-offset-2 hover:underline" href="/admin/settings/hr/grades">Grades</Link>
+      </div>
       <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-sm">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -300,8 +322,8 @@ export function DirectoryTab() {
           data-testid="directory-filter-department"
         >
           <option value="">All departments</option>
-          {DEPARTMENT_LABELS.map((d) => (
-            <option key={d.key} value={d.key}>{d.label}</option>
+          {departmentOptions.map((d) => (
+            <option key={d} value={d}>{d}</option>
           ))}
         </select>
         <select
@@ -424,7 +446,7 @@ export function DirectoryTab() {
                   <span>ends {p.probationEndsAt}</span>
                 ) : null}
               </div>
-              <div><span className="font-medium text-foreground/70">Department:</span> {p.department ? DEPARTMENT_LABELS.find((d) => d.key === p.department)?.label ?? p.department : "—"}</div>
+              <div><span className="font-medium text-foreground/70">Department:</span> {deptLabelOf(p) || "—"}</div>
               {/* P34 (EM-03) — the grouping axes on the card, rendered only
                   when classified (the skills-line pattern: "" stays silent,
                   the edit modal shows "—"). */}

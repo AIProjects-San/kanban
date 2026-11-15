@@ -1430,6 +1430,68 @@ model SalaryComponent {
   @@index([sortOrder])
 }
 
+// ---------------------------------------------------------------------------
+// P2.1 (ADR-022) — the HR masters: Department, Designation, Grade.
+// Supersedes the G6-era "intentionally NO master tables" decision (the
+// free-string axes served QA-19's honest-unclassified discipline, but the
+// benchmark's Employee master grouping facts — and the coming
+// department-based cost-center derivation — need real, referencable rows).
+//
+// EmployeeProfile keeps its department/jobTitle/grade STRINGS as
+// denormalized mirrors (every HR write sets FK + string; a rename
+// cascades its mirrors) so Phase 1/2 string readers keep working; the
+// strings drop in a follow-up once every read path migrates. Documents
+// (transfer/promotion) carry the FK alongside their from/to string
+// SNAPSHOTS — the snapshot survives master deletion (SetNull FK), the
+// document's facts never die with the master.
+// ---------------------------------------------------------------------------
+model Department {
+  id        String   @id @default(cuid())
+  // The human label ("Engineering"); code is the legacy enum key
+  // ("ENGINEERING") the profile mirror strings still carry.
+  name      String   @unique
+  code      String?  @unique // for payroll reporting
+  parentId  String?
+  parent    Department?  @relation("DeptTree", fields: [parentId], references: [id])
+  children  Department[] @relation("DeptTree")
+  costCenter String?           // for future GL integration
+  isActive  Boolean  @default(true)
+  employees EmployeeProfile[]
+  transferSources EmployeeTransfer[] @relation("TransferFromDepartment")
+  transferTargets EmployeeTransfer[] @relation("TransferToDepartment")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Designation {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String?  @unique
+  gradeId   String?
+  grade     Grade?   @relation(fields: [gradeId], references: [id])
+  isActive  Boolean  @default(true)
+  employees EmployeeProfile[]
+  promotionSources EmployeePromotion[] @relation("PromotionFromDesignation")
+  promotionTargets EmployeePromotion[] @relation("PromotionToDesignation")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Grade {
+  id           String        @id @default(cuid())
+  name         String        @unique
+  // Ordering within the ladder (1 = entry). The backfill assigns
+  // deterministic placeholder levels; HR reorders in the masters UI.
+  level        Int
+  minBase      Float?
+  maxBase      Float?
+  isActive     Boolean       @default(true)
+  designations Designation[]
+  employees    EmployeeProfile[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
 // HR Module feature 2 — employee directory (docs/HR_MODULE_PLAN.md §5).
 // One row per user (userId unique): structured job + contact data. The
 // manager display comes from the existing User.managerId org chart — this
@@ -1491,10 +1553,27 @@ model EmployeeProfile {
   grade                String   @default("")
   employmentType       String   @default("")
   branch               String   @default("")
+  // P2.1 — the master links (ADR-022). The three string axes above
+  // (department/jobTitle/grade) become DENORMALIZED MIRRORS of the
+  // masters below: every HR write path sets BOTH the FK and the string
+  // (mirror = code ?? name for departments, name for designations and
+  // grades), so Phase 1/2 readers that still key on the strings —
+  // payroll-reports' dimension charts, the CSV exports — keep working
+  // unchanged. The strings drop in a follow-up once every read path
+  // migrates; until then a master rename cascades its mirror strings.
+  departmentId         String?
+  departmentMaster     Department?  @relation(fields: [departmentId], references: [id])
+  designationId        String?
+  designationMaster    Designation? @relation(fields: [designationId], references: [id])
+  gradeId              String?
+  gradeMaster          Grade?       @relation(fields: [gradeId], references: [id])
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
   @@index([department])
+  @@index([departmentId])
+  @@index([designationId])
+  @@index([gradeId])
   @@index([employmentStatus])
   @@index([employmentType])
 }
@@ -1559,6 +1638,13 @@ model EmployeeTransfer {
   fromJobTitle   String?
   fromManagerId  String?
   fromLocation   String?
+  // P2.1 (ADR-022) — the master links beside the string snapshots: the
+  // FK makes the destination a real reference; the string survives the
+  // master's deletion (SetNull) and stays the display/history truth.
+  fromDepartmentId String?
+  fromDepartmentRef Department?  @relation("TransferFromDepartment", fields: [fromDepartmentId], references: [id], onDelete: SetNull)
+  toDepartmentId   String?
+  toDepartmentRef   Department?  @relation("TransferToDepartment", fields: [toDepartmentId], references: [id], onDelete: SetNull)
   // The requested end state. At least one axis must actually change (the
   // writer refuses a no-change transfer; same department/title is refused
   // outright per spec §4).
@@ -1604,6 +1690,12 @@ model EmployeePromotion {
   toJobTitle   String
   fromGrade    String?
   toGrade      String?
+  // P2.1 (ADR-022) — the designation master links beside the string
+  // snapshots (same discipline as the transfer's department FKs).
+  fromDesignationId String?
+  fromDesignationRef Designation? @relation("PromotionFromDesignation", fields: [fromDesignationId], references: [id], onDelete: SetNull)
+  toDesignationId   String?
+  toDesignationRef   Designation? @relation("PromotionToDesignation", fields: [toDesignationId], references: [id], onDelete: SetNull)
 
   effectiveDate DateTime
   reason        String?

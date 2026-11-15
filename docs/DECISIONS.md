@@ -1060,3 +1060,82 @@ aspirational one. The risk this ADR accepts is a year of "we'll raise
 it next sprint" — mitigated by the roadmap ticket naming the target
 and the files. The `src/lib` gate never moved: the security-critical
 kernel layer keeps its original bar.
+
+---
+
+## ADR-022 — The employee grouping axes become masters (Department / Designation / Grade) with denormalized string mirrors
+
+**Date:** 2026-11-15 · **Status:** accepted · **Phase:** P2.1
+
+**Context.** `EmployeeProfile`'s three grouping axes — `department`,
+`jobTitle`, `grade` — were free strings (P34's QA-19 discipline: `""` =
+not classified yet). The parity plan has called for real masters since
+EM-09, and G5's release made the gap concrete: every report groups,
+joins and filters on strings that can drift row by row, the G6
+transfer/promotion documents carry only string snapshots, and there is
+no first-class place to keep a department's cost center or a grade's
+salary band. The migration constraint was explicit: Phase 1/2 code —
+payroll above all — must not be modified to make the FK move; if it
+became necessary, the work stops and reports first.
+
+**Decision.**
+
+1. **Three master models** (`prisma/schema.prisma`): `Department`
+   (unique `name`, optional unique `code`, self-referencing
+   `parentId` tree, `costCenter` reserved for the future GL
+   integration, `isActive`), `Designation` (unique `name`, optional
+   `code`, one `gradeId` link), `Grade` (unique `name`, integer
+   `level` ordering, nullable `minBase`/`maxBase` salary band,
+   `isActive`).
+2. **`EmployeeProfile` gains `departmentId` / `designationId` /
+   `gradeId`** (RESTRICT). The legacy strings STAY as denormalized
+   mirrors — dual-write, not switch-write: every HR write path sets
+   BOTH the FK and the string through the ONE shared seam
+   (`src/lib/hr/masters.ts` — `ensure*` find-or-create for the legacy
+   free-form inputs, `find*` must-exist for the master-picker inputs).
+   The mirror rule: `department = code ?? name` (the legacy enum keys
+   "ENGINEERING"… ride in `code`, so Phase 1/2 string readers see the
+   exact bytes they always did), `jobTitle = designation.name`,
+   `grade = grade.name`. A master rename cascades every referencing
+   profile's mirror atomically.
+3. **Zero payroll-code changes.** Payroll analytics' dimension charts
+   and the CSV exports keep reading the mirror strings — which every
+   write path now maintains for them — so the hard constraint held
+   without a stop-and-report: nothing in `src/server-actions/payroll*`
+   or `src/lib/payroll/**` was touched. `Department.costCenter` is
+   reserved for the future GL integration; no payroll consumer reads
+   it yet.
+4. **The G6 documents gain real FKs beside their string snapshots**
+   (`fromDepartmentId`/`toDepartmentId` on transfers,
+   `fromDesignationId`/`toDesignationId` on promotions — SET NULL on
+   master deletion): the document's display/history facts survive the
+   master, while the reference is real for as long as the master is.
+5. **Referenced masters are never deleted** — the action-level guards
+   refuse while employees (or children/holders) reference the row and
+   offer deactivation instead; unreferenced rows delete, with the
+   documents' string snapshots and the profiles' mirrors untouched.
+   Grade bands validate at both the zod boundary (non-negative) and
+   the seam (`gradeBandError`: min ≤ max, null = open-ended).
+6. **Migration `20261210000000_hr_master_tables`** creates the tables,
+   backfills the masters from the DISTINCT non-empty strings already
+   in `EmployeeProfile` (departments through the legacy label
+   mapping, designations and grades by name; grades get monotonic
+   placeholder levels HR reorders in the UI), links every profile
+   row, and is idempotent-by-unique. The `down.sql` restores the
+   pre-P2.1 shape. `scripts/backfill-hr-masters.ts` re-runs the
+   backfill as part of `db:seed` for fresh environments.
+7. **Admin UI:** `/admin/settings/hr/departments` (the tree editor),
+   `/admin/settings/hr/designations` (list + grade link),
+   `/admin/settings/hr/grades` (the ladder + salary bands), each with
+   its audit trail (`hr.department_saved` … `hr.grade_deleted`).
+
+**Consequences.** Reports, search and payroll stay on the strings and
+are correct by construction — until the strings drop. That drop is a
+deliberate follow-up (roadmap P2.x): it happens only after every read
+path migrates to the FKs, which is exactly the organic path ADR-021
+charts for the coverage climb over the same files. The mirror is one
+more invariant the write paths must hold; it is enforced by having
+exactly one seam and tested by the P2.1 suite (schema pins, the
+executed backfill, the masters CRUD guards, the G6 effect writes, the
+directory's picker/filter sync — 216 files / 3,961 tests green,
+`src/lib` 94.4/87.0, `src/server-actions` 92.0/77.9).

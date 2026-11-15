@@ -22,6 +22,7 @@ import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import type { EmployeeProfileT } from "@/lib/types";
 import { employeeProfileSchema, employeeProfileSelfSchema, parseOrThrow } from "@/lib/validation";
 import { isoDateOrNull, EMPLOYMENT_STATUS_LABELS } from "@/lib/hr/employment";
+import { ensureDepartmentByKeyOrName, ensureDesignationByName, ensureGradeByName } from "@/lib/hr/masters";
 import { logAudit } from "./shared";
 import { toResult } from "./result";
 import type { ActionResult } from "@/lib/shared/action-result";
@@ -42,6 +43,8 @@ function serialize(
     skillMap?: { skillKey: string; label: string; rating: number }[] | null;
     employmentStatus: string; probationEndsAt: Date | null;
     noticePeriodWeeks: number | null; lastWorkingDay: Date | null;
+    departmentId?: string | null; designationId?: string | null; gradeId?: string | null;
+    departmentMaster?: { name: string } | null;
   },
   user: { name: string; email: string; role: string; managerName: string | null },
 ): EmployeeProfileT {
@@ -56,6 +59,12 @@ function serialize(
     managerName: user.managerName,
     jobTitle: row.jobTitle,
     department: row.department as EmployeeProfileT["department"],
+    // P2.1 (ADR-022) — the master links + the FK-derived display name
+    // (null mirror = the string predates the masters and matched none).
+    departmentId: row.departmentId ?? null,
+    departmentName: row.departmentMaster?.name ?? null,
+    designationId: row.designationId ?? null,
+    gradeId: row.gradeId ?? null,
     // P34 (EM-03) — the grouping axes (QA-19: "" = unclassified, rendered
     // "—"; employmentType is the raw key — the views resolve the label
     // through employmentTypeLabel so an unknown key renders raw, never
@@ -100,7 +109,15 @@ export async function getDirectory(): Promise<
     // PR-21 — hard caps on both roster queries (a directory beyond ~500
     // people is a paginated-list concern, not a single-render concern).
     const [rows, users, config] = await Promise.all([
-      db.employeeProfile.findMany({ orderBy: { createdAt: "asc" }, take: 500 }),
+      // P2.1 (ADR-022) — the department display name now rides the FK
+      // relation (the string mirror stays the storage format); an
+      // unlinked string falls back to the legacy label lookup, never
+      // silently blank.
+      db.employeeProfile.findMany({
+        orderBy: { createdAt: "asc" },
+        take: 500,
+        include: { departmentMaster: { select: { name: true } } },
+      }),
       db.user.findMany({
         where: { deletedAt: null },
         select: { id: true, name: true, email: true, role: true, managerId: true },
@@ -186,7 +203,11 @@ export async function exportDirectoryCsv(): Promise<ActionResult<{ filename: str
     // getDirectory's own reads (PR-21 caps; profiles of deleted users are
     // hidden exactly like the roster cards).
     const [rows, users] = await Promise.all([
-      db.employeeProfile.findMany({ orderBy: { createdAt: "asc" }, take: 500 }),
+      db.employeeProfile.findMany({
+        orderBy: { createdAt: "asc" },
+        take: 500,
+        include: { departmentMaster: { select: { name: true } } },
+      }),
       db.user.findMany({
         where: { deletedAt: null },
         select: { id: true, name: true, email: true, role: true, managerId: true },
@@ -206,11 +227,14 @@ export async function exportDirectoryCsv(): Promise<ActionResult<{ filename: str
         email: u.email,
         role: u.role,
         jobTitle: row.jobTitle,
-        // The roster card's label (QA-19: "" stays unclassified, not
-        // fabricated); an unknown key renders raw, never silently blank.
-        department: row.department
-          ? DEPARTMENT_LABELS.find((d) => d.key === row.department)?.label ?? row.department
-          : "",
+        // P2.1 (ADR-022) — the department column groups through the FK's
+        // master name (a renamed department exports its NEW name); an
+        // unlinked legacy string falls back to the label lookup, never
+        // silently blank.
+        department: row.departmentMaster?.name
+          ?? (row.department
+            ? DEPARTMENT_LABELS.find((d) => d.key === row.department)?.label ?? row.department
+            : ""),
         // P34 (EM-03) — the grouping axes mirror the roster card's facts:
         // the raw grade/branch strings and the employment-type label
         // (blank when unclassified — the data-file convention, only the
@@ -337,6 +361,18 @@ export async function updateProfileAsAdmin(userId: string, input: {
     const target = await db.user.findUnique({ where: { id: userId }, select: { id: true, name: true, deletedAt: true } });
     if (!target || target.deletedAt) throw new AuthorizationError("User not found.");
 
+    // P2.1 (ADR-022) — the master links beside the string mirrors: a
+    // provided axis resolves-or-creates its master ("" clears the link).
+    const deptRef = data.department !== undefined && data.department !== ""
+      ? await ensureDepartmentByKeyOrName(db, data.department)
+      : null;
+    const desigRef = data.jobTitle !== undefined && data.jobTitle !== ""
+      ? await ensureDesignationByName(db, data.jobTitle)
+      : null;
+    const gradeRef = data.grade !== undefined && data.grade !== ""
+      ? await ensureGradeByName(db, data.grade)
+      : null;
+
     // S14 — the override target must be a real, live member and NOT the
     // employee themselves (deciding your own leave is the manager chain's
     // job, never a self-assignment).
@@ -391,6 +427,9 @@ export async function updateProfileAsAdmin(userId: string, input: {
         ...(data.noticePeriodWeeks != null ? { noticePeriodWeeks: data.noticePeriodWeeks } : {}),
         ...(lastWorkingDay ? { lastWorkingDay } : {}),
         ...(data.leaveApproverId !== undefined ? { leaveApproverId: data.leaveApproverId } : {}),
+        ...(deptRef ? { departmentId: deptRef.id } : {}),
+        ...(desigRef ? { designationId: desigRef.id } : {}),
+        ...(gradeRef ? { gradeId: gradeRef.id } : {}),
       },
       update: {
         ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
@@ -410,6 +449,9 @@ export async function updateProfileAsAdmin(userId: string, input: {
         ...(data.noticePeriodWeeks !== undefined ? { noticePeriodWeeks: data.noticePeriodWeeks } : {}),
         ...(lastWorkingDay !== undefined ? { lastWorkingDay } : {}),
         ...(data.leaveApproverId !== undefined ? { leaveApproverId: data.leaveApproverId } : {}),
+        ...(data.department !== undefined ? { departmentId: deptRef ? deptRef.id : null } : {}),
+        ...(data.jobTitle !== undefined ? { designationId: desigRef ? desigRef.id : null } : {}),
+        ...(data.grade !== undefined ? { gradeId: gradeRef ? gradeRef.id : null } : {}),
       },
     });
 

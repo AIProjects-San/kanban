@@ -92,8 +92,11 @@ describe("P34 — the org-slicing filter chips", () => {
       "All branches", "Accra", "Auckland HQ", "Mexico City",
     ]);
     const deptChip = screen.getByTestId("directory-filter-department") as HTMLSelectElement;
+    // P2.1 (ADR-022) — the department chip now lists the roster's own
+    // distinct FK-derived labels (the grade/branch chip discipline), not
+    // the static four-key enum.
     expect([...deptChip.options].map((o) => o.textContent)).toEqual([
-      "All departments", "Engineering", "Design", "Marketing", "Management",
+      "All departments", "Engineering",
     ]);
   });
 
@@ -142,13 +145,13 @@ describe("P34 — the org-slicing filter chips", () => {
   it("a department chip slices the roster like the other axes", async () => {
     getDirectory.mockResolvedValue(directoryPayload([
       THEO,
-      { ...DIEGO, department: "DESIGN" },
+      { ...DIEGO, department: "DESIGN", departmentName: "Design" },
     ]));
     render(<DirectoryTab />);
     await screen.findAllByTestId("directory-name");
 
     fireEvent.change(screen.getByTestId("directory-filter-department"), {
-      target: { value: "DESIGN" },
+      target: { value: "Design" },
     });
     expect(await screen.findAllByTestId("directory-name")).toHaveLength(1);
     expect(screen.getByText("Diego Morales")).toBeTruthy();

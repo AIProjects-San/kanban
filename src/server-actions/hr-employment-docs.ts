@@ -61,6 +61,7 @@ import {
   type EmploymentDocStatus,
 } from "@/lib/hr/employment-documents";
 import { effectEmploymentDocument } from "@/lib/hr/employment-doc-effect";
+import { ensureDepartmentByKeyOrName, ensureDesignationByName } from "@/lib/hr/masters";
 import type { EmployeeTransferT, EmployeePromotionT } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -141,10 +142,30 @@ export async function createEmployeeTransfer(
     const data = parseOrThrow(createEmployeeTransferSchema, input);
     const { user, profile } = await loadEmployee(data.employeeId);
 
+    // P2.1 (ADR-022) — the department master: the picker's id wins (must
+    // resolve); the legacy enum key falls back to find-or-create so the
+    // pre-master callers and tests keep working. The resolved mirror
+    // string is what gets compared, stored and applied.
+    let toDepartmentMirror: string | undefined;
+    let toDepartmentId: string | null = null;
+    if (data.toDepartmentId) {
+      const ref = await db.department.findUnique({
+        where: { id: data.toDepartmentId },
+        select: { id: true, code: true, name: true },
+      });
+      if (!ref) throw new AuthorizationError("Department not found — refresh and pick one from the list.");
+      toDepartmentMirror = ref.code ?? ref.name;
+      toDepartmentId = ref.id;
+    } else if (data.toDepartment !== undefined) {
+      const ref = await ensureDepartmentByKeyOrName(db, data.toDepartment);
+      toDepartmentMirror = ref.mirror;
+      toDepartmentId = ref.id;
+    }
+
     // Spec §4 — the named refusals: same department / same designation.
     const currentDepartment = profile?.department ?? "";
     const currentJobTitle = profile?.jobTitle ?? "";
-    if (data.toDepartment !== undefined && data.toDepartment === currentDepartment) {
+    if (toDepartmentMirror !== undefined && toDepartmentMirror === currentDepartment) {
       throw new AuthorizationError(
         `${user.name} is already in that department — a transfer must move them somewhere else.`,
       );
@@ -154,7 +175,7 @@ export async function createEmployeeTransfer(
         `${user.name} already holds that job title — a transfer must change it (or leave it untouched).`,
       );
     }
-    if (!transferCarriesAnyAxis(data)) {
+    if (!transferCarriesAnyAxis({ toDepartment: toDepartmentMirror, toJobTitle: data.toJobTitle, toManagerId: data.toManagerId, toLocation: data.toLocation })) {
       throw new AuthorizationError(
         "A transfer needs at least one destination — pick a department, job title, manager or location.",
       );
@@ -187,7 +208,7 @@ export async function createEmployeeTransfer(
           managerId: user.managerId ?? null,
         },
         {
-          toDepartment: data.toDepartment,
+          toDepartment: toDepartmentMirror,
           toJobTitle: data.toJobTitle,
           toManagerId: compareManagerId(data.toManagerId),
           toLocation: data.toLocation,
@@ -206,7 +227,12 @@ export async function createEmployeeTransfer(
         fromJobTitle: currentJobTitle || null,
         fromManagerId: user.managerId ?? null,
         fromLocation: profile?.location || null,
-        toDepartment: data.toDepartment ?? null,
+        // P2.1 — the master links beside the string snapshots: the from
+        // side snapshots the LIVE profile link; the to side carries the
+        // resolved master (null when the axis is untouched).
+        fromDepartmentId: profile?.departmentId ?? null,
+        toDepartmentId,
+        toDepartment: toDepartmentMirror ?? null,
         toJobTitle: data.toJobTitle ?? null,
         toManagerId: storeManagerId(data.toManagerId),
         toLocation: data.toLocation ?? null,
@@ -241,10 +267,29 @@ export async function createEmployeePromotion(
     const data = parseOrThrow(createEmployeePromotionSchema, input);
     const { user, profile } = await loadEmployee(data.employeeId);
 
+    // P2.1 (ADR-022) — the designation master: the picker's id wins (must
+    // resolve, and OVERRIDES the free-text title with the master's name);
+    // the legacy free-text title falls back to find-or-create so the
+    // pre-master callers keep working.
+    let toJobTitle = data.toJobTitle;
+    let toDesignationId: string | null = null;
+    if (data.toDesignationId) {
+      const ref = await db.designation.findUnique({
+        where: { id: data.toDesignationId },
+        select: { id: true, name: true },
+      });
+      if (!ref) throw new AuthorizationError("Designation not found — refresh and pick one from the list.");
+      toJobTitle = ref.name;
+      toDesignationId = ref.id;
+    } else {
+      const ref = await ensureDesignationByName(db, data.toJobTitle);
+      toDesignationId = ref.id;
+    }
+
     // Spec §4 — the named refusals: same designation / same grade.
     const currentJobTitle = profile?.jobTitle ?? "";
     const currentGrade = profile?.grade ?? "";
-    if (data.toJobTitle === currentJobTitle && currentJobTitle !== "") {
+    if (toJobTitle === currentJobTitle && currentJobTitle !== "") {
       throw new AuthorizationError(
         `${user.name} already holds that designation — a promotion must name a new one.`,
       );
@@ -278,7 +323,7 @@ export async function createEmployeePromotion(
           location: profile?.location ?? "",
           managerId: user.managerId ?? null,
         },
-        { toJobTitle: data.toJobTitle, toGrade: data.toGrade },
+        { toJobTitle, toGrade: data.toGrade },
       )
     ) {
       throw new AuthorizationError(
@@ -291,7 +336,10 @@ export async function createEmployeePromotion(
         employeeId: user.id,
         fromJobTitle: currentJobTitle || null,
         fromGrade: currentGrade || null,
-        toJobTitle: data.toJobTitle,
+        // P2.1 — the designation master links beside the string snapshots.
+        fromDesignationId: profile?.designationId ?? null,
+        toDesignationId,
+        toJobTitle,
         toGrade: data.toGrade ?? null,
         effectiveDate: dayKeyToDate(data.effectiveDate),
         reason: data.reason ?? null,
@@ -309,7 +357,7 @@ export async function createEmployeePromotion(
       entityId: created.id,
       entityLabel: user.name,
       detail:
-        `${auth.name} drafted a promotion for ${user.name} to ${data.toJobTitle}` +
+        `${auth.name} drafted a promotion for ${user.name} to ${toJobTitle}` +
         `${data.toGrade ? ` (grade ${data.toGrade})` : ""} effective ${data.effectiveDate}` +
         `${data.reason ? ` (reason: ${data.reason})` : ""}.`,
     });
@@ -582,6 +630,8 @@ export async function getEmployeeTransfers(
       employeeId: r.employeeId,
       fromDepartment: r.fromDepartment,
       toDepartment: r.toDepartment,
+      fromDepartmentId: r.fromDepartmentId,
+      toDepartmentId: r.toDepartmentId,
       fromJobTitle: r.fromJobTitle,
       toJobTitle: r.toJobTitle,
       fromManagerId: r.fromManagerId,
@@ -629,6 +679,8 @@ export async function getEmployeePromotions(
       toJobTitle: r.toJobTitle,
       fromGrade: r.fromGrade,
       toGrade: r.toGrade,
+      fromDesignationId: r.fromDesignationId,
+      toDesignationId: r.toDesignationId,
       effectiveDate: utcDayKeyOf(r.effectiveDate),
       reason: r.reason,
       status: r.status,

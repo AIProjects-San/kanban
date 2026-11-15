@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const db = vi.hoisted(() => {
-  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord", "teamMember", "employeeProfile", "onboardingChecklist", "onboardingTask", "salaryStructure", "salaryComponent", "onboardingTemplateTask", "holidayCalendarEntry"];
+  const models = ["hiringStageConfig", "candidate", "candidateStage", "user", "auditLog", "notification", "calendarEvent", "reminder", "mailOutbox", "documentTypeConfig", "candidateDocument", "backgroundCheck", "offerTemplate", "offerRecord", "teamMember", "employeeProfile", "onboardingChecklist", "onboardingTask", "salaryStructure", "salaryComponent", "onboardingTemplateTask", "holidayCalendarEntry", "department", "designation", "grade"];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
     "updateMany", "delete", "deleteMany", "upsert", "count", "aggregate",
@@ -25,6 +25,25 @@ const db = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/infra/db", () => ({ db }));
+
+// P2.1 (ADR-022) — the HR master models + deterministic resolver defaults:
+// find-first/find-unique resolve canonical refs (or null → create), so
+// the ensure* resolvers in lib/hr/masters.ts round-trip without a DB.
+db.department.findFirst.mockImplementation(async ({ where }: { where?: { OR?: { code?: string; name?: string }[] } }) => {
+  const first = where?.OR?.[0];
+  if (!first) return null;
+  return { id: `dept-${String(first.code ?? first.name).toLowerCase()}`, code: first.code ?? null, name: first.name ?? first.code ?? "" };
+});
+db.department.findUnique.mockResolvedValue(null);
+db.department.create.mockImplementation(async ({ data }: { data: { name: string; code: string | null } }) =>
+  ({ id: `dept-${String(data.code ?? data.name).toLowerCase()}`, code: data.code, name: data.name }));
+db.designation.findUnique.mockResolvedValue(null);
+db.designation.create.mockImplementation(async ({ data }: { data: { name: string } }) =>
+  ({ id: `desig-${data.name.toLowerCase().replace(/\s+/g, "-")}`, name: data.name }));
+db.grade.findUnique.mockResolvedValue(null);
+db.grade.aggregate.mockResolvedValue({ _max: { level: null } });
+db.grade.create.mockImplementation(async ({ data }: { data: { name: string } }) =>
+  ({ id: `grade-${data.name.toLowerCase()}`, name: data.name }));
 
 const requirePermissionMock = vi.fn();
 const getSessionOrThrowMock = vi.fn();

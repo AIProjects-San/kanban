@@ -20,6 +20,7 @@ import { toResult } from "./result";
 import type { ActionResult } from "@/lib/shared/action-result";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import { parseComponents } from "@/lib/hiring/offer-math";
+import { ensureDepartmentByKeyOrName, ensureDesignationByName } from "@/lib/hr/masters";
 import { evaluateJoiningGate } from "@/lib/hiring/joining-gate";
 import { holidayLookupFrom } from "@/lib/hr/working-days";
 import { hashPassword } from "@/lib/auth/password";
@@ -169,6 +170,11 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
           userId: created.id,
         },
       });
+      // P2.1 (ADR-022) — the joiner's master links: the offer's position
+      // and department resolve-or-create their masters so the FK and the
+      // mirror string land together (empty = unclassified, link null).
+      const joinDeptRef = candidate.department ? await ensureDepartmentByKeyOrName(tx, candidate.department) : null;
+      const joinDesigRef = candidate.position ? await ensureDesignationByName(tx, candidate.position) : null;
       await tx.employeeProfile.create({
         data: {
           userId: created.id,
@@ -178,6 +184,8 @@ export async function markJoined(input: { candidateId: string }): Promise<Action
           employeeNumber: await nextEmployeeNumber(tx),
           jobTitle: candidate.position || "",
           department: candidate.department || "",
+          ...(joinDeptRef ? { departmentId: joinDeptRef.id } : {}),
+          ...(joinDesigRef ? { designationId: joinDesigRef.id } : {}),
           hireDate: new Date(),
         },
       });

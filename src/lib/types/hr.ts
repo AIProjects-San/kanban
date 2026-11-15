@@ -287,6 +287,14 @@ export interface EmployeeProfileT {
   jobTitle: string;
   /** QA-19: "" means "not classified yet" — rendered as "—" until HR sets it. */
   department: "ENGINEERING" | "DESIGN" | "MARKETING" | "MANAGEMENT" | "";
+  // P2.1 (ADR-022) — the master links beside the string mirrors above
+  // (null = the string predates the masters and matched no master — the
+  // honest unclassified state). The display name comes from the master
+  // (departmentName), the strings stay for the Phase 1/2 readers.
+  departmentId: string | null;
+  departmentName: string | null;
+  designationId: string | null;
+  gradeId: string | null;
   // P34 (EM-03) — the grouping axes. Same QA-19 rule: "" = not classified
   // yet (rendered "—"); grade/branch are free-form strings, employmentType
   // is the controlled vocabulary keyed in lib/config (EMPLOYMENT_TYPE_LABELS).
@@ -396,6 +404,10 @@ export interface EmployeeTransferT {
   employeeId: string;
   fromDepartment: string | null;
   toDepartment: string | null;
+  // P2.1 (ADR-022) — the master links beside the string snapshots (null
+  // after a master deletion — the string stays the history truth).
+  fromDepartmentId: string | null;
+  toDepartmentId: string | null;
   fromJobTitle: string | null;
   toJobTitle: string | null;
   fromManagerId: string | null;
@@ -427,6 +439,9 @@ export interface EmployeePromotionT {
   toJobTitle: string;
   fromGrade: string | null;
   toGrade: string | null;
+  // P2.1 (ADR-022) — the designation master links beside the snapshots.
+  fromDesignationId: string | null;
+  toDesignationId: string | null;
   /** "yyyy-mm-dd". */
   effectiveDate: string;
   reason: string | null;
@@ -442,6 +457,50 @@ export interface EmployeePromotionT {
   createdAt: string;
   createdById: string;
   createdByName: string;
+}
+
+// ---------------------------------------------------------------------------
+// P2.1 (ADR-022) — the HR masters: Department (tree), Designation
+// (grade-linked), Grade (salary band). Client-shaped: ISO timestamps,
+// plain counts.
+// ---------------------------------------------------------------------------
+
+export interface DepartmentT {
+  id: string;
+  name: string;
+  code: string | null;
+  parentId: string | null;
+  parentName: string | null;
+  costCenter: string | null;
+  isActive: boolean;
+  employeeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DesignationT {
+  id: string;
+  name: string;
+  code: string | null;
+  gradeId: string | null;
+  gradeName: string | null;
+  isActive: boolean;
+  employeeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GradeT {
+  id: string;
+  name: string;
+  level: number;
+  minBase: number | null;
+  maxBase: number | null;
+  isActive: boolean;
+  designationCount: number;
+  employeeCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ---------------------------------------------------------------------------
