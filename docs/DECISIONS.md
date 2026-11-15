@@ -932,3 +932,58 @@ tested, and independently evolvable. The cost is duplicated
 status-enum plumbing (labels, badges, transition maps) — accepted
 duplication, chosen explicitly over coupling leave's ledger math to
 employment facts.
+
+## ADR-020 — Money is Float + round2, and schedules carry the rounding remainder in their last installment
+
+**Date:** 2026-11-15 · **Status:** accepted · **Phase:** 1 (G3)
+
+**Context.** G3 (full loan management, commit `53d0ad5`, migration
+`20261207000000_loan_management`) had to pick a money type for
+`Loan.principal`, `outstandingBalance`, and every
+`LoanSchedule`/`LoanRepayment` amount. The spec suggested
+`Decimal(12,2)`; the codebase says otherwise. This ADR records the
+convention the loan engine followed, so the next money-handling module
+does not re-litigate it — and so a future Decimal migration knows what
+it owes.
+
+**Decision.**
+
+1. **Float is the codebase money convention.** Every existing money
+   field and kernel is a JS number rounded to cents through
+   `round2` (`lib/shared/money.ts`, re-exported by
+   `lib/payroll/payroll-math.ts`): `PayAdjustment.amount`,
+   `Payslip.gross/net`, the statutory engine's snapshots, the arrears
+   and gratuity kernels, the salary-advance and encashment pricers.
+   The G3 migration therefore stores loan money as `Float`, not
+   `@db.Decimal` — a Decimal column would introduce a second money
+   representation and a serialization boundary (Prisma `Decimal` →
+   number) at every read, for no gain while every writer and reader
+   is float + `round2`.
+2. **Schedules are cent-exact by construction: the LAST installment
+   absorbs the rounding remainder.** The annuity split rounds each
+   row's interest and principal to cents, then the final row's
+   principal is set to the exact remaining balance (the salary-advance
+   rule). The principal portions therefore sum to the principal
+   EXACTLY and the final row clears the balance to 0 — never a stray
+   cent. `schedulePlanIsExact` plus the golden schedule tests
+   (`lib/payroll/__tests__/loans.test.ts`) pin the invariant.
+3. **Any future money-handling code follows round2 + Float.** New
+   money columns are `Float`; new money math routes every intermediate
+   through `round2` at the points the payroll kernels already do
+   (per-row rounding, never a single end-of-loop round); schedules
+   and repeated deductions carry the rounding remainder in their last
+   installment rather than distributing it.
+4. **A Decimal migration re-verifies the loan engine against the
+   golden tests.** If the codebase ever migrates money to `Decimal`
+   (e.g. for an accounting-grade audit), the loan repayment math —
+   amortization, the settlement balance walk, early-repayment
+   neutralization, FnF receivables — must be re-run against the
+   existing golden schedule and settlement tests before the switch
+   ships, because float-to-decimal cent drift changes which row
+   absorbs remainders.
+
+**Consequences.** One money representation everywhere; cent-exactness
+is a property of the schedule construction, not of the column type.
+The cost is the standing caveat that money never undergoes float
+arithmetic WITHOUT a `round2` at each materialization point — the
+kernel tests are the tripwire.
