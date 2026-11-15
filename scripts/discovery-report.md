@@ -186,3 +186,75 @@ scripts/discover-view-actions.py output; highlights:
    my-payslips, my-interviews, messaging, login(+lockout), hr-* (reviews,
    onboarding, offboarding, leave, holidays, directory, attendance,
    qa-hardening), hiring, a11y.
+
+## 8. PHASE 1 ADDENDUM — check E + verification results (2026-11-15)
+
+### Check E — internal-helper caller sweep (scripts/check-helpers-callers.py)
+Population checked: the 35 "internal helpers" (shared 14, hr-shared 16, result 2,
+ics-export 1, data-export 1, mentions 1) PLUS the other excluded singles
+(auth-guard 5, search 1, password-reset 3, payday-filing refreshOverdueFilings 1,
+audit-retention 2, biometric matchPunchToEmployee 1) = 48 exports.
+
+Result (precise, after manual verification of every regex hit):
+- **1 of the 35 has a real UI caller**: `exportMyData` — Settings → Privacy
+  ("Download my data"). Already planned for self-service/my-account.md.
+- **2 more from the wider set surfaced as UI-triggered** (were wrongly excluded):
+  - `matchPunchToEmployee` — Biometric Exceptions page "match" button → goes into
+    the biometric flow.
+  - `refreshOverdueFilings` — EI filings list refresh button → goes into the
+    payday-filing flow.
+- All 45 others: callers are only other server actions, src/lib code, comments,
+  or nothing at all → stay internal.
+- Confirmations: password-reset.ts resetPassword — the user-modal `resetPassword`
+  hit is a FIELD on updateUser (admin sets a user's password), not this action;
+  password-reset.ts stays UI-less. searchWorkspace / exportCalendarIcs /
+  trash.ts (getTrash, restore*, eraseUser) / bulkUpdateTasks / createReminder /
+  toggleReminder / notification issueAuthToken — NO UI callers anywhere.
+- Reminders: the Dashboard card only DISPLAYS reminders; nothing creates/toggles
+  them from the UI (likely cron/seed) → read-only card, no creation flow.
+- Trash/restore/erase: no UI → excluded with reason "no UI trigger".
+
+### Finding A — what happens after "mark joined" (hiring-onboarding.ts)
+markJoined (hiring:manage) inside one transaction:
+1. Creates the User account with a deterministic email
+   <first>.<last>@<hiring email domain> (collisions get numeric suffix), a RANDOM
+   one-time password that is NEVER emailed/displayed.
+2. Creates EmployeeProfile (employee number, master links from the offer's
+   position), TeamMember roster entry, SalaryStructure copied from the signed
+   offer (payrollReady=false warning if the offer carried no components).
+3. Instantiates the onboarding checklist from the workspace template.
+4. Queues a welcome email (MailOutbox → sendOutboxMail): "To set your password,
+   open the app and use 'Forgot password?' with that email."
+5. Joining gate (when enabled): refuses until every ACTIVE+MANDATORY document
+   type has a VERIFIED document and background checks are terminal; refusal
+   lists exactly what is outstanding.
+6. Audit: "marked <candidate> as joined — account <email> created with
+   onboarding checklist + welcome email (<status>)".
+
+**INCONSISTENCY FLAGGED**: the welcome email points new hires at "Forgot password?"
+but the login screen has NO forgot-password UI (password-reset.ts has no caller).
+The admin must set the initial password via Users → edit user (set new password).
+Document the actual mechanism in mark-joined.md + admin/users.md; README known
+limitations notes the missing self-reset (P2).
+
+### Finding — self-service loans (Q5)
+No self-service loan surface exists: payroll-self-service.ts exports only
+getMyPayslips; my-payslips-view shows no loan data (loan repayments appear only
+as payslip deduction lines); Payroll console/loan pages all need payroll:manage.
+→ No self-service/my-loans.md. README known limitations: "Employees cannot view
+their own loans — repayments appear only as payslip deduction lines (P2)."
+
+### UI structure verifications for the merge decisions
+- HR Console tabs: Requests / Types & Policies (hr:admin) / Holidays (hr:admin) /
+  Attendance (attendance:manage) / Balances / Directory / Reviews / Onboarding /
+  Offboarding. The Requests tab hosts ALL THREE decision queues (leave,
+  encashment, comp-off). Types & Policies tab hosts types + policy sets +
+  periods. Holidays is its own tab.
+- Leave view (self-service) = balance cards + "My requests" + encashment history
+  + comp-off history + three modals (Request leave / Encash leave days / Claim
+  comp-off) — one page.
+- Settings hub sections: Profile, Employee Profile (HR fields), My Reviews,
+  My Onboarding, My Documents, My Skill Map, Security (change password),
+  Notifications, Appearance, Time & Locale, Privacy (Download my data).
+- Trash / reminders / bulk-task-update / workspace search / ICS export / auth
+  tokens: no UI triggers → excluded (reasons recorded).
