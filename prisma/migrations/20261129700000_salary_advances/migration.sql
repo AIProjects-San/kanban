@@ -18,7 +18,7 @@
 CREATE TABLE "SalaryAdvance" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userId" TEXT NOT NULL,
-    "amount" REAL NOT NULL,
+    "amount" DOUBLE PRECISION NOT NULL,
     "currencyNote" TEXT NOT NULL DEFAULT '',
     -- OPEN → RECOVERED (the final installment's consuming run flips it).
     "status" TEXT NOT NULL DEFAULT 'OPEN',

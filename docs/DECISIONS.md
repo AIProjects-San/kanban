@@ -981,6 +981,16 @@ it owes.
    existing golden schedule and settlement tests before the switch
    ships, because float-to-decimal cent drift changes which row
    absorbs remainders.
+5. **In the PostgreSQL migration files, Prisma `Float` is written
+   `DOUBLE PRECISION` — never `REAL`.** The canonical datasource is
+   postgresql (ADR-008); the CI drift gate
+   (`scripts/pg-replay/replay.ts` → `scripts/drift-check.py`) maps
+   `Float → double precision` strictly, so a hand-written migration
+   that says `REAL` (a SQLite-ism the G3 and salary-advance migrations
+   initially carried, amended 2026-11-15 before any production deploy)
+   fails the gate. `REAL` is a 4-byte float in Postgres — silent
+   precision loss on money, exactly the class the gate exists to
+   catch before `migrate deploy` ever meets a production database.
 
 **Consequences.** One money representation everywhere; cent-exactness
 is a property of the schedule construction, not of the column type.

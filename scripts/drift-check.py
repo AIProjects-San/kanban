@@ -28,6 +28,7 @@ PRISMA_TO_PG = {
     "Boolean": "boolean",
     "DateTime": "timestamp without time zone",
     "Json": "jsonb",
+    "Decimal": "numeric",
 }
 
 # ---------------------------------------------------------------- parse schema
@@ -39,7 +40,7 @@ for raw in SCHEMA.splitlines():
         continue
     m = re.match(r"^model\s+(\w+)\s*\{", line)
     if m:
-        cur = {"name": m.group(1), "fields": [], "uniques": [], "pk": None}
+        cur = {"name": m.group(1), "fields": [], "uniques": [], "pk": None, "table": m.group(1)}
         models[m.group(1)] = cur
         continue
     if cur is None:
@@ -55,6 +56,9 @@ for raw in SCHEMA.splitlines():
         mi = re.match(r"@@id\(\[([^\]]+)\]", stripped)
         if mi:
             cur["pk"] = [c.strip() for c in mi.group(1).split(",")]
+        mm = re.match(r'@@map\(["\']([\w.]+)["\']\)', stripped)
+        if mm:
+            cur["table"] = mm.group(1)
         continue
     fm = re.match(r"^\s*(\w+)\s+([\w.?]+)(.*)$", line)
     if not fm:
@@ -102,15 +106,20 @@ for u in DUMP["uniques"]:
     pg_uniques.setdefault(u["tablename"], set()).add(frozenset(u["columns"].split(",")))
 
 failures, warnings = [], []
-exp_tables = set(models)
+# A model's real table name — @@map("...") when present (Prisma keeps the
+# model name for the client but creates/reads the mapped table; comparing
+# model names against table names reported false drift for the two
+# @@map-renamed statutory models).
+exp_tables = {m["table"] for m in models.values()}
+table_of = {m["table"]: name for name, m in models.items()}
 for t in sorted(exp_tables - pg_tables):
-    failures.append(f"table {t}: in schema.prisma but MISSING from migrations replay")
+    failures.append(f"table {t} (model {table_of[t]}): in schema.prisma but MISSING from migrations replay")
 for t in sorted(pg_tables - exp_tables):
     failures.append(f"table {t}: created by migrations but NOT in schema.prisma")
 
 for name, model in sorted(models.items()):
     exp = expected_columns(model)
-    got = pg_columns.get(name, {})
+    got = pg_columns.get(model["table"], {})
     for col, (etype, enull) in sorted(exp.items()):
         if col not in got:
             failures.append(f"{name}.{col}: in schema.prisma but MISSING from migrations replay")
@@ -129,7 +138,7 @@ for name, model in sorted(models.items()):
 
 for name, model in sorted(models.items()):
     exp_u = {frozenset(u) for u in expected_uniques(model)}
-    got_u = pg_uniques.get(name, set())
+    got_u = pg_uniques.get(model["table"], set())
     for u in sorted(exp_u - got_u, key=lambda s: sorted(s)):
         failures.append(f"{name}: unique constraint on {sorted(u)} MISSING from migrations replay (upsert target)")
     for u in sorted(got_u - exp_u, key=lambda s: sorted(s)):

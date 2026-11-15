@@ -14,7 +14,7 @@
 --     (the encashment PAID precedent at run lock).
 --
 -- Spec adaptations (also recorded in the G3 report):
---   • money columns are REAL (Float), not DECIMAL — the codebase's money
+--   • money columns are DOUBLE PRECISION (Float), not DECIMAL — the codebase's money
 --     convention (PayAdjustment.amount and every payroll kernel are
 --     float + round2; the amortization is cent-exact by construction:
 --     the LAST installment absorbs the rounding remainder);
@@ -25,8 +25,8 @@
 CREATE TABLE "LoanType" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
-    "interestRate" REAL NOT NULL DEFAULT 0,
-    "maxAmount" REAL,
+    "interestRate" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "maxAmount" DOUBLE PRECISION,
     "maxTermMonths" INTEGER,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -40,8 +40,8 @@ CREATE TABLE "Loan" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "employeeId" TEXT NOT NULL,
     "loanTypeId" TEXT NOT NULL,
-    "principal" REAL NOT NULL,
-    "interestRate" REAL NOT NULL,
+    "principal" DOUBLE PRECISION NOT NULL,
+    "interestRate" DOUBLE PRECISION NOT NULL,
     "termMonths" INTEGER NOT NULL,
     "startDate" TIMESTAMP(3) NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'DRAFT',
@@ -49,7 +49,7 @@ CREATE TABLE "Loan" (
     "approvedAt" TIMESTAMP(3),
     "activatedAt" TIMESTAMP(3),
     "closedAt" TIMESTAMP(3),
-    "outstandingBalance" REAL NOT NULL DEFAULT 0,
+    "outstandingBalance" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "reason" TEXT NOT NULL DEFAULT '',
     "createdById" TEXT NOT NULL DEFAULT '',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -65,9 +65,9 @@ CREATE TABLE "LoanSchedule" (
     "loanId" TEXT NOT NULL,
     "installmentNo" INTEGER NOT NULL,
     "dueDate" TIMESTAMP(3) NOT NULL,
-    "principalPortion" REAL NOT NULL,
-    "interestPortion" REAL NOT NULL,
-    "totalAmount" REAL NOT NULL,
+    "principalPortion" DOUBLE PRECISION NOT NULL,
+    "interestPortion" DOUBLE PRECISION NOT NULL,
+    "totalAmount" DOUBLE PRECISION NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'SCHEDULED',
     "paidAt" TIMESTAMP(3),
     "payslipId" TEXT,
@@ -82,9 +82,9 @@ CREATE TABLE "LoanRepayment" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "loanId" TEXT NOT NULL,
     "payslipId" TEXT,
-    "amount" REAL NOT NULL,
-    "principalPaid" REAL NOT NULL,
-    "interestPaid" REAL NOT NULL,
+    "amount" DOUBLE PRECISION NOT NULL,
+    "principalPaid" DOUBLE PRECISION NOT NULL,
+    "interestPaid" DOUBLE PRECISION NOT NULL,
     "paidAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "source" TEXT NOT NULL,
     "note" TEXT NOT NULL DEFAULT '',
