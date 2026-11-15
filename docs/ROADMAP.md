@@ -25,8 +25,12 @@ accumulated is paid down as those same files are touched.
 ## P2.5 — candidate scope (reported, not committed)
 
 Items surfaced by smoke tests but explicitly deferred for a scope decision
-before any work starts. Nothing here is scheduled.
+before any work starts. Nothing here is scheduled. Source: the G5 CSV
+import smoke test (2026-11-15, manual attendance path — device `CSV_IMPORT`,
+3+1 employees × 5 days imported, reconciled, paid through a W46 run).
 
 | # | Item | Source |
 |---|---|---|
-| P2.5.x | *(to be filled as gaps are reported)* | — |
+| P2.5.1 | **CSV re-upload has no retract/replace semantics.** The punches import is insert-only with re-delivery dedup: deleting a row from the CSV and re-uploading reports "0 inserted, N duplicates" and the already-imported punch persists — the exception queue cannot flag the missing entry (verified live). A corrected export cannot retract a bad punch; there is no UI to delete/re-import a device window's punches. (The queue DOES flag genuinely incomplete data — a lone IN punch surfaces as a missing-OUT exception.) | CSV smoke test |
+| P2.5.2 | **`addPayslip` has no UI.** The server action exists (and is guarded), but the Payroll view offers no way to add a missed employee to an OPEN run — the only UI path is deleting the run (blocked when it consumed adjustments) and recreating it. | CSV smoke test (payroll leg) |
+| P2.5.3 | Minor UX: the punches CSV import reuses the punch-log page's device *filter* as its import target (documented in the panel text, but easy to miss); the mapping/punch templates are paste-only ("Insert template" + placeholder) with no downloadable file. | CSV smoke test |
