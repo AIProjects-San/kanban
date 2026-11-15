@@ -294,3 +294,32 @@ their own loans — repayments appear only as payslip deduction lines (P2)."
 - Time entries: log/delete inside task-modal → covered by work/tasks.md.
 - Dashboard (KPI cards, payslips card) + Analytics (metric cards, charts)
   are read-only views → one work/dashboard.md, two sections.
+
+## 10. PHASE 2-4 EXECUTION LOG (2026-11-16)
+- Phase 2: 53 flow files written across 10 categories (3 getting-started
+  written directly; 50 via 8 parallel category writers with verbatim-label
+  + verbatim-error instructions). README.md index written (Phase 3).
+- Corrections applied after agent reports:
+  - hr/masters.md: the "Workspace Config Departments tab stays in sync"
+    claim was FALSE (it edits departmentConfig — a separate legacy list
+    feeding the General tab's Default department dropdown). Rewritten to
+    state the two lists are separate and do not sync. (Workspace-config
+    side verified accurate: markJoined's find-or-create seam does ensure a
+    matching Department master when someone joins.)
+  - payroll/runs.md: analytics card label quoted with an internal ADR id
+    paraphrased away (label verified real in payroll-view.tsx:389,396).
+  - getting-started/roles.md + workspace-tour.md restructured to carry the
+    full nine sections; work/calendar.md heading normalized.
+- Phase 4 (scripts/validate-flows.py): 54 files; 0 structural errors
+  (nine sections present and ordered in every flow file); 0 broken links;
+  README index ↔ disk parity exact (52/52); no internal-term leaks (source
+  paths, code identifiers, permission strings, dev commands, ticket ids,
+  placeholders); 247 quoted message fragments checked — 40 flagged, all
+  verified as templated messages with interpolations (22 spot-verified
+  directly against source; rest carried file:line citations from writer
+  reports). Route coverage: all 31 routes + 19 workspace views + public
+  offer page map to exactly one flow file (table in session log). Action
+  coverage: follows the Phase 0 view→action cross-reference that generated
+  the tree; UI-triggered actions from the 3 surfaced helpers
+  (exportMyData / matchPunchToEmployee / refreshOverdueFilings) each
+  documented in their flows.
