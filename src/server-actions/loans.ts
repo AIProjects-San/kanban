@@ -28,9 +28,10 @@
 // The payroll bookkeeping writer is settleLoansForRun: it flips the
 // schedule rows PAID off the adapter rows' consumedRunId back-link (the
 // encashment PAID precedent), writes the LoanRepayment rows, walks the
-// outstanding balance and closes the loan. It is exported for the
-// lock-time hook (proposed, pending review — see the G3 report) and for
-// the tests; nothing in payroll.ts calls it yet.
+// outstanding balance and closes the loan. lockPayrollRun calls the Tx
+// core at the same post-commit seam as the GL posting (best-effort:
+// audited, never rolled back); settleLoansForRun is the gated manual
+// retry the run row exposes when that hook fails.
 //
 // RBAC: everything here is payroll:manage (SUPER_ADMIN + ADMIN + HR — the
 // same permission the salary advances and the adjustments console use).
@@ -798,14 +799,6 @@ export interface LoanSettlementReport {
   skipped: number;
 }
 
-/** The system identity the lock-time hook (and any scheduler) settles
- *  under — the CRON_ACTOR convention. */
-export const LOAN_SETTLEMENT_ACTOR = {
-  userId: "cron:loan-settlement",
-  name: "Loan settlement pass",
-  role: "SYSTEM",
-};
-
 /** Settle the loan bookkeeping for a LOCKED run: every CONSUMED
  *  LOAN_INSTALLMENT adapter row whose consumedRunId names this run flips
  *  its schedule row PAID (guarded — idempotent), writes its LoanRepayment
@@ -813,10 +806,10 @@ export const LOAN_SETTLEMENT_ACTOR = {
  *  0. The encashment PAID precedent, loan-shaped: driven purely by the
  *  adapter's back-link, no payroll-side coupling.
  *
- *  NOT yet wired into lockPayrollRun — the exact hook placement is
- *  pending review (the G3 report carries the proposed diff). Safe to run
- *  any time after a run locks: the guarded schedule flips make repeats
- *  no-ops. */
+ *  Wired into lockPayrollRun at the post-commit GL seam (best-effort: a
+ *  failure audits payroll.loans_settlement_failed and never rolls the
+ *  lock back). Safe to run any time after a run locks: the guarded
+ *  schedule flips make repeats no-ops. */
 export async function settleLoansForRun(runId: string): Promise<LoanSettlementReport> {
   const auth = await requirePermission("payroll:manage");
   const report = await settleLoansForRunTx(runId);
@@ -835,8 +828,8 @@ export async function settleLoansForRun(runId: string): Promise<LoanSettlementRe
 }
 
 /** The settlement core (no permission gate, no audit — the action adds
- *  the payroll:manage gate and its audit entry; the future lock-time
- *  hook audits at its call site under LOAN_SETTLEMENT_ACTOR). */
+ *  the payroll:manage gate and its audit entry; lockPayrollRun calls this
+ *  directly at its post-commit seam and audits at its call site). */
 export async function settleLoansForRunTx(runId: string): Promise<LoanSettlementReport> {
   const report: LoanSettlementReport = { settled: 0, closed: 0, skipped: 0 };
   const consumed = await db.payAdjustment.findMany({

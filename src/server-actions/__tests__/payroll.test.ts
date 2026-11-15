@@ -20,6 +20,10 @@ const db = vi.hoisted(() => {
     "salaryStructureAssignment",
     // Phase 1C (G2) — the GL reads the lock-time posting makes.
     "ledgerAccount", "accountingPeriod", "journalEntry", "journalEntryLine",
+    // G3 — the loan reads the lock-time settlement makes (the real
+    // settleLoansForRunTx runs at the lock seam; the empty defaults below
+    // make it a benign no-op when nothing is consumed).
+    "loan", "loanSchedule", "loanRepayment", "loanType",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -225,6 +229,14 @@ beforeEach(() => {
   db.benefitElection.findMany.mockResolvedValue([]);
   db.benefitAccrual.create.mockResolvedValue({});
   db.benefitAccrual.groupBy.mockResolvedValue([]);
+  // G3 — the lock-time settlement: no schedules/loans by default, so the
+  // real settleLoansForRunTx no-ops even when a test seeds consumed
+  // adapter rows (the encashment fixtures) for its own assertions.
+  db.loanSchedule.findMany.mockResolvedValue([]);
+  db.loan.findMany.mockResolvedValue([]);
+  db.loanSchedule.updateMany.mockResolvedValue({ count: 0 });
+  db.loan.updateMany.mockResolvedValue({ count: 0 });
+  db.loanRepayment.create.mockResolvedValue({ id: "lr-new" });
   // P8 (F3.3) — no hold windows by default (slips stay unstamped).
   db.salaryWithholding.findMany.mockResolvedValue([]);
   db.salaryWithholding.findFirst.mockResolvedValue(null);

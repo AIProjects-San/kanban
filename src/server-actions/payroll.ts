@@ -105,6 +105,8 @@ import {
 } from "@/lib/payroll/nz/slip-statutory";
 // Phase 1C (G2) — the GL posting engine (lock hook).
 import { postPayrollRun } from "@/lib/accounting/post-payroll-run";
+// G3 — the loan settlement core (lock hook, same seam as the GL posting).
+import { settleLoansForRunTx } from "./loans";
 // The view bundle calls the structures module (split sibling).
 import { getSalaryStructures } from "./payroll-structures";
 
@@ -1720,6 +1722,41 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
         entityId: run.id,
         entityLabel: run.period,
         detail: `${run.period} was NOT posted to the general ledger: ${glError}. Fix the cause and re-run the posting — it is idempotent.`,
+      });
+    }
+    // G3 — settle the run's loan bookkeeping (schedule PAID flips +
+    // LoanRepayment rows + the outstanding-balance walk + the CLOSED flip),
+    // AFTER the lock commits and at the same best-effort seam as the GL
+    // posting: the payroll is already paid, so a settlement failure must
+    // NOT roll back or shadow the lock — it is audited loudly here and the
+    // settlement stays idempotent (guarded PAID flips) for the run row's
+    // "Retry loans" button (settleLoansForRun) once the cause is fixed.
+    try {
+      const loanSettlement = await settleLoansForRunTx(run.id);
+      if (loanSettlement.settled > 0 || loanSettlement.closed > 0) {
+        await logAudit({
+          actor: auth,
+          action: "payroll.loans_settled_for_run",
+          entityType: "PAYROLL_RUN",
+          entityId: run.id,
+          entityLabel: run.period,
+          detail: `${run.period} lock settled the run's loan bookkeeping — ${loanSettlement.settled} installment${loanSettlement.settled === 1 ? "" : "s"} booked, ${loanSettlement.closed} loan${loanSettlement.closed === 1 ? "" : "s"} closed${loanSettlement.skipped > 0 ? `, ${loanSettlement.skipped} skipped (already settled)` : ""}.`,
+        });
+      }
+    } catch (e) {
+      const loanError = e instanceof Error ? e.message : "unknown loan settlement error";
+      // Loud on purpose: this is the one lock-time failure an admin must
+      // notice and act on (the GL seam above has its own audit-only path).
+      console.error(
+        `[payroll] loan settlement FAILED for run ${run.id} (${run.period}): ${loanError} — the lock itself is committed; retry the settlement from the run row once the cause is fixed.`,
+      );
+      await logAudit({
+        actor: auth,
+        action: "payroll.loans_settlement_failed",
+        entityType: "PAYROLL_RUN",
+        entityId: run.id,
+        entityLabel: run.period,
+        detail: `${run.period} was locked but its loan bookkeeping was NOT settled: ${loanError}. The lock itself is committed. Retry the loan settlement from the run row — it is idempotent.`,
       });
     }
     // P18 — deliver outside the transaction (provider I/O never holds the

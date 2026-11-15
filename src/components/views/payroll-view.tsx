@@ -23,6 +23,8 @@ import {
 } from "@/server-actions/payroll";
 import { getPayrollAnalytics, exportPayrollRunCsv } from "@/server-actions/payroll-reports";
 import { applyPayAdjustmentsToRun } from "@/server-actions/payroll-adjustments";
+// G3 — the manual loan-settlement retry (the lock hook's failure escape).
+import { settleLoansForRun } from "@/server-actions/loans";
 // Phase 2 (payday filing) — the per-run EI filing badge.
 import { getRunFilingStatus } from "@/server-actions/payday-filing";
 import { computeOffer } from "@/lib/hiring/offer-math";
@@ -225,6 +227,30 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
     toast.success("Run locked — the period is paid and immutable.");
     await load();
     if (selectedRunId === runId) await loadPayslips(runId);
+  };
+
+  // G3 — re-run a locked run's loan settlement (the lock hook's best-effort
+  // escape: a failed settlement never rolled the lock back, so this button
+  // finishes the bookkeeping once the cause is fixed; guarded PAID flips
+  // make it idempotent, and a clean run is a no-op). settleLoansForRun
+  // returns the bare report (and throws on a permission failure) — the
+  // try/catch is the ActionResult the action itself doesn't wrap.
+  const retryLoanSettlement = async (runId: string, period: string) => {
+    setBusy(true);
+    try {
+      const { settled, closed, skipped } = await settleLoansForRun(runId);
+      if (settled === 0 && closed === 0 && skipped === 0) {
+        toast.info(`No loan settlement pending for ${period} — nothing consumed by this run.`);
+        return;
+      }
+      toast.success(
+        `${period} loan settlement re-run — ${settled} installment${settled === 1 ? "" : "s"} booked, ${closed} loan${closed === 1 ? "" : "s"} closed${skipped > 0 ? `, ${skipped} skipped (already settled)` : ""}.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "The loan settlement retry failed.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   // P20 (PR-R01/PR-R02) — the per-run CSV exports (LOCKED only server-side;
@@ -614,6 +640,17 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
                     title="One payment row per disbursed net (withheld nets stay out); the bank-account column is blank"
                   >
                     <Download size={13} /> Bank CSV
+                  </button>
+                  {/* G3 — the lock hook's failure escape (idempotent re-run). */}
+                  <button
+                    className="f-btn f-btn-ghost text-xs no-print"
+                    onClick={() => void retryLoanSettlement(r.id, r.period)}
+                    disabled={busy}
+                    type="button"
+                    data-testid={`retry-loans-btn-${r.period}`}
+                    title="Re-run this run's loan settlement (idempotent — use after a lock-time settlement failure)"
+                  >
+                    <RotateCcw size={13} /> Retry loans
                   </button>
                 </>
               )}

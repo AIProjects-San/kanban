@@ -41,6 +41,10 @@ vi.mock("@/server-actions/payroll-adjustments", () => ({
 
 vi.mock("@/server-actions/hr-directory", () => ({ getDirectory }));
 
+// G3 — the loan-settlement retry on LOCKED run rows (mocked: the real
+// action is covered by its own server-action suite).
+vi.mock("@/server-actions/loans", () => ({ settleLoansForRun: vi.fn() }));
+
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 // The modals are covered by their own suites; stub them here so this file

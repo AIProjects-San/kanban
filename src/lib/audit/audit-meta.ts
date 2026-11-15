@@ -16,6 +16,7 @@ import {
   BookOpen, ListChecks, MessageSquareText, CalendarClock, BadgeCheck,
   Scale, CircleDollarSign, Undo2, HeartPulse, Award, Users, Download,
   ArrowUpRight, Upload, FileX, Archive, PiggyBank, TriangleAlert,
+  ClipboardList, Moon, ArrowLeftRight, UserCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -169,6 +170,20 @@ export type AuditAction =
   | "hr.skill_deleted"
   | "hr.employee_skill_rated"
   | "hr.employee_skill_removed"
+  // G4 — timesheets (the actual-hours document lifecycle).
+  | "hr.timesheet_created"
+  | "hr.timesheet_updated"
+  | "hr.timesheet_submitted"
+  | "hr.timesheet_approved"
+  | "hr.timesheet_rejected"
+  // G4 — shifts + the roster (expected hours; the absence pass).
+  | "hr.shift_created"
+  | "hr.shift_updated"
+  | "hr.roster_assigned"
+  | "hr.roster_unassigned"
+  | "hr.roster_status_changed"
+  | "hr.roster_swapped"
+  | "hr.roster_absences_marked"
   // P39 (EM-16 advances half) — salary advances.
   | "payroll.advance_issued"
   // G3 — loan management (the full lifecycle + the settlement).
@@ -182,6 +197,11 @@ export type AuditAction =
   | "payroll.loan_activated"
   | "payroll.loan_early_repaid"
   | "payroll.loan_settled"
+  // G3 hook — the lock-time settlement at the GL seam (the run's loan
+  // bookkeeping after the lock commits; the manual retry writes
+  // payroll.loan_settled above).
+  | "payroll.loans_settled_for_run"
+  | "payroll.loans_settlement_failed"
   // Recruitment module lifecycle (docs/RECRUITMENT_MODULE_PLAN.md)
   | "hiring.candidate_created"
   | "hiring.candidate_updated"
@@ -445,6 +465,19 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hr.skill_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hr.employee_skill_rated": { icon: Award, cls: "text-amber-500 bg-amber-500/10" },
   "hr.employee_skill_removed": { icon: Trash2, cls: "text-zinc-500 bg-zinc-500/10" },
+  // G4 — timesheets + shifts + the roster.
+  "hr.timesheet_created": { icon: ClipboardList, cls: "text-teal-500 bg-teal-500/10" },
+  "hr.timesheet_updated": { icon: Pencil, cls: "text-teal-500 bg-teal-500/10" },
+  "hr.timesheet_submitted": { icon: Upload, cls: "text-amber-500 bg-amber-500/10" },
+  "hr.timesheet_approved": { icon: BadgeCheck, cls: "text-emerald-500 bg-emerald-500/10" },
+  "hr.timesheet_rejected": { icon: FileX, cls: "text-red-500 bg-red-500/10" },
+  "hr.shift_created": { icon: CalendarPlus, cls: "text-cyan-500 bg-cyan-500/10" },
+  "hr.shift_updated": { icon: Pencil, cls: "text-cyan-500 bg-cyan-500/10" },
+  "hr.roster_assigned": { icon: UserCheck, cls: "text-cyan-500 bg-cyan-500/10" },
+  "hr.roster_unassigned": { icon: UserMinus, cls: "text-zinc-500 bg-zinc-500/10" },
+  "hr.roster_status_changed": { icon: CalendarClock, cls: "text-sky-500 bg-sky-500/10" },
+  "hr.roster_swapped": { icon: ArrowLeftRight, cls: "text-violet-500 bg-violet-500/10" },
+  "hr.roster_absences_marked": { icon: Moon, cls: "text-destructive bg-destructive/10" },
   "payroll.advance_issued": { icon: CircleDollarSign, cls: "text-primary bg-primary/10" },
   "payroll.loan_type_created": { icon: Plus, cls: "text-blue-500 bg-blue-500/10" },
   "payroll.loan_type_updated": { icon: Pencil, cls: "text-blue-500 bg-blue-500/10" },
@@ -456,6 +489,8 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "payroll.loan_activated": { icon: ArrowUpRight, cls: "text-emerald-500 bg-emerald-500/10" },
   "payroll.loan_early_repaid": { icon: CircleDollarSign, cls: "text-emerald-500 bg-emerald-500/10" },
   "payroll.loan_settled": { icon: CircleDollarSign, cls: "text-sky-500 bg-sky-500/10" },
+  "payroll.loans_settled_for_run": { icon: CircleDollarSign, cls: "text-sky-500 bg-sky-500/10" },
+  "payroll.loans_settlement_failed": { icon: TriangleAlert, cls: "text-amber-500 bg-amber-500/10" },
   "onboarding.task_done": { icon: CheckCircle2, cls: "text-emerald-500 bg-emerald-500/10" },
   "onboarding.task_undone": { icon: RotateCcw, cls: "text-zinc-500 bg-zinc-500/10" },
   "onboarding.template_task_saved": { icon: Plus, cls: "text-primary bg-primary/10" },
@@ -598,6 +633,9 @@ export const ENTITY_BADGE: Record<string, EntityBadgeMeta> = {
   SALARY_ADVANCE: { label: "Advance", cls: "bg-cyan-500/10 text-cyan-700" },
   LOAN: { label: "Loan", cls: "bg-indigo-500/10 text-indigo-700" },
   LOAN_TYPE: { label: "Loan type", cls: "bg-indigo-500/10 text-indigo-700" },
+  TIMESHEET: { label: "Timesheet", cls: "bg-teal-500/10 text-teal-700" },
+  SHIFT: { label: "Shift", cls: "bg-cyan-500/10 text-cyan-700" },
+  SHIFT_ASSIGNMENT: { label: "Roster slot", cls: "bg-cyan-500/10 text-cyan-700" },
 };
 
 export const ENTITY_BADGE_DEFAULT: EntityBadgeMeta = {
@@ -626,6 +664,7 @@ export const AUDIT_FILTERS: AuditFilterDef[] = [
   { key: "bugs", label: "Bugs", types: ["BUG"] },
   { key: "hiring", label: "Hiring", types: ["CANDIDATE"] },
   { key: "people", label: "People & Access", types: ["MEMBER", "USER", "ROLE", "EMPLOYEE_TRANSFER", "EMPLOYEE_PROMOTION"] },
+  { key: "attendance-roster", label: "Attendance & Roster", types: ["TIMESHEET", "SHIFT", "SHIFT_ASSIGNMENT"] },
   { key: "payroll-loans", label: "Payroll & Loans", types: ["LOAN", "LOAN_TYPE", "SALARY_ADVANCE"] },
   { key: "events", label: "Calendar", types: ["EVENT"] },
   { key: "messages", label: "Messages", types: ["MESSAGE"] },
