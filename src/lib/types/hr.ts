@@ -443,3 +443,88 @@ export interface EmployeePromotionT {
   createdById: string;
   createdByName: string;
 }
+
+// ---------------------------------------------------------------------------
+// G4 — timesheets + shifts (docs plan §"timesheet and shift"): shifts
+// define EXPECTED hours (the roster), timesheets carry ACTUAL hours.
+// Client-shaped: ISO days ("yyyy-mm-dd"), clock strings ("HH:mm").
+// ---------------------------------------------------------------------------
+
+/** One worked-day line of a timesheet (several per day are legal —
+ * distinct projects/tasks). */
+export interface TimesheetLineT {
+  id: string;
+  /** "yyyy-mm-dd". */
+  workDate: string;
+  hours: number;
+  projectId: string | null;
+  taskId: string | null;
+  description: string | null;
+  isBillable: boolean;
+  isOvertime: boolean;
+}
+
+/** One timesheet, client-shaped. */
+export interface TimesheetT {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  /** "yyyy-mm-dd" window bounds. */
+  periodStart: string;
+  periodEnd: string;
+  status: string;
+  totalHours: number;
+  overtimeHours: number;
+  billableHours: number;
+  submittedAt: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  rejectReason: string;
+  /** The consuming payroll run, once locked payroll-side. */
+  payrollRunId: string | null;
+  createdAt: string;
+  lineCount: number;
+}
+
+/** A timesheet + its lines (the editor / detail read). */
+export interface TimesheetDetailT extends TimesheetT {
+  lines: TimesheetLineT[];
+  /** The signed-in viewer's standing: may they edit (draft family +
+  * owner-or-HR), may they submit, may they decide. */
+  viewer: { isOwner: boolean; canEdit: boolean; canSubmit: boolean; canDecide: boolean };
+}
+
+/** A shift definition (master data). */
+export interface ShiftT {
+  id: string;
+  name: string;
+  startTime: string;
+  endTime: string;
+  isOvernight: boolean;
+  breakMinutes: number;
+  isActive: boolean;
+  /** Derived at read time (the kernel's clock math — not stored). */
+  expectedHours: number | null;
+  assignmentCount: number;
+}
+
+/** One roster slot, client-shaped. */
+export interface ShiftAssignmentT {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  shiftId: string;
+  shiftName: string;
+  /** "yyyy-mm-dd". */
+  rosterDate: string;
+  status: string;
+  note: string;
+}
+
+/** One day of the roster grid: the date, its assignments, and the
+ * workspace's active shifts (the assign menu). */
+export interface RosterDayT {
+  /** "yyyy-mm-dd". */
+  day: string;
+  assignments: ShiftAssignmentT[];
+}

@@ -7,7 +7,8 @@
 // says so — corrections go to HR, who owns every record.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { CalendarCheck, ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { ATTENDANCE_STATUS_BADGE, ATTENDANCE_STATUS_LABELS } from "@/lib/shared/config";
 import type { AttendanceT, AttendanceStatus } from "@/lib/types";
@@ -100,6 +101,16 @@ export function MyAttendanceView({ currentUser }: { currentUser: { id: string; n
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* G4 — the member's self-service timesheet surface (draft +
+              submit actual hours; the page is session-identity scoped). */}
+          <Link
+            href={`/admin/employees/${currentUser.id}/timesheets`}
+            className="f-btn f-btn-ghost f-btn-sm"
+            data-testid="my-timesheets-link"
+            title="Draft and submit your actual hours for a period"
+          >
+            <ClipboardList size={13} /> My timesheets
+          </Link>
           <button
             type="button"
             className="f-btn f-btn-ghost f-btn-sm"

@@ -10,7 +10,8 @@
 // Weekends and calendar holidays are shaded (F1.1 integration).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarCheck, ChevronLeft, ChevronRight, Download, Loader2, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { CalendarCheck, CalendarRange, ChevronLeft, ChevronRight, ClipboardList, Download, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "../ui/modal";
 import { Field, FormRow } from "../ui/field";
@@ -174,6 +175,25 @@ export function AttendanceTab() {
             {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
             Sheet CSV
           </button>
+          {/* G4 — the timesheet review queue + the shift roster live on
+              their own routes (their data actions re-gate on
+              attendance:manage; this tab already implies the audience). */}
+          <Link
+            href="/admin/timesheets"
+            className="f-btn f-btn-ghost f-btn-sm"
+            data-testid="att-timesheets-link"
+            title="Review submitted timesheets (actual hours)"
+          >
+            <ClipboardList size={13} /> Timesheets
+          </Link>
+          <Link
+            href="/admin/shifts/roster"
+            className="f-btn f-btn-ghost f-btn-sm"
+            data-testid="att-roster-link"
+            title="The shift roster (expected hours)"
+          >
+            <CalendarRange size={13} /> Roster
+          </Link>
         </div>
       </div>
 

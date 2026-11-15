@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeftRight, TrendingUp } from "lucide-react";
+import { ArrowLeftRight, ClipboardList, TrendingUp } from "lucide-react";
 import { getEmploymentDocumentEmployees } from "@/server-actions/hr-employment-docs";
 import { departmentLabel } from "@/lib/shared/config";
 
@@ -67,6 +67,13 @@ export default async function EmploymentDocumentsIndexPage() {
                         className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
                       >
                         <TrendingUp className="h-3.5 w-3.5" /> Promotions
+                      </Link>
+                      {/* G4 — the employee's timesheets (actual hours). */}
+                      <Link
+                        href={`/admin/employees/${e.id}/timesheets`}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                      >
+                        <ClipboardList className="h-3.5 w-3.5" /> Timesheets
                       </Link>
                     </div>
                   </td>

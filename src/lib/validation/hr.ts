@@ -404,3 +404,90 @@ export const employmentDocumentRefSchema = z.object({
 export const cancelEmploymentDocumentSchema = employmentDocumentRefSchema.extend({
   reason: z.string().trim().max(2_000).optional(),
 }).strict();
+
+// ---------------------------------------------------------------------------
+// G4 — timesheets + shifts (docs plan §"timesheet and shift").
+// ---------------------------------------------------------------------------
+
+const clockTimeStr = z
+  .string()
+  .regex(/^([01]?\d|2[0-3]):([0-5]\d)$/, "Time must be a valid HH:mm clock time.");
+
+export const timesheetLineSchema = z.object({
+  workDate: isoDateStr,
+  hours: z.number().positive().max(24),
+  projectId: z.string().trim().max(64).optional(),
+  taskId: z.string().trim().max(64).optional(),
+  description: z.string().trim().max(500).optional(),
+  isBillable: z.boolean().optional(),
+  isOvertime: z.boolean().optional(),
+}).strict();
+
+/** Create/replace a timesheet draft. The window must be well-formed
+ * (start <= end, at most 372 days); the action additionally pins every
+ * line's work day inside the window. */
+export const saveTimesheetSchema = z.object({
+  employeeId: cuidish,
+  periodStart: isoDateStr,
+  periodEnd: isoDateStr,
+  lines: z.array(timesheetLineSchema).max(400),
+}).strict();
+
+export const timesheetRefSchema = z.object({
+  timesheetId: cuidish,
+}).strict();
+
+export const decideTimesheetSchema = timesheetRefSchema.extend({
+  decision: z.enum(["APPROVE", "REJECT"]),
+  reason: z.string().trim().max(2_000).optional(),
+}).strict();
+
+export const shiftSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  startTime: clockTimeStr,
+  endTime: clockTimeStr,
+  breakMinutes: z.number().int().min(0).max(240).default(0),
+  isActive: z.boolean().optional(),
+}).strict();
+
+export const shiftRefSchema = z.object({
+  shiftId: cuidish,
+}).strict();
+
+/** Update carries the id + the full definition (one strict shape — the
+ * ref-only schema would reject the definition keys, and vice versa). */
+export const updateShiftSchema = shiftSchema.extend({
+  shiftId: cuidish,
+}).strict();
+
+export const assignShiftSchema = z.object({
+  employeeId: cuidish,
+  shiftId: cuidish,
+  rosterDate: isoDateStr,
+  note: z.string().trim().max(500).optional(),
+}).strict();
+
+export const assignmentRefSchema = z.object({
+  assignmentId: cuidish,
+}).strict();
+
+export const assignmentStatusSchema = assignmentRefSchema.extend({
+  status: z.enum(["SCHEDULED", "COMPLETED", "ABSENT", "SWAPPED"]),
+  note: z.string().trim().max(500).optional(),
+}).strict();
+
+/** Swap: move one roster slot to another employee (the original flips
+ * SWAPPED for the trace; the target gains a fresh SCHEDULED slot). */
+export const swapShiftSchema = assignmentRefSchema.extend({
+  toEmployeeId: cuidish,
+  note: z.string().trim().max(500).optional(),
+}).strict();
+
+export const rosterDaySchema = z.object({
+  date: isoDateStr,
+}).strict();
+
+/** Move one roster slot to another day (the drag-drop grid's writer). */
+export const moveShiftSchema = assignmentRefSchema.extend({
+  toRosterDate: isoDateStr,
+}).strict();

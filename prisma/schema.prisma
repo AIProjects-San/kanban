@@ -111,6 +111,12 @@ model User {
   employeeTransfers  EmployeeTransfer[]
   employeePromotions EmployeePromotion[]
 
+  // G4 — the employee's timesheets (self-service drafts → HR-approved
+  // hours; see Timesheet below) and roster assignments (see
+  // ShiftAssignment below).
+  timesheets       Timesheet[]
+  shiftAssignments ShiftAssignment[]
+
   @@index([managerId])
 }
 
@@ -1320,6 +1326,14 @@ model AttendanceRecord {
   // these per period into an Overtime earning line when the workspace
   // overtime payout knob is on; shift-based multipliers arrive with F3.5.
   overtimeMinutes Int?
+  // G4 (F3.5) — the roster assignment this mark was worked under, when
+  // one exists (null = an unrostered day or a pre-G4 row). The link feeds
+  // absence detection (assigned but unmarked) and, later, shift
+  // differentials/overnight premiums; it NEVER changes the S2 timing
+  // facts above. An overnight assignment legitimately links BOTH calendar
+  // days it spans — hence one-to-many, not one-to-one.
+  shiftAssignmentId String?
+  shiftAssignment   ShiftAssignment? @relation(fields: [shiftAssignmentId], references: [id], onDelete: SetNull)
   note      String   @default("")
   source    String   @default("MANUAL")
   createdAt DateTime @default(now())
@@ -3375,4 +3389,121 @@ model PaydayAmendmentFiling {
 
   @@index([originalFilingId])
   @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// G4 (F3.4/F3.5) — timesheet + shift management. Spec docs/plan §"timesheet
+// and shift": shifts define EXPECTED hours (the roster), timesheets carry
+// ACTUAL hours (self-service drafts, HR-approved), and the approved
+// timesheet is the hours override the payroll run may consume (the
+// createPayrollRun hook ships behind review — see the G4 report; the
+// consumption target payrollRunId is already unique below).
+// ---------------------------------------------------------------------------
+
+// G4 — one timesheet per employee per period window: the actual-hours
+// document. Lifecycle DRAFT → SUBMITTED → APPROVED → LOCKED (auto, when a
+// payroll run locks after consuming it) with REJECTED as the review exit
+// (back to DRAFT for re-submission). Approval is four-eyes: the approver
+// must differ from the employee whose hours these are.
+model Timesheet {
+  id          String   @id @default(cuid())
+  employeeId  String
+  employee    User     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  // The window the lines fall inside (UTC midnights; weekly or monthly —
+  // the covering payroll window decides what "the period" means).
+  periodStart DateTime
+  periodEnd   DateTime
+  status      String   @default("DRAFT")
+  // DRAFT | SUBMITTED | APPROVED | LOCKED | REJECTED
+  submittedAt DateTime?
+  approvedById String?
+  approvedAt  DateTime?
+  // REJECTED's paper trail (the review reason; "" otherwise).
+  rejectedById String?
+  rejectedAt  DateTime?
+  rejectReason String  @default("")
+  // Denormalized Σ line hours at every write (read-time honesty, the F1.1
+  // discipline): the list views and the payroll bridge read this, never a
+  // per-line aggregation.
+  totalHours  Float    @default(0)
+  // The payroll run that consumed these hours (written at consumption; the
+  // UNIQUE constraint makes a timesheet consumable by EXACTLY ONE run —
+  // the idempotency anchor the G4 payroll hook relies on).
+  payrollRunId String? @unique
+  createdAt   DateTime @default(now())
+  createdById String   @default("")
+  updatedAt   DateTime @updatedAt
+  lines       TimesheetLine[]
+
+  @@index([employeeId, periodStart])
+  @@index([status])
+}
+
+// G4 — one line per worked day (possibly several per day: distinct
+// projects/tasks). hours is actual time worked, not expected; isOvertime
+// marks rows the employee claims beyond the roster/day standard (the flag
+// the review checks — the payout itself stays the P9 bridge's business).
+model TimesheetLine {
+  id          String    @id @default(cuid())
+  timesheetId String
+  timesheet  Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  // UTC midnight of the worked day.
+  workDate    DateTime
+  hours       Float
+  projectId   String?
+  taskId      String?
+  description String?
+  isBillable  Boolean   @default(false)
+  isOvertime  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([timesheetId])
+  @@index([workDate])
+}
+
+// G4 — a shift definition (master data): expected clock times as "HH:mm"
+// strings, parsed by the lib/hr/shifts kernel. isOvernight is a DISPLAY +
+// math hint (endTime <= startTime means the shift crosses midnight); the
+// kernel derives it but the column keeps the author's intent queryable.
+model Shift {
+  id           String   @id @default(cuid())
+  name         String
+  startTime    String
+  endTime      String
+  isOvernight  Boolean  @default(false)
+  breakMinutes Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  assignments  ShiftAssignment[]
+
+  @@unique([name])
+}
+
+// G4 — one roster slot: employee × date (the @@unique is the no
+// double-booking guard — assigning a second shift to an already-rostered
+// employee/day is refused at write time, the QA-16 write-guard style).
+// SCHEDULED | COMPLETED (attendance confirms) | ABSENT (rostered but no
+// attendance mark — the absence detection input) | SWAPPED (reassigned to
+// another employee; the note carries the trace).
+model ShiftAssignment {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shiftId    String
+  shift      Shift    @relation(fields: [shiftId], references: [id])
+  // UTC midnight of the rostered day.
+  rosterDate DateTime
+  status     String   @default("SCHEDULED")
+  note       String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  // The attendance marks worked under this slot (overnight shifts span
+  // two calendar days — see AttendanceRecord.shiftAssignmentId).
+  attendanceRecords AttendanceRecord[]
+
+  @@unique([employeeId, rosterDate])
+  @@index([rosterDate])
+  @@index([shiftId])
 }
