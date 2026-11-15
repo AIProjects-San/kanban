@@ -1,15 +1,15 @@
 -- G4 (F3.4/F3.5) — timesheet + shift management (docs plan §"timesheet and
 -- shift"): shifts define EXPECTED hours (the roster), timesheets carry
 -- ACTUAL hours (self-service drafts → HR approval), and the approved
--- timesheet is the hours override a payroll run may consume. The
--- createPayrollRun consumption hook itself ships behind review (see the
--- G4 report); the schema it needs is all here, including the
--- one-run-per-timesheet UNIQUE guard.
+-- timesheet is the hours override a payroll run may consume.
 --
 --   • Timesheet/TimesheetLine — the actual-hours document + its per-day
 --     (per project/task) lines. totalHours denormalizes Σ lines at every
---     write (F1.1 read-honesty); payrollRunId UNIQUE = consumable by
---     exactly one run, the idempotency anchor.
+--     write (F1.1 read-honesty); payrollRunId is indexed for the lock-time
+--     APPROVED→LOCKED flip and the run-deletion release — one run per
+--     timesheet is the guarded payrollRunId NULL→run flip in the consuming
+--     run's transaction (a column UNIQUE would cap a run at ONE consumed
+--     sheet, which a multi-employee run violates by construction).
 --   • Shift/ShiftAssignment — the roster master + one slot per employee
 --     per day (UNIQUE = the no double-booking guard).
 --   • AttendanceRecord.shiftAssignmentId — the optional back-link the
@@ -36,9 +36,11 @@ CREATE TABLE "Timesheet" (
     "createdById" TEXT NOT NULL DEFAULT '',
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "Timesheet_payrollRunId_key" UNIQUE ("payrollRunId"),
     CONSTRAINT "Timesheet_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
+
+-- CreateIndex
+CREATE INDEX "Timesheet_payrollRunId_idx" ON "Timesheet"("payrollRunId");
 
 -- CreateTable
 CREATE TABLE "TimesheetLine" (

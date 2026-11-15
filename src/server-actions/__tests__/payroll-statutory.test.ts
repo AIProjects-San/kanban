@@ -20,6 +20,8 @@ const db = vi.hoisted(() => {
     "salaryStructureAssignment",
     // Phase 1C (G2) — the GL reads the lock-time posting makes.
     "ledgerAccount", "accountingPeriod", "journalEntry", "journalEntryLine",
+    // G4 — the timesheet reads the reviewed payroll hook makes.
+    "timesheet",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -146,6 +148,10 @@ function structureRow(userId: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // G4 — the timesheet hook defaults: no consumable sheets, and a
+  // successful guarded flip whenever one is seeded (count 1).
+  db.timesheet.findMany.mockResolvedValue([]);
+  db.timesheet.updateMany.mockResolvedValue({ count: 1 });
   requirePermissionMock.mockResolvedValue(HR_AUTH);
   getSessionOrThrowMock.mockResolvedValue({ ...HR_AUTH, userId: "u-yuki", role: "MEMBER" as const, name: "Yuki Tanaka" });
   getWorkspaceConfigMock.mockResolvedValue({

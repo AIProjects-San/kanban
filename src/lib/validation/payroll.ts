@@ -228,6 +228,13 @@ export const lockPayrollRunSchema = z.object({
   runId: cuidish,
 }).strict();
 
+// G4 (the timesheet hook's release path) — deleting an OPEN run (the
+// "cancel this payroll before it ships" action). LOCKED runs are payroll
+// history and are refused in the action, not just here.
+export const deletePayrollRunSchema = z.object({
+  runId: cuidish,
+}).strict();
+
 // P20 (PR-R01/PR-R02) — the per-run CSV exports. LOCKED runs only (paid
 // money only); the kind picks the register vs the bank remittance shape.
 export const exportPayrollCsvSchema = z.object({

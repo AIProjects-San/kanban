@@ -169,6 +169,8 @@ const db = vi.hoisted(() => {
     "holidayCalendarEntry", "salaryWithholding", "attendanceRecord",
     "leaveRequest", "leaveType", "fullAndFinalStatement", "mailOutbox",
     "statutoryRule", "employeeTaxProfile", "taxYear",
+    // G4 — the timesheet reads the reviewed payroll hook makes.
+    "timesheet",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -272,6 +274,10 @@ function assignmentRow(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // G4 — the timesheet hook defaults: no consumable sheets, and a
+  // successful guarded flip whenever one is seeded (count 1).
+  db.timesheet.findMany.mockResolvedValue([]);
+  db.timesheet.updateMany.mockResolvedValue({ count: 1 });
   ASSIGNMENT_ROWS.length = 0;
   requirePermissionMock.mockResolvedValue(HR_AUTH);
   getWorkspaceConfigMock.mockResolvedValue({

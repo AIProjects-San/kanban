@@ -20,6 +20,8 @@ DROP INDEX "Timesheet_status_idx";
 
 DROP INDEX "Timesheet_employeeId_periodStart_idx";
 
+DROP INDEX "Timesheet_payrollRunId_idx";
+
 DROP TABLE "ShiftAssignment";
 
 DROP TABLE "Shift";

@@ -24,6 +24,11 @@ const db = vi.hoisted(() => {
     // settleLoansForRunTx runs at the lock seam; the empty defaults below
     // make it a benign no-op when nothing is consumed).
     "loan", "loanSchedule", "loanRepayment", "loanType",
+    // G4 — the timesheet reads the reviewed payroll hook makes (the hours
+    // override read in createPayrollRun, the lock-time flip, the
+    // run-deletion release). Empty defaults keep every pre-hook test
+    // byte-identical: no sheets, nothing consumed, nothing locked.
+    "timesheet",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -237,6 +242,12 @@ beforeEach(() => {
   db.loanSchedule.updateMany.mockResolvedValue({ count: 0 });
   db.loan.updateMany.mockResolvedValue({ count: 0 });
   db.loanRepayment.create.mockResolvedValue({ id: "lr-new" });
+  // G4 — the timesheet hook defaults: no consumable sheets, and a
+  // successful guarded flip whenever one is seeded (count 1).
+  db.timesheet.findMany.mockResolvedValue([]);
+  db.timesheet.updateMany.mockResolvedValue({ count: 1 });
+  db.timesheet.update.mockResolvedValue({});
+  db.payrollRun.delete.mockResolvedValue({ id: "run-1" });
   // P8 (F3.3) — no hold windows by default (slips stay unstamped).
   db.salaryWithholding.findMany.mockResolvedValue([]);
   db.salaryWithholding.findFirst.mockResolvedValue(null);

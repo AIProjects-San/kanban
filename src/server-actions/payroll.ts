@@ -33,6 +33,7 @@ import {
   createPayrollRunSchema,
   updatePayslipSchema,
   lockPayrollRunSchema,
+  deletePayrollRunSchema,
   addPayslipSchema,
   parseOrThrow,
 } from "@/lib/validation";
@@ -40,7 +41,7 @@ import { logAudit, queueOutboxMail, deliverOutboxMail } from "./shared";
 import { toResult, isUniqueConstraintError } from "./result";
 import type { ActionResult } from "@/lib/shared/action-result";
 import { parseComponents } from "@/lib/hiring/offer-math";
-import { workingDaysBetween, paymentWindowBetween, type HolidayLookup } from "@/lib/hr/working-days";
+import { workingDaysBetween, paymentWindowBetween, dayKey, type HolidayLookup } from "@/lib/hr/working-days";
 import { deriveLopBreakdownBetween, parseLopDetail, type LopAttendanceMark, type LopLeaveSpan } from "@/lib/payroll/lop-derivation";
 import { getWorkspaceConfig } from "@/lib/infra/config-loader";
 import { getHolidayLookup } from "./hr-shared";
@@ -107,6 +108,9 @@ import {
 import { postPayrollRun } from "@/lib/accounting/post-payroll-run";
 // G3 — the loan settlement core (lock hook, same seam as the GL posting).
 import { settleLoansForRunTx } from "./loans";
+// G4 — the timesheet→paid-days bridge (the reviewed hours override hook in
+// createPayrollRun / the lock-time APPROVED→LOCKED flip consume this).
+import { hoursToPaidDays } from "@/lib/hr/timesheets";
 // The view bundle calls the structures module (split sibling).
 import { getSalaryStructures } from "./payroll-structures";
 
@@ -628,6 +632,32 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
         )
       : new Map<string, number>();
 
+    // G4 (the reviewed payroll hook) — the hours override read: this run's
+    // employees' APPROVED, still-unconsumed timesheets whose window IS this
+    // run's window (day-granularity exact match — "an approved timesheet for
+    // the period"). A coarser sheet (monthly vs a weekly run) is deliberately
+    // NOT consumed: its totalHours price the SHEET's window, not the run's,
+    // and paidDays = hours / 8 is only honest against the matching
+    // denominator; the finer run falls back to the standard working-day
+    // derivation instead of inventing a 4x proration. One sheet per employee
+    // (first in creation order wins — the save action's one-sheet-per-window
+    // discipline makes duplicates impossible in practice).
+    const windowStartDay = dayKey(window.start);
+    const windowEndDay = dayKey(window.end);
+    const sheetRows = await db.timesheet.findMany({
+      where: {
+        status: "APPROVED",
+        payrollRunId: null,
+        employeeId: { in: paidSources.map((s) => s.userId) },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const sheetByUser = new Map<string, { id: string; totalHours: number }>();
+    for (const row of sheetRows) {
+      if (dayKey(row.periodStart) !== windowStartDay || dayKey(row.periodEnd) !== windowEndDay) continue;
+      if (!sheetByUser.has(row.employeeId)) sheetByUser.set(row.employeeId, { id: row.id, totalHours: row.totalHours });
+    }
+
     // P1 (PR-12/PR-B10, F2.3) — the adjustment adapter consumption: every
     // PENDING row due in this window resolves onto its employee's payslip
     // through the pure two-pass kernel, and the row updates commit in the
@@ -689,12 +719,26 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       };
       consumed: ConsumedEntry[];
       autoEnrol: SlipAutoEnrolment | null;
+      // G4 — the consumed timesheet whose hours priced this slip (null = the
+      // standard working-day derivation; the write below stamps it).
+      sheet: { id: string; totalHours: number } | null;
     };
     const slipPlans: SlipPlan[] = paidSources.map((s, i) => {
       const facts = lopByUser.get(s.userId)
         ?? { lopDays: 0, paidDays: runWorkingDays, clippedFrom: false, clippedUntil: false, lopDetail: null };
       const components = parseComponents(s.components);
-      const lopDays = facts.lopDays;
+      // G4 (the reviewed payroll hook) — the one branch: an approved
+      // timesheet for this exact window makes its totalHours the paid-time
+      // truth. paidDays = totalHours / 8 (the kernel bridge, clamped), and
+      // the attendance/leave LOP derivation is REPLACED — its absences are
+      // already netted out of the recorded hours, so charging both would
+      // double-dock the same absence (the F1.4 no-double-charge rule read
+      // at the window level). The gross formula itself is untouched:
+      // deriveSlipLines still prices paidDays / workingDays.
+      const sheet = sheetByUser.get(s.userId) ?? null;
+      const paidDays = sheet ? hoursToPaidDays(sheet.totalHours, runWorkingDays) : facts.paidDays;
+      const lopDays = sheet ? 0 : facts.lopDays;
+      const lopDetail = sheet ? undefined : facts.lopDetail;
       // The one structure→lines derivation (scale → structure deductions →
       // overtime → LOP → the two-pass adjustment kernel); the ordering
       // rationale lives in lib/payroll/slip-derivation.ts. The auto LOP line
@@ -704,7 +748,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
         frequency: window.frequency,
         earningsYear,
         workingDays: runWorkingDays,
-        paidDays: facts.paidDays,
+        paidDays,
         lopDays,
         periodKey: window.periodKey,
         overtime: { enabled: overtimePayEnabled, minutes: otByUser.get(s.userId) ?? null },
@@ -771,17 +815,18 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           deductions: JSON.stringify(deductions),
           lopDays,
           lopSource: "AUTO",
-          lopDetail: facts.lopDetail ? (facts.lopDetail as unknown as Prisma.InputJsonValue) : undefined,
+          lopDetail: lopDetail ? (lopDetail as unknown as Prisma.InputJsonValue) : undefined,
           statutory: statutorySnapshot,
           // Phase 1A — the snapshot's key facts as real columns.
           ...statutorySnapshotColumns(statutoryPlan),
-          paidDays: facts.paidDays,
+          paidDays,
           gross,
           net,
           withholdStatus: heldUserIds.has(s.userId) ? "WITHHELD" : "",
         },
         consumed,
         autoEnrol,
+        sheet,
       };
     });
 
@@ -795,6 +840,9 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
     // Phase 2 — enrolments that LANDED (filled by the transactions below;
     // audited only after commit).
     const enrolledInRun: Array<{ entry: SlipAutoEnrolment; slipNo: string }> = [];
+    // G4 — timesheet consumptions that LANDED (first chunk + overflow
+    // successes; the run_created audit quotes this count).
+    let timesheetsConsumed = 0;
 
     const run = await db.$transaction(async (tx) => {
       const created = await tx.payrollRun.create({
@@ -847,6 +895,25 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           enrolledInRun.push({ entry: plan.autoEnrol, slipNo: plan.data.slipNo });
         }
       }
+      // G4 — the transactional timesheet consumption (one run per
+      // timesheet, the QA-16 guarded flip): the write only ever matches an
+      // UNCONSUMED sheet, so a concurrent run that consumed it mid-flight
+      // flips zero rows here — and the whole run creation refuses (the
+      // slips were priced from those hours; committing them without the
+      // consumption would be money without its row, the S17 discipline).
+      for (const plan of firstChunk) {
+        if (!plan.sheet) continue;
+        const flip = await tx.timesheet.updateMany({
+          where: { id: plan.sheet.id, payrollRunId: null },
+          data: { payrollRunId: created.id },
+        });
+        if (flip.count !== 1) {
+          throw new AuthorizationError(
+            `That employee's approved timesheet was consumed by another payroll run while this one was being created — create the run again; it will fall back to the standard working-day derivation.`,
+          );
+        }
+        timesheetsConsumed += 1;
+      }
       return created;
     });
 
@@ -874,6 +941,21 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
           // Phase 2 — the overflow slip's auto-enrolment, same atomic rule.
           if (plan.autoEnrol && (await persistAutoEnrolment(tx, plan.autoEnrol))) {
             enrolledInRun.push({ entry: plan.autoEnrol, slipNo: plan.data.slipNo });
+          }
+          // G4 — the overflow slip's timesheet consumption, same guarded
+          // per-slip atomic rule: a failed flip rolls back THIS slip (and
+          // leaves its sheet unconsumed), never the rest of the run.
+          if (plan.sheet) {
+            const flip = await tx.timesheet.updateMany({
+              where: { id: plan.sheet.id, payrollRunId: null },
+              data: { payrollRunId: run.id },
+            });
+            if (flip.count !== 1) {
+              throw new AuthorizationError(
+                `That employee's approved timesheet was consumed by another payroll run while this one was being created — re-add the payslip; it will fall back to the standard working-day derivation.`,
+              );
+            }
+            timesheetsConsumed += 1;
           }
         });
         overflowApplied += plan.consumed.length;
@@ -905,7 +987,7 @@ export async function createPayrollRun(input: unknown): Promise<ActionResult<{ i
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${payslipCount} payslips from the active ${window.frequency.toLowerCase()} salary structures${data.userIds && data.userIds.length > 0 ? ` (filtered to ${data.userIds.length} selected employee(s))` : ""}${overflow.length > 0 ? ` (${firstChunk.length} in the creation batch + ${overflow.length - failures.length} chunked beyond 30)` : ""}${failures.length > 0 ? ` — ${failures.length} payslip(s) FAILED with reasons: ${failures.map((f) => `${f.slipNo} (${f.reason})`).join("; ")}` : ""}${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}${rateSet ? ` Statutory: priced on "${rateSet.label}"${statutoryDefaulted > 0 ? `, ${statutoryDefaulted} slip(s) on system-default tax profiles (no IR330 recorded)` : ""}${statutorySkips.length > 0 ? `, ${statutorySkips.length} slip(s) created WITHOUT statutory lines (${statutorySkips.map((f) => `${f.slipNo}: ${f.reason}`).join("; ")})` : ""}${enrolledInRun.length > 0 ? `, ${enrolledInRun.length} KiwiSaver auto-enrolment(s) persisted` : ""}.` : " No statutory rate set covers the window — statutory lines were not computed."}`,
+      detail: `${auth.name} created the ${run.period} (${window.frequency}) payroll run with ${payslipCount} payslips from the active ${window.frequency.toLowerCase()} salary structures${data.userIds && data.userIds.length > 0 ? ` (filtered to ${data.userIds.length} selected employee(s))` : ""}${overflow.length > 0 ? ` (${firstChunk.length} in the creation batch + ${overflow.length - failures.length} chunked beyond 30)` : ""}${failures.length > 0 ? ` — ${failures.length} payslip(s) FAILED with reasons: ${failures.map((f) => `${f.slipNo} (${f.reason})`).join("; ")}` : ""}${autoLopCount > 0 ? ` (${autoLopCount} with auto-derived loss-of-pay from attendance and unpaid leave)` : ""}${clippedCount > 0 ? ` (${clippedCount} scaled to mid-period employment windows)` : ""}${timesheetsConsumed > 0 ? ` (${timesheetsConsumed} approved timesheet(s) consumed — their recorded hours priced the paid days)` : ""}${otSlipCount > 0 ? ` (${otSlipCount} with attendance overtime)` : ""}${heldUserIds.size > 0 ? ` (${heldUserIds.size} payslip(s) WITHHELD under an active salary hold)` : ""}${adjustmentsApplied > 0 || adjustmentsSkipped > 0 ? ` (${adjustmentsApplied} adjustment(s) consumed${adjustmentsSkipped > 0 ? `, ${adjustmentsSkipped} skipped with reason` : ""})` : ""}${rateSet ? ` Statutory: priced on "${rateSet.label}"${statutoryDefaulted > 0 ? `, ${statutoryDefaulted} slip(s) on system-default tax profiles (no IR330 recorded)` : ""}${statutorySkips.length > 0 ? `, ${statutorySkips.length} slip(s) created WITHOUT statutory lines (${statutorySkips.map((f) => `${f.slipNo}: ${f.reason}`).join("; ")})` : ""}${enrolledInRun.length > 0 ? `, ${enrolledInRun.length} KiwiSaver auto-enrolment(s) persisted` : ""}.` : " No statutory rate set covers the window — statutory lines were not computed."}`,
     });
     // Phase 2 — the enrolment audit entries (after commit: the log never
     // describes money that rolled back).
@@ -1629,6 +1711,9 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
     // comfortably under 5s at seeded volumes but deserves headroom at the
     // documented ≤200-employee scale on a remote Postgres (Supabase RTT).
     const accrualCount = { rows: 0 };
+    // G4 — the timesheets this lock froze (filled by the transaction; the
+    // run_locked audit quotes the count after commit).
+    const lockedTimesheetCount = { sheets: 0 };
     // P18 — the queued email row ids (delivery happens after the tx).
     const emailRowIds: string[] = [];
     await db.$transaction(
@@ -1643,6 +1728,15 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
             data: { status: "PAID", paidRunId: run.id, paidAt: new Date() },
           });
         }
+        // G4 — the consumed timesheets lock WITH the run (the encashment
+        // PAID precedent: the document that fed the money freezes with it).
+        // Guarded on the consumption stamp, so only sheets THIS run
+        // consumed flip — and a LOCKED sheet can never be re-flipped.
+        const lockedTimesheets = await tx.timesheet.updateMany({
+          where: { payrollRunId: run.id, status: "APPROVED" },
+          data: { status: "LOCKED" },
+        });
+        lockedTimesheetCount.sheets = lockedTimesheets.count;
         // P5 — append-only ACCRUAL rows, one per election with a priced amount.
         const payslipRows = await tx.payslip.findMany({
           where: { runId: run.id },
@@ -1801,10 +1895,63 @@ export async function lockPayrollRun(input: unknown): Promise<ActionResult<{ ok:
       entityType: "PAYROLL_RUN",
       entityId: run.id,
       entityLabel: run.period,
-      detail: `${auth.name} locked the ${run.period} payroll run (paid) — ${run.payslips.length} payslips, net $${total.toLocaleString("en-NZ")}${encashmentIds.length > 0 ? `, ${encashmentIds.length} leave encashment(s) marked paid` : ""}${emailSlips.length > 0 ? `, ${emailSlips.length} payslip email(s) queued (${emailCounts.sent} sent, ${emailCounts.skipped} skipped, ${emailCounts.failed} failed)` : ""}.`,
+      detail: `${auth.name} locked the ${run.period} payroll run (paid) — ${run.payslips.length} payslips, net $${total.toLocaleString("en-NZ")}${encashmentIds.length > 0 ? `, ${encashmentIds.length} leave encashment(s) marked paid` : ""}${lockedTimesheetCount.sheets > 0 ? `, ${lockedTimesheetCount.sheets} timesheet(s) locked with the run` : ""}${emailSlips.length > 0 ? `, ${emailSlips.length} payslip email(s) queued (${emailCounts.sent} sent, ${emailCounts.skipped} skipped, ${emailCounts.failed} failed)` : ""}.`,
     });
     revalidatePath("/");
     return { ok: true };
+  });
+}
+
+/** G4 (the timesheet hook's release path) — delete an OPEN run: the
+ * "cancel this payroll before it ships" action. LOCKED runs are payroll
+ * history and are refused outright (their timesheets stay LOCKED, their
+ * encashments PAID — history is never unwound). Inside the ONE transaction:
+ * the timesheets this run consumed are RELEASED back to APPROVED with their
+ * payrollRunId cleared (so a corrected re-run can consume them again), the
+ * payslips cascade with the run, and the run row goes. A run that consumed
+ * pay adjustments is refused first — those rows would be orphaned money
+ * trails (consumedRunId pointing at a deleted run); HR resolves them
+ * deliberately (the P1 audit trail), never as a deletion side effect. */
+export async function deletePayrollRun(input: unknown): Promise<ActionResult<{ ok: true; releasedTimesheets: number }>> {
+  return toResult(async () => {
+    const auth = await requirePermission("payroll:manage");
+    const data = parseOrThrow(deletePayrollRunSchema, input);
+    const run = await db.payrollRun.findUnique({ where: { id: data.runId } });
+    if (!run) throw new AuthorizationError("Payroll run not found.");
+    if (run.status !== "OPEN") {
+      throw new AuthorizationError("A locked run is payroll history — it cannot be deleted.");
+    }
+    const consumedAdjustments = await db.payAdjustment.findMany({
+      where: { consumedRunId: run.id },
+      select: { id: true },
+    });
+    if (consumedAdjustments.length > 0) {
+      throw new AuthorizationError(
+        `This run consumed ${consumedAdjustments.length} pay adjustment(s) — deleting it would orphan their audit trail. Resolve those rows first (the Pay Adjustments register shows them).`,
+      );
+    }
+    let releasedTimesheets = 0;
+    await db.$transaction(async (tx) => {
+      // B — the release: only still-APPROVED sheets (a LOCKED sheet belongs
+      // to a locked run, refused above), and only THIS run's.
+      const released = await tx.timesheet.updateMany({
+        where: { payrollRunId: run.id, status: "APPROVED" },
+        data: { payrollRunId: null },
+      });
+      releasedTimesheets = released.count;
+      // Payslips ride the schema's own onDelete: Cascade.
+      await tx.payrollRun.delete({ where: { id: run.id } });
+    });
+    await logAudit({
+      actor: auth,
+      action: "payroll.run_deleted",
+      entityType: "PAYROLL_RUN",
+      entityId: run.id,
+      entityLabel: run.period,
+      detail: `${auth.name} deleted the OPEN ${run.period} payroll run${releasedTimesheets > 0 ? ` and released ${releasedTimesheets} consumed timesheet(s) back to approved` : ""} — a fresh run for the period can consume them again.`,
+    });
+    revalidatePath("/");
+    return { ok: true, releasedTimesheets };
   });
 }
 

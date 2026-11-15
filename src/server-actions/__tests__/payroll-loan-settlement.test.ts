@@ -20,6 +20,8 @@ const db = vi.hoisted(() => {
     "benefitElection", "benefitAccrual", "mailOutbox", "auditLog",
     // The settlement core's reads/writes (the retry test runs the real Tx).
     "loan", "loanSchedule", "loanRepayment", "loanType",
+    // G4 — the lock-time APPROVED→LOCKED flip write.
+    "timesheet",
   ];
   const methods = [
     "findMany", "findUnique", "findFirst", "create", "createMany", "update",
@@ -116,6 +118,10 @@ const ACTIVE_LOAN = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // G4 — the timesheet hook defaults: no consumable sheets, and a
+  // successful guarded flip whenever one is seeded (count 1).
+  db.timesheet.findMany.mockResolvedValue([]);
+  db.timesheet.updateMany.mockResolvedValue({ count: 1 });
   requirePermissionMock.mockResolvedValue(HR_AUTH);
   db.payrollRun.findUnique.mockResolvedValue({
     ...OPEN_RUN,

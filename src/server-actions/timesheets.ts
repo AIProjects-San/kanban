@@ -225,6 +225,16 @@ export async function saveTimesheet(input: unknown): Promise<ActionResult<{ id: 
     const existing = await db.timesheet.findFirst({
       where: { employeeId: data.employeeId, periodStart: parseDay(data.periodStart), periodEnd: parseDay(data.periodEnd) },
     });
+    // TASK 1A — the consumption guard: a sheet a payroll run has consumed
+    // (payrollRunId set, run still OPEN) is payroll INPUT now — it may not
+    // be edited, however innocuous the change looks (the run's slips were
+    // priced from these hours). The edit family (save/submit/decide) all
+    // refuse; the run's deletion releases the sheet back to APPROVED. A
+    // LOCKED sheet (the run already locked) keeps its terminal-state
+    // message below — its run is history, not active.
+    if (existing?.payrollRunId && existing.status !== "LOCKED") {
+      throw new AuthorizationError("Timesheet is consumed by an active payroll run — cannot edit");
+    }
     if (existing && !isEditableTimesheet(existing.status)) {
       throw new AuthorizationError(
         existing.status === "LOCKED"
@@ -301,6 +311,14 @@ export async function submitTimesheet(input: unknown): Promise<ActionResult<void
     if (sheet.employeeId !== auth.userId) {
       await requirePermission("attendance:manage");
     }
+    // TASK 1A — the consumption guard (defence in depth: a consumed sheet
+    // is APPROVED, which the transition graph already refuses — this makes
+    // the refusal EXPLICIT rather than incidental). After the standing
+    // check, so a stranger still hears "permission" first; a LOCKED sheet
+    // falls through to the terminal-state message below.
+    if (sheet.payrollRunId && sheet.status !== "LOCKED") {
+      throw new AuthorizationError("Timesheet is consumed by an active payroll run — cannot edit");
+    }
     if (!canTransitionTimesheet(sheet.status, "SUBMITTED")) {
       throw new AuthorizationError(
         sheet.status === "SUBMITTED"
@@ -344,6 +362,13 @@ export async function decideTimesheet(input: unknown): Promise<ActionResult<void
       include: { employee: { select: { name: true } } },
     });
     if (!sheet) throw new AuthorizationError("Timesheet not found.");
+    // TASK 1A — the consumption guard on the review side too: approving or
+    // rejecting a sheet a run already priced from would change payroll
+    // input after the fact (a LOCKED sheet's run is history — the
+    // submitted-only refusal below covers it).
+    if (sheet.payrollRunId && sheet.status !== "LOCKED") {
+      throw new AuthorizationError("Timesheet is consumed by an active payroll run — cannot edit");
+    }
     if (sheet.status !== "SUBMITTED") {
       throw new AuthorizationError("Only a submitted timesheet can be decided.");
     }

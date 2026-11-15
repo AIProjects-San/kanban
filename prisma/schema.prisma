@@ -3396,8 +3396,11 @@ model PaydayAmendmentFiling {
 // and shift": shifts define EXPECTED hours (the roster), timesheets carry
 // ACTUAL hours (self-service drafts, HR-approved), and the approved
 // timesheet is the hours override the payroll run may consume (the
-// createPayrollRun hook ships behind review — see the G4 report; the
-// consumption target payrollRunId is already unique below).
+// createPayrollRun hook consumes one sheet per employee whose window
+// matches the run's; one-run-per-timesheet is the guarded payrollRunId
+// NULL→run flip in the run's own transaction — a coarser UNIQUE on the
+// column would cap a run at a single consumed sheet, which a
+// multi-employee run violates by construction).
 // ---------------------------------------------------------------------------
 
 // G4 — one timesheet per employee per period window: the actual-hours
@@ -3426,10 +3429,14 @@ model Timesheet {
   // discipline): the list views and the payroll bridge read this, never a
   // per-line aggregation.
   totalHours  Float    @default(0)
-  // The payroll run that consumed these hours (written at consumption; the
-  // UNIQUE constraint makes a timesheet consumable by EXACTLY ONE run —
-  // the idempotency anchor the G4 payroll hook relies on).
-  payrollRunId String? @unique
+  // The payroll run that consumed these hours (written at consumption;
+  // indexed for the lock-time APPROVED→LOCKED flip and the run-deletion
+  // release). One run per timesheet is enforced by the guarded
+  // payrollRunId NULL→run flip inside the consuming run's transaction
+  // (the QA-16 status-in-WHERE discipline — a second run's flip matches
+  // zero rows and refuses), NOT by a column UNIQUE: several employees'
+  // sheets legitimately carry the same run id.
+  payrollRunId String?
   createdAt   DateTime @default(now())
   createdById String   @default("")
   updatedAt   DateTime @updatedAt
@@ -3437,6 +3444,7 @@ model Timesheet {
 
   @@index([employeeId, periodStart])
   @@index([status])
+  @@index([payrollRunId])
 }
 
 // G4 — one line per worked day (possibly several per day: distinct
