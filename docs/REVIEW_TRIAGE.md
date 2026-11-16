@@ -333,16 +333,28 @@ already in flight.
 **Sequencing (war-room directive, 2026-11-16):** three hotfixes executed the
 same day — R-P0-1 (`eef176c`), R-P0-2 (`b6c4c47`), R-P0-3 (`c90ebc4`), the
 latter shipping the `docs:drift` CI gate that keeps the truth pass true —
-and accepted by the war room the same evening. R-P0-4/5/6 start Tuesday
-2026-11-17, targeting Friday 2026-11-20, inside the two-week window; the
-Phase 0 week-2 config-boundary first cut proceeds as planned from 2026-11-23
-(ADR-023 Appendix A). ADR-025 (DocType framework) and ADR-023 Addendum A
-(revised gate criteria + kill condition #1) were recorded before week 2
-begins, per the directive: Addendum A is now **ratified** (sign-off Mara
-Chen, CTO, 2026-11-16) and ADR-025 is **countersigned** (Devon Okafor,
-Principal Architect, 2026-11-16, with a reversibility note). ADR-026 —
-erasure anonymizes, never deletes — is drafted ahead of R-P0-5 so that
+and accepted by the war room the same evening. The R-P0-4/5/6 execution
+order was re-issued as **state-based** (2026-11-16 directive): no calendar
+targets — the items run on dependencies and acceptance criteria, gated by
+three pre-checks (rate-set deletion behavior, Fatima's ADR-026
+countersignature, ICS scoping evidence); the Phase 0 week-2
+config-boundary first cut proceeds in parallel per ADR-023 Appendix A.
+ADR-025 (DocType framework) and ADR-023 Addendum A (revised gate criteria +
+kill condition #1) were recorded before week 2 begins, per the directive:
+Addendum A is now **ratified** (sign-off Mara Chen, CTO, 2026-11-16) and
+ADR-025 is **countersigned** (Devon Okafor, Principal Architect,
+2026-11-16, with a reversibility note). ADR-026 — erasure anonymizes,
+never deletes — is **countersigned** (Dr. Fatima Al-Rashid, Security &
+Compliance Lead, 2026-11-16, status ACCEPTED) ahead of R-P0-5 so that
 workstream implements a recorded decision rather than an improvisation.
+
+**Pre-check outcome (2026-11-16, state-based batch): A FAILED → R-P0-7.**
+Pre-check A (rate-set deletion while a run is OPEN) found the joiner path
+in the critical-bug bucket — see the R-P0-7 spec below. Per the batch
+protocol (failure protocol + "report first"), no item implementation
+begins until the war room agrees R-P0-7's scope. Pre-check B passed
+(countersignature recorded above). Pre-check C passed — decision recorded
+with R-P0-4 below.
 
 **R-P0-1 follow-up (2026-11-16): the double-deduction guard is verified.**
 The banner tells the scope truth; the guard is what prevents the failure
@@ -362,11 +374,14 @@ mode behind it. Verified present and green — 59/59 across the three suites
 - `persistStatutoryLines` (`payroll.ts:178`) replaces statutory keys
   wholesale on the run-creation and joiner paths; `withLopLine` /
   `withRoundingLine` are replace-never-duplicate (`payroll-math.test.ts`).
-  One adjacent edge is untested — the rate set deleted while a run is OPEN
-  (`payroll.ts:1336-1343`, a drop-guard that keeps the stored lines, not a
-  double-deduction vector) — noted as test debt for the R-P0-4/5/6 batch.
+  One adjacent edge was untested — the rate set deleted while a run is
+  OPEN — noted here as test debt; pre-check A (below) has since examined
+  the full edge and escalated it: the edit path is the documented cache
+  use this note assumed (now pinned by
+  `src/server-actions/__tests__/payroll-rateset-deleted.test.ts`), but the
+  joiner and lock paths are a silent-wrong-values hole → R-P0-7.
 
-**P0 — honesty and security surface, small diffs (R-P0-1/2/3 applied and war-room accepted; R-P0-4/5/6 start 2026-11-17, target 2026-11-20)**
+**P0 — honesty and security surface, small diffs (R-P0-1/2/3 applied and war-room accepted; R-P0-4/5/6 gated on pre-checks — R-P0-7 scope agreement pending)**
 
 | ID | Item | Evidence anchor |
 |---|---|---|
@@ -376,6 +391,72 @@ mode behind it. Verified present and green — 59/59 across the three suites
 | R-P0-4 | ICS export: scope to HR or strip candidate PII; emit TZID/VTIMEZONE (or document UTC-only) — the export currently has no UI caller, so fix before wiring | §4.3 |
 | R-P0-5 | `eraseUser`: decide FK strategy (anonymize instead of delete, or lift `Restrict`), sweep the non-FK orphan PII, add a non-mocked integration test | §4.4 |
 | R-P0-6 | Production posture: require explicit `SERVER_ACTIONS_ALLOWED_ORIGINS` override (startup warning on wildcard trust); document/gate the demo password prefill | §4.5-6 |
+| R-P0-7 | **SPEC ONLY, pending war-room scope agreement** — rate-set deletion guard, found by pre-check A. Spec below | Pre-check A |
+
+**Pre-check C decision (recorded 2026-11-16, lands with R-P0-4's
+implementation): strip PII.** Evidence: `exportCalendarIcs` has zero UI
+callers (the only import is the `data.ts` barrel re-export plus its own
+tests — the export is orphaned); no documentation or test asserts candidate
+names in the export (the `p2-batch-2` suite uses generic events only). No
+workflow depends on candidate names appearing. The writer is the sole PII
+source — `hiring-interviews.ts:102-103` embeds
+`Interview: ${fullName} — ${stage}` / `${position} · ${email}` — and
+interview events are typed `MEETING` (hiring-interviews.ts:111), so they
+are indistinguishable from generic events at the render layer: the redact
+must happen at the writer, with a renderer-side defense for legacy rows.
+Deletion is rejected: R-P1-2 already owns the wiring decision, and once
+PII never enters the stored fields, wiring later carries no PII risk. The
+adjacent in-app surface (the dashboard event feed renders the same stored
+titles, `dashboard.ts:188`) is fixed for future events by the same writer
+change; legacy-row cleanup is reported, not silently folded.
+
+**R-P0-7 spec (proposed — the war room must agree the scope before
+implementation; per the batch protocol this is spec-only).**
+
+*Finding (pre-check A, verified by test run + code read).* `deleteTaxYear`
+(`tax-admin.ts:704-735`) refuses deletion only when **LOCKED** runs
+reference the set; OPEN-run references are counted and audited but the
+deletion proceeds. After deletion, on an OPEN engine run:
+
+- `updatePayslip` keeps the stored statutory lines + snapshot — documented
+  cache use, now pinned by `payroll-rateset-deleted.test.ts`.
+- `addPayslip` creates joiner slips with **zero statutory lines** and a
+  plain-success result; only the audit row notes the missing set
+  (`payroll.ts:1564-1565`, `:1630`). An untaxed slip is a wrong-net
+  (overpayment) with no operator-visible error.
+- `lockPayrollRun` has no rate-set validation; the untaxed net locks
+  immutably and posts to the GL.
+
+Taxonomy: *silent wrong values* — the critical bucket. R-P0-5's erasure
+work rides on this data-integrity ground; fix the ground first.
+
+*Proposed guard (three layers, defense in depth):*
+
+1. **Deletion refusal extended to OPEN runs** — `deleteTaxYear` refuses
+   when ANY run (OPEN or LOCKED) references the set; archive remains the
+   retire path (archiving is safe mid-run: frozen-run resolution is by
+   explicit id via `findUnique` and ignores the effectiveness window —
+   `calculate.ts:409-427`). Existing tests at `tax-admin.test.ts:434-444`
+   are updated accordingly, documented.
+2. **Joiner loud failure** — `addPayslip` refuses with the engine-style
+   user-facing error naming the missing set when `run.rateSetId` is set but
+   the set fails to resolve — the same fail-loud philosophy the action
+   already applies to engine refusals (`payroll.ts:1529-1531`).
+3. **Edit cache-use kept + pinned** — `updatePayslip` keeps stored lines
+   (the slip's own frozen pricing; dropping them would silently
+   under-deduct). The pin test locks this in.
+
+*Open decision points for the war room:* (a) layer 1 outright refusal vs.
+typed-confirmation escape hatch (recommend: outright — archive exists);
+(b) optional run-page notice when `run.rateSetId` no longer resolves
+(recommend: yes, small); (c) a lock-time completeness check (recommend:
+no — layers 1+2 close the hole for new data; a lock check adds
+false-positive risk on legitimately manual legacy runs); (d) backfill for
+already-orphaned `rateSetId` values (recommend: none — pre-launch).
+Estimated shape: small diffs in `tax-admin.ts` + `payroll.ts`
+(`addPayslip`), test updates in `tax-admin.test.ts` +
+`payroll-statutory.test.ts`, plus the joiner/lock regression tests (the
+pre-check scratch cases, promoted).
 
 **P1 — product fundamentals**
 

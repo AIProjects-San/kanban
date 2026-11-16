@@ -193,7 +193,7 @@ contains **no credential literals**; the seed refuses to run without it):
 | `bun run build` / `bun run start` | Standalone production build / serve |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | `tsc --noEmit` (strict — part of the gate) |
-| `bun run test` | Vitest unit/integration suite (**3,844 test cases** · static count, pinned by `docs:drift`) |
+| `bun run test` | Vitest unit/integration suite (**3,845 test cases** · static count, pinned by `docs:drift`) |
 | `bun run test:coverage` | Coverage report + threshold gates (src/lib ≥90% statements / 80% branches; src/server-actions ≥89/77 — ADR-021's honest floor) |
 | `bun run test:e2e` | Selenium + Cucumber browser suite (needs Chrome; see `e2e/README.md`) |
 | `bun run test:prodsmoke` | Smoke-checks a production build (health, headers, CSP, login) |
@@ -291,7 +291,7 @@ deploy/                # Caddy/nginx TLS configs, sandbox preview helper
 
 | Layer | Tool | Scale |
 |-------|------|-------|
-| Unit / integration | Vitest + jsdom (212 files) | **3,844 test cases** (static count, pinned by `docs:drift`), coverage-gated |
+| Unit / integration | Vitest + jsdom (213 files) | **3,845 test cases** (static count, pinned by `docs:drift`), coverage-gated |
 | Browser E2E | Cucumber + Selenium | 138 scenarios / 18 feature files |
 | Production smoke | `test:prodsmoke` | health, headers, CSP, credential flow |
 | Load | k6 + `scripts/load-smoke.mjs` | p95 budgets incl. a 100k-row dataset (`scripts/seed-load.js`) |
