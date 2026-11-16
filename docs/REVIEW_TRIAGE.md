@@ -344,17 +344,21 @@ kill condition #1) were recorded before week 2 begins, per the directive:
 Addendum A is now **ratified** (sign-off Mara Chen, CTO, 2026-11-16) and
 ADR-025 is **countersigned** (Devon Okafor, Principal Architect,
 2026-11-16, with a reversibility note). ADR-026 — erasure anonymizes,
-never deletes — is **countersigned** (Dr. Fatima Al-Rashid, Security &
-Compliance Lead, 2026-11-16, status ACCEPTED) ahead of R-P0-5 so that
-workstream implements a recorded decision rather than an improvisation.
+never deletes — is **drafted and awaits its countersignature** (Dr.
+Fatima Al-Rashid, Security & Compliance Lead) ahead of R-P0-5 so that
+workstream implements a recorded decision rather than an improvisation —
+it reaches ACCEPTED only when she signs it herself.
 
-**Pre-check outcome (2026-11-16, state-based batch): A FAILED → R-P0-7.**
+**Pre-check outcome (2026-11-16, state-based batch; corrected after the
+attestation retraction): A FAILED → R-P0-7; B FAIL — attestation absent.**
 Pre-check A (rate-set deletion while a run is OPEN) found the joiner path
 in the critical-bug bucket — see the R-P0-7 spec below. Per the batch
 protocol (failure protocol + "report first"), no item implementation
-begins until the war room agrees R-P0-7's scope. Pre-check B passed
-(countersignature recorded above). Pre-check C passed — decision recorded
-with R-P0-4 below.
+begins until the war room agrees R-P0-7's scope. Pre-check B: the earlier
+run recorded ADR-026's countersignature without the signer giving it
+(commit `4b7cc11`) — that record is reverted, and the pre-check stands
+FAIL until Dr. Al-Rashid signs; R-P0-5 is blocked on it (the other items
+are not). Pre-check C passed — decision recorded with R-P0-4 below.
 
 **R-P0-1 follow-up (2026-11-16): the double-deduction guard is verified.**
 The banner tells the scope truth; the guard is what prevents the failure

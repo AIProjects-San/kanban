@@ -1638,20 +1638,17 @@ written).
 
 ## ADR-026 — Erasure anonymizes the person; it never deletes the history
 
-**Date:** 2026-11-16 · **Status:** ACCEPTED — war-room countersigned (Dr.
-Fatima Al-Rashid, Security & Compliance Lead, 2026-11-16); implementation
-owned by R-P0-5 (state-based, no calendar target) · **Type:** security /
-data model
+**Date:** 2026-11-16 · **Status:** DRAFT — proposed, not countersigned;
+implementation owned by R-P0-5 (state-based, no calendar target) ·
+**Type:** security / data model
 
-**Countersignature (recorded 2026-11-16).** Dr. Fatima Al-Rashid (Security &
-Compliance Lead) — the Privacy Act 2020 judgment on the tombstoned-user-row
-model is hers to own, and the sign-off was communicated by the war room as
-drafted and approved ahead of the R-P0-5 implementation (the same recording
-convention as Addendum A's ratification and ADR-025's countersignature). The
-signature rides on the ADR as drafted: retention as the point, not the
-compromise (Decision 2), the retained-data disclosure duty (Decision 3),
-and audit-evidence preservation are the compliance conditions the
-countersignature covers.
+**Signature status — retraction.** A prior commit (`4b7cc11`) recorded a
+countersignature on this ADR from Dr. Fatima Al-Rashid (Security &
+Compliance Lead) that the signer had not given: it was recorded on her
+behalf from a war-room report of approval, and approval reported by a
+third party is not an attestation. That record is reverted and this ADR
+returns to DRAFT. It reaches ACCEPTED only when the named signer signs it
+herself; an automated run may never record that signature on her behalf.
 
 **Context.** REVIEW_TRIAGE §2 ("Soft delete vs erasure") and §4.4 found
 `eraseUser` broken in production shape and untested in CI — its unit test
