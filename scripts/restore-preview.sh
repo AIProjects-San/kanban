@@ -47,6 +47,18 @@ grep -q '^NEXT_PUBLIC_DEMO_PASSWORD=' .env || echo 'NEXT_PUBLIC_DEMO_PASSWORD=fe
 grep -q '^NEXT_PUBLIC_SEED_DEMO=' .env || echo 'NEXT_PUBLIC_SEED_DEMO=1' >> .env
 grep -q '^NEXT_PUBLIC_DEMO_ACCOUNTS=' .env || \
   echo 'NEXT_PUBLIC_DEMO_ACCOUNTS=demo@fernly.app:Admin,manager@fernly.app:Manager,member@fernly.app:Member' >> .env
+# R-P0-6 — the sandbox demo preview is the ONE legitimate production-mode
+# build with demo credentials; the build gate in next.config.ts requires
+# this explicit opt-in or the build FAILS. Without this line a healed .env
+# (demo trio present) would break the next preview rebuild.
+grep -q '^ALLOW_DEMO_CREDENTIALS_IN_BUILD=' .env || echo 'ALLOW_DEMO_CREDENTIALS_IN_BUILD=1' >> .env
+# R-P0-6 — the production default for Server Actions / Better Auth origins
+# became same-origin-only; the preview sits behind the platform proxy
+# (*.space-z.ai / *.fcapp.run hosts), so its origins must now be EXPLICIT
+# (previously they rode the wildcard default R-P0-6 removed). Scoped
+# wildcards, not the trust-all "*".
+grep -q '^SERVER_ACTIONS_ALLOWED_ORIGINS=' .env || \
+  echo 'SERVER_ACTIONS_ALLOWED_ORIGINS=*.space-z.ai,*.fcapp.run,localhost:3000,localhost:81,127.0.0.1:3000' >> .env
 # BETTER_AUTH_SECRET — must be STABLE across recycles. The auth-better resolver
 # falls back to crypto.randomUUID() when unset, which rotates on every restart
 # and invalidates every existing session row's signature.

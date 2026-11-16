@@ -119,6 +119,71 @@ describe("security headers (P2-20)", () => {
     }
   });
 
+  it("R-P0-6: the PRODUCTION default (env unset) is same-origin only — never a wildcard", async () => {
+    // The corrected-batch posture: dev/test keep the conservative
+    // preview/dev default; a production build with the env unset must not
+    // silently trust wildcard preview domains. An empty additions list
+    // means same-origin only (the deployment's own origin is implicit).
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SERVER_ACTIONS_ALLOWED_ORIGINS", "");
+    try {
+      vi.resetModules();
+      const mod = await import("../../next.config");
+      const origins = (
+        (mod.default.experimental as { serverActions: { allowedOrigins: string[] } })
+          .serverActions.allowedOrigins
+      );
+      expect(origins).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it("R-P0-6: a production build with NEXT_PUBLIC_DEMO_PASSWORD set FAILS at config evaluation", async () => {
+    // The credential would be inlined into the client bundle (the L-P0-12
+    // failure mode); the chosen behavior is a loud, named build failure.
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_DEMO_PASSWORD", "fernly123");
+    vi.stubEnv("ALLOW_DEMO_CREDENTIALS_IN_BUILD", "");
+    try {
+      vi.resetModules();
+      await expect(import("../../next.config")).rejects.toThrow(
+        /NEXT_PUBLIC_DEMO_PASSWORD is set in a production build/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it("R-P0-6: a DEV build with NEXT_PUBLIC_DEMO_PASSWORD set builds fine (demo prefill path intact)", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NEXT_PUBLIC_DEMO_PASSWORD", "fernly123");
+    try {
+      vi.resetModules();
+      const mod = await import("../../next.config");
+      expect(mod.default).toBeDefined();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it("R-P0-6: the sandbox demo hatch (ALLOW_DEMO_CREDENTIALS_IN_BUILD=1) explicitly opts a production build in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_DEMO_PASSWORD", "fernly123");
+    vi.stubEnv("ALLOW_DEMO_CREDENTIALS_IN_BUILD", "1");
+    try {
+      vi.resetModules();
+      const mod = await import("../../next.config");
+      expect(mod.default).toBeDefined();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
   it("REPORT_URI adds report-uri/report-to directives and the Report-To header", async () => {
     const prev = process.env.REPORT_URI;
     process.env.REPORT_URI = "https://csp-collector.example.com/report";

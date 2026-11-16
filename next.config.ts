@@ -1,6 +1,37 @@
 import type { NextConfig } from "next";
 
 // ---------------------------------------------------------------------------
+// R-P0-6 (REVIEW_TRIAGE §4.5-6) — demo-credential build gate.
+//
+// NEXT_PUBLIC_DEMO_PASSWORD is dev/demo-only by contract (docs/SECURITY.md:
+// its single home is .env). Because NEXT_PUBLIC_* vars are inlined into the
+// client bundle at build time, a PRODUCTION build that sets it ships the
+// credential string to every browser — the exact L-P0-12 failure mode the
+// literal purge fixed. Chosen behavior (documented): the build FAILS, loudly
+// and by name, at config evaluation — the earliest moment the mistake is
+// detectable, before a single chunk is emitted.
+//
+// The one legitimate production-mode build with demo credentials is the
+// sandbox demo preview, which opts in EXPLICITLY with
+// ALLOW_DEMO_CREDENTIALS_IN_BUILD=1 (healed into .env by
+// scripts/restore-preview.sh, documented in .env.example). The hatch is the
+// difference between "the demo preview builds demo credentials on purpose"
+// and "someone's prod pipeline leaked a demo var" — the latter now fails.
+// ---------------------------------------------------------------------------
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PUBLIC_DEMO_PASSWORD &&
+  process.env.ALLOW_DEMO_CREDENTIALS_IN_BUILD !== "1"
+) {
+  throw new Error(
+    "[build] FATAL: NEXT_PUBLIC_DEMO_PASSWORD is set in a production build — " +
+      "demo credentials must never ship in the client bundle. " +
+      "Unset it (demo credentials are a dev/.env-only concern), or, for the " +
+      "sandbox demo preview ONLY, set ALLOW_DEMO_CREDENTIALS_IN_BUILD=1.",
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Server Actions allowed origins — environment-driven split (audit §1.15).
 //
 // Preview deployments (*.space-z.ai, *.fcapp.run) and local development need
@@ -10,22 +41,31 @@ import type { NextConfig } from "next";
 //
 //   SERVER_ACTIONS_ALLOWED_ORIGINS="app.example.com,staging.example.com"
 //
-// When unset we keep the previous conservative default (localhost dev +
-// preview product domains) so existing preview behaviour is unchanged.
+// R-P0-6 — the split is now mode-aware:
+//   • development (and test) keep the conservative preview/dev default —
+//     dev behavior is UNCHANGED.
+//   • production with the env UNSET defaults to NO additional origins
+//     (same-origin only — never a wildcard), and the startup hook logs a
+//     warning telling the operator to set the env explicitly
+//     (src/instrumentation-node.ts). The deployment's own origin is always
+//     implicitly allowed; the list only adds proxy origins.
 // Origins are comma-separated; each entry may be a glob (leading `*.`).
 const envOrigins = process.env.SERVER_ACTIONS_ALLOWED_ORIGINS;
+const isProdBuild = process.env.NODE_ENV === "production";
 const serverActionsAllowedOrigins = envOrigins
   ? envOrigins
       .split(",")
       .map((o) => o.trim())
       .filter((o) => o.length > 0)
-  : [
-      "*.space-z.ai",
-      "*.fcapp.run",
-      "localhost:3000",
-      "localhost:81",
-      "127.0.0.1:3000",
-    ];
+  : isProdBuild
+    ? []
+    : [
+        "*.space-z.ai",
+        "*.fcapp.run",
+        "localhost:3000",
+        "localhost:81",
+        "127.0.0.1:3000",
+      ];
 
 // ---------------------------------------------------------------------------
 // Static security headers. These apply to ALL routes as a base layer.

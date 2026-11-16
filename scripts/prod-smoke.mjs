@@ -23,7 +23,7 @@
 // Env:    SMOKE_PORT (default 3111), SMOKE_EMAIL/SMOKE_PASSWORD override
 //         the login account (defaults: demo@fernly.app / $NEXT_PUBLIC_DEMO_PASSWORD).
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -125,11 +125,71 @@ async function fullLogin(email, password) {
 // Boot the production server.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// R-P0-6 — step 0: production bundle hygiene (REVIEW_TRIAGE §4.5-6).
+//
+// The build gate in next.config.ts FAILS a production build that sets
+// NEXT_PUBLIC_DEMO_PASSWORD without the explicit sandbox hatch; this grep
+// verifies the built OUTPUT independently of the gate (defense in depth —
+// it would also catch a future build path that bypasses config evaluation).
+//
+// The check asserts the demo password VALUE is absent from the build
+// output (.next/cache excluded — stale chunks from an older demo build
+// are not shipped output) UNLESS the build explicitly opted in with
+// ALLOW_DEMO_CREDENTIALS_IN_BUILD=1 (the sandbox demo preview — the one
+// documented exception).
+//
+// Empirical note (build inspection, R-P0-6): in a build WITHOUT the value
+// set, the login chunk still carries the variable NAME as a dead runtime
+// read (`process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? ""` compiles to a
+// node-process shim access that is always undefined in the browser — the
+// pre-existing L-P0-12 shape). A blanket name grep therefore false-
+// positives every clean build; the VALUE is the credential, and the value
+// is what this check pins.
+// ---------------------------------------------------------------------------
+function grepIn(haystackDir, needle) {
+  try {
+    const out = execFileSync(
+      "grep",
+      ["-rl", "--binary-files=text", "--exclude-dir=cache", needle, haystackDir],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    return out.trim().split("\n").filter(Boolean);
+  } catch (err) {
+    // grep exit 1 = no matches (the good case); anything else rethrows.
+    if (err && typeof err === "object" && "status" in err && err.status === 1) return [];
+    throw err;
+  }
+}
+
 if (!existsSync(STANDALONE)) {
   console.error(
     "prod-smoke: .next/standalone/server.js not found — run `bun run build` first.",
   );
   process.exit(2);
+}
+
+{
+  const demoPw =
+    process.env.NEXT_PUBLIC_DEMO_PASSWORD || fileEnv.NEXT_PUBLIC_DEMO_PASSWORD;
+  const hatch =
+    process.env.ALLOW_DEMO_CREDENTIALS_IN_BUILD === "1" ||
+    fileEnv.ALLOW_DEMO_CREDENTIALS_IN_BUILD === "1";
+  if (demoPw && !hatch) {
+    const valueHits = grepIn(resolve(PROJECT_ROOT, ".next"), demoPw);
+    if (valueHits.length > 0) {
+      console.error(
+        `prod-smoke: FAIL — the demo password VALUE is in the build output (${valueHits.slice(0, 3).join(", ")}) without ALLOW_DEMO_CREDENTIALS_IN_BUILD=1. This build must not ship.`,
+      );
+      process.exit(2);
+    }
+  }
+  console.log(
+    "prod-smoke: bundle hygiene OK — " +
+      (demoPw && hatch
+        ? "demo VALUE present under the explicit sandbox hatch (the demo preview build)"
+        : "no demo password value in the build output"),
+  );
 }
 
 console.log(`prod-smoke: booting the production build on ${BASE} …`);
@@ -142,6 +202,12 @@ const child = spawn(process.execPath, [STANDALONE], {
     NODE_ENV: "production",
     // The app's boot contract requires a secret; .env normally has one.
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || fileEnv.BETTER_AUTH_SECRET,
+    // R-P0-6 — the production default trusts same-origin only; the smoke
+    // server is reached on 127.0.0.1:PORT, so list it EXPLICITLY (this also
+    // exercises the "specific list → no warning" startup path).
+    SERVER_ACTIONS_ALLOWED_ORIGINS:
+      process.env.SERVER_ACTIONS_ALLOWED_ORIGINS ||
+      `http://127.0.0.1:${PORT},http://localhost:${PORT}`,
   },
   stdio: ["ignore", "pipe", "pipe"],
 });

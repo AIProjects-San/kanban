@@ -112,13 +112,14 @@ const DUMMY_HASH =
   "$2b$12$llbxFwXYn3xp2mUpBZUk3ec17zATv43gw0rBZq1kItXp3H11.q5UO";
 
 // Mirrors next.config.ts `serverActionsAllowedOrigins` (audit §1.15): env
-// override first, then the conservative preview default. Better Auth's
+// override first, then the mode-aware default (R-P0-6). Better Auth's
 // origin check (its CSRF posture — no double-submit token to keep in sync)
 // must accept exactly the origins Server Actions accept. NOTE the format
 // difference: non-wildcard entries must be FULL origins (scheme included —
 // matchesOriginPattern compares against getOrigin()); wildcard entries
 // match on host alone. The prod-smoke origins (127.0.0.1:3111, SMOKE_PORT
-// default) are included so the standalone smoke build passes the same gate.
+// default) are passed EXPLICITLY by scripts/prod-smoke.mjs since R-P0-6
+// made the production default same-origin-only.
 function trustedOrigins(): string[] {
   const env = process.env.SERVER_ACTIONS_ALLOWED_ORIGINS;
   if (env) {
@@ -130,6 +131,10 @@ function trustedOrigins(): string[] {
       // a full-origin comparison — normalize them onto the dev scheme.
       .map((o) => (/^[a-z0-9.-]+(:\d+)?$/i.test(o) ? `http://${o}` : o));
   }
+  // R-P0-6 — production with the env unset trusts SAME-ORIGIN ONLY (never
+  // a wildcard); the startup hook warns and names the fix. Development (and
+  // test) keep the conservative preview/dev list — dev behavior unchanged.
+  if (process.env.NODE_ENV === "production") return [];
   return [
     "*.space-z.ai",
     "*.fcapp.run",

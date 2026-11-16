@@ -355,6 +355,22 @@ describe("PR-24/PR-25 deploy stack (production-readiness audit)", () => {
     }
   });
 
+  it("R-P0-6: restore-preview.sh heals the demo-build hatch + explicit preview origins (preview survives the posture change)", () => {
+    // R-P0-6 made a production build with NEXT_PUBLIC_DEMO_PASSWORD FAIL
+    // unless ALLOW_DEMO_CREDENTIALS_IN_BUILD=1, and made the production
+    // origins default same-origin-only. The sandbox demo preview needs
+    // BOTH healed into .env or the next recycle rebuild breaks: the build
+    // gate kills the demo build without the hatch, and the platform proxy
+    // (space-z.ai/fcapp.run hosts) loses Server Actions + Better Auth
+    // without the explicit origins.
+    const sh = readFileSync(resolve(repoRoot, "scripts", "restore-preview.sh"), "utf-8");
+    expect(sh).toMatch(/grep -q '\^ALLOW_DEMO_CREDENTIALS_IN_BUILD='/);
+    expect(sh).toMatch(/ALLOW_DEMO_CREDENTIALS_IN_BUILD=1/);
+    expect(sh).toMatch(/grep -q '\^SERVER_ACTIONS_ALLOWED_ORIGINS='/);
+    // Scoped preview wildcards — NOT the trust-all "*".
+    expect(sh).toMatch(/SERVER_ACTIONS_ALLOWED_ORIGINS=\*\.space-z\.ai,\*\.fcapp\.run/);
+  });
+
   it("PR-42: the right-to-erasure privacy template exists and its retention numbers match the code", () => {
     // The owner signs off and publishes this notice; if the constants change
     // without the notice following, the published policy silently lies.
