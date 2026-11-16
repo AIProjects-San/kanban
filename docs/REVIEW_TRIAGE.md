@@ -358,21 +358,33 @@ it (commit `4b7cc11`) — that record is reverted, and the pre-check stands
 FAIL until Dr. Al-Rashid signs; R-P0-5 is blocked on it (the other items
 are not). Pre-check C passed — decision recorded with R-P0-4 below.
 
-**Corrected batch re-verification (2026-11-17, post Step Zero): A PASS
-(bug reproduces), B FAIL (unchanged — no signature in the tree), C PASS
-(+ R-P0-8 added to scope).** Pre-check A re-ran the four-assertion
-verification against the corrected tree — deletion with only OPEN-run
-references proceeds; the joiner slip lands with zero statutory lines and
-plain success; the lock path has no rate-set validation; the edit path
-preserves the cached lines — exactly the previous finding, now pinned to
-the current HEAD. Pre-check B stands FAIL per §9 (the attestation rule):
-only Dr. Al-Rashid can resolve it. Pre-check C's evidence re-confirmed
-(zero UI callers; writer PII at `hiring-interviews.ts:102-103`; the
-dashboard feed renders the same stored titles) with one war-room scope
-addition: the legacy rows that already carry PII in the title field get a
-one-time redaction migration — **R-P0-8** below (migration only, no UI
-change; the dashboard feed is fixed by the stored-field redaction, its
-code untouched).
+**Corrected batch re-verification (2026-11-17, post Step Zero): A PASS — the\nbug reproduces; B FAIL — no signature in the tree; C PASS — evidence\nre-confirmed (zero UI callers; writer PII at `hiring-interviews.ts:102-103`;\nthe dashboard feed renders the same stored titles), R-P0-8 added to scope.**
+
+**Corrected batch execution state (R-P0-4/6/8 shipped; R-P0-5/7 blocked on
+attestations — per §9, only the named humans can unblock).** R-P0-4:
+COMPLETE (`1e8de5c`) — the writer no longer emits candidate PII, the ICS
+export redacts legacy patterns with a counted, observable defense, every
+timed DTSTART/DTEND is TZID-qualified with VTIMEZONE (default
+Pacific/Auckland; the supported registry + fail-loud unknown-tz), absent
+times render date-only, and the 3×2 timezone matrix + PII cases pass. R-P0-8:
+COMPLETE (`43588e5`) — the one-time migration core
+(src/lib/hiring/legacy-event-pii.ts) redacts legacy stored events via
+three deterministic layers, writes one PII-free audit row per redaction in
+the same transaction, is idempotent by fixed point, and reverses from the
+gitignored pre-migration backup the script writes before applying
+(scripts/migrate-interview-event-pii.ts; dry-run against the empty dev DB:
+scanned 0, redacted 0). The dashboard feed code is untouched — the stored
+field it renders is now clean. R-P0-6: COMPLETE (`b6c5295`) — a production
+build with NEXT_PUBLIC_DEMO_PASSWORD FAILS at config evaluation (0.4s,
+verified) unless the sandbox demo hatch opts in explicitly; the production
+origins default is same-origin-only (never a wildcard; dev unchanged); the
+startup posture is WARN-never-block (unset → warning, trust-all '*' → loud
+warning, specific list → silent; the malformed-typo check stays fatal);
+prod-smoke greps the built output for the credential value. R-P0-5:
+BLOCKED — ADR-026 awaits Dr. Fatima Al-Rashid's actual signature. R-P0-7:
+BLOCKED at implementation — ADR-027 is drafted (DECISIONS.md) and awaits
+Devon Okafor's, Dr. Al-Rashid's, and Mara Chen's actual signatures; the
+four property tests land with that implementation.
 
 **R-P0-1 follow-up (2026-11-16): the double-deduction guard is verified.**
 The banner tells the scope truth; the guard is what prevents the failure
@@ -406,11 +418,11 @@ mode behind it. Verified present and green — 59/59 across the three suites
 | R-P0-1 | Rewrite the statutory banner to the jurisdiction truth (NZ computed+filed when rate sets are seeded; other jurisdictions manual); mark ADR-014 superseded by ADR-015/016 | §4.1 |
 | R-P0-2 | Jurisdiction/disclaimer line on the payslip print view and employee self-service, not just the admin console | §4.2 |
 | R-P0-3 | Docs truth pass: README numbers (246 actions, 35 permissions, 5 roles, one test count, 138/18 e2e, 10 s cache), remove the tokenVersion claim, align coverage wording with ADR-021; fix `PRODUCTION_READINESS.md:41` and `schema.prisma:39-42`; add the CI drift guard from §5 | §4.11 |
-| R-P0-4 | ICS export: scope to HR or strip candidate PII; emit TZID/VTIMEZONE (or document UTC-only) — the export currently has no UI caller, so fix before wiring | §4.3 |
-| R-P0-5 | `eraseUser`: decide FK strategy (anonymize instead of delete, or lift `Restrict`), sweep the non-FK orphan PII, add a non-mocked integration test | §4.4 |
-| R-P0-6 | Production posture: require explicit `SERVER_ACTIONS_ALLOWED_ORIGINS` override (startup warning on wildcard trust); document/gate the demo password prefill | §4.5-6 |
+| R-P0-4 | ICS export: scope to HR or strip candidate PII; emit TZID/VTIMEZONE (or document UTC-only) — the export currently has no UI caller, so fix before wiring — **SHIPPED** (`1e8de5c`) | §4.3 |
+| R-P0-5 | `eraseUser`: decide FK strategy (anonymize instead of delete, or lift `Restrict`), sweep the non-FK orphan PII, add a non-mocked integration test — **BLOCKED on ADR-026's missing signature** | §4.4 |
+| R-P0-6 | Production posture: require explicit `SERVER_ACTIONS_ALLOWED_ORIGINS` override (startup warning on wildcard trust); document/gate the demo password prefill — **SHIPPED** (`b6c5295`) | §4.5-6 |
 | R-P0-7 | Rate-set deletion guard — **ADR-027 drafted** (DECISIONS.md, DRAFT); implementation blocked pending Devon/Fatima/Mara signatures per §9 | Pre-check A |
-| R-P0-8 | Legacy event title redaction — one-time migration (after R-P0-4's writer fix; migration only, no UI change) | Pre-check C |
+| R-P0-8 | Legacy event title redaction — one-time migration (after R-P0-4's writer fix; migration only, no UI change) — **SHIPPED** (`43588e5`) | Pre-check C |
 
 **Pre-check C decision (recorded 2026-11-16, lands with R-P0-4's
 implementation): strip PII.** Evidence: `exportCalendarIcs` has zero UI
