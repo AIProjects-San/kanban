@@ -670,7 +670,14 @@ describe("scheduleInterview", () => {
     expect(res.ok).toBe(true);
     expect(db.calendarEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ title: "Interview: Nadia Petrova — Interview 1 — Technical", type: "MEETING" }),
+        data: expect.objectContaining({
+          // R-P0-4 — the shared-calendar event carries NO candidate PII:
+          // stage label + position + stage id (was
+          // `Interview: Nadia Petrova — …` / `… · nadia@example.com`).
+          title: "Interview — Interview 1 — Technical",
+          description: "SWE · stage st-2",
+          type: "MEETING",
+        }),
       }),
     );
     expect(db.reminder.create).toHaveBeenCalledWith(

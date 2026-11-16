@@ -38,7 +38,7 @@ Sidebar → HR → **Hiring**, then open a candidate and find an interview stage
 ## What you'll see
 
 - The booked stage shows a chip with the date and time, and the interviewer's name appears on the stage line.
-- The interview appears on the shared Calendar as a 60-minute meeting titled "Interview: <candidate> — <stage>", and the interviewer gets a personal reminder.
+- The interview appears on the shared Calendar as a 60-minute meeting titled "Interview — <stage>" (no candidate name or email — the shared calendar is a workspace-wide surface; the interviewer's reminder, the invite email, and the pipeline keep the identity on their permission-gated or owner-scoped surfaces), and the interviewer gets a personal reminder.
 - The candidate is emailed an invitation with the stage, date and time, duration, and interviewer — subject line "Interview invitation — <position> at <workspace>".
 - A saved scorecard shows on the stage as "Rating: 4/5", the recommendation badge (Strong hire, Hire, or No hire), and the strengths and concerns text.
 - In My Interviews, each row shows the candidate, position, stage, and time, with a **Fill scorecard** or **Edit scorecard** button; empty view: "No interviews assigned to you."

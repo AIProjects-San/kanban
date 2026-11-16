@@ -99,8 +99,16 @@ export async function scheduleInterview(input: unknown): Promise<ActionResult<{ 
       }
       const created = await tx.calendarEvent.create({
         data: {
-          title: `Interview: ${stage.candidate.fullName} — ${stage.label}`,
-          description: `${stage.candidate.position || "Position n/a"} · ${stage.candidate.email}`,
+          // R-P0-4 (pre-check C decision: strip PII at the writer) — the
+          // shared calendar is a workspace-wide surface, so the event
+          // carries NO candidate name or email: the stage label + position
+          // + the stage id (the correlation key the interviewer's scoped
+          // surfaces — reminder, invite email, pipeline — already carry the
+          // identity, each permission-gated or owner-scoped). The ICS
+          // export adds a renderer-side defense for legacy rows; R-P0-8
+          // migrates the stored ones.
+          title: `Interview — ${stage.label}`,
+          description: `${stage.candidate.position || "Position n/a"} · stage ${stage.id}`,
           // F-R18 (S18) — the planned pair (UTC-midnight day + picked
           // HH:MM), NOT the instant + its server-local rendering: interview
           // events share the generic-events basis so every reader renders

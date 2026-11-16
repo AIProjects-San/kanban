@@ -255,8 +255,16 @@ describe("L-P2-38 exportCalendarIcs", () => {
     expect(ics).toContain("PRODID:-//Fernly//Calendar//EN");
     expect(ics).toContain("BEGIN:VEVENT");
     expect(ics).toContain("UID:evt-1@fernly.app");
-    expect(ics).toContain("DTSTART:20261030T093000Z");
-    expect(ics).toContain("DTEND:20261030T103000Z");
+    // R-P0-4 — the default timezone is the product's jurisdiction
+    // (Pacific/Auckland): timed starts/ends are TZID-qualified local
+    // times (was the old parse-as-UTC `DTSTART:…Z` rendering), and the
+    // matching VTIMEZONE rides the document.
+    expect(ics).toContain("DTSTART;TZID=Pacific/Auckland:20261030T093000");
+    expect(ics).toContain("DTEND;TZID=Pacific/Auckland:20261030T103000");
+    expect(ics).toContain("BEGIN:VTIMEZONE");
+    expect(ics).toContain("TZID:Pacific/Auckland");
+    expect(ics).toContain("TZNAME:NZST");
+    expect(ics).toContain("TZNAME:NZDT");
     expect(ics).toContain("SUMMARY:Sprint planning");
     expect(ics).toContain("DESCRIPTION:Weekly sync\\; notes inside");
     expect(ics).toContain("LOCATION:Room 4");
@@ -321,7 +329,7 @@ describe("L-P2-38 exportCalendarIcs", () => {
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(75);
   });
 
-  it("PR-56: tolerates a malformed HH:MM time by defaulting to 09:00", async () => {
+  it("R-P0-4: renders an absent/unparseable time as a date-only (all-day) VEVENT, never a silently invented 09:00", async () => {
     db.calendarEvent.findMany.mockResolvedValue([
       {
         id: "evt-badtime",
@@ -337,9 +345,12 @@ describe("L-P2-38 exportCalendarIcs", () => {
     ]);
     const res = await exportCalendarIcs();
     if (!res.ok) throw new Error("expected ok");
-    // isNaN(hh) → 9, isNaN(mm) → 0 → 09:00.
-    expect(res.data.ics).toContain("DTSTART:20261030T090000Z");
-    expect(res.data.ics).toContain("DTEND:20261030T100000Z");
+    // VALUE=DATE + no DTEND = a one-day all-day event (RFC 5545 §3.6.1).
+    // (Was: the old exporter silently defaulted an unparseable time to
+    // 09:00 UTC — the silent-default habit R-P0-4 removes.)
+    expect(res.data.ics).toContain("DTSTART;VALUE=DATE:20261030");
+    expect(res.data.ics).not.toContain("DTSTART;TZID");
+    expect(res.data.ics).not.toContain("DTEND");
   });
 
   it("returns an empty (but valid) calendar when there are no events", async () => {
