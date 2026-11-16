@@ -240,6 +240,8 @@ export type AuditAction =
   | "hiring.scorecard_saved"
   // Recruitment R3 — decisions & candidate email outbox
   | "hiring.email_queued"
+  // R-P0-8 — legacy interview-event PII migration (one-time, audited)
+  | "hiring.event_pii_redacted"
   // Recruitment R4 — joining formalities (documents + background checks)
   | "hiring.doc_type_saved"
   | "hiring.doc_type_deleted"
@@ -551,6 +553,7 @@ export const ACTION_META: Record<AuditAction, AuditActionMeta> = {
   "hiring.interview_rescheduled": { icon: CalendarPlus, cls: "text-amber-500 bg-amber-500/10" },
   "hiring.scorecard_saved": { icon: ClipboardCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.email_queued": { icon: Send, cls: "text-sky-500 bg-sky-500/10" },
+  "hiring.event_pii_redacted": { icon: ShieldCheck, cls: "text-emerald-500 bg-emerald-500/10" },
   "hiring.doc_type_saved": { icon: Settings, cls: "text-purple-500 bg-purple-500/10" },
   "hiring.doc_type_deleted": { icon: Trash2, cls: "text-destructive bg-destructive/10" },
   "hiring.document_requested": { icon: FileText, cls: "text-amber-500 bg-amber-500/10" },
