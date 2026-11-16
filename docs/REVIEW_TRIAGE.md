@@ -327,10 +327,17 @@ positioning the new plan depends on (ADR-023 recording notes, item 7).
 
 ## 7. Remediation plan
 
-Proposed, not applied. IDs are `R-*` to avoid colliding with the `L-*`, `P*`,
-and `PR-*` series already in flight.
+IDs are `R-*` to avoid colliding with the `L-*`, `P*`, and `PR-*` series
+already in flight.
 
-**P0 — honesty and security surface, small diffs (this week)**
+**Sequencing (war-room directive, 2026-11-16):** three hotfixes executed the
+same day — R-P0-1 (`eef176c`), R-P0-2 (`b6c4c47`), R-P0-3 (`c90ebc4`), the
+latter shipping the `docs:drift` CI gate that keeps the truth pass true.
+R-P0-4/5/6 run as a parallel workstream with a two-week window. ADR-025
+(DocType framework) and ADR-023 Addendum A (revised gate criteria + kill
+condition #1) were recorded before Phase 0 week 2 begins, per the directive.
+
+**P0 — honesty and security surface, small diffs (R-P0-1/2/3 applied; R-P0-4/5/6 in the two-week workstream)**
 
 | ID | Item | Evidence anchor |
 |---|---|---|

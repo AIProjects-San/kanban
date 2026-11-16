@@ -1392,10 +1392,10 @@ from the war room session-2 outcome.
    statutory) by ADR-015/016 — first use of the supersede convention this
    file's preamble provides for. The India-scoped stance (no PF/ESI/TDS)
    stands.
-3. **The DocType framework decision has no ADR number.** This ADR references
-   "the DocType framework decision" but the series has no record of it. It
-   should be recorded as ADR-025 or folded into the week-8 config-boundary
-   ADR (deliverable 1).
+3. **The DocType framework decision had no ADR number.** This ADR references
+   "the DocType framework decision" but the series had no record of it.
+   Resolved 2026-11-16: recorded as **ADR-025** (same commit as Addendum A),
+   with the Phase 0 week-5 design owning the details.
 4. **Reuse-vs-rebuild asset claims verified against the tree** (evidence in
    `docs/REVIEW_TRIAGE.md`): NZ statutory engine at `src/lib/payroll/nz/`
    wired into every run (`payroll.ts:778-796`), GL posting on lock
@@ -1504,3 +1504,112 @@ the other phases' details will be authored at their respective entry points.
 
 **Week-8 gate outcome.** Binary: pass (proceed to Phase 1) or fail (kill
 condition #1 fires, board reassesses within one week).
+
+---
+
+### ADR-023 — Addendum A (draft): revised week-8 gate criteria and kill condition #1
+
+**Status:** DRAFT — pending war-room ratification. Recorded 2026-11-16 in
+response to the ADR-023 recording notes (items 5–6); the war room authorized
+drafting before Phase 0 week 2 begins.
+
+**1. Week-8 deliverable 4 (end-to-end payroll proof) — acceptance criterion
+revised.** The original criterion ends "published from sandbox to prod"
+without naming which sandbox. Revision: "published" means promoted through
+the publish path designed in Phase 0 week 4 — the NEW sandbox architecture's
+isolation model and refuse-to-publish-gated promotion sequence — exercised
+against a staging-grade target. It does **not** mean the existing dev-only
+generated SQLite local variant (ADR-008), which has no publish path and is
+not production-shaped. The dependency this surfaces: deliverable 4 cannot
+pass unless the week-4 sandbox design lands on schedule — a coupling the
+original wording hid. If week 4 slips, deliverable 4 slips with it; the gate
+does not relax to accommodate.
+
+**2. Kill condition #1 (engineering) — trigger revised.** The original
+month-6 trigger ("config boundary, invariant catalogue, sandbox, and working
+NZ payroll not all in place") restates the week-8 four deliverables, so as
+written it measures nothing new at month 6. Revision — at month 6, kill
+condition #1 fires unless **both** hold:
+
+- **(a) Phase 1 exit criteria are met** — the framework can define, version,
+  and permission a DocType, and the sandbox runs (the Phase 1 exit gate);
+- **(b) the payroll engine operates on multi-employee, production-shaped
+  runs** under the Phase 3 approach chosen at Phase 3 entry (port, rebuild,
+  or fork — the reuse-vs-rebuild decision, which must by then be written and
+  signed).
+
+Week 8 proves the design plus one correct single-employee run; month 6
+proves the framework plus the engine at production shape. The four week-8
+deliverables are not re-tested at month 6.
+
+**3. What does not change.** Binary firing ("met, not close-to-met"), the
+one-week board reassessment window, the consequence options (fund +6 months
+on the 18-month path, or cut scope to leave-only), the owner (Devon), and
+every other gate and kill condition in ADR-023.
+
+---
+
+## ADR-025 — The SME Suite substrate is a configurable DocType framework, not hand-coded modules
+
+**Date:** 2026-11-16 · **Status:** proposed (design lands Phase 0 week 5) · **Phase:** SME Suite
+
+**Provenance note.** The framework decision predates ADR-023 but was never
+recorded (ADR-023 recording note 3 flagged it). This entry was reconstructed
+by the recording scribe from the war room session outcomes and ADR-023's
+references to the decision; it is pending countersignature by Devon at the
+week-5 design lock. Where this entry and the week-5 design disagree, the
+design wins and this entry is amended.
+
+**Context.** ADR-023 commits Fernly to two product shells on one substrate:
+the Cloud shell (the 0–50 vertical — sign up, configure opinionated
+defaults, run payroll) and the Enterprise shell (the 50–200 vertical —
+config-exposed: integrator access, sandbox, custom fields). The existing
+Fernly tree is hand-coded per-module: 110 Prisma models and 72 server-action
+modules, where every entity, rule, and layout is a bespoke migration. That
+shape cannot serve both shells: the Enterprise shell's custom fields and
+integrator-defined entities are not features that can be retrofitted onto
+hand-written models, and the Cloud shell's "opinionated defaults" are the
+same substrate at a lower config-exposure level, not a separate product.
+
+**Decision.**
+
+1. The SME Suite is built on a configurable entity framework ("DocTypes"):
+   entities, rules, and layouts are versioned, permissioned **configuration
+   data**, not hand-written per-module schema code. A DocType is defined,
+   versioned, and permissioned through the framework (the Phase 1 exit
+   criterion).
+2. **The config boundary is itself a designed, locked artifact** — what is
+   config versus code is enumerated, decided, and signed (ADR-023's week-8
+   deliverable 1). This ADR does not pre-empt that enumeration; it commits
+   that the enumeration happens before framework implementation begins.
+3. **Custom fields and custom DocTypes are first-class**: an integrator
+   defines them in the sandbox; publication to production rides the
+   refuse-to-publish-gated promotion sequence (the week-4 sandbox
+   architecture, per Addendum A §1).
+4. **The existing Fernly tree is the reference implementation and the Phase 3
+   reuse-vs-rebuild candidate.** Nothing in this ADR mandates porting it;
+   whether the NZ statutory engine, effective-dating model, general ledger,
+   and IRD filing are ported, rebuilt, or forked is decided at Phase 3 entry
+   with a written cost/benefit analysis (ADR-023's commitment).
+
+**Deliberately deferred to Phase 0 week 5** (per ADR-023's planning
+discipline — a design written now would be a design made up, not decided):
+the entity model, the versioning model, the permission model, and the config
+schema format. ADR-023's week-5 table owns those deliverables.
+
+**Consequences.** *Positive:* one substrate serves both shells; integrator
+extensibility is architectural rather than bolted on; the Phase 3
+reuse-vs-rebuild question gets a clean target to be estimated against.
+*Negative:* the framework is a new dependency for every feature that follows
+— Phase 4 (HR core) cannot start until Phase 1 exits; config-driven systems
+pay a permanent complexity tax in debugging and performance that hand-coded
+modules do not; the week-8 gate becomes load-bearing for the entire plan
+(which is why Addendum A tightens its wording). *Neutral:* ADR-008's
+canonical-schema discipline continues to govern the existing tree for as
+long as it remains in service.
+
+**Related decisions.** ADR-023 (the phased delivery plan this substrate
+serves; Addendum A revises its gate criteria), ADR-008 (canonical schema for
+the existing tree), ADR-015/016 (the NZ statutory engine that is the
+flagship reuse candidate), ADR-024 (scope checkpoint criteria — to be
+written).
