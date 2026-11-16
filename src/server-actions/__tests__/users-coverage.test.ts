@@ -624,7 +624,7 @@ describe("deleteUser not-found branch", () => {
 describe("signOutAllDevices (PR-48/PR-49)", () => {
   it("bumps tokenVersion, kills reset tokens + sessions, and audits (lines 694-724)", async () => {
     // Uncovered block: the whole "Sign out all devices" action — no other
-    // suite calls it. One atomic transaction bumps tokenVersion (v4 JWTs)
+    // suite calls it. One atomic transaction bumps tokenVersion (revocation aid)
     // and burns pending password-reset tokens; revokeUserSessionsIfActive
     // kills the Better Auth DB sessions; the audit row records the event.
     getSessionOrThrowMock.mockResolvedValue(MEMBER);

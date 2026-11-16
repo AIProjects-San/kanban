@@ -279,8 +279,8 @@ export async function resetPassword(input: {
       throw validationError("This reset link was just used. Request a new one.");
     }
 
-    // PR-48 — the tokenVersion bump above invalidates the v4 JWTs; also
-    // revoke the Better Auth DB sessions (both stacks live in parallel).
+    // PR-48 — revoke the Better Auth DB sessions: the active revocation
+    // since the v4 retirement.
     await revokeUserSessionsIfActive(record.userId);
 
     revalidatePath("/");

@@ -61,6 +61,13 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # R-P0-3 (docs truth pass) — README's claimable numbers must match the
+      # tree, and retired tokenVersion/JWT-callback prose must not return
+      # outside docs/DECISIONS.md. Cheap (imports two registries + scrapes),
+      # so it runs before the test suite to fail fast on doc drift.
+      - name: Docs drift gate (README numbers vs tree)
+        run: bun run docs:drift
+
       - name: Unit & integration tests (coverage-gated)
         run: bun run test:coverage
 

@@ -35,11 +35,12 @@ model User {
   // the 1.7 adapter selects both on every mapped read, so they must exist.
   emailVerified Boolean   @default(false)
   image        String?
-  role         String    @default("MEMBER") // ADMIN | MANAGER | MEMBER — see lib/rbac.ts. Defaulting to MEMBER (was "Project Lead") closes L-P0-13.
-  // L-P0-8 — session revocation. Incremented on password change and role
-  // change. The JWT callback rejects tokens whose tokenVersion is stale,
-  // so a stolen cookie is invalidated the moment the user rotates their
-  // password or an admin rotates their role.
+  role         String    @default("MEMBER") // SUPER_ADMIN | ADMIN | MANAGER | MEMBER | HR — see lib/auth/rbac.ts. Defaulting to MEMBER (was "Project Lead") closes L-P0-13.
+  // L-P0-8 — revocation aid, bumped on password change and role change.
+  // NOTE (R-P0-3 / ADR-023 recording notes): since the NextAuth v4
+  // retirement (PR-49) no code path compares this claim — cookie
+  // revocation is session-row deletion; bearer JWTs are DB-checked per
+  // request and expire within 1 h. Kept for forward-compat.
   tokenVersion Int       @default(0)
   timezone     String    @default("Pacific/Auckland")
   bio          String    @default("")

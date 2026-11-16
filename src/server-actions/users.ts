@@ -259,8 +259,9 @@ export async function changePassword(input: {
     await db.$transaction([
       db.user.update({
         where: { id: input.userId },
-        // L-P0-8 — bump tokenVersion so any stolen cookie from before the
-        // password change is rejected by the jwt callback on its next refresh.
+        // L-P0-8 — bump tokenVersion (revocation aid; see the schema note —
+        // no active consumer). Cookie revocation is the session-row
+        // deletion below.
         data: { passwordHash: newHash, tokenVersion: { increment: 1 } },
       }),
       db.passwordResetToken.updateMany({
@@ -268,8 +269,8 @@ export async function changePassword(input: {
         data: { usedAt: new Date() },
       }),
     ]);
-    // PR-48 — revoke the Better Auth DB sessions for the same reason the
-    // tokenVersion bump revokes the v4 JWTs (both stacks live in parallel).
+    // PR-48 — revoke the Better Auth DB sessions: since the v4 retirement
+    // this IS the revocation (session-row deletion).
     await revokeUserSessionsIfActive(input.userId);
 
     await logAudit({
@@ -554,9 +555,9 @@ export async function updateUser(userId: string, input: {
       data.passwordHash = await hashPassword(input.resetPassword);
     }
 
-    // L-P0-8 — bump tokenVersion when role or password changes, so any
-    // existing session for this user is invalidated on the next jwt refresh.
-    // This is the admin-side force-logout.
+    // L-P0-8 — bump tokenVersion when role or password changes (revocation
+    // aid — see the schema note). The admin-side force-logout is the
+    // session-row revocation below.
     const roleChanged = input.role !== undefined && input.role !== target.role;
     const passwordReset = input.resetPassword !== undefined && input.resetPassword.length > 0;
     if (roleChanged || passwordReset) {
@@ -584,7 +585,7 @@ export async function updateUser(userId: string, input: {
     });
 
     // PR-48 — role or password changed → revoke the Better Auth DB sessions
-    // (the tokenVersion bump above already covers the v4 JWTs).
+    // (the revocation since the v4 retirement).
     if (roleChanged || passwordReset) {
       await revokeUserSessionsIfActive(userId);
     }
@@ -626,9 +627,10 @@ export async function deleteUser(userId: string): Promise<ActionResult<void>> {
     // both User and the linked TeamMember hides the row from read paths
     // (which filter `deletedAt: null`) WITHOUT cascading deletes that would
     // orphan messages (dangling senderUserId/recipientUserId) and team-member
-    // references. The user's auth is invalidated: the jwt callback's role
-    // refresh filters `deletedAt: null`, so it sees `fresh = null` and
-    // clears the token id within the ROLE_REFRESH_MS window. ProjectAssignments
+    // references. The user's auth is invalidated: the DB session rows are
+    // revoked below, and every auth path filters `deletedAt: null` (the
+    // bearer lookup and Better Auth's DB reads), so the soft-deleted user
+    // cannot authenticate. ProjectAssignments
     // still cascade (onDelete: Cascade); managerId on direct reports still
     // SetNulls (those reports become roots — deleting a manager never deletes
     // their team).
@@ -655,8 +657,7 @@ export async function deleteUser(userId: string): Promise<ActionResult<void>> {
     ]);
     // PR-48 — a soft-deleted user must lose their Better Auth DB sessions
     // immediately (the before-hook blocks new sign-ins; this kills the
-    // outstanding ones — the v4 JWTs die via the jwt callback's deletedAt
-    // filter within the refresh window).
+    // outstanding ones).
     await revokeUserSessionsIfActive(userId);
     await logAudit({
       actor: auth,
@@ -709,9 +710,11 @@ export async function getUserByEmail(email: string): Promise<ActionResult<{
 
 /**
  * P2 (production-readiness re-audit) — Sign out ALL devices for the signed-in
- * user by bumping their `tokenVersion`. Every JWT issued before this call
- * becomes stale at the next refresh window (≤5 min) and the session is
- * cleared. The caller's own current session is also invalidated — they will
+ * user. Deletes every Better Auth session row for the user (the active
+ * revocation mechanism since the NextAuth v4 retirement, PR-48) and bumps
+ * `tokenVersion` (a forward-compat revocation aid — no active consumer;
+ * see the schema note). Outstanding 1-hour bearer JWTs die at their expiry.
+ * The caller's own current session is also invalidated — they will
  * need to sign in again.
  *
  * Use cases: suspicious activity on the account, lost device, credential
@@ -720,8 +723,8 @@ export async function getUserByEmail(email: string): Promise<ActionResult<{
 export async function signOutAllDevices(): Promise<ActionResult<{ revokedAt: string }>> {
   return toResult(async () => {
     const auth = await getSessionOrThrow();
-    // Bump tokenVersion — the jwt callback's refresh path sees the mismatch
-    // and clears the token id for every outstanding session.
+    // Bump tokenVersion (forward-compat aid — no active consumer; see the
+    // schema note) and delete every session row below.
     // P1 (edge-case audit) — also invalidate pending password-reset tokens
     // (defence in depth: a "sign out everywhere" should also kill any
     // pending reset flow).
@@ -736,7 +739,7 @@ export async function signOutAllDevices(): Promise<ActionResult<{ revokedAt: str
       }),
     ]);
     // PR-48 — "sign out everywhere" must also kill the Better Auth DB
-    // sessions, not just the v4 JWTs.
+    // sessions (the revocation since the v4 retirement).
     await revokeUserSessionsIfActive(auth.userId);
     await logAudit({
       actor: auth,

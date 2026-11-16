@@ -237,7 +237,7 @@ layer. No field is application-level encrypted beyond hashing.
 | `bio` | User | Medium (user-entered) | Visible to signed-in users via profile |
 | `avatarColor` | User | Low (UI preference) | — |
 | `timezone` | User | Low (UI preference) | — |
-| `tokenVersion` | User | Critical (session revocation) | Integer; bumped on password/role change + sign-out-all-devices |
+| `tokenVersion` | User | Reserved — no active consumer (ADR-011) | Integer; bumped on password/role change + sign-out-all-devices. Since the NextAuth v4 retirement, revocation is session-row deletion; no code path compares the claim (ADR-023 recording notes) |
 | `deletedAt` | User, Project, TeamMember, Message | — (soft-delete marker) | Filters read paths; soft-deleted users cannot authenticate |
 | `ipAddress` | AuditLog | Medium (forensics) | Captured on `auth.signed_in`; stored as-is (hash at read time if exporting) |
 | `userAgent` | AuditLog | Low (forensics) | Captured on `auth.signed_in`; truncated to 500 chars |

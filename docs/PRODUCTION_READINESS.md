@@ -38,7 +38,7 @@ execution and owner sign-off, none of it code.
 
 | Dimension | Status | Notes |
 |---|---|---|
-| Authentication & session management | ✅ Strong | JWT sessions, 7-day cap, `tokenVersion` revocation ≤5 min, soft-delete invalidation, timing-equalized unknown-email path (cost-12 dummy hash), 5/15 min per-email **and** per-IP throttle (Redis-backed, fail-open), prod boot-fail on weak secret, `__Secure-` cookie prefix (PR-27). |
+| Authentication & session management | ✅ Strong | DB-backed cookie sessions (7-day cap; revocation = session-row deletion), 1-hour JWT bearer tokens re-checked against the DB on every request (soft-delete + fresh role), soft-delete invalidation, timing-equalized unknown-email path (cost-12 dummy hash), 5/15 min per-email **and** per-IP throttle (Redis-backed, fail-open), prod boot-fail on weak secret, `__Secure-` cookie prefix (PR-27). |
 | Authorization (RBAC + hierarchy) | ✅ Strong after fixes | Static-floor ∪ DB-ceiling permission model, deny-by-default, hierarchy-aware target guards, single-source project scoping. Gaps fixed: PR-02, PR-03, PR-04, PR-23. |
 | Input validation | ✅ Strong | zod schemas on every mutation (strict mode), server-derived identity everywhere, enum-validated lifecycle transitions. |
 | Security headers / CSP | ✅ Strong after fixes | Nonce-based CSP without `unsafe-inline`/`unsafe-eval` in prod, HSTS, XFO DENY, nosniff, Permissions-Policy. Fixed: `connect-src` exfil hole + decorative nonce (PR-06). |

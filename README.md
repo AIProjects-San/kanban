@@ -11,8 +11,9 @@ Tailwind v4 (CSS-first) + OKLCH design tokens · zod · Recharts · dnd-kit
 
 ## Feature tour
 
-The app is a **single route** (`/`); the sidebar switches views client-side, every
-keystroke-reachable. Groups below match the sidebar.
+The **work surface** is a single route (`/`) — the sidebar switches views client-side, every
+keystroke-reachable. The HR/payroll/attendance admin consoles are server-rendered pages under
+`/admin/…` with their own URLs. Groups below match the sidebar.
 
 **Overview**
 - **Dashboard** (`G D`) — KPI stats, personal reminders (private to their creator),
@@ -91,11 +92,15 @@ keystroke-reachable. Groups below match the sidebar.
   (monthly = annual ÷ 12), per-slip earnings/deduction editing while the
   run is OPEN with pro-rated loss-of-pay (days in → money out), lock-when-
   paid finality, YTD net totals, sequential slip numbers, and a
-  print-friendly slip view. Payroll is **pre-statutory by design** (ADR-014
-  in `docs/DECISIONS.md`): no PF, ESI, professional tax, TDS, Form 16 or
-  investment declarations are computed or filed — statutory amounts can be
-  entered as manual deduction lines, but compliance stays with your
-  provider. Employees self-serve their own payslips from LOCKED runs under
+  print-friendly slip view. **Statutory scope** (ADR-014/015/016): NZ
+  statutory — PAYE, ACC earners' levy, KiwiSaver (with ESCT) and student loan —
+  is computed in-system from the workspace rate set (frozen per run, ADR-016),
+  and IRD payday-filing files (EI/ED) are generated for myIR upload (ADR-018);
+  a run without a covering rate set carries manual deduction lines only.
+  Outside New Zealand, statutory remains manual — PF, ESI, professional tax,
+  TDS, Form 16 and investment declarations are not computed or filed; enter
+  them as manual deduction lines, with compliance at your provider.
+  Employees self-serve their own payslips from LOCKED runs under
   People → "My Payslips". Funnel analytics (R8): the Hiring board carries
   a recruitment-funnel panel — pool totals (active / selected / hired /
   rejected / withdrawn), per-stage load + velocity (avg days in stage over
@@ -107,8 +112,9 @@ keystroke-reachable. Groups below match the sidebar.
 - **Workspace Config** (`G W`, admin) — workspace defaults, password policy,
   capacity, audit retention, configurable vocabularies (task statuses, project
   statuses, event types, tags, priorities, departments) and the **role-permission
-  matrix** (edits apply to signed-in users within the 60 s config cache window).
-- **Audit Log** (`G L`) — append-only trail of every mutation (101 typed actions):
+  matrix** (edits apply to signed-in users within the 10 s config cache
+  window — mutations invalidate immediately; the TTL is a backstop).
+- **Audit Log** (`G L`) — append-only trail of every mutation (246 typed actions):
   actor, entity, timestamp, human-readable detail; filter by entity; per-entity
   history inside edit modals.
 
@@ -125,10 +131,10 @@ one group expanded at a time.
 
 ## Roles & data scoping
 
-Four roles — **ADMIN**, **MANAGER**, **MEMBER**, **HR** — mapped to a
-**28-permission matrix** that lives in the database (`Role`/`Permission`/
+Five roles — **SUPER_ADMIN**, **ADMIN**, **MANAGER**, **MEMBER**, **HR** — mapped to a
+**35-permission matrix** that lives in the database (`Role`/`Permission`/
 `RolePermission`), editable by admins at runtime, with the compile-time matrix in
-[`src/lib/rbac.ts`](src/lib/rbac.ts) as the floor. Authorization is **two-layer and
+[`src/lib/auth/rbac.ts`](src/lib/auth/rbac.ts) as the floor. Authorization is **two-layer and
 server-side only**:
 
 1. **Permission gate** — every server action states its required permission.
@@ -137,6 +143,7 @@ server-side only**:
 
 | Who | Sees |
 |---|---|
+| SUPER_ADMIN | everything ADMIN sees, plus the NZ statutory rate tables (`statutory:manage` — the only role that holds it) |
 | ADMIN | the whole workspace (personal items like reminders stay personal) |
 | MANAGER / MEMBER | projects they own / are assigned to / have tasks in; people connected to those projects; messages 1:1 as sender/recipient |
 | MEMBER analytics | only their own hours/activity — any other requested scope is forced to "self" |
@@ -186,18 +193,19 @@ contains **no credential literals**; the seed refuses to run without it):
 | `bun run build` / `bun run start` | Standalone production build / serve |
 | `bun run lint` | ESLint |
 | `bun run typecheck` | `tsc --noEmit` (strict — part of the gate) |
-| `bun run test` | Vitest unit/integration suite (**1727 tests**) |
-| `bun run test:coverage` | Coverage report + threshold gates (≥90% statements on `src/lib` + `src/server-actions`) |
+| `bun run test` | Vitest unit/integration suite (**3,844 test cases** · static count, pinned by `docs:drift`) |
+| `bun run test:coverage` | Coverage report + threshold gates (src/lib ≥90% statements / 80% branches; src/server-actions ≥89/77 — ADR-021's honest floor) |
 | `bun run test:e2e` | Selenium + Cucumber browser suite (needs Chrome; see `e2e/README.md`) |
 | `bun run test:prodsmoke` | Smoke-checks a production build (health, headers, CSP, login) |
 | `bun run bundle:check` | Client JS budget gate |
 | `bun run audit:check` | Dependency audit gate (prod-runtime scoped) |
+| `bun run docs:drift` | Docs truth gate — README's pinned numbers vs the tree |
 | `bun run db:push` / `db:generate` / `db:seed` / `db:migrate` / `db:deploy` | Schema push / client / demo data / dev + production migrations |
 
 CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR: lint →
 typecheck → coverage-gated unit tests → production build → bundle budget →
 dependency audit → **e2e** on a seeded ephemeral PostgreSQL 16 with headless
-Chrome (89 scenarios across 13 feature files: login & lockout, RBAC, tasks, hiring,
+Chrome (138 scenarios across 18 feature files: login & lockout, RBAC, tasks, hiring,
 messaging, a11y, HR leave/directory/reviews/onboarding, payroll, QA hardening).
 
 ## Keyboard shortcuts
@@ -250,7 +258,7 @@ immediately. Details: [`docs/SECURITY.md`](docs/SECURITY.md) §1.
   [`src/styles/tokens.ts`](src/styles/tokens.ts)); `globals.css` and components
   never hardcode color values. A sync test keeps the pair honest.
 - **Server actions** — all mutations go through `src/server-actions/` (one module
-  per domain, 30+ modules), each returning `ActionResult<T>` instead of throwing;
+  per domain, 72 modules), each returning `ActionResult<T>` instead of throwing;
   every action is permission-checked, scoped and audit-logged.
 - **Secrets** — `.env` is the only home; no credential literal is committed
   anywhere (tests, scripts, k6, e2e all read env vars and fail loudly when unset).
@@ -262,7 +270,7 @@ immediately. Details: [`docs/SECURITY.md`](docs/SECURITY.md) §1.
 
 ```
 src/
-  app/                 # single route (page.tsx = server component + session)
+  app/                 # the work route (/) + server-rendered admin pages
   components/
     views/             # one component per view (dashboard, tasks, hr-*, …)
     ui/                # design system + shells (app-shell, sidebar, modals)
@@ -272,8 +280,8 @@ src/
   store/app-store.ts   # Zustand: view state, modals, theme, nav groups
   lib/                 # pure logic (rbac, hierarchy, jwt, validation, …)
   styles/              # tokens.css + globals.css
-prisma/                # schema (37 models) + migrations + seed
-e2e/                   # Cucumber + Selenium suite (12 feature files)
+prisma/                # schema (110 models) + migrations + seed
+e2e/                   # Cucumber + Selenium suite (18 feature files)
 scripts/               # seed, gates (bundle/audit/prod-smoke), load tests
 docs/                  # the documentation set below
 deploy/                # Caddy/nginx TLS configs, sandbox preview helper
@@ -283,8 +291,8 @@ deploy/                # Caddy/nginx TLS configs, sandbox preview helper
 
 | Layer | Tool | Scale |
 |-------|------|-------|
-| Unit / integration | Vitest + jsdom (82 files) | **1484 tests**, coverage-gated |
-| Browser E2E | Cucumber + Selenium | 70 scenarios / 12 feature files |
+| Unit / integration | Vitest + jsdom (212 files) | **3,844 test cases** (static count, pinned by `docs:drift`), coverage-gated |
+| Browser E2E | Cucumber + Selenium | 138 scenarios / 18 feature files |
 | Production smoke | `test:prodsmoke` | health, headers, CSP, credential flow |
 | Load | k6 + `scripts/load-smoke.mjs` | p95 budgets incl. a 100k-row dataset (`scripts/seed-load.js`) |
 
@@ -307,7 +315,8 @@ All authorization is enforced server-side; client gating is cosmetic. Every
 mutation is permission-checked, ownership-checked where relevant, and
 audit-logged. Login is rate-limited (5 failures / 15 min per email and IP,
 Redis-backed when configured) with timing-attack mitigation and lockout.
-Passwords are bcrypt (cost 12) under a workspace-configurable minimum length.
+Passwords are bcrypt (cost 12) under a workspace-configurable minimum length
+(hard floor 8), with an optional k-anonymity breached-password check on set.
 Personal data (reminders, time entries, greeting counts, leave, project staff)
 is scoped to the signed-in user — for every role including admins. Production
 refuses to boot without a strong `BETTER_AUTH_SECRET`. See
@@ -319,7 +328,7 @@ inventory and the honest list of accepted risks.
 | Doc | Contents |
 |-----|----------|
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements, roles, functional & non-functional criteria |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System, layering, auth/authz flows, data model (37 models) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System, layering, auth/authz flows, data model (110 models) |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADRs: HTTP client, UI kit, Tailwind v4, tokens, secrets, scoping, HR model, bearer tokens, … |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, controls, PII inventory, incident response |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test strategy + full manual test plan |

@@ -15,6 +15,7 @@
     "test:prodsmoke": "node scripts/prod-smoke.mjs",
     "bundle:check": "node scripts/check-bundle-budget.mjs",
     "audit:check": "node scripts/check-audit.mjs",
+    "docs:drift": "bun scripts/check-docs-drift.mjs",
     "db:push": "bash scripts/run-with-env.sh bunx prisma db push",
     "db:generate": "bash scripts/run-with-env.sh bunx prisma generate",
     "db:migrate": "bash scripts/run-with-env.sh bunx prisma migrate dev",
