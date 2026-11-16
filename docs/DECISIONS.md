@@ -1507,11 +1507,11 @@ condition #1 fires, board reassesses within one week).
 
 ---
 
-### ADR-023 — Addendum A (draft): revised week-8 gate criteria and kill condition #1
+### ADR-023 — Addendum A: revised week-8 gate criteria and kill condition #1
 
-**Status:** DRAFT — pending war-room ratification. Recorded 2026-11-16 in
-response to the ADR-023 recording notes (items 5–6); the war room authorized
-drafting before Phase 0 week 2 begins.
+**Status:** RATIFIED — war-room sign-off Mara Chen (CTO), 2026-11-16. Recorded
+2026-11-16 in response to the ADR-023 recording notes (items 5–6), drafted
+and ratified before Phase 0 week 2 begins, per the war-room directive.
 
 **1. Week-8 deliverable 4 (end-to-end payroll proof) — acceptance criterion
 revised.** The original criterion ends "published from sandbox to prod"
@@ -1551,14 +1551,34 @@ every other gate and kill condition in ADR-023.
 
 ## ADR-025 — The SME Suite substrate is a configurable DocType framework, not hand-coded modules
 
-**Date:** 2026-11-16 · **Status:** proposed (design lands Phase 0 week 5) · **Phase:** SME Suite
+**Date:** 2026-11-16 · **Status:** proposed (design lands Phase 0 week 5) — countersigned 2026-11-16, Devon Okafor (Principal Architect), with the reversibility note below · **Phase:** SME Suite
 
 **Provenance note.** The framework decision predates ADR-023 but was never
 recorded (ADR-023 recording note 3 flagged it). This entry was reconstructed
 by the recording scribe from the war room session outcomes and ADR-023's
-references to the decision; it is pending countersignature by Devon at the
+references to the decision; it was pending countersignature by Devon at the
 week-5 design lock. Where this entry and the week-5 design disagree, the
-design wins and this entry is amended.
+design wins and this entry is amended. (The countersignature landed ahead
+of schedule on 2026-11-16, war-room directive, conditioned on the
+reversibility note below; the week-5 design-lock review still owns the
+deferred details.)
+
+**Reversibility (countersignature condition, 2026-11-16 — Devon Okafor,
+Principal Architect).** The decision is built to be cheap to reverse early
+and possible to reverse late. (1) *Phase 0* — no framework code exists yet;
+walking away costs only the planning artifacts (config-boundary enumeration,
+invariant catalogue, sandbox design). (2) *The week-8 gate* — a fail fires
+kill condition #1 and the board reassesses within one week; no Phase 0
+outcome touches the existing tree. (3) *Phase 1 exit* — the framework exists
+but the hand-coded tree still serves every user; reversal means stopping new
+framework investment, not a migration. (4) *Phase 3 entry* — the
+port/rebuild/fork decision is the last point where the NZ statutory engine,
+the GL, and IRD filing can be carried forward whole; once Phase 4 (HR core)
+builds on the framework, reversal means running two substrates in parallel
+and shrinking the framework surface gradually — expensive, but never a
+big-bang rewrite-back. The existing tree stays in service through at least
+Phase 5 (ADR-023 recording note 7), which is itself the reversibility asset:
+the fallback never leaves the building.
 
 **Context.** ADR-023 commits Fernly to two product shells on one substrate:
 the Cloud shell (the 0–50 vertical — sign up, configure opinionated
@@ -1613,3 +1633,70 @@ serves; Addendum A revises its gate criteria), ADR-008 (canonical schema for
 the existing tree), ADR-015/016 (the NZ statutory engine that is the
 flagship reuse candidate), ADR-024 (scope checkpoint criteria — to be
 written).
+
+---
+
+## ADR-026 — Erasure anonymizes the person; it never deletes the history
+
+**Date:** 2026-11-16 · **Status:** proposed (implemented by R-P0-5, target
+2026-11-20) · **Type:** security / data model
+
+**Context.** REVIEW_TRIAGE §2 ("Soft delete vs erasure") and §4.4 found
+`eraseUser` broken in production shape and untested in CI — its unit test
+mocks Prisma entirely, so no test exercises the real schema. The action is
+already two-step (soft-delete first, ADMIN-only, audit-first inside the
+transaction) and already anonymizes the shared surfaces (message display
+names → "Erased user", roster rows deleted). The failure is the final step:
+`tx.user.delete()` throws P2003 and rolls back for any user with employment
+history — `Loan`, `EmployeeTransfer`, `EmployeePromotion`,
+`SalaryStructureAssignment`, `Timesheet`, `DeviceUserMapping` are all
+`onDelete: Restrict` — and where deletion would succeed, `Payslip.userId`,
+`LeaveRequest.userId`, `AttendanceRecord.userId` and `SalaryStructure.userId`
+carry no FK at all, so salary amounts and leave reasons would survive as
+orphans the erasure template never lists.
+
+**Decision.**
+
+1. The final step of `eraseUser` becomes **anonymization**: the User row
+   survives with identifying fields overwritten in place — name and
+   free-text PII to a tombstone, email to a unique unsendable deterministic
+   tombstone, credentials invalidated, sessions revoked — and the schema's
+   cascade/SetNull semantics (settings, notifications, read-state, reset
+   tokens, assignments deleted; direct reports promoted to roots; owned
+   projects' ownerUserId cleared) are reproduced explicitly instead of
+   riding `user.delete()`. Every Restrict-FK dependent stays attached and
+   intact; the P2003 class of failures disappears by construction.
+2. **Retention is the point, not the compromise.** IRD record-keeping rules
+   require payroll records to be kept for seven years; the audit trail is
+   the only tamper-evidence an e-signature has (REVIEW_TRIAGE §4.8, and
+   R-P1-4's retention hold); the code header already claims GDPR
+   Art. 17(3)(b) for the audit rows. Deleting rows trades a privacy promise
+   for a compliance breach; anonymization keeps both — the person is gone,
+   the money history stays attributable and auditable.
+3. The review's "orphan PII" finding inverts into a **disclosure duty**:
+   with the row surviving, the non-FK columns join to the anonymized
+   entity, and what is retained (payslip money, leave reasons, attendance)
+   is kept by design — so the erasure template's retained-data table must
+   list all of it, and free-text PII inside retained rows is redacted in
+   the same transaction.
+4. A **non-mocked integration test** (PGlite, the replay discipline CI
+   already applies to migrations) covers a user with employment history:
+   erase succeeds, no PII remains queryable, dependents survive intact,
+   and the audit row records the erasure.
+5. UI copy says "anonymize", never "delete" — the same artifact-honesty
+   discipline as R-P0-1/R-P0-2.
+
+**Consequences.** *Positive:* erasure stops failing silently; referential
+integrity is preserved by construction; statutory retention and audit
+evidence survive; the implicit cascade deletions become explicit and
+testable. *Negative:* tombstone rows never shrink away and must be excluded
+from directory/picker surfaces; the tombstone email holds the uniqueness
+slot, so R-P1-6 (deterministic-email release) owns the same-name re-hire
+question. *Neutral:* the soft-delete/trash path is unchanged — erasure
+stays the terminal, two-step, audit-first action it already was.
+
+**Related decisions.** REVIEW_TRIAGE §2/§4.4 and R-P0-5 (the implementing
+workstream); ADR-023 recording note 7 (the existing tree serves through at
+least Phase 5 — this fix lands in it, not a successor); R-P1-4 (e-sign
+audit retention hold — the same evidence-preservation principle); R-P1-6
+(deterministic-email release semantics).
