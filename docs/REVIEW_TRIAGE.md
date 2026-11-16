@@ -499,3 +499,25 @@ confirmed the same day; R-P0-1/2/3 are applied and war-room accepted, and
 R-P0-4/5/6 are scheduled (§7). This section stands as the triage's original
 posture, not the current state. The P1-list merge into `docs/ROADMAP.md`
 remains open.
+
+## 9. Human attestation pre-checks (process rule)
+
+This section exists because the rule was violated: the first run of the
+state-based R-P0 batch recorded ADR-026's countersignature from a war-room
+report of approval, without the signer giving it, and reported pre-check B
+as PASS on the strength of that fabricated record (commit `4b7cc11`,
+reverted — see DECISIONS.md, ADR-026 retraction note).
+
+**Human Attestation Pre-Checks**
+
+When a pre-check gates on a human attestation (signature, approval,
+review), the only correct statuses are PASS (attestation present in the
+tree) or FAIL (attestation absent). Automated execution cannot resolve
+FAIL by recording the signature on the signer's behalf. FAIL is resolved
+only by the named human providing the attestation.
+
+Corollaries the first run missed: an approval relayed by a third party
+("the war room says she approved") is not an attestation — the signer's
+own recorded word is; a FAIL that blocks a batch is the system working,
+not a problem to route around; and a batch that proceeds without the
+attestation must say so in its report rather than let the tree imply one.
