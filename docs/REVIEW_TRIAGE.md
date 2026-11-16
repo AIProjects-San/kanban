@@ -332,12 +332,41 @@ already in flight.
 
 **Sequencing (war-room directive, 2026-11-16):** three hotfixes executed the
 same day — R-P0-1 (`eef176c`), R-P0-2 (`b6c4c47`), R-P0-3 (`c90ebc4`), the
-latter shipping the `docs:drift` CI gate that keeps the truth pass true.
-R-P0-4/5/6 run as a parallel workstream with a two-week window. ADR-025
-(DocType framework) and ADR-023 Addendum A (revised gate criteria + kill
-condition #1) were recorded before Phase 0 week 2 begins, per the directive.
+latter shipping the `docs:drift` CI gate that keeps the truth pass true —
+and accepted by the war room the same evening. R-P0-4/5/6 start Tuesday
+2026-11-17, targeting Friday 2026-11-20, inside the two-week window; the
+Phase 0 week-2 config-boundary first cut proceeds as planned from 2026-11-23
+(ADR-023 Appendix A). ADR-025 (DocType framework) and ADR-023 Addendum A
+(revised gate criteria + kill condition #1) were recorded before week 2
+begins, per the directive: Addendum A is now **ratified** (sign-off Mara
+Chen, CTO, 2026-11-16) and ADR-025 is **countersigned** (Devon Okafor,
+Principal Architect, 2026-11-16, with a reversibility note). ADR-026 —
+erasure anonymizes, never deletes — is drafted ahead of R-P0-5 so that
+workstream implements a recorded decision rather than an improvisation.
 
-**P0 — honesty and security surface, small diffs (R-P0-1/2/3 applied; R-P0-4/5/6 in the two-week workstream)**
+**R-P0-1 follow-up (2026-11-16): the double-deduction guard is verified.**
+The banner tells the scope truth; the guard is what prevents the failure
+mode behind it. Verified present and green — 59/59 across the three suites
+(`bunx vitest run` on `slip-statutory`, `payroll-statutory`,
+`payroll-math`):
+
+- `withoutStatutoryLines` (`src/lib/payroll/nz/slip-statutory.ts:371`)
+  strips the auto-managed statutory keys (paye/acc/ks/sl) from any
+  client-submitted deduction set — pinned by the "strips auto-managed
+  statutory keys" case.
+- `updatePayslip` (`src/server-actions/payroll.ts:1285`) strips, then
+  recomputes against the run's frozen rate set — the stale-client case
+  submits a slip echoing the old PAYE line against raised earnings and
+  asserts the stored set is exactly the three fresh lines (no duplication,
+  net recomputed).
+- `persistStatutoryLines` (`payroll.ts:178`) replaces statutory keys
+  wholesale on the run-creation and joiner paths; `withLopLine` /
+  `withRoundingLine` are replace-never-duplicate (`payroll-math.test.ts`).
+  One adjacent edge is untested — the rate set deleted while a run is OPEN
+  (`payroll.ts:1336-1343`, a drop-guard that keeps the stored lines, not a
+  double-deduction vector) — noted as test debt for the R-P0-4/5/6 batch.
+
+**P0 — honesty and security surface, small diffs (R-P0-1/2/3 applied and war-room accepted; R-P0-4/5/6 start 2026-11-17, target 2026-11-20)**
 
 | ID | Item | Evidence anchor |
 |---|---|---|
@@ -379,3 +408,9 @@ condition #1) were recorded before Phase 0 week 2 begins, per the directive.
 No code changes. No scope decision. The P0 batch is proposed, not applied —
 execute it as one PR series once the owner confirms, then merge the P1 list
 into `docs/ROADMAP.md`.
+
+**Update (2026-11-16, post-acceptance):** superseded by events — the owner
+confirmed the same day; R-P0-1/2/3 are applied and war-room accepted, and
+R-P0-4/5/6 are scheduled (§7). This section stands as the triage's original
+posture, not the current state. The P1-list merge into `docs/ROADMAP.md`
+remains open.
