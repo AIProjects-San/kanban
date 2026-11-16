@@ -446,6 +446,17 @@ export function PayslipModal({
           </div>
         )}
 
+        {/* R-P0-2 (review triage) — the jurisdiction line lives on the
+            artifact itself, not just the admin console: NZ statutory is
+            computed in-system (ADR-015/016); other jurisdictions carry
+            manual deduction lines only (ADR-014). Renders for OPEN drafts
+            and LOCKED records alike, and prints with the slip (it sits
+            inside .print-area, outside .no-print). */}
+        <div className="text-[0.6875rem] text-muted-foreground" data-testid="payslip-statutory-scope">
+          Statutory scope: NZ amounts (PAYE · ACC · KiwiSaver · student loan) are computed in-system from
+          the run's rate set (ADR-015/016); other jurisdictions — manual deduction lines only (ADR-014).
+        </div>
+
         <div className={editable ? "" : "print-classic"}>
           <Field label="Note (shown on the printed slip)">
             <input

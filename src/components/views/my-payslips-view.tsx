@@ -66,6 +66,15 @@ export function MyPayslipsView({ currentUser }: { currentUser: { id: string; nam
         </div>
       </div>
 
+      {/* R-P0-2 (review triage) — the employee-facing scope note: NZ
+          statutory is computed in-system; other jurisdictions carry manual
+          deduction lines only. The PayslipModal repeats this on the printed
+          artifact itself. */}
+      <p className="text-xs text-muted-foreground" data-testid="my-payslips-scope-note">
+        Statutory scope: NZ amounts (PAYE, ACC, KiwiSaver, student loan) are computed in-system from each
+        run's rate set; other jurisdictions — manual deduction lines only (ADR-014/015/016).
+      </p>
+
       {/* Summary card — the basic employee question: what did I get paid? */}
       {latest && (
         <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 flex flex-wrap items-center gap-x-8 gap-y-2" data-testid="my-payslips-latest">

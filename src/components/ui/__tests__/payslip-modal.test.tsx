@@ -130,6 +130,14 @@ describe("PayslipModal (OPEN run)", () => {
     expect(screen.getByTestId("payslip-earnings-ytd-1").textContent).toContain("$400.00");
   });
 
+  it("R-P0-2 — states the statutory scope on the artifact (jurisdiction line)", () => {
+    render(<PayslipModal payslip={payslip()} onClose={onClose} onChanged={onChanged} />);
+    const scope = screen.getByTestId("payslip-statutory-scope");
+    expect(scope.textContent).toContain("computed in-system");
+    expect(scope.textContent).toContain("ADR-015/016");
+    expect(scope.textContent).toContain("manual deduction lines only (ADR-014)");
+  });
+
   it("F-R2 — a conflict error keeps the modal open (the toast says who saved first)", async () => {
     updatePayslip.mockResolvedValue({
       ok: false,
@@ -173,6 +181,9 @@ describe("PayslipModal (LOCKED run)", () => {
     expect(totals.textContent).toContain("$6,700.00");
     expect(totals.textContent).toContain("$6,253.33");
     expect(screen.getByTestId("payslip-print")).toBeTruthy();
+    // R-P0-2 — the statutory scope line rides the paid record too (it
+    // prints with the slip; it is not a no-print chrome element).
+    expect(screen.getByTestId("payslip-statutory-scope").textContent).toContain("computed in-system");
     expect(updatePayslip).not.toHaveBeenCalled();
   });
 

@@ -76,6 +76,15 @@ describe("My Payslips view (P0-1 / D-02)", () => {
     expect(screen.getByTestId("payslip-totals").textContent).toContain("$6,300.00");
   });
 
+  it("R-P0-2 — states the statutory scope note (jurisdiction truth)", async () => {
+    render(<MyPayslipsView currentUser={CURRENT_USER} />);
+    await waitFor(() => expect(screen.getAllByTestId("my-payslip-row").length).toBe(2));
+    const note = screen.getByTestId("my-payslips-scope-note");
+    expect(note.textContent).toContain("computed in-system");
+    expect(note.textContent).toContain("manual deduction lines only");
+    expect(note.textContent).toContain("ADR-014/015/016");
+  });
+
   it("shows the finalized-months empty state when there are no payslips", async () => {
     getMyPayslips.mockResolvedValue({ ok: true, data: [] });
     render(<MyPayslipsView currentUser={CURRENT_USER} />);
