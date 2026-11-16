@@ -31,7 +31,7 @@ function disclaimerLines(kind: "Salary register" | "Bank remittance", period: st
     product: "Fernly Payroll",
     scope: `period ${period}`,
     generatedAt,
-    disclaimerExtra: " Not a tax document (ADR-014).",
+    disclaimerExtra: " Not a tax document (ADR-014/015/016 — statutory scope: NZ computed in-system, others manual).",
   });
 }
 

@@ -37,7 +37,8 @@ export function csvRow(fields: Array<string | number | null | undefined>): strin
  * The shared leading comment lines every report CSV opens with: the report
  * identity, the generation instant, and the non-statutory disclaimer.
  * `disclaimerExtra` appends a per-family restatement to the disclaimer line
- * (the payroll files keep their explicit "Not a tax document (ADR-014)."),
+ * (the payroll files keep their explicit "Not a tax document" with the
+ * ADR-014/015/016 statutory-scope citation),
  * `extraLines` carry per-report legends (e.g. the attendance sheet's code
  * legend) — each is prefixed with "# " and RFC 4180-escaped as one field.
  */

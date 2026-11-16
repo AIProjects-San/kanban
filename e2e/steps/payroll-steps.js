@@ -283,7 +283,7 @@ Then("the outgoing salary chart should show paid months", async function () {
     `outgoing chart should show month labels, got: ${text}`);
 });
 
-Then("the statutory cards should render the ADR-014 note", async function () {
+Then("the India-statutory cards should render the ADR-014 note", async function () {
   const driver = await this.getDriver();
   const cards = await driver.wait(
     until.elementLocated(By.css('[data-testid="payroll-analytics-cards"]')),
@@ -292,12 +292,12 @@ Then("the statutory cards should render the ADR-014 note", async function () {
   );
   const text = await cards.getText();
   assert.ok(
-    text.includes("statutory, declined (ADR-014)"),
-    `the statutory cards should name the ADR-014 decline, got: ${text}`,
+    text.includes("declined — India statutory (ADR-014)"),
+    `the India-statutory cards should name the scoped ADR-014 decline, got: ${text}`,
   );
   assert.ok(
     text.includes("—"),
-    `the statutory cards should render an em dash, never a fake zero, got: ${text}`,
+    `the India-statutory cards should render an em dash, never a fake zero, got: ${text}`,
   );
 });
 

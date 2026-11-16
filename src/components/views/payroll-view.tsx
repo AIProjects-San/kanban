@@ -322,32 +322,36 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
         </div>
       </div>
 
-      {/* D-06 (P0-3, persona-audit) — statutory positioning, stated where
-          payroll is used. The honest scope of this console: gross → net from
-          structures + manual deduction lines; statutory computation (PF/ESI/
-          PT/TDS, Form 16, declarations) is deliberately NOT built — the
-          decision record is docs/DECISIONS.md ADR-014. Permanent (not
-          env-gated): the scope statement must be visible in every demo.
-          The parent's space-y-5 provides the gap to the form below. */}
+      {/* R-P0-1 (review triage) — statutory positioning, stated where
+          payroll is used, now jurisdiction-true: NZ statutory IS computed
+          in-system (ADR-015/016) and IRD payday-filing files ARE generated
+          (ADR-018); the ADR-014 decline survives scoped to jurisdictions
+          outside NZ (PF/ESI/PT/TDS, Form 16, declarations). Runs without a
+          covering rate set carry manual deduction lines only. Permanent
+          (not env-gated): the scope statement must be visible in every
+          demo. The parent's space-y-5 provides the gap to the form below. */}
       <div
         className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 flex items-start gap-2"
         data-testid="statutory-scope-banner"
       >
         <Scale size={14} className="shrink-0 mt-0.5" />
         <span>
-          <span className="font-semibold">Pre-statutory payroll.</span>{" "}
-          Fernly computes gross → net from your structures and manual deduction lines — it does{" "}
-          <span className="font-semibold">not</span> compute or file statutory amounts (PF, ESI, professional
-          tax, TDS, Form 16, investment declarations). Enter statutory deductions as manual lines or run
-          them through your compliance provider. Decision record: <span className="font-mono text-xs">docs/DECISIONS.md</span> (ADR-014).
+          <span className="font-semibold">Statutory scope.</span>{" "}
+          New Zealand: PAYE, ACC earners' levy, KiwiSaver (with ESCT) and student loan are{" "}
+          <span className="font-semibold">computed in-system</span> from the workspace rate set, and IRD
+          payday-filing files are generated for myIR upload (ADR-015/016, ADR-018) — a run without a
+          covering rate set carries manual deduction lines only. Other jurisdictions remain pre-statutory:
+          enter PF, ESI, professional tax, TDS, Form 16 and investment declarations as manual lines, with
+          compliance at your provider (ADR-014). Decision records: <span className="font-mono text-xs">docs/DECISIONS.md</span>.
         </span>
       </div>
 
       {/* P22 (PR-C01–04, PR-N01–06) — the analytics panel: the four benchmark
           payroll charts + the six number cards, read-time over LOCKED runs only
           (draft money never reaches an analytics surface — the same
-          published-only basis as payslip self-service). The two statutory cards
-          render "—" with the ADR-014 note instead of a misleading zero. */}
+          published-only basis as payslip self-service). The two India-statutory
+          cards render "—" with the ADR-014 note instead of a misleading zero
+          (NZ statutory is computed — ADR-015/016). */}
       {analytics && (
         <div className="rounded-lg border border-border" data-testid="payroll-analytics">
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border flex-wrap">
@@ -386,14 +390,14 @@ export function PayrollView({ currentUser }: { currentUser: { id: string; name: 
               <StatCard
                 icon={ShieldAlert}
                 value="—"
-                label="Tax exemption proofs · statutory, declined (ADR-014)"
+                label="Tax exemption proofs · declined — India statutory (ADR-014)"
                 iconColor="text-amber-600"
                 iconBg="bg-amber-500/10"
               />
               <StatCard
                 icon={FileText}
                 value="—"
-                label="Declarations submitted · statutory, declined (ADR-014)"
+                label="Declarations submitted · declined — India statutory (ADR-014)"
                 iconColor="text-amber-600"
                 iconBg="bg-amber-500/10"
               />

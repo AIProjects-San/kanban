@@ -143,16 +143,22 @@ describe("PayrollView", () => {
     expect(locked).toContain("locked by Remy");
   });
 
-  // Persona-audit D-06 / P0-3 (ADR-014): the pre-statutory scope must be
-  // stated where payroll is used — permanent, in every environment.
-  it("states the pre-statutory scope permanently (D-06, ADR-014)", async () => {
+  // R-P0-1 (review triage) — the statutory scope banner must state the
+  // jurisdiction truth: NZ statutory IS computed in-system (ADR-015/016)
+  // with payday-filing files generated (ADR-018); the ADR-014 decline
+  // survives scoped to jurisdictions outside NZ. Permanent, every env.
+  it("states the statutory scope truthfully, jurisdiction-scoped (R-P0-1)", async () => {
     render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
     const banner = await screen.findByTestId("statutory-scope-banner");
     const text = banner.textContent ?? "";
-    expect(text).toContain("Pre-statutory payroll");
-    expect(text).toContain("PF, ESI, professional tax, TDS, Form 16, investment declarations");
+    expect(text).toContain("Statutory scope");
+    expect(text).toContain("computed in-system");
+    expect(text).toContain("PAYE, ACC earners' levy, KiwiSaver (with ESCT) and student loan");
+    expect(text).toContain("payday-filing files");
+    expect(text).toContain("Other jurisdictions remain pre-statutory");
     expect(text).toContain("manual deduction lines");
     expect(text).toContain("ADR-014");
+    expect(text).toContain("ADR-015/016, ADR-018");
   });
 
   it("only OPEN runs offer the lock button (with a confirm step)", async () => {
@@ -330,13 +336,13 @@ describe("P22 (PR-C01–04, PR-N01–06) — the analytics panel", () => {
     expect(screen.getByTestId("designation-salary-header").textContent).toContain("2026-11");
   });
 
-  it("the two statutory cards render '—' with the ADR-014 note, never a fake zero", async () => {
+  it("the two India-statutory cards render '—' with the ADR-014 note, never a fake zero", async () => {
     getPayrollAnalytics.mockResolvedValue({ ok: true, data: fullPayload });
     render(<PayrollView currentUser={{ id: "u-hr", name: "Remy", role: "HR" }} />);
     const cards = await screen.findByTestId("payroll-analytics-cards");
     const text = cards.textContent ?? "";
-    expect(text).toContain("Tax exemption proofs · statutory, declined (ADR-014)");
-    expect(text).toContain("Declarations submitted · statutory, declined (ADR-014)");
+    expect(text).toContain("Tax exemption proofs · declined — India statutory (ADR-014)");
+    expect(text).toContain("Declarations submitted · declined — India statutory (ADR-014)");
     expect(text).toContain("—");
   });
 

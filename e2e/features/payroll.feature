@@ -18,12 +18,13 @@ Feature: Payroll (Recruitment R7)
   Scenario: HR sees the payroll analytics panel (P22)
     The four charts and six number cards render read-time off the LOCKED
     runs (the same published-only basis as payslip self-service); the two
-    statutory cards state the ADR-014 decline instead of a fake zero.
+    India-statutory cards state the ADR-014 decline instead of a fake zero
+    (NZ statutory is computed in-system — ADR-015/016).
     When I sign in as "remy@fernly.app" with the demo password
     And I open the "Payroll" view
     Then the payroll analytics panel should render the six number cards
     And the outgoing salary chart should show paid months
-    And the statutory cards should render the ADR-014 note
+    And the India-statutory cards should render the ADR-014 note
 
   Scenario: HR opens a payslip with the seeded LOP deduction
     When I sign in as "remy@fernly.app" with the demo password
