@@ -469,7 +469,7 @@ and the PRD (FR-N2).
 
 ## ADR-014 — Payroll is pre-statutory by design; we position honestly instead of half-implementing India compliance
 
-**Date:** 2026-11-06 · **Status:** ACCEPTED · **Type:** product / compliance
+**Date:** 2026-11-06 · **Status:** ACCEPTED — partially superseded (NZ statutory) by ADR-015/016, see ADR-023 recording notes · **Type:** product / compliance
 
 **Context.** The persona acceptance assessment
 (`docs/Fernly_Persona_Acceptance_Assessment.md`, finding **D-06**, backlog
@@ -1139,3 +1139,368 @@ exactly one seam and tested by the P2.1 suite (schema pins, the
 executed backfill, the masters CRUD guards, the G6 effect writes, the
 directory's picker/filter sync — 216 files / 3,961 tests green,
 `src/lib` 94.4/87.0, `src/server-actions` 92.0/77.9).
+
+---
+
+## ADR-023 — The SME Suite ships in nine gated phases; each phase's detailed plan is written one phase ahead, never earlier
+
+**Date:** 2026-11-16 · **Status:** proposed · **Phase:** SME Suite delivery
+
+**Deciders:** Mara Chen (CTO), Devon Okafor (Principal Architect), Priya
+Raghunathan (VP Product), Jonas Weber (Principal QA), Dr. Fatima Al-Rashid
+(Security & Compliance Lead). **Consulted:** Board. **Informed:** All
+engineering, product, security staff.
+
+**Context.** The Fernly SME Suite war room (sessions 1 and 2, 2026-11-16)
+reached a set of decisions about scope, architecture, security, and delivery
+approach, documented in the session transcripts and in:
+
+- ADR-018 — Phase 2 payday filing: EI/ED/EIA2 files for myIR upload (pt 6:
+  DEI field 13 files 0 — the YTD ACC-cap deferral)
+- ADR-019 — Employment document approval kernel (separate from leave)
+- ADR-020 — Money is Float + round2
+- ADR-021 — Coverage gate baseline reset to the honest floor
+- ADR-024 — Scope checkpoint criteria (to be written; renumbered — see
+  recording notes)
+- ADR-023 — This document (phased delivery plan)
+
+The board asked for a "step-by-step plan for all phases." The war room's
+honest answer was that weeks 1–8 can be planned in detail today, but Phases
+1–8 cannot be planned in detail until specific design decisions are made at
+the week-8 gate and after. Producing detailed month-5 milestones today would
+be guessing at week-8 outputs and phase-6 design-partner learnings — the
+exact pattern that produces timelines a team cannot hold.
+
+This ADR formalizes the alternative: a phase skeleton with gates, plus a
+binding commitment to plan each phase's detail one phase ahead of execution,
+not further.
+
+**Decision.** Fernly will be delivered in nine phases with explicit entry and
+exit gates. The detailed plan for each phase is written at the moment the
+previous phase's exit gate passes — never before. Phase 0 detail is written
+now because its inputs exist. Phases 1–8 detail is deliberately withheld
+until their inputs exist.
+
+### Phase skeleton
+
+| Phase | Months | Entry gate | Exit gate | Owner |
+|---|---|---|---|---|
+| **0 — Design** | 1–2 | Board Go decision | Week-8 gate passes (see below) | Devon |
+| **1 — Framework core** | 3–5 | Week-8 gate passes | Framework can define, version, and permission a DocType; sandbox runs | Devon |
+| **2 — Identity + SSO** | 4–6 (parallel with 1) | Week-8 gate passes | Google + Microsoft OIDC working; deprovisioning audited | Fatima |
+| **3 — Payroll engine** | 5–7 | Week-8 gate passes; reuse-vs-rebuild decision made | NZ PAYE/ACC/KiwiSaver/SL/payday filing verified against IRD worked examples | Devon |
+| **4 — HR core** | 6–8 | Framework stable (Phase 1 exit) | Employees, org, documents, onboarding checklist, leave, timesheets | Priya |
+| **5 — Fernly Cloud shell** | 8–10 | Phases 2, 3, 4 substantially complete | Self-serve product for 0–50 vertical: sign up, configure opinionated defaults, run payroll | Priya |
+| **6 — Design-partner validation** | 10–12 | Phase 5 shipped to 3 design partners | Feedback loop closed; critical gaps fixed | Priya |
+| **7 — Fernly Enterprise shell** | 12–14 | Phase 6 learnings applied | Config-exposed product for 50–200 vertical: integrator access, sandbox, custom fields | Devon |
+| **8 — v1 release** | 14–15 | Phases 5–7 complete; security engineer in seat; property tests green; kill conditions not fired | 10 paying customers, public launch | Mara |
+
+**Note on parallelism:** Phase 2 (Identity + SSO) runs in parallel with
+Phase 1 because the SSO work depends on the config/permission model design
+but not on framework implementation. Phase 3 (Payroll engine) overlaps Phase
+2 exit because payroll computation can proceed against a stable permission
+model before the full framework UI lands.
+
+### The week-8 gate
+
+Phase 0's exit gate is the single most consequential checkpoint in the plan.
+It determines whether the 12-month engineering timeline holds or whether the
+engineering kill condition fires.
+
+**Four deliverables must exist and be signed off by end of week 8:**
+
+| # | Deliverable | Owner | Acceptance criterion |
+|---|---|---|---|
+| 1 | **Config boundary locked** | Devon | Written ADR enumerating every entity, rule, and layout as config or code, signed by Mara, Fatima, Jonas |
+| 2 | **Invariant catalogue locked** | Jonas | Every payroll, leave, timesheet, and config invariant written as a fast-check property signature, committed to repo |
+| 3 | **Sandbox architecture locked** | Devon + Fatima | Written design with isolation model, refuse-to-publish sequence, and threat model, signed by Fatima |
+| 4 | **End-to-end payroll proof** | Devon + Jonas | A single NZ payroll run for a test employee producing correct PAYE/ACC/KiwiSaver/SL, passing all invariants, published from sandbox to prod |
+
+**Week-8 gate outcome:**
+
+- **If all four exist and are signed:** the engineering kill condition does
+  not fire; the 12-month timeline holds; Phase 1 detail is written.
+- **If any of the four is missing or unsigned:** the engineering kill
+  condition fires; the board reassesses within one week; the plan does not
+  proceed to Phase 1 until resolved.
+
+The gate is binary. Partial completion is not completion. A config boundary
+that's "mostly locked" will produce a config boundary that ships
+half-designed, which is the failure mode the war room existed to prevent.
+
+### The "plan one phase ahead" discipline
+
+This ADR commits Fernly to a specific planning discipline:
+
+> **The detailed plan for Phase N is written when Phase N−1's exit gate
+> passes. Not before.**
+
+Concretely:
+
+| When | What gets planned | Who writes it | Reviewers |
+|---|---|---|---|
+| Today | Phase 0 (weeks 1–8) | Devon | Mara, Fatima, Jonas |
+| Week 8, gate passes | Phase 1 (framework core) | Devon | Mara, Jonas |
+| Week 8, gate passes | Phase 2 (identity/SSO) | Fatima | Mara, Devon |
+| Phase 3 entry (Month 5) | Phase 3 (payroll engine) — includes reuse-vs-rebuild decision | Devon + Priya | Mara, Jonas |
+| Phase 4 entry (Month 6) | Phase 4 (HR core) | Priya + Devon | Mara |
+| Phase 5 entry (Month 8) | Phase 5 (Cloud shell) | Priya | Mara, Devon |
+| Phase 6 entry (Month 10) | Phase 6 (design-partner validation) | Priya | Mara |
+| Phase 7 entry (Month 12) | Phase 7 (Enterprise shell) | Devon | Mara, Fatima |
+| Phase 8 entry (Month 14) | Phase 8 (release) | Mara | Board |
+
+**Why this discipline matters:**
+
+- **Planning beyond design is guessing.** A month-5 milestone written today
+  assumes a config-schema format that hasn't been chosen, a versioning model
+  that hasn't been specified, and a sandbox isolation approach that hasn't
+  been designed. Any one of those changing invalidates the milestone.
+- **Premature plans create false commitment.** Once a month-5 milestone is on
+  a board slide, it acquires political weight. The team either hits it by
+  cutting corners (shipping half-designed) or misses it and loses
+  credibility. Neither is acceptable.
+- **Phase-N−1 exit gate is the natural planning point.** The gate produces
+  the concrete outputs the next phase's plan depends on. The gate is also
+  when the team has fresh information about actual velocity, which makes
+  estimates accurate instead of aspirational.
+
+**What this discipline does not mean:**
+
+- It does not mean the team plans in one-phase-ahead isolation. Each phase
+  plan is written with awareness of the phases after it, so the current
+  phase doesn't paint future phases into a corner.
+- It does not mean stakeholders lack visibility. The skeleton in this ADR is
+  the visibility artifact. It tells the board what's coming and when each
+  phase starts and ends. The detail underneath is earned, not promised.
+- It does not mean scope is fluid. Each phase's scope is bounded by the
+  phase skeleton. Planning discipline is about *how* the scope gets executed,
+  not *what* the scope is.
+
+### Kill conditions
+
+Three kill conditions, each with a named trigger and owner. If any fires, the
+plan stops and the board reassesses within one week.
+
+| # | Kill condition | Trigger | Owner | Consequence |
+|---|---|---|---|---|
+| 1 | **Engineering** | Month 6: config boundary, invariant catalogue, sandbox, and working NZ payroll not all in place | Devon | The "AI accelerates implementation" assumption was wrong. Board chooses: fund +6 months (18-month path) or cut scope to leave-only |
+| 2 | **Commercial** | Month 9: fewer than 3 design-partner LOIs from NZ professional services vertical | Priya | The vertical assumption was wrong. Board chooses: pivot to different SME segment or accept services business |
+| 3 | **Security** | End Q1: security engineer not hired | Fatima | Payroll does not ship. Leave and HR can ship. Payroll waits for hire |
+
+**Why kill conditions matter more than the plan itself:** a plan without
+kill conditions is a plan to continue regardless of evidence. A plan with
+kill conditions is a plan to continue as long as evidence supports it. The
+war room chose the second. The board should expect any future status update
+to include explicit "kill condition status: not fired" or "kill condition N
+fired, decision required."
+
+**What "fires" means operationally:** the trigger condition is met, not
+"close to met" or "at risk." At month 6, either the four deliverables exist
+or they don't. At month 9, either three LOIs are signed or fewer are. At end
+Q1, either the security engineer is in seat or they aren't. Binary. No
+partial credit.
+
+### What's explicitly not in this ADR
+
+- **No month-5 milestones.** See the planning discipline above.
+- **No feature list per phase.** The phase scope is bounded by the skeleton
+  (e.g., "Phase 3 is the payroll engine"), but the specific features are
+  enumerated in each phase plan when it's written. A feature list written now
+  would be a feature list made up, not designed.
+- **No staffing plan per phase.** Headcount follows phase scope, not vice
+  versa. The security engineer is committed (kill condition #3). The rest is
+  determined at phase entry.
+- **No budget breakdown per phase.** Total budget is committed. Phase budget
+  is allocated at phase entry based on the phase plan.
+- **No contingency reserve specification.** The war room agreed to 12-month
+  engineering and 15-to-revenue. Contingency is the difference between those
+  (3 months) plus the fundable extension if kill condition #1 fires.
+
+### The reuse-vs-rebuild question
+
+One decision is deliberately left to Phase 3 entry, not Phase 0. The existing
+Fernly codebase has a working NZ statutory engine, effective-dating model,
+general ledger, and IRD filing that were built before the DocType framework
+decision. Phase 3 will decide whether to:
+
+- **Port** the existing engine into the new framework, or
+- **Rebuild** it in the framework from scratch, or
+- **Fork** and adapt, using the existing engine as reference.
+
+This is a 6-week vs 12-week difference in Phase 3 alone. It's not decided now
+because the answer depends on the config boundary (Phase 0 output) — the
+existing engine's behavior needs to be expressed as config + code under the
+new model, and until the model exists, the port effort isn't estimable.
+
+**What this ADR does commit:** Phase 3 entry includes an explicit written
+decision on reuse-vs-rebuild with cost/benefit analysis, signed by Devon and
+Priya. The decision is not deferred past Phase 3 entry.
+
+**Consequences.**
+
+*Positive:* the plan is honest about what's known and unknown; stakeholders
+have visibility into phase order and gates without false precision; each
+phase's detail is written with fresh information from the previous phase;
+kill conditions create explicit off-ramps that preserve credibility rather
+than forcing "continue regardless"; the week-8 gate is the single
+highest-leverage decision point, correctly front-loaded.
+
+*Negative:* the board must accept that "step-by-step plan for all phases" is
+not forthcoming and never will be — that's the deliberate cost of the
+decision; stakeholders who want a Gantt chart to month 15 will not get one
+(the skeleton plus gate dates is what they get); phase plans written one
+phase ahead require discipline from leadership to *not* plan further ahead
+when asked — every request for "what does month 10 look like" must be
+answered with "the Phase 7 plan will be written at Phase 6 exit; here is the
+skeleton scope"; kill conditions create the possibility of stopping, which is
+uncomfortable for stakeholders who prefer plans that always continue — that
+discomfort is the point.
+
+*Neutral:* the ADR series grows. ADR-023 is the eighth in the SME Suite
+series. This is a feature of the discipline, not a bug.
+
+**Enforcement.** Three mechanisms:
+
+1. **Phase entry checklist.** No phase proceeds until the previous phase's
+   exit gate is documented as passed in the ADR series. Devon is the
+   gatekeeper; the CTO has override authority that must be exercised in
+   writing.
+2. **Kill condition status in every status update.** Any status update to the
+   board or investors must state each kill condition's status explicitly.
+   "Not fired" is required if accurate; "at risk" is not acceptable phrasing
+   if the trigger is close.
+3. **Phase plan review requirement.** Each phase plan must be reviewed and
+   signed by the phase owner's designated reviewers (see the discipline
+   table) before execution begins.
+
+If any of these three mechanisms is bypassed, the bypass is itself a decision
+that must be documented in a new ADR. The reason this matters: bypassing the
+discipline once creates a precedent that dissolves it.
+
+**Recording notes (2026-11-16).** Corrections and verifications made when
+entering this ADR into the log; the decision text above is otherwise verbatim
+from the war room session-2 outcome.
+
+1. **Cross-references corrected.** The draft cited "ADR-017 — YTD ACC cap
+   deferred" and "ADR-018 — Payday filing field 13 = 0": the recorded titles
+   are used above (the YTD ACC-cap deferral is ADR-018 pt 6, riding the
+   capped ACC levy line ADR-017 pt 3 fixes). The draft cited "ADR-022 —
+   Scope checkpoint criteria (to be written)": ADR-022 is already taken
+   (employee grouping masters, 2026-11-15), so the scope-checkpoint ADR is
+   renumbered **ADR-024** in both reference lists above.
+2. **ADR-014 status annotated** in this commit as partially superseded (NZ
+   statutory) by ADR-015/016 — first use of the supersede convention this
+   file's preamble provides for. The India-scoped stance (no PF/ESI/TDS)
+   stands.
+3. **The DocType framework decision has no ADR number.** This ADR references
+   "the DocType framework decision" but the series has no record of it. It
+   should be recorded as ADR-025 or folded into the week-8 config-boundary
+   ADR (deliverable 1).
+4. **Reuse-vs-rebuild asset claims verified against the tree** (evidence in
+   `docs/REVIEW_TRIAGE.md`): NZ statutory engine at `src/lib/payroll/nz/`
+   wired into every run (`payroll.ts:778-796`), GL posting on lock
+   (`postPayrollRun`, `payroll.ts:1786-1820`), IRD EI/ED filing
+   (`src/lib/ird/`), and effective-dated structures with frozen rate sets
+   (ADR-015/016). The question is about real, tested assets.
+5. **"Published from sandbox to prod" is a new capability.** The current
+   sandbox (ADR-008) is a dev-only generated SQLite local variant; the
+   week-8 deliverable 4 publish path is the week-4 sandbox architecture
+   design item, not an existing mechanism.
+6. **Kill condition #1's month-6 trigger restates the week-8 four
+   deliverables.** As written it reads as a later backstop; the war room may
+   want to distinguish the week-8 single-run proof from whatever "working NZ
+   payroll" means at month 6 (Phase 3 spans months 5–7).
+7. **The REVIEW_TRIAGE R-P0/R-P1 items are not absorbed by this ADR.** The
+   existing codebase stays in service through at least Phase 5 (months
+   8–10), and several R-P0 items (banner truth, docs truth pass) are
+   prerequisites for the honesty positioning this plan depends on.
+
+**Related decisions.** ADR-014 (payroll pre-statutory positioning —
+partially superseded by ADR-015/016); ADR-015/016 (NZ statutory engine);
+ADR-017 (IR340 combined secondary rates canonical); ADR-018 (payday filing
+EI/ED/EIA2, incl. DEI field 13 = 0); ADR-019 (employment document approval
+kernel); ADR-020 (Float + round2); ADR-021 (coverage gate reset); ADR-022
+(employee grouping masters); ADR-024 (scope checkpoint criteria — to be
+written).
+
+**Revision history.**
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-11-16 | Initial | War room session 2 outcome |
+
+### Appendix A — Phase 0 detail (weeks 1–8)
+
+The only phase whose detail exists at ADR time. Committed for completeness;
+the other phases' details will be authored at their respective entry points.
+
+**Week 1 — Governance and constraints**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–2 | Security engineer job spec + budget approval | Fatima + Mara |
+| 1–2 | Kill conditions formalized in writing | Mara |
+| 3 | Design-partner recruitment plan | Priya |
+| 4–5 | 8-week critical-path milestone breakdown | Devon |
+
+**Week 2 — Config boundary first cut**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–3 | Config-vs-code enumeration, module by module | Devon + Jonas |
+| 4–5 | Contested boundary decisions | Mara adjudicates |
+
+**Week 3 — Invariant catalogue**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–2 | Payroll invariants (fast-check signatures) | Jonas + Devon |
+| 3 | Leave invariants | Jonas |
+| 4 | Timesheet invariants | Jonas |
+| 5 | Config invariants | Jonas + Devon |
+
+**Week 4 — Sandbox architecture**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–2 | Sandbox isolation model | Devon + Fatima |
+| 3–4 | Refuse-to-publish architecture | Devon + Jonas |
+| 5 | Sandbox security boundary | Fatima |
+
+**Week 5 — DocType framework core design**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–2 | Entity model | Devon |
+| 3 | Versioning model | Devon |
+| 4 | Permission model | Devon + Fatima |
+| 5 | Config schema format decision | Devon |
+
+**Week 6 — NZ payroll engine specification**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–2 | PAYE/ACC spec matched to IR341 | Devon |
+| 3 | KiwiSaver/ESCT spec matched to IRD | Devon |
+| 4 | Student loan spec matched to IRD | Devon |
+| 5 | Payday filing spec | Devon |
+
+**Week 7 — SSO implementation design**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–2 | OIDC implementation design | Devon + Fatima |
+| 3 | Deprovisioning design | Fatima |
+| 4–5 | SSO test matrix | Fatima + Jonas |
+
+**Week 8 — Gate**
+
+| Day | Deliverable | Owner |
+|---|---|---|
+| 1–2 | Config boundary ADR locked | Devon |
+| 3 | Invariant catalogue committed | Jonas |
+| 4 | Sandbox architecture ADR locked | Devon + Fatima |
+| 5 | End-to-end payroll proof (Phase 0 demo) | Devon + Jonas |
+
+**Week-8 gate outcome.** Binary: pass (proceed to Phase 1) or fail (kill
+condition #1 fires, board reassesses within one week).

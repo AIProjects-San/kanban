@@ -314,6 +314,17 @@ backends); **(C)** status quo — not defensible given §4. Recommendation: **B*
 now, with an explicit scope checkpoint after the P0/P1 batches land. This is
 the owner's call; this triage takes no position beyond that recommendation.
 
+**Update (2026-11-16, post-triage):** the owner's answer arrived the same day
+as ADR-023 — a nine-phase, gate-driven rebuild around a configurable DocType
+framework: the payroll/HR domains are kept (payroll gated on a security
+hire), the existing NZ statutory engine becomes the Phase 3
+reuse-vs-rebuild candidate, and the scope checkpoint this section called for
+is formalized as ADR-024 (to be written). That is effectively a fourth option
+— rebuild the substrate, keep the domains — and it does **not** absorb the
+R-* items: the existing codebase remains in service through at least Phase 5
+(months 8–10), and the R-P0 doc-truth fixes are prerequisites for the honesty
+positioning the new plan depends on (ADR-023 recording notes, item 7).
+
 ## 7. Remediation plan
 
 Proposed, not applied. IDs are `R-*` to avoid colliding with the `L-*`, `P*`,
@@ -334,7 +345,7 @@ and `PR-*` series already in flight.
 
 | ID | Item |
 |---|---|
-| R-P1-1 | URL state for the work surface — view + selected entity in searchParams, refresh-stable, shareable links (ADR-023; the single highest-leverage product fix) |
+| R-P1-1 | URL state for the work surface — view + selected entity in searchParams, refresh-stable, shareable links (the single highest-leverage product fix; needs its own ADR — ADR-023 is the phased delivery plan) |
 | R-P1-2 | Wire the orphaned backends: `searchWorkspace` into the command palette, `bulkUpdateTasks` selection-mode UI, ICS export button (after R-P0-4) |
 | R-P1-3 | Message/notification freshness: visibilitychange + interval polling now; SSE-vs-polling decision ADR |
 | R-P1-4 | E-signature hardening: rate-limit the public offer actions; retention hold on `hiring.offer_signed` audit rows; keep the sign page's honest "what is recorded" statement in sync |
