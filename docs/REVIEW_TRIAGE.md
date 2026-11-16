@@ -352,13 +352,27 @@ it reaches ACCEPTED only when she signs it herself.
 **Pre-check outcome (2026-11-16, state-based batch; corrected after the
 attestation retraction): A FAILED → R-P0-7; B FAIL — attestation absent.**
 Pre-check A (rate-set deletion while a run is OPEN) found the joiner path
-in the critical-bug bucket — see the R-P0-7 spec below. Per the batch
-protocol (failure protocol + "report first"), no item implementation
-begins until the war room agrees R-P0-7's scope. Pre-check B: the earlier
-run recorded ADR-026's countersignature without the signer giving it
-(commit `4b7cc11`) — that record is reverted, and the pre-check stands
+in the critical-bug bucket — see the R-P0-7 spec below. Pre-check B: the
+earlier run recorded ADR-026's countersignature without the signer giving
+it (commit `4b7cc11`) — that record is reverted, and the pre-check stands
 FAIL until Dr. Al-Rashid signs; R-P0-5 is blocked on it (the other items
 are not). Pre-check C passed — decision recorded with R-P0-4 below.
+
+**Corrected batch re-verification (2026-11-17, post Step Zero): A PASS
+(bug reproduces), B FAIL (unchanged — no signature in the tree), C PASS
+(+ R-P0-8 added to scope).** Pre-check A re-ran the four-assertion
+verification against the corrected tree — deletion with only OPEN-run
+references proceeds; the joiner slip lands with zero statutory lines and
+plain success; the lock path has no rate-set validation; the edit path
+preserves the cached lines — exactly the previous finding, now pinned to
+the current HEAD. Pre-check B stands FAIL per §9 (the attestation rule):
+only Dr. Al-Rashid can resolve it. Pre-check C's evidence re-confirmed
+(zero UI callers; writer PII at `hiring-interviews.ts:102-103`; the
+dashboard feed renders the same stored titles) with one war-room scope
+addition: the legacy rows that already carry PII in the title field get a
+one-time redaction migration — **R-P0-8** below (migration only, no UI
+change; the dashboard feed is fixed by the stored-field redaction, its
+code untouched).
 
 **R-P0-1 follow-up (2026-11-16): the double-deduction guard is verified.**
 The banner tells the scope truth; the guard is what prevents the failure
@@ -395,7 +409,8 @@ mode behind it. Verified present and green — 59/59 across the three suites
 | R-P0-4 | ICS export: scope to HR or strip candidate PII; emit TZID/VTIMEZONE (or document UTC-only) — the export currently has no UI caller, so fix before wiring | §4.3 |
 | R-P0-5 | `eraseUser`: decide FK strategy (anonymize instead of delete, or lift `Restrict`), sweep the non-FK orphan PII, add a non-mocked integration test | §4.4 |
 | R-P0-6 | Production posture: require explicit `SERVER_ACTIONS_ALLOWED_ORIGINS` override (startup warning on wildcard trust); document/gate the demo password prefill | §4.5-6 |
-| R-P0-7 | **SPEC ONLY, pending war-room scope agreement** — rate-set deletion guard, found by pre-check A. Spec below | Pre-check A |
+| R-P0-7 | Rate-set deletion guard — **ADR-027 drafted** (DECISIONS.md, DRAFT); implementation blocked pending Devon/Fatima/Mara signatures per §9 | Pre-check A |
+| R-P0-8 | Legacy event title redaction — one-time migration (after R-P0-4's writer fix; migration only, no UI change) | Pre-check C |
 
 **Pre-check C decision (recorded 2026-11-16, lands with R-P0-4's
 implementation): strip PII.** Evidence: `exportCalendarIcs` has zero UI
@@ -414,10 +429,12 @@ adjacent in-app surface (the dashboard event feed renders the same stored
 titles, `dashboard.ts:188`) is fixed for future events by the same writer
 change; legacy-row cleanup is reported, not silently folded.
 
-**R-P0-7 spec (proposed — the war room must agree the scope before
-implementation; per the batch protocol this is spec-only).**
+**R-P0-7 spec (scope agreed by the war room in the corrected-batch
+directive; recorded as ADR-027, DRAFT — implementation blocked pending the
+three signatures, per §9).**
 
-*Finding (pre-check A, verified by test run + code read).* `deleteTaxYear`
+*Finding (pre-check A, verified by test run + code read; re-verified
+2026-11-17).* `deleteTaxYear`
 (`tax-admin.ts:704-735`) refuses deletion only when **LOCKED** runs
 reference the set; OPEN-run references are counted and audited but the
 deletion proceeds. After deletion, on an OPEN engine run:
@@ -450,17 +467,20 @@ work rides on this data-integrity ground; fix the ground first.
    (the slip's own frozen pricing; dropping them would silently
    under-deduct). The pin test locks this in.
 
-*Open decision points for the war room:* (a) layer 1 outright refusal vs.
-typed-confirmation escape hatch (recommend: outright — archive exists);
-(b) optional run-page notice when `run.rateSetId` no longer resolves
-(recommend: yes, small); (c) a lock-time completeness check (recommend:
-no — layers 1+2 close the hole for new data; a lock check adds
-false-positive risk on legitimately manual legacy runs); (d) backfill for
-already-orphaned `rateSetId` values (recommend: none — pre-launch).
-Estimated shape: small diffs in `tax-admin.ts` + `payroll.ts`
-(`addPayslip`), test updates in `tax-admin.test.ts` +
-`payroll-statutory.test.ts`, plus the joiner/lock regression tests (the
-pre-check scratch cases, promoted).
+*Open decision points — resolved by the corrected-batch directive:*
+(a) outright refusal (no escape hatch — archive exists); (b) run-page
+notice: yes — a badge on the runs list + a banner on the run detail page,
+firing on an unresolvable `rateSetId` AND on any payslip with zero
+statutory lines where the employee has taxable earnings; (c) no lock-time
+completeness check — layers 1+2 close the hole, a lock check would mask
+rather than surface; (d) no backfill — pre-launch, with a v1-launch
+checklist item (verify no orphaned `rateSetId` in production data before
+the first real payroll run). The full decision text, the four required
+property tests, and the reversibility note live in ADR-027
+(docs/DECISIONS.md). Reviewers on record: Devon Okafor (architectural),
+Dr. Fatima Al-Rashid (data-integrity/security), Mara Chen (CTO —
+restricting an admin capability). None has signed; none may be signed
+for.
 
 **P1 — product fundamentals**
 

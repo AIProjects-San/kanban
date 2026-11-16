@@ -1709,3 +1709,92 @@ workstream); ADR-023 recording note 7 (the existing tree serves through at
 least Phase 5 — this fix lands in it, not a successor); R-P1-4 (e-sign
 audit retention hold — the same evidence-preservation principle); R-P1-6
 (deterministic-email release semantics).
+
+---
+
+## ADR-027 — Rate-set deletion is refused while any run references the set
+
+**Date:** 2026-11-17 · **Status:** DRAFT — proposed, not countersigned;
+implementation owned by R-P0-7 (state-based, no calendar target) ·
+**Type:** data integrity / payroll
+
+**Signature status.** Not signed. Per REVIEW_TRIAGE §9 (the human
+attestation rule this ADR predates by one incident): it reaches ACCEPTED
+only when the named reviewers sign it themselves — Devon Okafor
+(architectural), Dr. Fatima Al-Rashid (data-integrity/security), and Mara
+Chen (CTO — restricting an admin capability requires CTO approval). An
+automated run may never record those signatures on their behalf.
+
+**Context.** Pre-check A of the R-P0 batch (verified by test run + code
+read, re-verified by the corrected batch) found `deleteTaxYear`
+(`tax-admin.ts:704-735`) refusing deletion only when **LOCKED** runs
+reference the set; OPEN-run references are counted and audited but the
+deletion proceeds. After deletion, on an OPEN engine run:
+
+- `updatePayslip` keeps the stored statutory lines + snapshot — the
+  documented cache use, already pinned by
+  `src/server-actions/__tests__/payroll-rateset-deleted.test.ts`.
+- `addPayslip` creates joiner slips with **zero statutory lines** and a
+  plain-success result; only the audit row notes the missing set
+  (`payroll.ts:1536-1566`, audit at `:1630`). An untaxed slip is a
+  wrong-net overpayment with no operator-visible error.
+- `lockPayrollRun` has no rate-set validation; the untaxed net locks
+  immutably and posts to the general ledger.
+
+Taxonomy: *silent wrong values* — the critical bucket. Tax calculations
+must fail loudly, never succeed quietly with wrong numbers.
+
+**Decision.** Three-layer enforcement, defense in depth:
+
+1. **Deletion refusal covers every run state.** `deleteTaxYear` refuses
+   deletion while ANY run (OPEN or LOCKED) references the rate set; the
+   refusal message names the referencing runs. **Archive is the retire
+   path** for used sets — archiving is safe mid-run because frozen-run
+   resolution is by explicit id via `findUnique` and ignores the
+   effectiveness window (`calculate.ts` resolveNzRateSet). Deletion
+   remains available for never-used rate sets.
+2. **The joiner path fails loudly.** `addPayslip` refuses with the
+   engine-style user-facing error naming the missing rate set when
+   `run.rateSetId` is set but the set fails to resolve — the same
+   fail-loud philosophy the action already applies to engine refusals.
+3. **The edit path keeps its cache.** `updatePayslip` preserves the
+   cached statutory lines from the run's snapshot (existing, correct
+   behavior — a test proving it lands with the implementation; no
+   audit-only change is needed here).
+
+**Defense in depth — the run-page notice.** Two surfaces (a badge on the
+runs list, a banner on the run detail page) fire on: (a) an unresolvable
+`rateSetId` on the run, and (b) any payslip in the run with zero
+statutory lines where the employee has taxable earnings.
+
+**Property tests.** Four tests must exist and pass:
+`rate-set-deletion-blocked-when-referenced` (Layer 1);
+`add-payslip-fails-when-rate-set-missing` (Layer 2);
+`update-payslip-preserves-cache` (Layer 3); and
+`run-cannot-lock-with-missing-rate-set` (the end-to-end property).
+
+**Explicitly rejected.**
+
+- *No lock-time completeness check.* Layers 1 and 2 close the hole; a
+  lock-time check would mask rather than surface bugs.
+- *No backfill for orphaned ids.* Pre-launch data. A v1-launch checklist
+  item is added instead: verify no orphaned `rateSetId` exists in
+  production data before the first real payroll run.
+
+**Consequences.** *Positive:* the silent-wrong-values class disappears at
+both entry points; operators see named, actionable refusals. *Negative:*
+admins can no longer delete a used rate set even in a workspace they
+know is stale — the archive path is one click away, and the refusal
+message says so. *Neutral:* never-used sets delete as before; the
+tax-admin UI documents which action to take (archive to retire, delete
+only for never-used sets).
+
+**Reversibility.** Layer 1 is reversible — remove the refusal if the
+archive path ever proves insufficient. Layers 2 and 3 should stay
+regardless: they are the fail-loud and cache-correctness invariants the
+engine already claims elsewhere.
+
+**Related decisions.** REVIEW_TRIAGE §7 (R-P0-7 spec, pre-check A
+evidence); ADR-015/ADR-016 (the NZ statutory engine whose rate sets this
+protects); ADR-026 (the same batch's data-integrity ground — R-P0-5's
+erasure work rides on rate-set integrity).
